@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway - Playground</title>
+    <link rel="stylesheet" href="/static/editor.css">
+    <link rel="stylesheet" href="/static/web-playground.css">
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <a href="/v1/ui/docs" class="nav-button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
+                Docs
+            </a>
+            <a href="/v1/ui/usage-stats" class="nav-button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                Usage Statistics
+            </a>
+            <a href="/v1/ui/rules-editor" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+                Rules Editor
+            </a>
+            <a href="/v1/ui/playground" class="nav-button active" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
+                Playground
+            </a>
+            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
+                API Keys
+            </a>
+            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
+                <span class="icon-placeholder"></span>
+            </button>
+        </div>
+    </div>
+    <div class="container">
+        <h1>Playground <span style="font-size:small">(admin testing)</span></h1>
+        <p class="playground-intro">
+            Runs configured operation routes from <code>models_operation_rules.json</code>:
+            web, speech-to-text, text-to-speech, images and PDF conversion.
+        </p>
+
+        <div class="tabs playground-section-tabs">
+            <button type="button" class="tab-button active" data-playground-section-tab="web">Web</button>
+            <button type="button" class="tab-button" data-playground-section-tab="audio-transcription">Speech to Text</button>
+            <button type="button" class="tab-button" data-playground-section-tab="audio-speech">Text to Speech</button>
+            <button type="button" class="tab-button" data-playground-section-tab="image-generation">Image Generation</button>
+            <button type="button" class="tab-button" data-playground-section-tab="image-edit">Image Editing</button>
+            <button type="button" class="tab-button" data-playground-section-tab="pdf-conversion">PDF Conversion</button>
+        </div>
+
+        <section class="playground-section" data-playground-section-panel="web">
+            <div class="tabs web-operation-tabs">
+                <button type="button" class="tab-button active" data-web-tab="search">Search</button>
+                <button type="button" class="tab-button" data-web-tab="read">Read</button>
+                <button type="button" class="tab-button" data-web-tab="tavily-search">Tavily Search</button>
+                <button type="button" class="tab-button" data-web-tab="tavily-extract">Tavily Extract</button>
+                <button type="button" class="tab-button" data-web-tab="research">Research</button>
+                <button type="button" class="tab-button" data-web-tab="deep-research">Deep Research</button>
+            </div>
+
+        <section class="playground-panel" data-web-panel="search">
+            <form class="playground-form" id="searchForm" autocomplete="off">
+                <div class="field-group">
+                    <label for="searchModel">Gateway model</label>
+                    <select id="searchModel" name="model" required></select>
+                </div>
+                <div class="field-group">
+                    <label for="searchQuery">Query</label>
+                    <input id="searchQuery" name="query" type="text" placeholder="latest EU AI Act updates" required>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="searchMaxResults">Max results (1–20)</label>
+                        <input id="searchMaxResults" name="max_results" type="number" min="1" max="20" value="10">
+                    </div>
+                    <div class="field-group">
+                        <label for="searchNumQueries">Query rewrites (1–5)</label>
+                        <input id="searchNumQueries" name="num_queries" type="number" min="1" max="5" value="1">
+                    </div>
+                    <div class="field-group">
+                        <label for="searchLanguage">Language</label>
+                        <input id="searchLanguage" name="language" type="text" value="ru" maxlength="8">
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="searchReadModel">Read model for raw content</label>
+                        <select id="searchReadModel" name="read_model"></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="searchIncludeRawContent">Raw content</label>
+                        <select id="searchIncludeRawContent" name="include_raw_content">
+                            <option value="" selected>off</option>
+                            <option value="markdown">markdown</option>
+                            <option value="text">text</option>
+                        </select>
+                    </div>
+                    <label class="toggle-field">
+                        <input id="searchIncludeImages" name="include_images" type="checkbox">
+                        Include images[]
+                    </label>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="searchIncludeDomains">Include domains</label>
+                        <input id="searchIncludeDomains" name="include_domains" type="text" placeholder="example.com, docs.example.com">
+                    </div>
+                    <div class="field-group">
+                        <label for="searchExcludeDomains">Exclude domains</label>
+                        <input id="searchExcludeDomains" name="exclude_domains" type="text" placeholder="spam.example">
+                    </div>
+                </div>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button">Run search</button>
+                    <span class="playground-status" data-status-for="search"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="search" hidden></div>
+        </section>
+
+        <section class="playground-panel" data-web-panel="read" hidden>
+            <form class="playground-form" id="readForm" autocomplete="off">
+                <div class="field-group">
+                    <label for="readModel">Gateway model</label>
+                    <select id="readModel" name="model" required></select>
+                </div>
+                <div class="field-group">
+                    <label for="readUrl">URL</label>
+                    <input id="readUrl" name="url" type="url" placeholder="https://example.com/article" required>
+                </div>
+                <div class="field-group">
+                    <label for="readFormat">Output format</label>
+                    <select id="readFormat" name="format">
+                        <option value="markdown" selected>markdown</option>
+                        <option value="text">text</option>
+                    </select>
+                </div>
+                <label class="toggle-field">
+                    <input id="readIncludeImages" name="include_images" type="checkbox">
+                    Include images[]
+                </label>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button">Fetch and parse</button>
+                    <span class="playground-status" data-status-for="read"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="read" hidden></div>
+        </section>
+
+        <section class="playground-panel" data-web-panel="tavily-search" hidden>
+            <form class="playground-form" id="tavilySearchForm" autocomplete="off">
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="tavilySearchModel">Search model</label>
+                        <select id="tavilySearchModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="tavilySearchReadModel">Read model for raw content</label>
+                        <select id="tavilySearchReadModel" name="read_model"></select>
+                    </div>
+                </div>
+                <div class="field-group">
+                    <label for="tavilySearchQuery">Query</label>
+                    <input id="tavilySearchQuery" name="query" type="text" placeholder="LLM gateway web search" required>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="tavilySearchMaxResults">Max results (1–20)</label>
+                        <input id="tavilySearchMaxResults" name="max_results" type="number" min="1" max="20" value="5">
+                    </div>
+                    <div class="field-group">
+                        <label for="tavilySearchLanguage">Language</label>
+                        <input id="tavilySearchLanguage" name="language" type="text" value="en" maxlength="8">
+                    </div>
+                    <div class="field-group">
+                        <label for="tavilySearchIncludeRawContent">Raw content</label>
+                        <select id="tavilySearchIncludeRawContent" name="include_raw_content">
+                            <option value="" selected>off</option>
+                            <option value="markdown">markdown</option>
+                            <option value="text">text</option>
+                        </select>
+                    </div>
+                    <label class="toggle-field">
+                        <input id="tavilySearchIncludeImages" name="include_images" type="checkbox">
+                        Include images[]
+                    </label>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="tavilySearchIncludeDomains">Include domains</label>
+                        <input id="tavilySearchIncludeDomains" name="include_domains" type="text" placeholder="example.com, docs.example.com">
+                    </div>
+                    <div class="field-group">
+                        <label for="tavilySearchExcludeDomains">Exclude domains</label>
+                        <input id="tavilySearchExcludeDomains" name="exclude_domains" type="text" placeholder="spam.example">
+                    </div>
+                </div>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button">Run Tavily search</button>
+                    <span class="playground-status" data-status-for="tavily-search"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="tavily-search" hidden></div>
+        </section>
+
+        <section class="playground-panel" data-web-panel="tavily-extract" hidden>
+            <form class="playground-form" id="tavilyExtractForm" autocomplete="off">
+                <div class="field-group">
+                    <label for="tavilyExtractModel">Read model</label>
+                    <select id="tavilyExtractModel" name="model" required></select>
+                </div>
+                <div class="field-group">
+                    <label for="tavilyExtractUrls">URLs</label>
+                    <textarea id="tavilyExtractUrls" name="urls" data-array="lines" rows="4" placeholder="https://example.com/article&#10;https://example.com/another" required></textarea>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="tavilyExtractFormat">Output format</label>
+                        <select id="tavilyExtractFormat" name="format">
+                            <option value="markdown" selected>markdown</option>
+                            <option value="text">text</option>
+                        </select>
+                    </div>
+                    <label class="toggle-field">
+                        <input id="tavilyExtractIncludeImages" name="include_images" type="checkbox">
+                        Include images[]
+                    </label>
+                </div>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button">Run Tavily extract</button>
+                    <span class="playground-status" data-status-for="tavily-extract"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="tavily-extract" hidden></div>
+        </section>
+
+        <section class="playground-panel" data-web-panel="research" hidden>
+            <form class="playground-form" id="researchForm" autocomplete="off">
+                <div class="field-group">
+                    <label for="researchModel">Gateway model</label>
+                    <select id="researchModel" name="model" required></select>
+                </div>
+                <div class="field-group">
+                    <label for="researchQuery">Query</label>
+                    <input id="researchQuery" name="query" type="text" required>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="researchMaxResults">Max results per language (1–20)</label>
+                        <input id="researchMaxResults" name="max_results" type="number" min="1" max="20" value="10">
+                        <p class="field-help">Limits search candidates collected for each selected search language.</p>
+                    </div>
+                    <div class="field-group">
+                        <label for="researchMaxArticles">Max articles per language (1–10)</label>
+                        <input id="researchMaxArticles" name="max_articles" type="number" min="1" max="10" value="8">
+                        <p class="field-help">Caps downloaded articles selected for analysis after content reranking.</p>
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="researchNumQueries">Query rewrites (1–5)</label>
+                        <input id="researchNumQueries" name="num_queries" type="number" min="1" max="5" placeholder="default">
+                        <p class="field-help">Overrides rewrite count; blank keeps ru=2 and en/zh=3.</p>
+                    </div>
+                    <div class="field-group">
+                        <label for="researchLanguage">Language</label>
+                        <select id="researchLanguage" name="language">
+                            <option value="all" selected>all</option>
+                            <option value="ru">ru</option>
+                            <option value="en">en</option>
+                            <option value="zh">zh</option>
+                        </select>
+                        <p class="field-help">Selects source-search languages, not the final answer language.</p>
+                    </div>
+                    <div class="field-group">
+                        <label for="researchOutputLanguage">Output language</label>
+                        <select id="researchOutputLanguage" name="output_language">
+                            <option value="ru" selected>ru</option>
+                            <option value="en">en</option>
+                            <option value="zh">zh</option>
+                        </select>
+                        <p class="field-help">Controls the language used for the synthesized final report.</p>
+                    </div>
+                    <div class="field-group">
+                        <label for="researchFormat">Article format</label>
+                        <select id="researchFormat" name="format">
+                            <option value="markdown" selected>markdown</option>
+                            <option value="text">text</option>
+                        </select>
+                        <p class="field-help">Controls the format requested from the page reader before analysis.</p>
+                    </div>
+                </div>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button">Run research</button>
+                    <span class="playground-status" data-status-for="research"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="research" hidden></div>
+        </section>
+
+        <section class="playground-panel" data-web-panel="deep-research" hidden>
+            <form class="playground-form" id="deepResearchForm" autocomplete="off">
+                <div class="field-group">
+                    <label for="deepResearchModel">Gateway model</label>
+                    <select id="deepResearchModel" name="model" required></select>
+                </div>
+                <div class="field-group">
+                    <label for="deepResearchQuery">Query</label>
+                    <input id="deepResearchQuery" name="query" type="text" required>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="deepResearchMaxWords">Max words (200–8000)</label>
+                        <input id="deepResearchMaxWords" name="max_words" type="number" min="200" max="8000" value="2500">
+                    </div>
+                    <div class="field-group">
+                        <label for="deepResearchBreadth">Breadth (1–10)</label>
+                        <input id="deepResearchBreadth" name="breadth" type="number" min="1" max="10" value="4">
+                    </div>
+                    <div class="field-group">
+                        <label for="deepResearchDepth">Depth (1–5)</label>
+                        <input id="deepResearchDepth" name="depth" type="number" min="1" max="5" value="2">
+                    </div>
+                    <div class="field-group">
+                        <label for="deepResearchConcurrency">Concurrency (1–10)</label>
+                        <input id="deepResearchConcurrency" name="concurrency" type="number" min="1" max="10" value="4">
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="deepResearchLanguage">Language</label>
+                        <input id="deepResearchLanguage" name="language" type="text" value="ru" maxlength="8">
+                    </div>
+                    <div class="field-group">
+                        <label for="deepResearchFormat">Format</label>
+                        <select id="deepResearchFormat" name="format">
+                            <option value="markdown" selected>markdown</option>
+                            <option value="text">text</option>
+                        </select>
+                    </div>
+                    <label class="toggle-field">
+                        <input id="deepResearchImageGeneration" name="image_generation" type="checkbox">
+                        Generate illustrations (images)
+                    </label>
+                </div>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button">Run deep research</button>
+                    <span class="playground-status" data-status-for="deep-research"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="deep-research" hidden></div>
+        </section>
+
+        </section>
+
+        <section class="playground-section" data-playground-section-panel="audio-speech" hidden>
+            <section class="playground-panel">
+                <form class="playground-form" id="audioSpeechForm" autocomplete="off">
+                    <div class="field-group">
+                        <label for="audioSpeechModel">Gateway model</label>
+                        <select id="audioSpeechModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="audioSpeechInput">Input text</label>
+                        <textarea id="audioSpeechInput" name="input" rows="5" required></textarea>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="audioSpeechVoice">Voice</label>
+                            <select id="audioSpeechVoice" name="voice">
+                                <option value="" selected>Select a model first</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="audioSpeechLanguage">Language</label>
+                            <select id="audioSpeechLanguage" name="language">
+                                <option value="" selected>provider default</option>
+                                <option value="ru">ru</option>
+                                <option value="en">en</option>
+                                <option value="zh">zh</option>
+                                <option value="de">de</option>
+                                <option value="fr">fr</option>
+                                <option value="es">es</option>
+                                <option value="it">it</option>
+                                <option value="pt">pt</option>
+                                <option value="ja">ja</option>
+                                <option value="ko">ko</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="audioSpeechFormat">Response format</label>
+                            <select id="audioSpeechFormat" name="response_format">
+                                <option value="mp3" selected>mp3</option>
+                                <option value="wav">wav</option>
+                                <option value="opus">opus</option>
+                                <option value="flac">flac</option>
+                                <option value="aac">aac</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="audioSpeechSpeed">Speed</label>
+                            <input id="audioSpeechSpeed" name="speed" type="number" min="0.25" max="4" step="0.05" placeholder="1">
+                        </div>
+                    </div>
+                    <div class="playground-actions">
+                        <button type="submit" class="secondary-button run-button">Generate speech</button>
+                        <span class="playground-status" data-status-for="audio-speech"></span>
+                    </div>
+                </form>
+                <div class="playground-result" data-result-for="audio-speech" hidden></div>
+            </section>
+        </section>
+
+        <section class="playground-section" data-playground-section-panel="audio-transcription" hidden>
+            <section class="playground-panel">
+                <form class="playground-form" id="audioTranscriptionForm" autocomplete="off">
+                    <div class="field-group">
+                        <label for="audioTranscriptionModel">Gateway model</label>
+                        <select id="audioTranscriptionModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="audioTranscriptionFile">Audio file</label>
+                        <input id="audioTranscriptionFile" name="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.webm" required>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="audioTranscriptionLanguage">Language</label>
+                            <select id="audioTranscriptionLanguage" name="language">
+                                <option value="" selected>auto</option>
+                                <option value="ru">ru</option>
+                                <option value="en">en</option>
+                                <option value="zh">zh</option>
+                                <option value="de">de</option>
+                                <option value="fr">fr</option>
+                                <option value="es">es</option>
+                                <option value="it">it</option>
+                                <option value="pt">pt</option>
+                                <option value="ja">ja</option>
+                                <option value="ko">ko</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="audioTranscriptionFormat">Response format</label>
+                            <select id="audioTranscriptionFormat" name="response_format">
+                                <option value="json" selected>json</option>
+                                <option value="text">text</option>
+                                <option value="srt">srt</option>
+                                <option value="vtt">vtt</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="audioTranscriptionTemperature">Temperature</label>
+                            <input id="audioTranscriptionTemperature" name="temperature" type="number" min="0" max="1" step="0.05" placeholder="0">
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <label for="audioTranscriptionPrompt">Prompt</label>
+                        <textarea id="audioTranscriptionPrompt" name="prompt" rows="3"></textarea>
+                    </div>
+                    <div class="playground-actions">
+                        <button type="submit" class="secondary-button run-button">Transcribe audio</button>
+                        <span class="playground-status" data-status-for="audio-transcription"></span>
+                    </div>
+                </form>
+                <div class="playground-result" data-result-for="audio-transcription" hidden></div>
+            </section>
+        </section>
+
+        <section class="playground-section" data-playground-section-panel="image-generation" hidden>
+            <section class="playground-panel">
+                <form class="playground-form" id="imageGenerationForm" autocomplete="off">
+                    <div class="field-group">
+                        <label for="imageGenerationModel">Gateway model</label>
+                        <select id="imageGenerationModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="imageGenerationPrompt">Prompt</label>
+                        <textarea id="imageGenerationPrompt" name="prompt" rows="5" required></textarea>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="imageGenerationSize">Size</label>
+                            <select id="imageGenerationSize" name="size">
+                                <option value="" selected>provider default</option>
+                                <option value="1024x1024">1024x1024</option>
+                                <option value="1024x1536">1024x1536</option>
+                                <option value="1536x1024">1536x1024</option>
+                                <option value="512x512">512x512</option>
+                                <option value="768x768">768x768</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="imageGenerationCount">Images</label>
+                            <input id="imageGenerationCount" name="n" type="number" min="1" max="4" value="1">
+                        </div>
+                        <div class="field-group">
+                            <label for="imageGenerationFormat">Response format</label>
+                            <select id="imageGenerationFormat" name="response_format">
+                                <option value="" selected>provider default</option>
+                                <option value="url">url</option>
+                                <option value="b64_json">b64_json</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="playground-actions">
+                        <button type="submit" class="secondary-button run-button">Generate images</button>
+                        <span class="playground-status" data-status-for="image-generation"></span>
+                    </div>
+                </form>
+                <div class="playground-result" data-result-for="image-generation" hidden></div>
+            </section>
+        </section>
+
+        <section class="playground-section" data-playground-section-panel="image-edit" hidden>
+            <section class="playground-panel">
+                <form class="playground-form" id="imageEditForm" autocomplete="off">
+                    <div class="field-group">
+                        <label for="imageEditModel">Gateway model</label>
+                        <select id="imageEditModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="imageEditPrompt">Prompt</label>
+                        <textarea id="imageEditPrompt" name="prompt" rows="4" required></textarea>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="imageEditFiles">Images (up to 4)</label>
+                            <input id="imageEditFiles" name="image[]" type="file" accept="image/*" multiple required data-max-files="4">
+                        </div>
+                        <div class="field-group">
+                            <label for="imageEditMask">Mask</label>
+                            <input id="imageEditMask" name="mask" type="file" accept="image/*">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="imageEditSize">Size</label>
+                            <select id="imageEditSize" name="size">
+                                <option value="" selected>provider default</option>
+                                <option value="1024x1024">1024x1024</option>
+                                <option value="1024x1536">1024x1536</option>
+                                <option value="1536x1024">1536x1024</option>
+                                <option value="512x512">512x512</option>
+                                <option value="768x768">768x768</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="imageEditCount">Images</label>
+                            <input id="imageEditCount" name="n" type="number" min="1" max="4" value="1">
+                        </div>
+                        <div class="field-group">
+                            <label for="imageEditFormat">Response format</label>
+                            <select id="imageEditFormat" name="response_format">
+                                <option value="" selected>provider default</option>
+                                <option value="url">url</option>
+                                <option value="b64_json">b64_json</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="playground-actions">
+                        <button type="submit" class="secondary-button run-button">Edit images</button>
+                        <span class="playground-status" data-status-for="image-edit"></span>
+                    </div>
+                </form>
+                <div class="playground-result" data-result-for="image-edit" hidden></div>
+            </section>
+        </section>
+
+        <section class="playground-section" data-playground-section-panel="pdf-conversion" hidden>
+            <section class="playground-panel">
+                <form class="playground-form" id="pdfConversionForm" autocomplete="off">
+                    <div class="field-group">
+                        <label for="pdfConversionModel">Gateway model</label>
+                        <select id="pdfConversionModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="pdfConversionFile">PDF file</label>
+                        <input id="pdfConversionFile" name="file" type="file" accept="application/pdf,.pdf" required>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="pdfConversionOutput">Output</label>
+                            <select id="pdfConversionOutput" name="output">
+                                <option value="both" selected>DOCX + MD</option>
+                                <option value="docx">DOCX</option>
+                                <option value="md">MD</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="pdfConversionLanguage">OCR languages</label>
+                            <input id="pdfConversionLanguage" name="language" type="text" value="rus+eng">
+                        </div>
+                        <div class="field-group">
+                            <label for="pdfConversionTargetLanguage">Translate to</label>
+                            <select id="pdfConversionTargetLanguage" name="target_language">
+                                <option value="" selected>No translation</option>
+                                <option value="Russian">Russian</option>
+                                <option value="English">English</option>
+                                <option value="German">German</option>
+                                <option value="French">French</option>
+                                <option value="Spanish">Spanish</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="pdfConversionMathOcr">Math OCR</label>
+                            <select id="pdfConversionMathOcr" name="math_ocr_provider">
+                                <option value="off" selected>off</option>
+                                <option value="mathpix">mathpix</option>
+                                <option value="local_im2latex">local_im2latex</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="pdfConversionFormulaPages">Formula pages</label>
+                            <input id="pdfConversionFormulaPages" name="formulas_max_pages" type="number" min="1" placeholder="auto">
+                        </div>
+                        <div class="field-group">
+                            <label for="pdfConversionMaxPages">Max pages</label>
+                            <input id="pdfConversionMaxPages" name="max_pages" type="number" min="1" placeholder="provider limit">
+                        </div>
+                        <div class="field-group">
+                            <label for="pdfConversionPassword">PDF password</label>
+                            <input id="pdfConversionPassword" name="password" type="password" autocomplete="off">
+                        </div>
+                        <label class="toggle-field">
+                            <input id="pdfConversionPreprocessSave" name="ocr_preprocess_save" type="checkbox">
+                            Save preprocessed PDF
+                        </label>
+                    </div>
+                    <div class="playground-actions">
+                        <button type="submit" class="secondary-button run-button">Start conversion job</button>
+                        <span class="playground-status" data-status-for="pdf-conversion"></span>
+                    </div>
+                </form>
+                <div class="playground-result" data-result-for="pdf-conversion" hidden></div>
+            </section>
+        </section>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.11/purify.min.js"></script>
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/web-playground.js"></script>
+    <script>
+        (function () {
+            const toggle = document.getElementById("darkModeToggle");
+            if (!toggle) return;
+            const stored = localStorage.getItem("darkMode");
+            if (stored === "1") document.body.classList.add("dark-mode");
+            toggle.addEventListener("click", function () {
+                const on = document.body.classList.toggle("dark-mode");
+                localStorage.setItem("darkMode", on ? "1" : "0");
+            });
+        })();
+    </script>
+</body>
+</html>

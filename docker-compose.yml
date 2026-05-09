@@ -1,0 +1,52 @@
+services:
+  llm-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: llm-gateway:latest
+    container_name: llm-gateway
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      # Mount providers.json read-write so the web editor can persist changes back to the host file
+      - ./providers.json:/app/providers.json
+      # Mount models_fallback_rules.json read-write so the web editor can persist changes back to the host file
+      - ./models_fallback_rules.json:/app/models_fallback_rules.json
+      # Mount models_operation_rules.json read-write so the web editor can persist changes for operation routes
+      - ./models_operation_rules.json:/app/models_operation_rules.json
+      # Mount database directory for persistence
+      - ./data/db:/app/db
+    environment:
+      # Required: this is the gateway token clients must send to this service.
+      - GATEWAY_API_KEY=your-secure-api-key
+
+      # Optional gateway settings
+      - GATEWAY_PORT=9000
+      - GATEWAY_HOST=0.0.0.0
+      - LOG_FILE_LIMIT=15
+      - LOG_CHAT_ENABLED=false
+      - FALLBACK_PROVIDER=openrouter
+
+      # Provider API keys - uncomment and set the ones you need.
+      # APIKEY_OPENROUTER is issued by OpenRouter.
+      - APIKEY_OPENROUTER=your-openrouter-api-key
+      # - APIKEY_OPENAI=your-openai-api-key
+      # - APIKEY_GOOGLE=your-google-api-key
+      # - APIKEY_NEBIUS=your-nebius-api-key
+      # - APIKEY_TOGETHER=your-together-api-key
+      # - APIKEY_KLUSTERAI=your-klusterai-api-key
+      # - APIKEY_REQUESTY=your-requesty-api-key
+      # - APIKEY_XAI=your-xai-api-key
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - llm-gateway-network
+
+networks:
+  llm-gateway-network:
+    driver: bridge

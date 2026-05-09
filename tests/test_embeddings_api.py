@@ -1,0 +1,293 @@
+import json
+import tempfile
+import unittest
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
+
+from fastapi.testclient import TestClient
+
+import main
+from llm_gateway_core.config.loader import ConfigLoader
+from llm_gateway_core.services.request_handler import OperationDispatcher
+
+
+VALID_PROVIDERS_TEXT = """
+[
+  {
+    "openai": {
+      "baseUrl": "https://openai.example/v1",
+      "apikey": "DIRECT-KEY"
+    }
+  }
+]
+""".strip()
+
+VALID_FALLBACK_RULES_TEXT = """
+[
+  {
+    "gateway_model_name": "chat-model",
+    "fallback_models": [
+      {
+        "provider": "openai",
+        "model": "gpt-4o-mini"
+      }
+    ],
+    "rotate_models": false
+  }
+]
+""".strip()
+
+VALID_OPERATION_RULES_TEXT = """
+{
+  "embeddings": [
+    {
+      "gateway_model_name": "gateway/embed-small",
+      "routes": [
+        {
+          "provider": "openai",
+          "model": "text-embedding-3-small",
+          "target_path": "/embeddings",
+          "custom_headers": {
+            "X-Route-Header": "embed-route"
+          },
+          "custom_body_params": {
+            "dimensions": 256,
+            "user": "operation-user"
+          }
+        }
+      ]
+    }
+  ],
+  "rerank": [],
+  "images_generations": [],
+  "images_edits": []
+}
+""".strip()
+
+
+class _FakeCleanupTask:
+    def cancel(self):
+        return None
+
+    def __await__(self):
+        async def _done():
+            return None
+
+        return _done().__await__()
+
+
+class _FakeDownstreamResponse:
+    def __init__(self, payload, status_code: int = 200, text: str | None = None):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = text if text is not None else json.dumps(payload)
+
+    def json(self):
+        return self._payload
+
+
+class EmbeddingsApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.providers_path = Path(self.temp_dir.name) / "providers.json"
+        self.rules_path = Path(self.temp_dir.name) / "models_fallback_rules.json"
+        self.operation_rules_path = Path(self.temp_dir.name) / "models_operation_rules.json"
+        self.providers_path.write_text(VALID_PROVIDERS_TEXT, encoding="utf-8")
+        self.rules_path.write_text(VALID_FALLBACK_RULES_TEXT, encoding="utf-8")
+        self.operation_rules_path.write_text(VALID_OPERATION_RULES_TEXT, encoding="utf-8")
+        self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openai")
+        self.fallback_provider_patcher.start()
+        self.config_loader = ConfigLoader(
+            providers_filename=str(self.providers_path),
+            fallback_rules_filename=str(self.rules_path),
+            operation_rules_filename=str(self.operation_rules_path),
+        )
+        self.config_loader.load_providers()
+        self.config_loader.load_fallback_rules()
+        self.config_loader.load_operation_rules()
+
+    def tearDown(self):
+        self.fallback_provider_patcher.stop()
+        self.temp_dir.cleanup()
+
+    @contextmanager
+    def _client(self, downstream_response):
+        fake_http_client = Mock()
+        fake_http_client.post = AsyncMock(return_value=downstream_response)
+        fake_http_client.aclose = AsyncMock()
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
+            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(patch("main.TokensUsageDB"))
+            stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
+            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
+            stack.enter_context(patch.object(main.settings, "fallback_provider", "openai"))
+
+            with TestClient(main.app) as client:
+                dispatcher = getattr(client.app.state, "operation_dispatcher", None)
+                self.assertIsInstance(dispatcher, OperationDispatcher)
+                self.assertIs(client.app.state.http_client, fake_http_client)
+                yield client, dispatcher, fake_http_client
+
+    def test_embeddings_valid_request(self):
+        downstream_payload = {
+            "object": "list",
+            "data": [{"object": "embedding", "embedding": [0.1, 0.2], "index": 0}],
+            "model": "text-embedding-3-small",
+            "usage": {"prompt_tokens": 2, "total_tokens": 2},
+        }
+
+        with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
+            route = dispatcher.lookup_route("embeddings", "gateway/embed-small")
+            self.assertIsNotNone(route)
+
+            response = client.post(
+                "/v1/embeddings",
+                json={
+                    "model": "gateway/embed-small",
+                    "input": ["hello"],
+                    "encoding_format": "float",
+                    "dimensions": 1024,
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), downstream_payload)
+        fake_http_client.post.assert_awaited_once()
+        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
+        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
+        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
+        self.assertEqual(
+            call_args,
+            {
+                "prompt_tokens": 2,
+                "completion_tokens": 0,
+                "total_tokens": 2,
+                "reasoning_tokens": 0,
+                "cached_tokens": 0,
+                "cost": 0,
+                "cost_saved": 0,
+                "is_estimated": False,
+                "gateway_model": "gateway/embed-small",
+                "operation": "embeddings",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+            },
+        )
+
+    def test_embeddings_missing_model(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, dispatcher, fake_http_client):
+            self.assertIsNotNone(dispatcher.lookup_route("embeddings", "gateway/embed-small"))
+
+            response = client.post(
+                "/v1/embeddings",
+                json={"input": ["hello"]},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Missing 'model' in request body")
+        fake_http_client.post.assert_not_awaited()
+
+    def test_embeddings_missing_input(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, dispatcher, fake_http_client):
+            self.assertIsNotNone(dispatcher.lookup_route("embeddings", "gateway/embed-small"))
+
+            response = client.post(
+                "/v1/embeddings",
+                json={"model": "gateway/embed-small"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Missing 'input' in request body")
+        fake_http_client.post.assert_not_awaited()
+
+    def test_embeddings_unknown_model(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, dispatcher, fake_http_client):
+            self.assertIsNone(dispatcher.lookup_route("embeddings", "unknown-model"))
+
+            response = client.post(
+                "/v1/embeddings",
+                json={"model": "unknown-model", "input": ["hello"]},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "No embeddings route configured for model 'unknown-model'.")
+        fake_http_client.post.assert_not_awaited()
+
+    def test_embeddings_downstream_error(self):
+        with self._client(
+            _FakeDownstreamResponse(
+                {"error": {"message": "downstream-500"}},
+                status_code=500,
+            )
+        ) as (client, dispatcher, fake_http_client):
+            self.assertIsNotNone(dispatcher.lookup_route("embeddings", "gateway/embed-small"))
+
+            response = client.post(
+                "/v1/embeddings",
+                json={"model": "gateway/embed-small", "input": ["hello"]},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "downstream-500")
+        fake_http_client.post.assert_awaited_once()
+
+    def test_embeddings_response_unchanged(self):
+        downstream_payload = {
+            "object": "list",
+            "data": [
+                {
+                    "object": "embedding",
+                    "embedding": [0.1, 0.2],
+                    "index": 0,
+                    "metadata": {"source": "downstream"},
+                }
+            ],
+            "model": "text-embedding-3-small",
+            "usage": {"prompt_tokens": 2, "total_tokens": 2},
+            "extra_field": {"nested": ["kept", "as-is"]},
+        }
+
+        with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
+            self.assertEqual(dispatcher.lookup_route("embeddings", "gateway/embed-small").model, "text-embedding-3-small")
+
+            response = client.post(
+                "/v1/embeddings",
+                json={"model": "gateway/embed-small", "input": ["hello"]},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), downstream_payload)
+        fake_http_client.post.assert_awaited_once()
+        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
+        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
+        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
+        self.assertEqual(
+            call_args,
+            {
+                "prompt_tokens": 2,
+                "completion_tokens": 0,
+                "total_tokens": 2,
+                "reasoning_tokens": 0,
+                "cached_tokens": 0,
+                "cost": 0,
+                "cost_saved": 0,
+                "is_estimated": False,
+                "gateway_model": "gateway/embed-small",
+                "operation": "embeddings",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+            },
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

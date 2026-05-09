@@ -1,0 +1,530 @@
+[
+  {
+    "gateway_model_name": "llmgateway/glm-5",
+    "fallback_models": [
+      {
+        "provider": "nvidia",
+        "model": "minimaxai/minimax-m2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "qwen/qwen3.5-397b-a17b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "deepseek-ai/deepseek-v4-pro",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "z.ai",
+        "model": "glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "OpenClaw-Gateway/1.0",
+          "Referer": "https://openclaw.ai"
+        }
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "retry_delay": 1,
+      "retry_count": 2,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/light_model",
+    "fallback_models": [
+      {
+        "provider": "aitunnel",
+        "model": "gpt-4.1-nano",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "cloudru",
+        "model": "zai-org/GLM-4.7-Flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "z.ai",
+        "model": "glm-5-turbo",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "OpenClaw-Gateway/1.0",
+          "Referer": "https://openclaw.ai"
+        }
+      },
+      {
+        "provider": "nvidia2",
+        "model": "google/gemma-4-31b-it",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "qwen/qwen3-next-80b-a3b-instruct",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "nvidia/nemotron-3-super-120b-a12b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "openai/gpt-oss-120b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "retry_delay": 1,
+      "retry_count": 2,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/qwen",
+    "fallback_models": [
+      {
+        "provider": "nvidia",
+        "model": "qwen/qwen3.5-397b-a17b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "deepseek-ai/deepseek-v4-pro",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "retry_delay": 1,
+      "retry_count": 2,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/qwen3.5",
+    "fallback_models": [
+      {
+        "provider": "devbox",
+        "model": "mm.MiniMax-M2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "z.ai",
+        "model": "glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "OpenClaw-Gateway/1.0",
+          "Referer": "https://openclaw.ai"
+        }
+      },
+      {
+        "provider": "nvidia",
+        "model": "minimaxai/minimax-m2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "openai_codex",
+        "model": "gpt-5.3-codex",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "qwen/qwen3.5-397b-a17b",
+        "use_provider_order_as_fallback": false,
+        "retry_delay": 1,
+        "retry_count": 2,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "retry_delay": 1,
+      "retry_count": 2,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/big_context",
+    "fallback_models": [
+      {
+        "provider": "aitunnel",
+        "model": "deepseek-v4-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "devbox",
+        "model": "google.models/gemini-2.5-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "deepseek-ai/deepseek-v4-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "qwen/qwen3.5-122b-a10b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "gemini_cli",
+      "model": "gemini-2.5-pro",
+      "use_provider_order_as_fallback": false,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/high",
+    "fallback_models": [
+      {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "Kimi Claw Plugin",
+          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
+        }
+      },
+      {
+        "provider": "z.ai",
+        "model": "glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "OpenClaw-Gateway/1.0",
+          "Referer": "https://openclaw.ai"
+        }
+      },
+      {
+        "provider": "devbox",
+        "model": "mm.MiniMax-M2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "deepseek-ai/deepseek-v4-pro",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/fast",
+    "fallback_models": [
+      {
+        "provider": "openai_codex",
+        "model": "gpt-5.3-codex-spark-fast",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "devbox",
+        "model": "openai.gpt-5.3-codex-spark-fast",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "z.ai",
+        "model": "glm-5-turbo",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "cloudru",
+        "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/text",
+    "fallback_models": [
+      {
+        "provider": "devbox",
+        "model": "mm.MiniMax-M2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "z.ai",
+        "model": "glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "OpenClaw-Gateway/1.0",
+          "Referer": "https://openclaw.ai"
+        }
+      },
+      {
+        "provider": "openai_codex",
+        "model": "gpt-5.5",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "minimaxai/minimax-m2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "google/gemma-4-31b-it",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "openai_codex",
+      "model": "gpt-5.4",
+      "use_provider_order_as_fallback": false,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/ocr",
+    "fallback_models": [
+      {
+        "provider": "cloudru",
+        "model": "deepseek-ai/DeepSeek-OCR-2",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "llm_ai",
+        "model": "deepseek-ocr-2",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/free",
+    "fallback_models": [
+      {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "Kimi Claw Plugin",
+          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
+        }
+      },
+      {
+        "provider": "nvidia2",
+        "model": "deepseek-ai/deepseek-v4-pro",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia2",
+        "model": "qwen/qwen3.5-397b-a17b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia2",
+        "model": "z-ai/glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "qwen/qwen3.5-397b-a17b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": true
+  },
+  {
+    "gateway_model_name": "llmgateway/free_gd",
+    "fallback_models": [
+      {
+        "provider": "nvidia2",
+        "model": "moonshotai/kimi-k2.6",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia2",
+        "model": "minimaxai/minimax-m2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia2",
+        "model": "z-ai/glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "minimaxai/minimax-m2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "context_overflow_fallback": {
+      "provider": "nvidia2",
+      "model": "deepseek-ai/deepseek-v4-flash",
+      "use_provider_order_as_fallback": false,
+      "custom_body_params": {},
+      "custom_headers": {}
+    },
+    "rotate_models": false,
+    "strip_think_tags": false
+  }
+]

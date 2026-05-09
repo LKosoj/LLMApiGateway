@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway v1.10-  Usage Statistics</title>
+    <link rel="stylesheet" href="/static/usage-stats.css">
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <a href="/v1/ui/docs" class="nav-button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
+                Docs
+            </a>
+            <a href="/v1/ui/usage-stats" class="nav-button active">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                Usage Statistics
+            </a>
+            <a href="/v1/ui/rules-editor" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                Rules Editor
+            </a>
+            <a href="/v1/ui/playground" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
+                Playground
+            </a>
+            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
+                API Keys
+            </a>
+            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
+                <span class="icon-placeholder"></span>
+            </button>
+        </div>
+    </div>
+    <div class="container">
+        <h1>LLM Gateway - Usage Statistics <span style="font-size:small">(v1.10)</span></h1>
+
+        <div class="tabs">
+            <button class="tab-button active" data-tab="stats">Usage Statistics</button>
+            <button class="tab-button" data-tab="records">Usage Records</button>
+            <button class="tab-button" data-tab="fallback" data-master-only>Fallback Analytics</button>
+        </div>
+
+        <div id="statsTabContent" class="tab-content active">
+            <div class="controls">
+                <label for="periodSelector">Group by:</label>
+                <select id="periodSelector">
+                    <option value="hour">Hour</option>
+                    <option value="day" selected>Day</option>
+                    <option value="week">Week</option>
+                    <option value="month">Month</option>
+                </select>
+                <button id="refreshButton">Refresh</button>
+            </div>
+            <div id="statsArea">
+                <!-- Statistics tables will be rendered here by JavaScript -->
+                <p>Select a period and click 'Refresh' to view statistics.</p>
+            </div>
+        </div>
+
+        <div id="recordsTabContent" class="tab-content">
+            <div class="records-header">
+                <h2>Latest Usage Records</h2>
+                <div class="controls">
+                    <button id="recordRefreshButton">Refresh</button>
+                </div>
+                <div class="pagination-controls">
+                    <button id="prevPage">Previous</button>
+                    <span id="pageInfo">Page 1</span>
+                    <button id="nextPage">Next</button>
+                </div>
+            </div>
+            <div id="recordsArea">
+                <!-- Usage records table will be rendered here by JavaScript -->
+                <p>Loading usage records...</p>
+            </div>
+        </div>
+        <div id="fallbackTabContent" class="tab-content">
+            <div class="fallback-sub-tabs">
+                <button class="fallback-sub-tab active" data-subtab="summary">Summary</button>
+                <button class="fallback-sub-tab" data-subtab="chains">Chains</button>
+            </div>
+
+            <div id="fallbackSummaryContent" class="fallback-sub-content active">
+                <div class="controls">
+                    <label for="fallbackPeriodSelector">Group by:</label>
+                    <select id="fallbackPeriodSelector">
+                        <option value="hour">Hour</option>
+                        <option value="day" selected>Day</option>
+                        <option value="week">Week</option>
+                        <option value="month">Month</option>
+                    </select>
+                    <button id="fallbackRefreshButton">Refresh</button>
+                </div>
+                <div id="fallbackStatsArea">
+                    <p>Select a period and click 'Refresh' to view fallback statistics.</p>
+                </div>
+            </div>
+
+            <div id="fallbackChainsContent" class="fallback-sub-content">
+                <div class="records-header">
+                    <h2>Fallback Chains</h2>
+                    <div class="controls">
+                        <button id="fallbackChainsRefreshButton">Refresh</button>
+                    </div>
+                    <div class="pagination-controls">
+                        <button id="fallbackPrevPage">Previous</button>
+                        <span id="fallbackPageInfo">Page 1</span>
+                        <button id="fallbackNextPage">Next</button>
+                    </div>
+                </div>
+                <div id="fallbackChainsArea">
+                    <p>Loading fallback chains...</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="messageArea"></div>
+    </div>
+
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/usage-stats.js"></script>
+</body>
+</html>

@@ -1,0 +1,285 @@
+{
+  "embeddings": [
+    {
+      "gateway_model_name": "llmgateway/embedding",
+      "routes": [
+        {
+          "provider": "cloudru",
+          "model": "Qwen/Qwen3-Embedding-0.6B",
+          "target_path": "/embeddings",
+          "custom_headers": {},
+          "custom_body_params": {}
+        },
+        {
+          "provider": "llm_ai",
+          "model": "Qwen/Qwen3-Embedding-0.6B",
+          "target_path": "/embeddings",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "retry_delay": 1.0,
+          "retry_count": 3
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/embedding_nv",
+      "routes": [
+        {
+          "provider": "nvidia",
+          "model": "nvidia/nv-embed-v1",
+          "target_path": "/embeddings",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    }
+  ],
+  "rerank": [
+    {
+      "gateway_model_name": "llmgateway/rerank",
+      "routes": [
+        {
+          "provider": "cloudru",
+          "model": "Qwen/Qwen3-Reranker-0.6B",
+          "target_path": "https://foundation-models.api.cloud.ru/score",
+          "custom_headers": {},
+          "custom_body_params": {}
+        },
+        {
+          "provider": "llm_ai",
+          "model": "Qwen/Qwen3-Reranker-0.6B",
+          "target_path": "http://94.143.43.118:18080/score",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "response_output_format": "jina_results",
+          "retry_delay": 1.0,
+          "retry_count": 3
+        }
+      ]
+    }
+  ],
+  "images_generations": [
+    {
+      "gateway_model_name": "llmgateway/flux.image-generation",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "gpt-image-2",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "request_format": "openai_images",
+          "response_format": "openai_images"
+        },
+        {
+          "provider": "vsegpt",
+          "model": "img-openai/gpt-image-2",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/flux.2-klein-4b-generation",
+      "routes": [
+        {
+          "provider": "nvidia",
+          "model": "black-forest-labs/flux.2-klein-4b",
+          "target_path": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
+          "custom_headers": {},
+          "custom_body_params": {
+            "steps": 4
+          },
+          "request_format": "nvidia_genai_json",
+          "response_format": "nvidia_artifacts",
+          "request_mapping": {
+            "fields": {
+              "prompt": "prompt",
+              "seed": "seed",
+              "width": {
+                "from": "size",
+                "transform": "size_width"
+              },
+              "height": {
+                "from": "size",
+                "transform": "size_height"
+              },
+              "": "n"
+            }
+          },
+          "response_mapping": {
+            "artifacts_path": "artifacts",
+            "base64_field": "base64"
+          }
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/ai-klein-generation",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "flux2-klein-4b",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/ai-krea-generation",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "flux1-krea-dev-fp8",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    }
+  ],
+  "images_edits": [
+    {
+      "gateway_model_name": "llmgateway/flux.image-edit",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "gpt-image-2",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "request_format": "openai_images",
+          "response_format": "openai_images"
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/ai-klein-edit",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "flux2-klein-4b",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "request_format": "openai_images_multipart"
+        }
+      ]
+    }
+  ],
+  "audio_speech": [
+    {
+      "gateway_model_name": "llmgateway/silero-tts",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "silero-v5_5_ru",
+          "target_path": "/silero/audio/speech",
+          "voices_target_path": "/voices",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/silero-en-tts",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "silero-v3_en",
+          "target_path": "/silero/audio/speech",
+          "voices_target_path": "/voices",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/cosyvoice-tts",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "cosyvoice",
+          "target_path": "/audio/speech",
+          "voices_target_path": "/voices",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    }
+  ],
+  "audio_transcriptions": [
+    {
+      "gateway_model_name": "llmgateway/whisper-large-v3",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "large-v3-turbo",
+          "target_path": "/audio/transcriptions",
+          "custom_headers": {},
+          "custom_body_params": {}
+        },
+        {
+          "provider": "cloudru",
+          "model": "openai/whisper-large-v3",
+          "target_path": "/audio/transcriptions",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    }
+  ],
+  "pdf_conversions": [
+    {
+      "gateway_model_name": "llmgateway/pdf-converter",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "pdf-converter",
+          "target_path": "http://94.143.43.118:18080/pdf/api",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "retry_delay": 1.0,
+          "retry_count": 3
+        }
+      ]
+    }
+  ],
+  "web_search": [
+    {
+      "gateway_model_name": "llmgateway/web-search",
+      "query_model": "llmgateway/light_model"
+    }
+  ],
+  "web_read": [
+    {
+      "gateway_model_name": "llmgateway/web-read"
+    }
+  ],
+  "web_research": [
+    {
+      "gateway_model_name": "llmgateway/web-research",
+      "search_model": "llmgateway/web-search",
+      "read_model": "llmgateway/web-read",
+      "rerank_model": "llmgateway/rerank",
+      "analysis_model": "llmgateway/light_model",
+      "routes": []
+    }
+  ],
+  "web_deep_research": [
+    {
+      "gateway_model_name": "llmgateway/web-deep-research",
+      "search_model": "llmgateway/web-search",
+      "read_model": "llmgateway/web-read",
+      "fast_model": "llmgateway/light_model",
+      "smart_model": "llmgateway/high",
+      "strategic_model": "llmgateway/high",
+      "embedding_model": "llmgateway/embedding",
+      "image_generation_model": "llmgateway/flux.2-klein-4b-generation",
+      "image_generation_size": "1024x1024",
+      "routes": []
+    }
+  ]
+}

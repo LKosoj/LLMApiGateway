@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway Login</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(135deg, #0f172a, #1e293b);
+        }
+
+        .card {
+            width: min(420px, calc(100vw - 32px));
+            padding: 32px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.96);
+            color: #0f172a;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 28px;
+        }
+
+        p {
+            margin: 0 0 20px;
+            line-height: 1.5;
+            color: #334155;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            box-sizing: border-box;
+            font: inherit;
+        }
+
+        button {
+            width: 100%;
+            margin-top: 16px;
+            padding: 12px 14px;
+            border: 0;
+            border-radius: 10px;
+            background: #0f172a;
+            color: #fff;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.75;
+            cursor: wait;
+        }
+
+        .error {
+            display: __ERROR_DISPLAY__;
+            margin-bottom: 16px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .hint {
+            margin-top: 14px;
+            font-size: 13px;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <main class="card">
+        <h1>LLM Gateway Login</h1>
+        <p>Enter <code>GATEWAY_API_KEY</code> to open the protected UI and create a persistent signed cookie for this browser.</p>
+        <div id="errorBox" class="error">__ERROR_MESSAGE__</div>
+        <form id="loginForm">
+            <input id="nextInput" type="hidden" value="__NEXT__">
+            <label for="apiKeyInput">Gateway API Key</label>
+            <input id="apiKeyInput" name="api_key" type="password" autocomplete="current-password" autofocus required>
+            <button id="submitButton" type="submit">Sign in</button>
+        </form>
+        <p class="hint">After sign-in the browser uses a persistent HttpOnly cookie, so the UI stays signed in across browser restarts. SDK clients can continue to use Bearer auth directly.</p>
+    </main>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('loginForm');
+            const apiKeyInput = document.getElementById('apiKeyInput');
+            const nextInput = document.getElementById('nextInput');
+            const submitButton = document.getElementById('submitButton');
+            const errorBox = document.getElementById('errorBox');
+
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                submitButton.disabled = true;
+                errorBox.style.display = 'none';
+                errorBox.textContent = '';
+
+                try {
+                    const response = await fetch('/auth/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            api_key: apiKeyInput.value,
+                            next: nextInput.value
+                        })
+                    });
+
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        throw new Error(payload.detail || 'Authentication failed');
+                    }
+
+                    window.location.assign(payload.redirect_to || '/v1/ui/usage-stats');
+                } catch (error) {
+                    errorBox.textContent = error.message;
+                    errorBox.style.display = 'block';
+                    submitButton.disabled = false;
+                }
+            });
+        });
+    </script>
+</body>
+</html>

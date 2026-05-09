@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway v1.10 - Configuration Editor</title>
+    <link rel="stylesheet" href="/static/editor.css">
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <a href="/v1/ui/docs" class="nav-button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
+                Docs
+            </a>
+            <a href="/v1/ui/usage-stats" class="nav-button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                Usage Statistics
+            </a>
+            <a href="/v1/ui/rules-editor" class="nav-button active" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                Rules Editor
+            </a>
+            <a href="/v1/ui/playground" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
+                Playground
+            </a>
+            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
+                API Keys
+            </a>
+            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
+                <span class="icon-placeholder"></span>
+            </button>
+        </div>
+    </div>
+    <div class="container">
+        <h1>LLM Gateway - Configuration Editor <span style="font-size:small">(v1.10)</span></h1>
+
+        <div class="tabs">
+            <button id="tabRules" class="tab-button active" data-tab="rules">Fallback Rules</button>
+            <button id="tabEmbeddings" class="tab-button" data-tab="embeddings">Embeddings</button>
+            <button id="tabRerank" class="tab-button" data-tab="rerank">Rerank</button>
+            <button id="tabImages" class="tab-button" data-tab="images">Images</button>
+            <button id="tabAudio" class="tab-button" data-tab="audio">Audio</button>
+            <button id="tabWeb" class="tab-button" data-tab="web">Web</button>
+            <button id="tabProviders" class="tab-button" data-tab="providers">Providers</button>
+        </div>
+
+        <div style="position:relative">
+            <div id="editor-container-rules" class="editor-tab-content active">
+                <div id="rulesBuilder" class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Fallback Rules</strong>
+                            <span>Choose providers and only their available models. Provider model lists are cached for 15 minutes and refreshed on demand.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Format: JSON5 (supports // single-line and /* multi-line */ comments)</span>
+                        </div>
+                        <button id="addRuleButton" type="button" class="secondary-button">Add Gateway Model</button>
+                    </div>
+                    <div id="rulesList" class="rules-list"></div>
+                    <div id="rulesEmptyState" class="rules-empty-state" hidden>
+                        No fallback rules yet. Add the first gateway model rule to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-embeddings" class="editor-tab-content" style="display: none;">
+                <div id="embeddingsBuilder" class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Embeddings Routes</strong>
+                            <span>Configure routes for /v1/embeddings endpoint.</span>
+                        </div>
+                        <button id="addEmbeddingButton" type="button" class="secondary-button">Add Embedding Model</button>
+                    </div>
+                    <div id="embeddingsList" class="rules-list"></div>
+                    <div id="embeddingsEmptyState" class="rules-empty-state" hidden>
+                        No embedding routes yet. Add the first embedding model to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-rerank" class="editor-tab-content" style="display: none;">
+                <div id="rerankBuilder" class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Rerank Routes</strong>
+                            <span>Configure routes for /v1/rerank endpoint.</span>
+                        </div>
+                        <button id="addRerankButton" type="button" class="secondary-button">Add Rerank Model</button>
+                    </div>
+                    <div id="rerankList" class="rules-list"></div>
+                    <div id="rerankEmptyState" class="rules-empty-state" hidden>
+                        No rerank routes yet. Add the first rerank model to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-images" class="editor-tab-content" style="display: none;">
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Image Generation Routes</strong>
+                            <span>Configure routes for both /v1/images and /v1/images/generations.</span>
+                            <span>Default format is OpenAI-compatible passthrough. Advanced options can switch to mapping-based adapters such as NVIDIA JSON/artifacts routes.</span>
+                        </div>
+                        <button id="addImageGenerationButton" type="button" class="secondary-button">Add Generation Model</button>
+                    </div>
+                    <div id="imageGenerationList" class="rules-list"></div>
+                    <div id="imageGenerationEmptyState" class="rules-empty-state" hidden>
+                        No image generation routes yet. Add the first image generation model to begin.
+                    </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Image Edit Routes</strong>
+                            <span>Configure routes for /v1/images/edits. Supports JSON and multipart requests.</span>
+                            <span>Use request/response mappings when a downstream model needs a provider-specific shape instead of OpenAI-compatible images payloads.</span>
+                        </div>
+                        <button id="addImageEditButton" type="button" class="secondary-button">Add Edit Model</button>
+                    </div>
+                    <div id="imageEditList" class="rules-list"></div>
+                    <div id="imageEditEmptyState" class="rules-empty-state" hidden>
+                        No image edit routes yet. Add the first image edit model to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-audio" class="editor-tab-content" style="display: none;">
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Audio Speech Routes</strong>
+                            <span>Configure routes for /v1/audio/speech and the voice catalog used by /v1/audio/voices.</span>
+                            <span>Text-to-speech uses the first route for each gateway model. Configure retry settings and voice catalog path in advanced options.</span>
+                        </div>
+                        <button id="addAudioSpeechButton" type="button" class="secondary-button">Add Speech Model</button>
+                    </div>
+                    <div id="audioSpeechList" class="rules-list"></div>
+                    <div id="audioSpeechEmptyState" class="rules-empty-state" hidden>
+                        No audio speech routes yet. Add the first speech model to begin.
+                    </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Audio Transcriptions Routes</strong>
+                            <span>Configure routes for /v1/audio/transcriptions.</span>
+                            <span>Requests stay OpenAI-compatible multipart/form-data. Advanced options can switch the downstream transport to vendor-specific adapters such as NVIDIA Riva gRPC.</span>
+                        </div>
+                        <button id="addAudioTranscriptionButton" type="button" class="secondary-button">Add Audio Model</button>
+                    </div>
+                    <div id="audioTranscriptionsList" class="rules-list"></div>
+                    <div id="audioTranscriptionsEmptyState" class="rules-empty-state" hidden>
+                        No audio transcription routes yet. Add the first audio model to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-web" class="editor-tab-content" style="display: none;">
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Web Search Services</strong>
+                            <span>Configure gateway services for <code>/v1/web/search</code>. Each service only defines the gateway-visible name and (optionally) a query-expansion model.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Upstream adapters are built in and fixed: Proxy → Tavily → Jina → Z.AI. Enable each by setting the corresponding env var in <code>.env</code>: <code>PROXY_URL</code> / <code>TAVILY_API_KEY</code> / <code>JINA_API_KEY</code> / <code>ZAI_API_KEY</code>. Adapters are tried in that order and the first non-empty result wins.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The optional <em>Query Model</em> below each service is a gateway chat LLM used to expand the user query into multiple search queries.</span>
+                        </div>
+                        <button id="addWebSearchButton" type="button" class="secondary-button">Add Search Service</button>
+                    </div>
+                    <div id="webSearchList" class="rules-list"></div>
+                    <div id="webSearchEmptyState" class="rules-empty-state" hidden>
+                        No web search services yet. Add the first search service to begin.
+                    </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Web Read Services</strong>
+                            <span>Configure gateway services for <code>/v1/web/read</code>. Each service only defines the gateway-visible name.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The gateway first tries a direct HTTP fetch (no API key required, with trafilatura / HTML parser / PDF / YouTube subtitles). Only if that returns empty are built-in adapters tried in fixed order: Proxy → Tavily → Jina → Z.AI. Enable each by setting <code>PROXY_URL</code> / <code>TAVILY_API_KEY</code> / <code>JINA_API_KEY</code> / <code>ZAI_API_KEY</code> in <code>.env</code>.</span>
+                        </div>
+                        <button id="addWebReadButton" type="button" class="secondary-button">Add Read Service</button>
+                    </div>
+                    <div id="webReadList" class="rules-list"></div>
+                    <div id="webReadEmptyState" class="rules-empty-state" hidden>
+                        No web read services yet. Add the first read service to begin.
+                    </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Web Research Services</strong>
+                            <span>Composite services for <code>/v1/web/research</code>. Each service picks a gateway Web Search, a Web Read, and a chat LLM to synthesize the final answer.</span>
+                        </div>
+                        <button id="addWebResearchButton" type="button" class="secondary-button">Add Research Service</button>
+                    </div>
+                    <div id="webResearchList" class="rules-list"></div>
+                    <div id="webResearchEmptyState" class="rules-empty-state" hidden>
+                        No web research services yet. Add the first research service to begin.
+                    </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Web Deep Research Services</strong>
+                            <span>GPT Researcher services for <code>/v1/web/deep-research</code>. Every model (search, read, fast/smart/strategic LLMs, embedding, image) is a gateway-managed model.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Image generation is opt-in per request (<code>image_generation: true</code>) and uses the configured gateway image model.</span>
+                        </div>
+                        <button id="addWebDeepResearchButton" type="button" class="secondary-button">Add Deep Research Service</button>
+                    </div>
+                    <div id="webDeepResearchList" class="rules-list"></div>
+                    <div id="webDeepResearchEmptyState" class="rules-empty-state" hidden>
+                        No web deep research services yet. Add the first deep research service to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-providers" class="editor-tab-content" style="display: none;">
+                <div id="providersBuilder" class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Providers</strong>
+                            <span>Configure provider base URLs, API key references, native API type, proxy, and optional model metadata.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">API key and proxy environment variables must use explicit <code>${VAR_NAME}</code> syntax.</span>
+                        </div>
+                        <button id="addProviderButton" type="button" class="secondary-button">Add Provider</button>
+                    </div>
+                    <div id="providersList" class="rules-list"></div>
+                    <div id="providersEmptyState" class="rules-empty-state" hidden>
+                        No providers yet. Add the first provider to begin.
+                    </div>
+                </div>
+            </div>
+        </div>
+        <button id="saveButton">Save Configuration</button>
+        <div id="messageArea"></div>
+    </div>
+
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/editor.js"></script>
+</body>
+</html>
