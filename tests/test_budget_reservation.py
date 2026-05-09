@@ -161,10 +161,10 @@ def test_usd_budget_reservation_rejects_concurrent_overspend(monkeypatch):
 
     monkeypatch.setattr(auth_middleware.settings, "gateway_api_key", "master-key")
     monkeypatch.setattr(chat_logging.settings, "log_chat_messages", False)
-    monkeypatch.setattr(chat_logging, "tokens_usage_db", tokens_usage_db)
-    monkeypatch.setattr(chat_logging, "api_keys_db", api_keys_db)
-    monkeypatch.setattr(chat_logging, "usd_budget_ledger", ledger)
-    monkeypatch.setattr(chat_logging, "rate_limiter", None)
+    monkeypatch.setattr(chat_logging.state, "tokens_usage_db", tokens_usage_db)
+    monkeypatch.setattr(chat_logging.state, "api_keys_db", api_keys_db)
+    monkeypatch.setattr(chat_logging.state, "usd_budget_ledger", ledger)
+    monkeypatch.setattr(chat_logging.state, "rate_limiter", None)
 
     async def scenario():
         transport = httpx.ASGITransport(app=app)
@@ -314,10 +314,10 @@ def test_chat_usage_insert_failure_still_commits_budget_reservation(monkeypatch)
     ledger.sync_record(record.id, budget_usd=record.budget_usd, spent_usd=record.spent_usd)
     assert ledger.reserve(record.id, 5.0)
 
-    monkeypatch.setattr(chat_logging, "tokens_usage_db", _FailingTokensUsageDB())
-    monkeypatch.setattr(chat_logging, "api_keys_db", api_keys_db)
-    monkeypatch.setattr(chat_logging, "usd_budget_ledger", ledger)
-    monkeypatch.setattr(chat_logging, "rate_limiter", None)
+    monkeypatch.setattr(chat_logging.state, "tokens_usage_db", _FailingTokensUsageDB())
+    monkeypatch.setattr(chat_logging.state, "api_keys_db", api_keys_db)
+    monkeypatch.setattr(chat_logging.state, "usd_budget_ledger", ledger)
+    monkeypatch.setattr(chat_logging.state, "rate_limiter", None)
 
     chat_logging.record_tokens_usage(
         {

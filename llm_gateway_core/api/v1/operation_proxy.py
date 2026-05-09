@@ -489,7 +489,12 @@ async def record_operation_usage(
     rate_limiter = getattr(request.app.state, "rate_limiter", None)
     if rate_limiter is not None:
         try:
-            rate_limiter.add_tokens(int(key_id), int(tokens_usage.get("total_tokens") or 0))
+            key_tpm_rec = getattr(request.state, "api_key_record", None)
+            rate_limiter.add_tokens(
+                int(key_id),
+                int(tokens_usage.get("total_tokens") or 0),
+                tpm_limit=getattr(key_tpm_rec, "tpm", None),
+            )
         except Exception as exc:
             logger.error("Failed to attribute %s tokens to RateLimiter for key %s: %s", operation, key_id, exc)
 

@@ -12,7 +12,7 @@ class ChatUsageTrackingTests(unittest.TestCase):
     def setUp(self):
         # chat_logging no longer ships with a module-level TokensUsageDB;
         # each test binds its own Mock so insert_usage calls can be observed.
-        self._original_db = chat_logging.tokens_usage_db
+        self._original_db = chat_logging.state.tokens_usage_db
         self._fake_db = Mock()
         chat_logging.set_tokens_usage_db(self._fake_db)
 

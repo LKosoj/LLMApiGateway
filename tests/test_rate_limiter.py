@@ -112,8 +112,8 @@ class TryAcquireTests(unittest.TestCase):
         self.assertIsNone(rl.try_acquire(1, rpm_limit=None, tpm_limit=500, tokens=400))
         # Second call: state is 400, still < 500, admit and record 200 more.
         self.assertIsNone(rl.try_acquire(1, rpm_limit=None, tpm_limit=500, tokens=200))
-        # Third call: state is 600 >= 500 — reject.
-        err = rl.try_acquire(1, rpm_limit=None, tpm_limit=500, tokens=0)
+        # Third call: state is 600 >= 500 — reject (tokens must be >0 for TPM check).
+        err = rl.try_acquire(1, rpm_limit=None, tpm_limit=500, tokens=1)
         self.assertIsNotNone(err)
         self.assertIn("TPM", err)
 

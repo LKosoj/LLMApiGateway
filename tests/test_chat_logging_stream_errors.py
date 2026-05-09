@@ -46,6 +46,7 @@ class ChatLoggingStreamErrorsTests(unittest.TestCase):
                 operation="chat",
                 api_key_id=None,
                 usd_budget_reserved=False,
+                key_tpm_limit=None,
             ):
                 super().__init__(
                     req_headers,
@@ -57,6 +58,7 @@ class ChatLoggingStreamErrorsTests(unittest.TestCase):
                     operation=operation,
                     api_key_id=api_key_id,
                     usd_budget_reserved=usd_budget_reserved,
+                    key_tpm_limit=key_tpm_limit,
                 )
                 type(self).last_instance = self
                 self.finish_called = False

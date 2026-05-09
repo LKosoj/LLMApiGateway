@@ -29,10 +29,10 @@ class ChatLoggingTailExceptionTests(unittest.TestCase):
         path_patch.start()
         self.addCleanup(path_patch.stop)
 
-        self._original_tokens_usage_db = chat_logging.tokens_usage_db
-        self._original_api_keys_db = chat_logging.api_keys_db
-        self._original_rate_limiter = chat_logging.rate_limiter
-        self._original_usd_budget_ledger = chat_logging.usd_budget_ledger
+        self._original_tokens_usage_db = chat_logging.state.tokens_usage_db
+        self._original_api_keys_db = chat_logging.state.api_keys_db
+        self._original_rate_limiter = chat_logging.state.rate_limiter
+        self._original_usd_budget_ledger = chat_logging.state.usd_budget_ledger
 
         self.tokens_db = TokensUsageDB(db_filename="test_tail_exception.db")
         chat_logging.set_tokens_usage_db(self.tokens_db)

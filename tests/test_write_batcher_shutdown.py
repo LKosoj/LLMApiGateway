@@ -45,7 +45,7 @@ class WriteBatcherShutdownTests(unittest.TestCase):
             stop_task = asyncio.create_task(batcher.stop())
             await batcher.stop_flush_waiting.wait()
 
-            with self.assertRaisesRegex(RuntimeError, "closed"):
+            with self.assertRaisesRegex(RuntimeError, "stopping"):
                 batcher.enqueue("INSERT INTO items (value) VALUES (?)", ("late",))
 
             batcher.release_stop_flush.set()

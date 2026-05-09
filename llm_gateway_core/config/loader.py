@@ -983,6 +983,40 @@ class ConfigLoader:
                     f"'{image_generation_model}' (must be a gateway images_generations model)."
                 )
 
+    def validate_fallback_operation_consistency(
+        self,
+        fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+        operation_rules: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
+    ) -> None:
+        """Cross-validate that chat models from fallback rules are consistent
+        with operation rules.
+
+        Catches configuration bugs where a model referenced by an operation
+        rule (e.g. web_research.analysis_model) is not defined as a chat model
+        in the fallback rules, or where a chat model exists but has no fallback
+        chain and is only used by operations — which could leave it unreachable
+        for direct chat routing.
+        """
+        effective_fallback = fallback_rules or self.fallback_rules
+        effective_operation = operation_rules or self.operation_rules
+
+        chat_models = set(effective_fallback.keys())
+
+        # All *analysis_model*, *fast_model*, *smart_model*, *strategic_model*
+        # in operation rules must be defined in fallback (chat) rules.
+        for section_name in ("web_research", "web_deep_research"):
+            section = effective_operation.get(section_name, {})
+            for gw_model, config in section.items():
+                if not isinstance(config, dict):
+                    continue
+                for field in ("analysis_model", "fast_model", "smart_model", "strategic_model"):
+                    value = config.get(field)
+                    if value and value not in chat_models:
+                        raise ValueError(
+                            f"Operation rule '{section_name}.{gw_model}' references "
+                            f"{field}='{value}', which is not defined in fallback (chat) rules."
+                        )
+
     def parse_and_validate_providers_payload(
         self,
         payload_text: str,

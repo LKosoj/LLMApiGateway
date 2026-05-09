@@ -34,7 +34,7 @@ class _RateLimiter:
     def __init__(self) -> None:
         self.tokens: list[tuple[int, int]] = []
 
-    def add_tokens(self, key_id: int, tokens: int) -> None:
+    def add_tokens(self, key_id: int, tokens: int, *, tpm_limit=None) -> None:
         self.tokens.append((key_id, tokens))
 
 

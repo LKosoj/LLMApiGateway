@@ -40,47 +40,54 @@ _LOG_CLEANUP_INTERVAL = 10  # Only check for old log cleanup every N writes
 CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS = 5.0
 _log_write_counter = 0
 
-# The TokensUsageDB used by this middleware. ``None`` until explicitly bound
-# by ``set_tokens_usage_db`` — either from the FastAPI lifespan or from a test
-# setup. No silent fallback: if the binding is missing, ``record_tokens_usage``
-# raises, surfacing the wiring bug instead of inserting into an orphan file.
-tokens_usage_db: TokensUsageDB | None = None
-api_keys_db: ApiKeysDB | None = None
-rate_limiter: RateLimiter | None = None
-usd_budget_ledger: UsdBudgetLedger | None = None
+
+class ChatLoggingState:
+    """Encapsulates the mutable module-level state for chat logging middleware.
+
+    Instead of bare globals (``tokens_usage_db``, ``api_keys_db``, etc.) the
+    state lives in a single object.  The module-level ``state`` instance is the
+    only public handle — tests and the lifespan bind attributes on it.
+    """
+
+    tokens_usage_db: TokensUsageDB | None = None
+    api_keys_db: ApiKeysDB | None = None
+    rate_limiter: RateLimiter | None = None
+    usd_budget_ledger: UsdBudgetLedger | None = None
 
 
+# Module-level singleton — the only public handle for state binding.
+state = ChatLoggingState()
+
+
+# Backwards-compatible setters kept for external callers (lifespan, tests).
+# Each delegates to the ``state`` instance so that no code path can diverge.
 def set_tokens_usage_db(db: TokensUsageDB | None) -> None:
     """Bind (or unbind) the TokensUsageDB used for chat usage recording."""
-    global tokens_usage_db
-    tokens_usage_db = db
+    state.tokens_usage_db = db
 
 
 def set_api_keys_db(db: ApiKeysDB | None) -> None:
     """Bind (or unbind) the ApiKeysDB used for per-key budget tracking."""
-    global api_keys_db
-    api_keys_db = db
+    state.api_keys_db = db
 
 
 def set_rate_limiter(limiter: RateLimiter | None) -> None:
     """Bind (or unbind) the RateLimiter used for per-key TPM attribution."""
-    global rate_limiter
-    rate_limiter = limiter
+    state.rate_limiter = limiter
 
 
 def set_usd_budget_ledger(ledger: UsdBudgetLedger | None) -> None:
     """Bind (or unbind) the in-memory USD reservation ledger."""
-    global usd_budget_ledger
-    usd_budget_ledger = ledger
+    state.usd_budget_ledger = ledger
 
 
 def _require_tokens_usage_db() -> TokensUsageDB:
-    if tokens_usage_db is None:
+    if state.tokens_usage_db is None:
         raise RuntimeError(
             "chat_logging.tokens_usage_db is not bound. "
             "Call set_tokens_usage_db() from the application lifespan or test setup before recording usage."
         )
-    return tokens_usage_db
+    return state.tokens_usage_db
 
 
 def _decode_body(body_bytes: bytes, headers: dict) -> str:
@@ -103,6 +110,7 @@ def _decode_body(body_bytes: bytes, headers: dict) -> str:
 def record_tokens_usage(tokens_usage):
     try:
         usd_budget_reserved = bool(tokens_usage.pop("_usd_budget_reserved", False))
+        key_tpm_limit = tokens_usage.pop("_key_tpm_limit", None)
         # Ensure total_tokens is recalculated before saving
         tokens_usage["total_tokens"] = tokens_usage.get("prompt_tokens", 0) + tokens_usage.get("completion_tokens", 0)
 
@@ -113,24 +121,24 @@ def record_tokens_usage(tokens_usage):
             logger.error("Failed to insert token usage data into database: %s", db_error, exc_info=True)
 
         key_id = tokens_usage.get("api_key_id")
-        if key_id is not None and api_keys_db is not None:
+        if key_id is not None and state.api_keys_db is not None:
             try:
-                api_keys_db.record_spent(int(key_id), float(tokens_usage.get("cost") or 0.0))
+                state.api_keys_db.record_spent(int(key_id), float(tokens_usage.get("cost") or 0.0))
             except Exception as budget_error:
                 logger.error("Failed to update spent_usd for key %s: %s", key_id, budget_error)
 
-        if key_id is not None and usd_budget_reserved and usd_budget_ledger is not None:
+        if key_id is not None and usd_budget_reserved and state.usd_budget_ledger is not None:
             try:
-                usd_budget_ledger.commit(
+                state.usd_budget_ledger.commit(
                     int(key_id),
                     float(tokens_usage.get("cost") or 0.0),
                 )
             except Exception as ledger_error:
                 logger.error("Failed to commit USD budget reservation for key %s: %s", key_id, ledger_error)
 
-        if key_id is not None and rate_limiter is not None:
+        if key_id is not None and state.rate_limiter is not None:
             try:
-                rate_limiter.add_tokens(int(key_id), int(tokens_usage.get("total_tokens") or 0))
+                state.rate_limiter.add_tokens(int(key_id), int(tokens_usage.get("total_tokens") or 0), tpm_limit=key_tpm_limit)
             except Exception as tpm_error:
                 logger.error("Failed to attribute tokens to RateLimiter for key %s: %s", key_id, tpm_error)
     except Exception as usage_error:
@@ -220,9 +228,9 @@ def _release_usd_budget_reservation_for_request(request: Request) -> None:
         return
 
     key_id = getattr(request.state, "usd_budget_reserved_key_id", None)
-    if key_id is not None and usd_budget_ledger is not None:
+    if key_id is not None and state.usd_budget_ledger is not None:
         try:
-            usd_budget_ledger.release(int(key_id))
+            state.usd_budget_ledger.release(int(key_id))
         except Exception as ledger_error:
             logger.error("Failed to release USD budget reservation for key %s: %s", key_id, ledger_error)
     request.state.usd_budget_finalized = True
@@ -359,6 +367,7 @@ class ChunkProcessor:
         operation="chat",
         api_key_id=None,
         usd_budget_reserved=False,
+        key_tpm_limit=None,
         request: Request | None = None,
     ):
         self.req_headers = req_headers
@@ -391,6 +400,8 @@ class ChunkProcessor:
             self.tokens_usage["api_key_id"] = api_key_id
         if usd_budget_reserved:
             self.tokens_usage["_usd_budget_reserved"] = True
+        if key_tpm_limit is not None:
+            self.tokens_usage["_key_tpm_limit"] = key_tpm_limit
         self._finished = False
         self._log_written = False
         self._anthropic_tool_blocks: dict[object, dict[str, object]] = {}
@@ -718,25 +729,25 @@ def _init_tokens_and_response():
     return "", initialize_tokens_usage()
 
 async def log_chat_completions(request: Request, call_next: Callable) -> Response:
-    if tokens_usage_db is None:
+    if state.tokens_usage_db is None:
         app_db = getattr(request.app.state, "tokens_usage_db", None)
         if isinstance(app_db, TokensUsageDB):
-            set_tokens_usage_db(app_db)
+            state.tokens_usage_db = app_db
 
-    if api_keys_db is None:
+    if state.api_keys_db is None:
         app_api_keys_db = getattr(request.app.state, "api_keys_db", None)
         if isinstance(app_api_keys_db, ApiKeysDB):
-            set_api_keys_db(app_api_keys_db)
+            state.api_keys_db = app_api_keys_db
 
-    if rate_limiter is None:
+    if state.rate_limiter is None:
         app_rate_limiter = getattr(request.app.state, "rate_limiter", None)
         if app_rate_limiter is not None:
-            set_rate_limiter(app_rate_limiter)
+            state.rate_limiter = app_rate_limiter
 
-    if usd_budget_ledger is None:
+    if state.usd_budget_ledger is None:
         app_usd_budget_ledger = getattr(request.app.state, "usd_budget_ledger", None)
         if isinstance(app_usd_budget_ledger, UsdBudgetLedger):
-            set_usd_budget_ledger(app_usd_budget_ledger)
+            state.usd_budget_ledger = app_usd_budget_ledger
 
     operation = _extract_operation_from_url(request.url.path)
     if operation is None:
@@ -808,6 +819,7 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
                                 operation=operation,
                                 api_key_id=getattr(request.state, "api_key_id", None),
                                 usd_budget_reserved=getattr(request.state, "usd_budget_reserved", False),
+                                key_tpm_limit=getattr(getattr(request.state, "api_key_record", None), "tpm", None),
                             )
                             chunk_processor.request = request
                             chunk_processor.start()
@@ -867,6 +879,9 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
             tokens_usage = _merge_request_usage_tracker(tokens_usage, request)
             if getattr(request.state, "usd_budget_reserved", False):
                 tokens_usage["_usd_budget_reserved"] = True
+            key_tpm_rec = getattr(request.state, "api_key_record", None)
+            if key_tpm_rec is not None and getattr(key_tpm_rec, "tpm", None):
+                tokens_usage["_key_tpm_limit"] = key_tpm_rec.tpm
             tokens_usage["duration_ms"] = int((time.monotonic() - request_started_at) * 1000)
             # Write log file immediately for non-streaming responses
             # Run observability tasks in a thread to avoid blocking the event loop

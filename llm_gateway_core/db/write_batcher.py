@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import threading
+from collections import deque
 from contextlib import suppress
 from pathlib import Path
 
@@ -57,6 +58,10 @@ class WriteBatcher:
         self._state_lock = threading.Lock()
         self._stopping = False
         self._closed = False
+        # Pre-start buffer: thread-safe deque for writes enqueued before the
+        # event loop is running. Drained into _queue on start() or discarded
+        # on stop() so that no writes are silently lost.
+        self._pre_start_buffer: deque[tuple[str, tuple]] = deque()
 
     # ------------------------------------------------------------------
     # Public API
@@ -69,24 +74,37 @@ class WriteBatcher:
                 raise RuntimeError("WriteBatcher cannot be restarted after stop.")
             self._stopping = False
         self._loop = asyncio.get_running_loop()
+        # Drain pre-start buffer into the queue before the task begins consuming.
+        with self._state_lock:
+            while self._pre_start_buffer:
+                self._queue.put_nowait(self._pre_start_buffer.popleft())
         self._task = asyncio.create_task(self._run(), name="write-batcher")
 
     def enqueue(self, sql: str, params: tuple) -> None:
         """Thread-safe enqueue of a single write operation.
 
         Can be called from the event loop thread (direct put) or from any
-        other thread (``call_soon_threadsafe``).
+        other thread (``call_soon_threadsafe``). If the background task has
+        not started yet, items are buffered in a thread-safe deque and drained
+        once the event loop is running — preventing silent data loss during
+        startup races.
         """
         with self._state_lock:
-            if self._stopping or self._closed:
+            if self._closed:
                 message = "WriteBatcher is closed; cannot enqueue write."
                 logger.error(message)
                 raise RuntimeError(message)
-            loop = self._loop
+            if self._stopping:
+                message = "WriteBatcher is stopping; cannot enqueue write."
+                logger.error(message)
+                raise RuntimeError(message)
 
-        if loop is None or not loop.is_running():
-            logger.debug("WriteBatcher: event loop not running, dropping write.")
-            return
+            # Not yet started — buffer locally.
+            if self._loop is None:
+                self._pre_start_buffer.append((sql, params))
+                return
+
+            loop = self._loop
 
         item = (sql, params)
         try:
@@ -104,6 +122,13 @@ class WriteBatcher:
     async def stop(self) -> None:
         """Gracefully stop: drain every pending item, then close."""
         if self._task is None:
+            # Nothing started — drain pre-start buffer into a one-shot flush.
+            with self._state_lock:
+                batch = list(self._pre_start_buffer)
+                self._pre_start_buffer.clear()
+                self._closed = True
+            if batch:
+                await self._flush(batch)
             return
         with self._state_lock:
             should_signal_stop = not self._stopping and not self._closed
@@ -115,6 +140,9 @@ class WriteBatcher:
         with suppress(asyncio.CancelledError):
             await self._task
         self._task = None
+        # Clear any residual pre-start buffer (should be empty at this point).
+        with self._state_lock:
+            self._pre_start_buffer.clear()
 
     # ------------------------------------------------------------------
     # Internals

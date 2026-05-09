@@ -193,7 +193,7 @@ class ChatLoggingDbInstanceTests(unittest.TestCase):
     def test_require_tokens_usage_db_raises_when_unbound(self):
         from llm_gateway_core.middleware import chat_logging
 
-        original_db = chat_logging.tokens_usage_db
+        original_db = chat_logging.state.tokens_usage_db
         try:
             chat_logging.set_tokens_usage_db(None)
             with self.assertRaises(RuntimeError):
@@ -205,7 +205,7 @@ class ChatLoggingDbInstanceTests(unittest.TestCase):
         from llm_gateway_core.middleware import chat_logging
         from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 
-        original_db = chat_logging.tokens_usage_db
+        original_db = chat_logging.state.tokens_usage_db
         sentinel_db = TokensUsageDB()
         try:
             chat_logging.set_tokens_usage_db(sentinel_db)

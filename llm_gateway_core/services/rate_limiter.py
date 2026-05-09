@@ -78,6 +78,13 @@ class RateLimiter:
         recording), else records the event and returns ``None``. This closes
         the TOCTOU gap between :meth:`check` and :meth:`record` when concurrent
         requests race on the same ``key_id``.
+
+        When ``tokens`` is zero (the typical case at request start, before the
+        upstream response is known), the TPM check is intentionally skipped —
+        the caller is expected to attribute the real token count retroactively
+        via :meth:`add_tokens` once it becomes available. This avoids a false
+        sense of enforcement: checking TPM against zero would let a burst of
+        concurrent requests through regardless of the real token volume.
         """
         if key_id is None:
             return None
@@ -91,7 +98,10 @@ class RateLimiter:
                 self._by_key[key_id] = state
             if rpm_limit is not None and rpm_limit > 0 and state.rpm_count >= rpm_limit:
                 return f"RPM limit of {rpm_limit} requests/min exceeded"
-            if tpm_limit is not None and tpm_limit > 0 and state.tpm_tokens >= tpm_limit:
+            # Only enforce TPM when the caller already knows the real token
+            # count.  With tokens=0 the check would be a no-op, so skip it
+            # to make the deferred-enforcement path explicit.
+            if tokens and tpm_limit is not None and tpm_limit > 0 and state.tpm_tokens >= tpm_limit:
                 return f"TPM limit of {tpm_limit} tokens/min exceeded"
             state.events.append((now, int(tokens or 0)))
             state.rpm_count += 1
@@ -118,20 +128,28 @@ class RateLimiter:
             state.rpm_count += 1
             state.tpm_tokens += int(tokens or 0)
 
-    def add_tokens(self, key_id: int, tokens: int) -> None:
-        """Retroactively add tokens to the most-recent event for *key_id*."""
+    def add_tokens(self, key_id: int, tokens: int, *, tpm_limit: int | None = None) -> str | None:
+        """Retroactively add tokens to the most-recent event for *key_id*.
+
+        When *tpm_limit* is provided the new total is checked against it first.
+        On limit violation the tokens are **not** added and an error message is
+        returned; otherwise ``None`` is returned on success.
+        """
         if key_id is None or not tokens:
-            return
+            return None
         now = self._time()
         with self._lock:
             state = self._by_key.get(key_id)
             if state is None or not state.events:
-                return
+                return None
             if self._purge(key_id, state, now):
-                return
+                return None
+            if tpm_limit is not None and tpm_limit > 0 and state.tpm_tokens + int(tokens) > tpm_limit:
+                return f"TPM limit of {tpm_limit} tokens/min exceeded"
             ts, prev_tokens = state.events[-1]
             state.events[-1] = (ts, prev_tokens + int(tokens))
             state.tpm_tokens += int(tokens)
+        return None
 
     def reset(self, key_id: int | None = None) -> None:
         with self._lock:

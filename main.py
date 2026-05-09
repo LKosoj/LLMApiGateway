@@ -212,6 +212,7 @@ async def lifespan(app: FastAPI):
     config_loader.load_providers()
     config_loader.load_fallback_rules()
     config_loader.load_operation_rules()
+    config_loader.validate_fallback_operation_consistency()
     app.state.config_loader = config_loader
     app.state.operation_rules = config_loader.operation_rules
     logger.info("Service configurations loaded and ConfigLoader attached to app.state.")
@@ -325,8 +326,8 @@ STATIC_FILES_DIR.mkdir(parents=True, exist_ok=True) # Ensure static directory ex
 app = FastAPI(
     title="LLMGateway",
     description="A gateway for routing LLM requests with fallback and rotation.",
-    version="1.0.0", # Consider making this dynamic
-    lifespan=lifespan # Add lifespan manager
+    version="1.10",
+    lifespan=lifespan,
 )
 
 # --- Middleware Configuration ---
