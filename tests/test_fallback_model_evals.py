@@ -9,6 +9,7 @@ from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ProviderDetails
 from llm_gateway_core.services.fallback_model_evals import (
     FallbackModelEvalService,
+    HEALTH_PROBE_MAX_TOKENS,
     _collect_unique_fallback_targets,
 )
 from tests._async_compat import run_async
@@ -28,8 +29,9 @@ class FakeResponse:
 
 
 class FakeFallbackEvalClient:
-    def __init__(self, catalog=None):
+    def __init__(self, catalog=None, *, health_content="OK"):
         self.catalog = catalog or []
+        self.health_content = health_content
         self.gets = []
         self.get_headers = []
         self.posts = []
@@ -50,7 +52,7 @@ class FakeFallbackEvalClient:
         )
         prompt = _first_message_text(json)
         if "Reply with exactly OK" in prompt:
-            content = "OK"
+            content = self.health_content
         elif "Return exactly 4 lines" in prompt:
             content = 'STATUS: READY\nROUTER and ROUTER\n{"mode":"eval","count":3}\nDONE'
         elif "Available tools" in prompt and "create_ticket" in prompt:
@@ -213,6 +215,43 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         self.assertTrue(all(post["json"].get("top_p") == 0.9 for post in model_one_posts))
         self.assertTrue(all(post["json"].get("provider") == {"order": ["SubProviderA"]} for post in model_one_posts))
         self.assertTrue(all(post["json"].get("allow_fallbacks") is False for post in model_one_posts))
+        health_posts = [
+            post for post in fake_client.posts
+            if "Reply with exactly OK" in _first_message_text(post["json"])
+        ]
+        self.assertTrue(health_posts)
+        self.assertTrue(all(post["json"].get("max_tokens") == HEALTH_PROBE_MAX_TOKENS for post in health_posts))
+
+    def test_run_once_evaluates_imperfect_health_targets(self):
+        providers_config = {
+            "provider-a": ProviderDetails(baseUrl="https://provider.example/v1", apikey="provider-key"),
+        }
+        fallback_rules = {
+            "gateway/a": {
+                "fallback_models": [
+                    {"provider": "provider-a", "model": "model-one"},
+                ],
+            },
+        }
+        fake_client = FakeFallbackEvalClient(health_content="READY")
+        service = FallbackModelEvalService(time_func=lambda: 1_770_000_000)
+
+        run_async(
+            service.run_once(
+                providers_config=providers_config,
+                fallback_rules=fallback_rules,
+                http_client=fake_client,
+            )
+        )
+
+        status = run_async(service.get_status())
+        snapshot = status["snapshot"]
+        model = snapshot["models"][0]
+        self.assertEqual(snapshot["evaluatedCount"], 1)
+        self.assertEqual(model["healthStatus"], "imperfect")
+        self.assertEqual(model["healthScore"], 250)
+        self.assertEqual(model["evalSummary"]["status"], "completed")
+        self.assertEqual(model["liteEvalScore"], 750)
 
     def test_run_once_enriches_metadata_from_openrouter_basename_when_key_configured(self):
         providers_config = {

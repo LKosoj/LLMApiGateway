@@ -9,6 +9,7 @@ from tests._async_compat import run_async
 from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ProviderDetails
 from llm_gateway_core.services.openrouter_free_models import (
+    HEALTH_PROBE_MAX_TOKENS,
     OpenRouterFreeModelsService,
     ScoredOpenRouterModel,
     _catalog_fingerprint,
@@ -171,6 +172,12 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
         self.assertEqual(snapshot["evaluatedCount"], 21)
         self.assertEqual(len(snapshot["models"]), 21)
         self.assertTrue(all(model["evalSummary"]["status"] == "completed" for model in snapshot["models"]))
+        health_posts = [
+            payload for payload in fake_client.posts
+            if "Reply with exactly OK" in payload["messages"][0]["content"]
+        ]
+        self.assertTrue(health_posts)
+        self.assertTrue(all(payload["max_tokens"] == HEALTH_PROBE_MAX_TOKENS for payload in health_posts))
 
     def test_refresh_uses_round_robin_openrouter_keys(self):
         catalog = [_model_entry("provider/a:free")]
@@ -193,8 +200,8 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
         first = ScoredOpenRouterModel("provider/a:free", "a", metadata_score=5000)
         second = ScoredOpenRouterModel("provider/b:free", "b", metadata_score=0)
         third = ScoredOpenRouterModel("provider/c:free", "c", metadata_score=0)
-        for model in (first, second, third):
-            model.health_score = 400
+        for model, health_score in ((first, 400), (second, 250), (third, 400)):
+            model.health_score = health_score
             model.latency_score = 75
             model.recalculate_score()
 

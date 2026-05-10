@@ -21,6 +21,7 @@ from ..config.loader import (
 from ..utils.api_keys import has_api_key
 from .openrouter_free_models import (
     HEALTH_PROBE_TIMEOUT_SECONDS,
+    HEALTH_PROBE_MAX_TOKENS,
     LITE_EVAL_TIMEOUT_SECONDS,
     OPENROUTER_HOST,
     OPENROUTER_PROVIDER_NAME,
@@ -397,7 +398,7 @@ class FallbackModelEvalService:
             payload = {
                 "model": model.model,
                 "messages": [{"role": "user", "content": "Reply with exactly OK."}],
-                "max_tokens": 4,
+                "max_tokens": HEALTH_PROBE_MAX_TOKENS,
                 "temperature": 0,
             }
             response = await self._chat_completion(target, provider_config, http_client, payload, timeout=HEALTH_PROBE_TIMEOUT_SECONDS)

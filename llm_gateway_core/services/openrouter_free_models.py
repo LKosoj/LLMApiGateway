@@ -28,6 +28,7 @@ REFRESH_INTERVAL_SECONDS = 8 * 60 * 60
 MIN_CONTEXT_LENGTH = 8192
 MAX_LITE_EVAL_POINTS = 750
 HEALTH_PROBE_TIMEOUT_SECONDS = 30.0
+HEALTH_PROBE_MAX_TOKENS = 16
 LITE_EVAL_TIMEOUT_SECONDS = 45.0
 CODE_EVAL_TIMEOUT_SECONDS = 2.0
 
@@ -377,7 +378,7 @@ class OpenRouterFreeModelsService:
             payload = {
                 "model": model.id,
                 "messages": [{"role": "user", "content": "Reply with exactly OK."}],
-                "max_tokens": 4,
+                "max_tokens": HEALTH_PROBE_MAX_TOKENS,
                 "temperature": 0,
                 "usage": {"include": True},
             }
