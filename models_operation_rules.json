@@ -138,6 +138,19 @@
           "custom_body_params": {}
         }
       ]
+    },
+    {
+      "gateway_model_name": "llmgateway/banana",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "gemini-3.1-flash-image-preview",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "response_format": "openai_images"
+        }
+      ]
     }
   ],
   "images_edits": [
@@ -165,6 +178,19 @@
           "custom_headers": {},
           "custom_body_params": {},
           "request_format": "openai_images_multipart"
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/banana-edit",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "gemini-3.1-flash-image-preview",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "response_format": "openai_images"
         }
       ]
     }

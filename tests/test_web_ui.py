@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import json
@@ -632,11 +633,13 @@ def test_playground_pdf_conversion_uses_job_api_and_gateway_downloads(page: Page
     assert "/v1/pdf/jobs/job-123/download/docx?model=llmgateway%2Fpdf-convert" in docx_href
 
 
-def test_playground_renders_download_links_for_media_results(page: Page, server):
+def test_playground_renders_download_links_for_media_results(page: Page, server, tmp_path):
     add_session(page, server)
     png_b64 = (
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
     )
+    image_path = tmp_path / "source.png"
+    image_path.write_bytes(base64.b64decode(png_b64))
 
     page.route(
         f"{server}/v1/ui/playground/models",
@@ -647,7 +650,7 @@ def test_playground_renders_download_links_for_media_results(page: Page, server)
                 '{"web_search":[],"web_read":[],"web_research":[],"web_deep_research":[],'
                 '"audio_speech":["llmgateway/audio-speech"],'
                 '"audio_transcriptions":["llmgateway/audio-transcribe"],'
-                '"images_generations":["llmgateway/image-gen"],"images_edits":[],'
+                '"images_generations":["llmgateway/image-gen"],"images_edits":["llmgateway/image-edit"],'
                 '"pdf_conversions":[]}'
             ),
         ),
@@ -673,7 +676,15 @@ def test_playground_renders_download_links_for_media_results(page: Page, server)
         lambda route: route.fulfill(
             status=200,
             content_type="application/json",
-            body=f'{{"data":[{{"b64_json":"{png_b64}","revised_prompt":"tiny image"}}]}}',
+            body=f'{{"data":[{{"url":"data:image/png;base64,{png_b64}","revised_prompt":"tiny image"}}]}}',
+        ),
+    )
+    page.route(
+        f"{server}/v1/images/edits",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=f'{{"data":[{{"url":"data:image/png;base64,{png_b64}","revised_prompt":"edited tiny image"}}]}}',
         ),
     )
 
@@ -700,3 +711,13 @@ def test_playground_renders_download_links_for_media_results(page: Page, server)
     page.click("#imageGenerationForm .run-button")
     expect(page.locator('[data-result-for="image-generation"] img')).to_have_count(1)
     expect(page.locator('[data-result-for="image-generation"] a[download="generated-image-1.png"]')).to_have_count(1)
+    expect(page.locator('[data-result-for="image-generation"]')).not_to_contain_text("No image payloads in response.")
+
+    page.click("[data-playground-section-tab='image-edit']")
+    page.set_input_files("#imageEditFiles", str(image_path))
+    page.fill("#imageEditPrompt", "make it brighter")
+    page.select_option("#imageEditFormat", "url")
+    page.click("#imageEditForm .run-button")
+    expect(page.locator('[data-result-for="image-edit"] img')).to_have_count(1)
+    expect(page.locator('[data-result-for="image-edit"] a[download="edited-image-1.png"]')).to_have_count(1)
+    expect(page.locator('[data-result-for="image-edit"]')).not_to_contain_text("No image payloads in response.")

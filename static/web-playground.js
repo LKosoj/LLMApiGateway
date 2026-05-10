@@ -214,6 +214,20 @@
         return "";
     }
 
+    function safeImageDataUrl(value) {
+        const raw = String(value == null ? "" : value).trim();
+        if (!raw) return "";
+        const compact = raw.replace(/\s+/g, "");
+        if (/^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/i.test(compact)) {
+            return compact;
+        }
+        return "";
+    }
+
+    function safeImageUrl(value) {
+        return safeImageDataUrl(value) || safeHttpUrl(value);
+    }
+
     function renderExternalLink(url, label) {
         const text = escapeHtml(label || url || "");
         const safeUrl = safeHttpUrl(url);
@@ -411,8 +425,8 @@
 
     function dataImageUrl(item) {
         if (!item || typeof item !== "object") return "";
-        if (item.url) return safeHttpUrl(item.url);
-        if (item.b64_json) return `data:image/png;base64,${String(item.b64_json)}`;
+        if (item.url) return safeImageUrl(item.url);
+        if (item.b64_json) return safeImageDataUrl(`data:image/png;base64,${String(item.b64_json)}`);
         return "";
     }
 
