@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const tabAudio = document.getElementById('tabAudio');
     const tabWeb = document.getElementById('tabWeb');
     const tabOpenRouterFree = document.getElementById('tabOpenRouterFree');
+    const tabFallbackEval = document.getElementById('tabFallbackEval');
     const tabProviders = document.getElementById('tabProviders');
     const editorContainerRules = document.getElementById('editor-container-rules');
     const editorContainerEmbeddings = document.getElementById('editor-container-embeddings');
@@ -24,6 +25,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const editorContainerAudio = document.getElementById('editor-container-audio');
     const editorContainerWeb = document.getElementById('editor-container-web');
     const editorContainerOpenRouterFree = document.getElementById('editor-container-openrouter-free');
+    const editorContainerFallbackEval = document.getElementById('editor-container-fallback-eval');
     const editorContainerProviders = document.getElementById('editor-container-providers');
     const addProviderButton = document.getElementById('addProviderButton');
     const providersList = document.getElementById('providersList');
@@ -61,8 +63,13 @@ document.addEventListener('DOMContentLoaded', function () {
     const openRouterFreeStatus = document.getElementById('openRouterFreeStatus');
     const openRouterFreeModels = document.getElementById('openRouterFreeModels');
     const openRouterFreeEmptyState = document.getElementById('openRouterFreeEmptyState');
+    const runFallbackEvalButton = document.getElementById('runFallbackEvalButton');
+    const fallbackEvalStatus = document.getElementById('fallbackEvalStatus');
+    const fallbackEvalModels = document.getElementById('fallbackEvalModels');
+    const fallbackEvalEmptyState = document.getElementById('fallbackEvalEmptyState');
 
     const MODELS_CACHE_TTL_MS = 15 * 60 * 1000;
+    const MODEL_ID_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
     const IMAGE_REQUEST_FORMAT_OPTIONS = ['openai_images', 'openai_images_multipart', 'nvidia_genai_json'];
     const IMAGE_RESPONSE_FORMAT_OPTIONS = ['openai_images', 'nvidia_artifacts'];
     const AUDIO_REQUEST_FORMAT_OPTIONS = ['nvidia_riva_grpc'];
@@ -96,6 +103,7 @@ document.addEventListener('DOMContentLoaded', function () {
     };
     const providerModelsCache = new Map();
     const providerModelsRequests = new Map();
+    let fallbackEvalPollTimer = null;
 
     function renderMessage(type, text) {
         messageArea.className = type;
@@ -300,7 +308,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     function updateControlsVisibility() {
-        saveButton.hidden = activeEditor === 'openrouter-free';
+        saveButton.hidden = activeEditor === 'openrouter-free' || activeEditor === 'fallback-eval';
         if (activeEditor === 'rules') {
             saveButton.textContent = 'Save Fallback Rules';
         } else if (activeEditor === 'embeddings') {
@@ -314,6 +322,8 @@ document.addEventListener('DOMContentLoaded', function () {
         } else if (activeEditor === 'web') {
             saveButton.textContent = 'Save Web Services';
         } else if (activeEditor === 'openrouter-free') {
+            saveButton.textContent = '';
+        } else if (activeEditor === 'fallback-eval') {
             saveButton.textContent = '';
         } else {
             saveButton.textContent = 'Save Configuration';
@@ -408,6 +418,16 @@ document.addEventListener('DOMContentLoaded', function () {
         const select = document.createElement('select');
         select.className = className;
         return select;
+    }
+
+    function sortProviderModelIds(modelIds) {
+        return [...modelIds].sort((left, right) => {
+            const comparison = MODEL_ID_COLLATOR.compare(left, right);
+            if (comparison !== 0) {
+                return comparison;
+            }
+            return left < right ? -1 : left > right ? 1 : 0;
+        });
     }
 
     function setSelectOptions(select, options, placeholder, selectedValue) {
@@ -788,12 +808,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 const models = Array.isArray(payload.models)
                     ? payload.models.map(item => item.id).filter(modelId => typeof modelId === 'string')
                     : [];
+                const sortedModels = sortProviderModelIds(models);
 
                 providerModelsCache.set(providerName, {
-                    models,
+                    models: sortedModels,
                     fetchedAt: Date.now(),
                 });
-                return models;
+                return sortedModels;
             })
             .finally(() => {
                 providerModelsRequests.delete(providerName);
@@ -3579,6 +3600,140 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    function renderFallbackEvalModels(payload) {
+        clearElement(fallbackEvalStatus);
+        clearElement(fallbackEvalModels);
+
+        const snapshot = payload.snapshot;
+        fallbackEvalEmptyState.hidden = Boolean(snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0);
+
+        appendOpenRouterMeta(fallbackEvalStatus, 'Status', payload.running ? 'Running' : 'Idle');
+        appendOpenRouterMeta(fallbackEvalStatus, 'Last checked', formatDateTime(payload.lastCheckedAt));
+        if (snapshot) {
+            appendOpenRouterMeta(fallbackEvalStatus, 'Unique targets', formatNumber(snapshot.configuredCount));
+            appendOpenRouterMeta(fallbackEvalStatus, 'Lite evals', formatNumber(snapshot.evaluatedCount));
+            appendOpenRouterMeta(fallbackEvalStatus, 'Last updated', formatDateTime(snapshot.updatedAt));
+        }
+        if (payload.lastError) {
+            appendOpenRouterMeta(fallbackEvalStatus, 'Last error', payload.lastError);
+        }
+
+        if (!snapshot) {
+            return;
+        }
+
+        (snapshot.models || []).forEach(model => {
+            const card = document.createElement('article');
+            card.className = 'openrouter-free-card';
+
+            const header = document.createElement('div');
+            header.className = 'openrouter-free-card-header';
+
+            const title = document.createElement('div');
+            const rank = document.createElement('div');
+            rank.className = 'openrouter-free-rank';
+            rank.textContent = `#${model.rank || '?'}`;
+            const name = document.createElement('strong');
+            name.textContent = model.name || model.model || model.id || 'Unknown model';
+            const id = document.createElement('code');
+            id.textContent = `${model.provider || 'provider'} / ${model.model || model.id || ''}`;
+            title.appendChild(rank);
+            title.appendChild(name);
+            title.appendChild(id);
+
+            const score = document.createElement('div');
+            score.className = 'openrouter-free-score';
+            score.textContent = formatNumber(model.score);
+
+            header.appendChild(title);
+            header.appendChild(score);
+            card.appendChild(header);
+
+            const reason = document.createElement('p');
+            reason.className = 'openrouter-free-reason';
+            const gatewayModels = Array.isArray(model.gatewayModels) && model.gatewayModels.length > 0
+                ? ` Gateway models: ${model.gatewayModels.join(', ')}.`
+                : '';
+            reason.textContent = `${model.reason || 'Configured fallback model.'}${gatewayModels}`;
+            card.appendChild(reason);
+
+            const metrics = document.createElement('div');
+            metrics.className = 'openrouter-free-metrics';
+            [
+                ['metadata', model.metadataScore],
+                ['health', model.healthScore],
+                ['latency', model.latencyScore],
+                ['eval', model.liteEvalScore],
+                ['penalty', model.instabilityPenalty],
+                ['latency ms', model.latencyMs],
+                ['context', model.contextLength],
+                ['health status', model.healthStatus],
+            ].forEach(([label, value]) => {
+                const metric = document.createElement('span');
+                metric.textContent = `${label}: ${typeof value === 'number' ? formatNumber(value) : (value || 'n/a')}`;
+                metrics.appendChild(metric);
+            });
+            card.appendChild(metrics);
+
+            fallbackEvalModels.appendChild(card);
+        });
+    }
+
+    function scheduleFallbackEvalPolling(payload) {
+        if (fallbackEvalPollTimer) {
+            clearTimeout(fallbackEvalPollTimer);
+            fallbackEvalPollTimer = null;
+        }
+        runFallbackEvalButton.disabled = Boolean(payload.running);
+        if (payload.running) {
+            fallbackEvalPollTimer = window.setTimeout(() => {
+                void loadFallbackModelEvals(false);
+            }, 3000);
+        }
+    }
+
+    async function loadFallbackModelEvals(showMessage = true) {
+        if (showMessage) {
+            renderMessage('info', 'Loading fallback model eval status...');
+        }
+        try {
+            const response = await apiFetch('/v1/fallback-model-evals');
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.detail || `HTTP ${response.status}`);
+            }
+            renderFallbackEvalModels(payload);
+            scheduleFallbackEvalPolling(payload);
+            if (showMessage) {
+                renderMessage('success', 'Fallback model eval status loaded.');
+            }
+        } catch (error) {
+            console.error('Error loading fallback model eval status:', error);
+            renderErrorWithDetails('Error loading fallback model eval status:', error.message);
+            fallbackEvalEmptyState.hidden = false;
+            runFallbackEvalButton.disabled = false;
+        }
+    }
+
+    async function runFallbackModelEval() {
+        runFallbackEvalButton.disabled = true;
+        renderMessage('info', 'Starting fallback model eval...');
+        try {
+            const response = await apiFetch('/v1/fallback-model-evals/run', { method: 'POST' });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.detail || `HTTP ${response.status}`);
+            }
+            renderFallbackEvalModels(payload);
+            scheduleFallbackEvalPolling(payload);
+            renderMessage('success', 'Fallback model eval started.');
+        } catch (error) {
+            console.error('Error starting fallback model eval:', error);
+            renderErrorWithDetails('Error starting fallback model eval:', error.message);
+            runFallbackEvalButton.disabled = false;
+        }
+    }
+
     async function saveRules() {
         let payload;
         try {
@@ -3771,8 +3926,11 @@ document.addEventListener('DOMContentLoaded', function () {
         activeEditor = tabName;
         updateControlsVisibility();
         tabOpenRouterFree.classList.remove('active');
+        tabFallbackEval.classList.remove('active');
         editorContainerOpenRouterFree.classList.remove('active');
         editorContainerOpenRouterFree.style.display = 'none';
+        editorContainerFallbackEval.classList.remove('active');
+        editorContainerFallbackEval.style.display = 'none';
 
         if (tabName === 'rules') {
             tabRules.classList.add('active');
@@ -3794,6 +3952,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerAudio.style.display = 'none';
             editorContainerWeb.classList.remove('active');
             editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadRulesEditor();
@@ -3817,6 +3977,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerAudio.style.display = 'none';
             editorContainerWeb.classList.remove('active');
             editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadEmbeddingsEditor();
@@ -3840,6 +4002,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerAudio.style.display = 'none';
             editorContainerWeb.classList.remove('active');
             editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadRerankEditor();
@@ -3863,6 +4027,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerAudio.style.display = 'none';
             editorContainerWeb.classList.remove('active');
             editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadImagesEditor();
@@ -3886,6 +4052,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerAudio.style.display = 'flex';
             editorContainerWeb.classList.remove('active');
             editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadAudioEditor();
@@ -3909,6 +4077,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerAudio.style.display = 'none';
             editorContainerWeb.classList.add('active');
             editorContainerWeb.style.display = 'flex';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadWebEditor();
@@ -3935,9 +4105,39 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerWeb.style.display = 'none';
             editorContainerOpenRouterFree.classList.add('active');
             editorContainerOpenRouterFree.style.display = 'flex';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadOpenRouterFreeModels();
+        } else if (tabName === 'fallback-eval') {
+            tabRules.classList.remove('active');
+            tabEmbeddings.classList.remove('active');
+            tabRerank.classList.remove('active');
+            tabImages.classList.remove('active');
+            tabAudio.classList.remove('active');
+            tabWeb.classList.remove('active');
+            tabFallbackEval.classList.add('active');
+            tabProviders.classList.remove('active');
+            editorContainerRules.classList.remove('active');
+            editorContainerRules.style.display = 'none';
+            editorContainerEmbeddings.classList.remove('active');
+            editorContainerEmbeddings.style.display = 'none';
+            editorContainerRerank.classList.remove('active');
+            editorContainerRerank.style.display = 'none';
+            editorContainerImages.classList.remove('active');
+            editorContainerImages.style.display = 'none';
+            editorContainerAudio.classList.remove('active');
+            editorContainerAudio.style.display = 'none';
+            editorContainerWeb.classList.remove('active');
+            editorContainerWeb.style.display = 'none';
+            editorContainerOpenRouterFree.classList.remove('active');
+            editorContainerOpenRouterFree.style.display = 'none';
+            editorContainerFallbackEval.classList.add('active');
+            editorContainerFallbackEval.style.display = 'flex';
+            editorContainerProviders.classList.remove('active');
+            editorContainerProviders.style.display = 'none';
+            loadFallbackModelEvals();
         } else if (tabName === 'providers') {
             tabRules.classList.remove('active');
             tabEmbeddings.classList.remove('active');
@@ -3945,6 +4145,7 @@ document.addEventListener('DOMContentLoaded', function () {
             tabImages.classList.remove('active');
             tabAudio.classList.remove('active');
             tabWeb.classList.remove('active');
+            tabFallbackEval.classList.remove('active');
             tabProviders.classList.add('active');
             editorContainerRules.classList.remove('active');
             editorContainerRules.style.display = 'none';
@@ -3958,6 +4159,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerAudio.style.display = 'none';
             editorContainerWeb.classList.remove('active');
             editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
             editorContainerProviders.classList.add('active');
             editorContainerProviders.style.display = 'flex';
             loadProvidersEditor();
@@ -3971,6 +4174,7 @@ document.addEventListener('DOMContentLoaded', function () {
     tabAudio.addEventListener('click', () => switchTab('audio'));
     tabWeb.addEventListener('click', () => switchTab('web'));
     tabOpenRouterFree.addEventListener('click', () => switchTab('openrouter-free'));
+    tabFallbackEval.addEventListener('click', () => switchTab('fallback-eval'));
     tabProviders.addEventListener('click', () => switchTab('providers'));
     addProviderButton.addEventListener('click', () => {
         const providerCard = buildProviderCard({});
@@ -4053,6 +4257,9 @@ document.addEventListener('DOMContentLoaded', function () {
         deepResearchCard.classList.remove('collapsed');
         webDeepResearchList.appendChild(deepResearchCard);
         refreshWebDeepResearchEmptyState();
+    });
+    runFallbackEvalButton.addEventListener('click', () => {
+        void runFallbackModelEval();
     });
 
     saveButton.addEventListener('click', function () {

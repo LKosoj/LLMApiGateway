@@ -6,6 +6,9 @@ def test_editor_js_contains_provider_models_cache_logic():
 
     assert "providerModelsCache" in content
     assert "MODELS_CACHE_TTL_MS = 15 * 60 * 1000" in content
+    assert "MODEL_ID_COLLATOR" in content
+    assert "sortProviderModelIds(models)" in content
+    assert "models: sortedModels" in content
     assert "/v1/config/models-rules/structured" in content
     assert "/v1/config/providers/${encodeURIComponent(providerName)}/models" in content
     assert "Choose an available model for provider" in content
@@ -29,8 +32,11 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "provider-name-input" in content
     assert "Provider models metadata must be valid JSON." in content
     assert "/v1/openrouter/free-models" in content
+    assert "/v1/fallback-model-evals" in content
+    assert "/v1/fallback-model-evals/run" in content
     assert "tabOpenRouterFree.hidden = !response.ok || !payload.configured" in content
     assert "OpenRouter free model ranking" in content
+    assert "runFallbackModelEval" in content
 
 
 def test_rules_editor_html_contains_openrouter_free_tab():
@@ -44,4 +50,19 @@ def test_rules_editor_html_contains_openrouter_free_tab():
     assert "OpenRouter scoring metric descriptions" in content
     assert "metadata" in content
     assert "Lite eval score for instruction following" in content
+    assert "health status" in content
+
+
+def test_rules_editor_html_contains_fallback_eval_tab():
+    content = Path("static/rules-editor.html").read_text(encoding="utf-8")
+
+    assert 'id="tabFallbackEval"' in content
+    assert 'data-tab="fallback-eval"' in content
+    assert 'id="editor-container-fallback-eval"' in content
+    assert 'id="runFallbackEvalButton"' in content
+    assert 'id="fallbackEvalModels"' in content
+    assert "Fallback Model Eval" in content
+    assert "Fallback model eval metric descriptions" in content
+    assert "unique target" in content
+    assert "metadata" in content
     assert "health status" in content

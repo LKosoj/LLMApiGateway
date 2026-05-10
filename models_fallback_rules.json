@@ -57,15 +57,15 @@
     "gateway_model_name": "llmgateway/light_model",
     "fallback_models": [
       {
-        "provider": "openrouter",
-        "model": "openai/gpt-oss-120b:free",
+        "provider": "aitunnel",
+        "model": "gpt-4.1-nano",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
       },
       {
-        "provider": "aitunnel",
-        "model": "gpt-4.1-nano",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}

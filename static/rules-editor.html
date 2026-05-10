@@ -45,6 +45,7 @@
             <button id="tabAudio" class="tab-button" data-tab="audio">Audio</button>
             <button id="tabWeb" class="tab-button" data-tab="web">Web</button>
             <button id="tabOpenRouterFree" class="tab-button" data-tab="openrouter-free" hidden>OpenRouter Free</button>
+            <button id="tabFallbackEval" class="tab-button" data-tab="fallback-eval">Fallback Eval</button>
             <button id="tabProviders" class="tab-button" data-tab="providers">Providers</button>
         </div>
 
@@ -260,6 +261,61 @@
                     <div id="openRouterFreeModels" class="openrouter-free-models"></div>
                     <div id="openRouterFreeEmptyState" class="rules-empty-state" hidden>
                         OpenRouter scoring has not produced a snapshot yet.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-fallback-eval" class="editor-tab-content" style="display: none;">
+                <div class="rules-builder fallback-eval-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Fallback Model Eval</strong>
+                            <span>Manual lite eval for unique provider/model targets from configured fallback rules.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The eval runs only when you press the button; it does not change routing rules.</span>
+                        </div>
+                        <button id="runFallbackEvalButton" type="button" class="secondary-button">Run Eval</button>
+                    </div>
+                    <dl class="openrouter-free-guide" aria-label="Fallback model eval metric descriptions">
+                        <div>
+                            <dt>unique target</dt>
+                            <dd>A configured fallback route grouped by provider and model. Repeated routes are evaluated once and list all gateway models that reference them.</dd>
+                        </div>
+                        <div>
+                            <dt>health</dt>
+                            <dd>Probe score from a small “reply OK” request sent directly to the configured provider/model route.</dd>
+                        </div>
+                        <div>
+                            <dt>latency</dt>
+                            <dd>Speed bonus calculated from the health probe latency. Lower latency gives more points.</dd>
+                        </div>
+                        <div>
+                            <dt>eval</dt>
+                            <dd>Lite eval score for instruction following, tool-call JSON, Python code unit tests, arithmetic, and factual QA.</dd>
+                        </div>
+                        <div>
+                            <dt>metadata</dt>
+                            <dd>Set to 0 for fallback eval because provider catalogs are not normalized across all configured providers.</dd>
+                        </div>
+                        <div>
+                            <dt>penalty</dt>
+                            <dd>Instability points subtracted from the final score, mainly for rate limits or probe errors.</dd>
+                        </div>
+                        <div>
+                            <dt>latency ms</dt>
+                            <dd>Measured response time of the health probe in milliseconds.</dd>
+                        </div>
+                        <div>
+                            <dt>context</dt>
+                            <dd>Always 0 in fallback eval because provider catalogs are not normalized here.</dd>
+                        </div>
+                        <div>
+                            <dt>health status</dt>
+                            <dd>Raw health probe result, for example passed, imperfect, http_429, missing_provider, unsupported_provider_type, or another error class.</dd>
+                        </div>
+                    </dl>
+                    <div id="fallbackEvalStatus" class="openrouter-free-status"></div>
+                    <div id="fallbackEvalModels" class="openrouter-free-models"></div>
+                    <div id="fallbackEvalEmptyState" class="rules-empty-state" hidden>
+                        Fallback model eval has not been run yet.
                     </div>
                 </div>
             </div>

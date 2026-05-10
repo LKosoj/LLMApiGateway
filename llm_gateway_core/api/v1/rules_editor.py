@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from threading import Lock
 
 from ...config.loader import ConfigError, ModelFallbackConfig, ModelsOperationConfig, resolve_provider_proxy
+from ...services.fallback_model_evals import FallbackModelEvalAlreadyRunning
 from ...config.paths import STATIC_DIR
 from ...services.request_handler import OperationDispatcher, SUPPORTED_OPERATION_TYPES
 from ...services.provider_models import ProviderModelsService
@@ -1048,4 +1049,37 @@ async def get_openrouter_free_models_status(request: Request):
             "lastError": None,
             "snapshot": None,
         }
+    return await service.get_status()
+
+
+@editor_router.get("/fallback-model-evals", tags=["Config Editor API"])
+async def get_fallback_model_eval_status(request: Request):
+    service = getattr(request.app.state, "fallback_model_eval_service", None)
+    if service is None:
+        return {
+            "configured": False,
+            "running": False,
+            "lastCheckedAt": None,
+            "lastError": "Fallback model eval service is not initialized.",
+            "snapshot": None,
+        }
+    return await service.get_status()
+
+
+@editor_router.post("/fallback-model-evals/run", tags=["Config Editor API"])
+async def start_fallback_model_eval(request: Request):
+    service = getattr(request.app.state, "fallback_model_eval_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="Fallback model eval service is not initialized.")
+
+    config_loader = _get_config_loader(request)
+    try:
+        await service.start_eval(
+            providers_config=config_loader.providers_config,
+            fallback_rules=config_loader.fallback_rules,
+            http_client=_get_shared_http_client(request),
+            proxy_http_clients=getattr(request.app.state, "proxy_http_clients", {}),
+        )
+    except FallbackModelEvalAlreadyRunning as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await service.get_status()
