@@ -222,6 +222,40 @@
                             <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The tab is shown only when the official OpenRouter provider and API key are configured.</span>
                         </div>
                     </div>
+                    <dl class="openrouter-free-guide" aria-label="OpenRouter scoring metric descriptions">
+                        <div>
+                            <dt>metadata</dt>
+                            <dd>Catalog score for free pricing, context size, max output, recency, and supported features such as tools, structured outputs, response format, reasoning, seed, and stop.</dd>
+                        </div>
+                        <div>
+                            <dt>health</dt>
+                            <dd>Probe score from a small “reply OK” request. Passed models get the full health bonus; imperfect or failed probes get less.</dd>
+                        </div>
+                        <div>
+                            <dt>latency</dt>
+                            <dd>Speed bonus calculated from the health probe latency. Lower latency gives more points.</dd>
+                        </div>
+                        <div>
+                            <dt>eval</dt>
+                            <dd>Lite eval score for instruction following, tool-call JSON, Python code unit tests, parameterized arithmetic, and factual QA.</dd>
+                        </div>
+                        <div>
+                            <dt>penalty</dt>
+                            <dd>Instability points subtracted from the final score, mainly for rate limits or probe errors.</dd>
+                        </div>
+                        <div>
+                            <dt>latency ms</dt>
+                            <dd>Measured response time of the health probe in milliseconds.</dd>
+                        </div>
+                        <div>
+                            <dt>context</dt>
+                            <dd>Model context window size in tokens from the OpenRouter catalog.</dd>
+                        </div>
+                        <div>
+                            <dt>health status</dt>
+                            <dd>Raw health probe result, for example passed, imperfect, http_429, timeout, or another error class.</dd>
+                        </div>
+                    </dl>
                     <div id="openRouterFreeStatus" class="openrouter-free-status"></div>
                     <div id="openRouterFreeModels" class="openrouter-free-models"></div>
                     <div id="openRouterFreeEmptyState" class="rules-empty-state" hidden>

@@ -39,4 +39,9 @@ def test_rules_editor_html_contains_openrouter_free_tab():
     assert 'id="tabOpenRouterFree"' in content
     assert 'data-tab="openrouter-free"' in content
     assert 'id="openRouterFreeModels"' in content
+    assert 'class="openrouter-free-guide"' in content
     assert "OpenRouter Free Model Ranking" in content
+    assert "OpenRouter scoring metric descriptions" in content
+    assert "metadata" in content
+    assert "Lite eval score for instruction following" in content
+    assert "health status" in content

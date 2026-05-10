@@ -302,6 +302,37 @@ body.dark-mode .editor-tab-content {
     gap: 10px;
 }
 
+.openrouter-free-guide {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+    margin: 0;
+    padding: 12px;
+    border: 1px solid #dce5ec;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.openrouter-free-guide div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.openrouter-free-guide dt {
+    color: #1f3d5b;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.openrouter-free-guide dd {
+    margin: 0;
+    color: #475569;
+    font-size: 0.86rem;
+    line-height: 1.4;
+}
+
 .openrouter-free-meta-item {
     display: flex;
     flex-direction: column;
@@ -937,6 +968,7 @@ body.dark-mode .rules-builder {
 body.dark-mode .rules-toolbar,
 body.dark-mode .rules-empty-state,
 body.dark-mode .rule-card,
+body.dark-mode .openrouter-free-guide,
 body.dark-mode .openrouter-free-meta-item,
 body.dark-mode .openrouter-free-card,
 body.dark-mode .context-overflow-section,
@@ -952,6 +984,7 @@ body.dark-mode .fallback-row.dragging {
 }
 
 body.dark-mode .rules-toolbar-copy strong,
+body.dark-mode .openrouter-free-guide dt,
 body.dark-mode .openrouter-free-meta-item strong,
 body.dark-mode .context-overflow-copy strong,
 body.dark-mode .field-label,
@@ -961,6 +994,7 @@ body.dark-mode .advanced-options summary {
 }
 
 body.dark-mode .rules-toolbar-copy span,
+body.dark-mode .openrouter-free-guide dd,
 body.dark-mode .openrouter-free-meta-item span,
 body.dark-mode .context-overflow-copy span,
 body.dark-mode .model-status {
