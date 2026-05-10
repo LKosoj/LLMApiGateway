@@ -2,6 +2,7 @@ import re
 import unittest
 from types import SimpleNamespace
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -25,13 +26,16 @@ class FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise AssertionError(f"unexpected HTTP {self.status_code}")
+            request = httpx.Request("POST", "https://provider.example/v1/chat/completions")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError(f"unexpected HTTP {self.status_code}", request=request, response=response)
 
 
 class FakeFallbackEvalClient:
-    def __init__(self, catalog=None, *, health_content="OK"):
+    def __init__(self, catalog=None, *, health_content="OK", health_status_code=200):
         self.catalog = catalog or []
         self.health_content = health_content
+        self.health_status_code = health_status_code
         self.gets = []
         self.get_headers = []
         self.posts = []
@@ -52,6 +56,8 @@ class FakeFallbackEvalClient:
         )
         prompt = _first_message_text(json)
         if "Reply with exactly OK" in prompt:
+            if self.health_status_code >= 400:
+                return FakeResponse({"error": {"message": "rate limited"}}, status_code=self.health_status_code)
             content = self.health_content
         elif "Return exactly 4 lines" in prompt:
             content = 'STATUS: READY\nROUTER and ROUTER\n{"mode":"eval","count":3}\nDONE'
@@ -252,6 +258,40 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         self.assertEqual(model["healthScore"], 250)
         self.assertEqual(model["evalSummary"]["status"], "completed")
         self.assertEqual(model["liteEvalScore"], 750)
+
+    def test_run_once_skips_lite_eval_for_rate_limited_health_targets(self):
+        providers_config = {
+            "provider-a": ProviderDetails(baseUrl="https://provider.example/v1", apikey="provider-key"),
+        }
+        fallback_rules = {
+            "gateway/a": {
+                "fallback_models": [
+                    {"provider": "provider-a", "model": "model-one"},
+                ],
+            },
+        }
+        fake_client = FakeFallbackEvalClient(health_status_code=429)
+        service = FallbackModelEvalService(time_func=lambda: 1_770_000_000)
+
+        run_async(
+            service.run_once(
+                providers_config=providers_config,
+                fallback_rules=fallback_rules,
+                http_client=fake_client,
+            )
+        )
+
+        status = run_async(service.get_status())
+        snapshot = status["snapshot"]
+        model = snapshot["models"][0]
+        self.assertEqual(snapshot["evaluatedCount"], 0)
+        self.assertEqual(model["healthStatus"], "http_429")
+        self.assertEqual(model["healthScore"], 100)
+        self.assertEqual(model["instabilityPenalty"], 25)
+        self.assertEqual(model["liteEvalScore"], 0)
+        self.assertEqual(model["evalSummary"]["status"], "not_evaluated")
+        self.assertEqual(model["evalSummary"]["reason"], "health_probe_rate_limited")
+        self.assertEqual(len(fake_client.posts), 1)
 
     def test_run_once_enriches_metadata_from_openrouter_basename_when_key_configured(self):
         providers_config = {

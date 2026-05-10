@@ -32,7 +32,9 @@ from .openrouter_free_models import (
     _extract_json_object,
     _extract_python_code,
     _first_int,
+    _health_status_allows_lite_eval,
     _latency_score,
+    _lite_eval_skip_reason,
     _normalize_simple_answer,
     _not_evaluated_summary,
     _python_code_safety_error,
@@ -306,12 +308,12 @@ class FallbackModelEvalService:
                 continue
             provider_http_client = proxy_http_clients.get(target.provider, http_client)
             await self._apply_health_probe(model, target, provider_config, provider_http_client)
-            if model.health_score > 0:
+            if _health_status_allows_lite_eval(model.health_status):
                 model.eval_summary = await self._run_lite_eval_suite(model, target, provider_config, provider_http_client)
                 model.lite_eval_score = int(model.eval_summary.get("points", 0))
                 evaluated_count += 1
             else:
-                model.eval_summary = _not_evaluated_summary("health_probe_failed")
+                model.eval_summary = _not_evaluated_summary(_lite_eval_skip_reason(model.health_status))
             model.recalculate_score()
 
         models.sort(key=_rank_sort_key)

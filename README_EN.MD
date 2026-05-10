@@ -95,7 +95,7 @@ The Fallback Eval final score is `metadataScore + healthScore + latencyScore + l
 
 ### Model Eval Tests
 
-OpenRouter Free and Fallback Eval use the same text-only checks. Evaluation starts with a health probe: the model receives a short `Reply with exactly OK` request with a small response limit. If the response contains `OK`, the target gets `healthStatus=passed` and 400 health points; if the HTTP call succeeds but the response does not match the expected text, the target gets `healthStatus=imperfect` and 250 health points. Lite eval runs for every target with a positive `healthScore`, including `imperfect`; targets with HTTP errors, missing providers, or network errors get `not_evaluated`.
+OpenRouter Free and Fallback Eval use the same text-only checks. Evaluation starts with a health probe: the model receives a short `Reply with exactly OK` request with a small response limit. If the response contains `OK`, the target gets `healthStatus=passed` and 400 health points; if the HTTP call succeeds but the response does not match the expected text, the target gets `healthStatus=imperfect` and 250 health points. HTTP 429 is treated as a temporary rate limit: the target gets `healthStatus=http_429`, 100 health points, and `instabilityPenalty=25`, but lite eval is not started for it so the gateway does not amplify the rate limit. Lite eval runs only for `passed` and `imperfect`; other HTTP errors, missing providers, or network errors get `not_evaluated`.
 
 Lite eval is worth up to 750 points and contains five tasks:
 

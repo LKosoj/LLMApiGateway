@@ -36,13 +36,6 @@
     "gateway_model_name": "llmgateway/light_model",
     "fallback_models": [
       {
-        "provider": "aitunnel",
-        "model": "gpt-4.1-nano",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "openrouter",
         "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
@@ -50,8 +43,8 @@
         "custom_headers": {}
       },
       {
-        "provider": "cloudru",
-        "model": "zai-org/GLM-4.7-Flash",
+        "provider": "aitunnel",
+        "model": "gpt-4.1-nano",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -65,6 +58,13 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
+      },
+      {
+        "provider": "cloudru",
+        "model": "zai-org/GLM-4.7-Flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {
@@ -203,6 +203,13 @@
       {
         "provider": "devbox",
         "model": "mm.MiniMax-M2.7",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "alibaba",
+        "model": "qwen3.6-plus-2026-04-02",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}

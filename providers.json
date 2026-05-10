@@ -1,102 +1,94 @@
 [
-    {
-        "devbox":
-        {
-            "baseUrl" : "http://109.107.174.36:18080/api",
-            "apikey" : "${APIKEY_OPENAI}"  // explicit environment variable reference
-        }
-    },
-    {
-        "openai_codex":
-        {
-            "baseUrl" : "http://109.107.174.36:3000/openai-codex-oauth/v1",
-            "apikey" : "${APIKEY_OPENAI_CODEX}"  // explicit environment variable reference
-        }
-    },
-    {
-        "gemini_cli":
-        {
-            "baseUrl" : "http://109.107.174.36:3000/gemini-cli-oauth/v1",
-            "apikey" : "${APIKEY_OPENAI_CODEX}"  // explicit environment variable reference
-        }
-    },
-    {
-        "grok":
-        {
-            "baseUrl" : "http://109.107.174.36:3000/grok-custom/v1",
-            "apikey" : "${APIKEY_OPENAI_CODEX}"  // explicit environment variable reference
-        }
-    },
-    {
-        "openrouter":
-        {
-            "baseUrl" : "https://openrouter.ai/api/v1",
-            "apikey" : "${APIKEY_OPENROUTER}"  // explicit environment variable reference
-        }
-    },
-    {
-        "nvidia":
-        {
-            "baseUrl" : "https://integrate.api.nvidia.com/v1",
-            "apikey" : "${APIKEY_NVIDIA}"  // explicit environment variable reference
-        }
-    },
-    {
-        "nvidia2":
-        {
-            "baseUrl" : "https://integrate.api.nvidia.com/v1",
-            "apikey" : "${APIKEY_NVIDIA2}"  // explicit environment variable reference
-        }
-    },
-    {
-        "z.ai":
-        {
-            "baseUrl" : "https://api.z.ai/api/coding/paas/v4",
-            "apikey" : "${APIKEY_ZAI}"  // explicit environment variable reference
-        }
-    },
-    {
-        "vsegpt":
-        {
-            "baseUrl" : "https://api.vsegpt.ru:7090/v1",
-            "apikey" : "${APIKEY_VSEGPT}"  // explicit environment variable reference
-        }
-    },
-    {
-        "gemini":
-        {
-            "baseUrl" : "https://generativelanguage.googleapis.com/v1beta/openai",
-            "apikey" : "${APIKEY_GEMINI}"  // explicit environment variable reference
-        }
-    },
   {
-        "kimicode":
-        {
-            "type": "anthropic",
-            "baseUrl" : "https://agent-gw.kimi.com/coding",
-            "apikey" : "${APIKEY_KIMI_CODE}"  // explicit environment variable reference
-        }
-    },
-  {
-        "aitunnel":
-        {
-            "baseUrl" : "https://api.aitunnel.ru/v1/",
-            "apikey" : "${APIKEY_AITUNNEL}"  // explicit environment variable reference
-        }
-    },
-  {
-        "llm_ai":
-        {
-            "baseUrl" : "http://94.143.43.118:18080/v1/",
-            "apikey" : "${APIKEY_LLM_AI}"  // explicit environment variable reference
-        }
-    },
-    {
-        "cloudru":
-        {
-            "baseUrl" : "https://foundation-models.api.cloud.ru/v1",
-            "apikey" : "${APIKEY_CLOUDRU}",  // explicit environment variable reference
-            "proxy" : "${PROXY_CLOUDRU}"  // explicit environment variable reference
-        }
+    "devbox": {
+      "baseUrl": "http://109.107.174.36:18080/api",
+      "apikey": "${APIKEY_OPENAI}"
     }
+  },
+  {
+    "openai_codex": {
+      "baseUrl": "http://109.107.174.36:3000/openai-codex-oauth/v1",
+      "apikey": "${APIKEY_OPENAI_CODEX}"
+    }
+  },
+  {
+    "gemini_cli": {
+      "baseUrl": "http://109.107.174.36:3000/gemini-cli-oauth/v1",
+      "apikey": "${APIKEY_OPENAI_CODEX}"
+    }
+  },
+  {
+    "grok": {
+      "baseUrl": "http://109.107.174.36:3000/grok-custom/v1",
+      "apikey": "${APIKEY_OPENAI_CODEX}"
+    }
+  },
+  {
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apikey": "${APIKEY_OPENROUTER}"
+    }
+  },
+  {
+    "nvidia": {
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "apikey": "${APIKEY_NVIDIA}"
+    }
+  },
+  {
+    "nvidia2": {
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "apikey": "${APIKEY_NVIDIA2}"
+    }
+  },
+  {
+    "z.ai": {
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "apikey": "${APIKEY_ZAI}"
+    }
+  },
+  {
+    "vsegpt": {
+      "baseUrl": "https://api.vsegpt.ru:7090/v1",
+      "apikey": "${APIKEY_VSEGPT}"
+    }
+  },
+  {
+    "gemini": {
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apikey": "${APIKEY_GEMINI}"
+    }
+  },
+  {
+    "kimicode": {
+      "baseUrl": "https://agent-gw.kimi.com/coding",
+      "apikey": "${APIKEY_KIMI_CODE}",
+      "type": "anthropic"
+    }
+  },
+  {
+    "aitunnel": {
+      "baseUrl": "https://api.aitunnel.ru/v1/",
+      "apikey": "${APIKEY_AITUNNEL}"
+    }
+  },
+  {
+    "llm_ai": {
+      "baseUrl": "http://94.143.43.118:18080/v1/",
+      "apikey": "${APIKEY_LLM_AI}"
+    }
+  },
+  {
+    "cloudru": {
+      "baseUrl": "https://foundation-models.api.cloud.ru/v1",
+      "apikey": "${APIKEY_CLOUDRU}",
+      "proxy": "${PROXY_CLOUDRU}"
+    }
+  },
+  {
+    "alibaba": {
+      "baseUrl": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+      "apikey": "${APIKEY_ALIBABA}"
+    }
+  }
 ]

@@ -95,7 +95,7 @@ LLM Gateway работает локально как OpenAI-совместимы
 
 ### Eval-тесты моделей
 
-OpenRouter Free и Fallback Eval используют один и тот же набор text-only проверок. Сначала выполняется health-probe: модель получает короткий запрос `Reply with exactly OK` с небольшим лимитом ответа. Если ответ содержит `OK`, цель получает `healthStatus=passed` и 400 health-баллов; если HTTP-вызов успешен, но ответ не совпал с ожидаемым, цель получает `healthStatus=imperfect` и 250 health-баллов. Lite eval запускается для всех целей с положительным `healthScore`, включая `imperfect`; цели с HTTP-ошибками, отсутствующим провайдером или сетевыми ошибками получают `not_evaluated`.
+OpenRouter Free и Fallback Eval используют один и тот же набор text-only проверок. Сначала выполняется health-probe: модель получает короткий запрос `Reply with exactly OK` с небольшим лимитом ответа. Если ответ содержит `OK`, цель получает `healthStatus=passed` и 400 health-баллов; если HTTP-вызов успешен, но ответ не совпал с ожидаемым, цель получает `healthStatus=imperfect` и 250 health-баллов. HTTP 429 считается временным rate-limit: цель получает `healthStatus=http_429`, 100 health-баллов и `instabilityPenalty=25`, но lite eval для неё не запускается, чтобы не усиливать rate-limit. Lite eval запускается только для `passed` и `imperfect`; остальные HTTP-ошибки, отсутствующий провайдер или сетевые ошибки получают `not_evaluated`.
 
 Lite eval даёт максимум 750 баллов и состоит из пяти задач:
 

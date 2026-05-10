@@ -412,8 +412,8 @@ class OpenRouterFreeModelsService:
     async def _apply_lite_evals(self, models: list[ScoredOpenRouterModel]) -> int:
         evaluated_count = 0
         for model in models:
-            if model.health_score <= 0:
-                model.eval_summary = _not_evaluated_summary("health_probe_failed")
+            if not _health_status_allows_lite_eval(model.health_status):
+                model.eval_summary = _not_evaluated_summary(_lite_eval_skip_reason(model.health_status))
                 continue
             model.eval_summary = await self._run_lite_eval_suite(model)
             model.lite_eval_score = int(model.eval_summary.get("points", 0))
@@ -777,6 +777,14 @@ def _latency_score(latency_ms: int | None) -> int:
     if latency_ms <= 8000:
         return 25
     return 10
+
+
+def _health_status_allows_lite_eval(health_status: str) -> bool:
+    return health_status in {"passed", "imperfect"}
+
+
+def _lite_eval_skip_reason(health_status: str) -> str:
+    return "health_probe_rate_limited" if health_status == "http_429" else "health_probe_failed"
 
 
 def _build_reason(model: ScoredOpenRouterModel) -> str:

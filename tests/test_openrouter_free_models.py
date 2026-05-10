@@ -1,6 +1,7 @@
 import re
 import unittest
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -28,12 +29,15 @@ class FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise AssertionError(f"unexpected HTTP {self.status_code}")
+            request = httpx.Request("POST", "https://openrouter.example/chat/completions")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError(f"unexpected HTTP {self.status_code}", request=request, response=response)
 
 
 class FakeOpenRouterClient:
-    def __init__(self, catalog):
+    def __init__(self, catalog, *, health_status_code=200):
         self.catalog = catalog
+        self.health_status_code = health_status_code
         self.posts = []
         self.get_headers = []
         self.post_headers = []
@@ -47,6 +51,8 @@ class FakeOpenRouterClient:
         self.post_headers.append(headers or {})
         prompt = json["messages"][0]["content"]
         if "Reply with exactly OK" in prompt:
+            if self.health_status_code >= 400:
+                return FakeResponse({"error": {"message": "rate limited"}}, status_code=self.health_status_code)
             content = "OK"
         elif "Return exactly 4 lines" in prompt:
             content = 'STATUS: READY\nROUTER and ROUTER\n{"mode":"eval","count":3}\nDONE'
@@ -200,8 +206,13 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
         first = ScoredOpenRouterModel("provider/a:free", "a", metadata_score=5000)
         second = ScoredOpenRouterModel("provider/b:free", "b", metadata_score=0)
         third = ScoredOpenRouterModel("provider/c:free", "c", metadata_score=0)
-        for model, health_score in ((first, 400), (second, 250), (third, 400)):
+        for model, health_score, health_status in (
+            (first, 400, "passed"),
+            (second, 250, "imperfect"),
+            (third, 400, "passed"),
+        ):
             model.health_score = health_score
+            model.health_status = health_status
             model.latency_score = 75
             model.recalculate_score()
 
@@ -220,6 +231,29 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
         self.assertEqual(first.lite_eval_score, 750)
         self.assertEqual(second.lite_eval_score, 0)
         self.assertEqual(third.lite_eval_score, 0)
+
+    def test_rate_limited_health_probe_keeps_partial_health_without_lite_eval(self):
+        catalog = [_model_entry("provider/a:free")]
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        fake_client = FakeOpenRouterClient(catalog, health_status_code=429)
+        service._http_client = fake_client
+
+        run_async(service.refresh_once())
+
+        status = run_async(service.get_status())
+        snapshot = status["snapshot"]
+        model = snapshot["models"][0]
+        self.assertEqual(snapshot["evaluatedCount"], 0)
+        self.assertEqual(model["healthStatus"], "http_429")
+        self.assertEqual(model["healthScore"], 100)
+        self.assertEqual(model["instabilityPenalty"], 25)
+        self.assertEqual(model["liteEvalScore"], 0)
+        self.assertEqual(model["evalSummary"]["status"], "not_evaluated")
+        self.assertEqual(model["evalSummary"]["reason"], "health_probe_rate_limited")
+        self.assertEqual(len(fake_client.posts), 1)
 
 
 class OpenRouterFreeModelsApiTests(unittest.TestCase):
