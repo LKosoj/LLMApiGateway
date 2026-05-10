@@ -220,7 +220,7 @@
                         <div class="rules-toolbar-copy">
                             <strong>OpenRouter Free Model Ranking</strong>
                             <span>Read-only ranking of free text OpenRouter models scored by metadata, health, latency, and lite eval checks.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The tab is shown only when the official OpenRouter provider and API key are configured.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The tab is shown only when the official OpenRouter provider and API key are configured. All eligible reachable models are evaluated.</span>
                         </div>
                     </div>
                     <dl class="openrouter-free-guide" aria-label="OpenRouter scoring metric descriptions">
@@ -270,7 +270,7 @@
                         <div class="rules-toolbar-copy">
                             <strong>Fallback Model Eval</strong>
                             <span>Manual lite eval for unique provider/model targets from configured fallback rules.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The eval runs only when you press the button; it does not change routing rules.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The eval runs only when you press the button; it evaluates OpenAI-compatible and Anthropic targets directly and does not change routing rules.</span>
                         </div>
                         <button id="runFallbackEvalButton" type="button" class="secondary-button">Run Eval</button>
                     </div>
@@ -293,7 +293,7 @@
                         </div>
                         <div>
                             <dt>metadata</dt>
-                            <dd>Set to 0 for fallback eval because provider catalogs are not normalized across all configured providers.</dd>
+                            <dd>OpenRouter catalog score matched by model basename when the official openrouter provider and API key are configured. If a target has no match but other targets do, this is the median known metadata score.</dd>
                         </div>
                         <div>
                             <dt>penalty</dt>
@@ -305,11 +305,11 @@
                         </div>
                         <div>
                             <dt>context</dt>
-                            <dd>Always 0 in fallback eval because provider catalogs are not normalized here.</dd>
+                            <dd>OpenRouter context length when a catalog card was matched; otherwise 0.</dd>
                         </div>
                         <div>
                             <dt>health status</dt>
-                            <dd>Raw health probe result, for example passed, imperfect, http_429, missing_provider, unsupported_provider_type, or another error class.</dd>
+                            <dd>Raw health probe result, for example passed, imperfect, http_429, missing_provider, timeout, or another error class.</dd>
                         </div>
                     </dl>
                     <div id="fallbackEvalStatus" class="openrouter-free-status"></div>

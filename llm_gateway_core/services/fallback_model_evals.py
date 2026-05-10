@@ -7,13 +7,23 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
-from ..config.loader import ProviderDetails, SECURITY_HEADERS, resolve_provider_api_key
+from ..config.loader import (
+    ANTHROPIC_API_VERSION,
+    ProviderDetails,
+    SECURITY_HEADERS,
+    resolve_provider_api_key,
+    resolve_provider_api_key_value,
+)
+from ..utils.api_keys import has_api_key
 from .openrouter_free_models import (
     HEALTH_PROBE_TIMEOUT_SECONDS,
     LITE_EVAL_TIMEOUT_SECONDS,
+    OPENROUTER_HOST,
+    OPENROUTER_PROVIDER_NAME,
     REFRESH_INTERVAL_SECONDS,
     LiteEvalTaskResult,
     _eval_payload,
@@ -27,11 +37,14 @@ from .openrouter_free_models import (
     _python_code_safety_error,
     _rank_sort_key,
     _run_sum_even_squares_tests,
+    _score_metadata,
     _symbolic_math_values,
     _utc_now_iso,
 )
 
 logger = logging.getLogger(__name__)
+
+ANTHROPIC_DEFAULT_MAX_TOKENS = 32768
 
 
 @dataclass
@@ -56,7 +69,20 @@ class ScoredFallbackModel:
     instability_penalty: int = 0
     score: int = 0
     context_length: int = 0
+    max_completion_tokens: int | None = None
+    created: int | None = None
+    pricing: dict[str, Any] = field(default_factory=dict)
+    supported_parameters: list[str] = field(default_factory=list)
+    supports_tools: bool = False
+    supports_tool_choice: bool = False
+    supports_structured_outputs: bool = False
     supports_response_format: bool = False
+    supports_reasoning: bool = False
+    supports_include_reasoning: bool = False
+    supports_seed: bool = False
+    supports_stop: bool = False
+    metadata_source: str | None = None
+    metadata_matched_model: str | None = None
     latency_ms: int | None = None
     health_status: str = "not_probed"
     reason: str = ""
@@ -84,10 +110,23 @@ class ScoredFallbackModel:
             "liteEvalScore": self.lite_eval_score,
             "instabilityPenalty": self.instability_penalty,
             "contextLength": self.context_length,
+            "maxCompletionTokens": self.max_completion_tokens,
+            "supportsTools": self.supports_tools,
+            "supportsToolChoice": self.supports_tool_choice,
+            "supportsStructuredOutputs": self.supports_structured_outputs,
+            "supportsResponseFormat": self.supports_response_format,
+            "supportsReasoning": self.supports_reasoning,
+            "supportsIncludeReasoning": self.supports_include_reasoning,
+            "supportsSeed": self.supports_seed,
+            "supportsStop": self.supports_stop,
+            "metadataSource": self.metadata_source,
+            "metadataMatchedModel": self.metadata_matched_model,
             "latencyMs": self.latency_ms,
             "healthStatus": self.health_status,
             "evalSummary": self.eval_summary,
             "reason": self.reason,
+            "pricing": self.pricing,
+            "created": self.created,
         }
 
 
@@ -244,6 +283,16 @@ class FallbackModelEvalService:
             )
             for target in targets
         ]
+        openrouter_metadata = await self._load_openrouter_metadata(
+            providers_config=providers_config,
+            http_client=http_client,
+            proxy_http_clients=proxy_http_clients,
+        ) if targets else {}
+        for target, model in zip(targets, models, strict=False):
+            metadata_model = openrouter_metadata.get(_openrouter_metadata_key(target.model))
+            if metadata_model is not None:
+                _apply_openrouter_metadata(model, metadata_model)
+        _apply_missing_openrouter_metadata_median(models)
 
         evaluated_count = 0
         for target, model in zip(targets, models, strict=False):
@@ -254,13 +303,6 @@ class FallbackModelEvalService:
                 model.eval_summary = _not_evaluated_summary("missing_provider")
                 model.recalculate_score()
                 continue
-            if getattr(provider_config, "type", "openai") == "anthropic":
-                model.health_status = "unsupported_provider_type"
-                model.reason = "Native Anthropic fallback routes are not evaluated by this OpenAI-compatible lite eval runner."
-                model.eval_summary = _not_evaluated_summary("unsupported_provider_type")
-                model.recalculate_score()
-                continue
-
             provider_http_client = proxy_http_clients.get(target.provider, http_client)
             await self._apply_health_probe(model, target, provider_config, provider_http_client)
             if model.health_score > 0:
@@ -282,10 +324,61 @@ class FallbackModelEvalService:
             models=models,
             notes=[
                 "Unique fallback targets are grouped by provider and model.",
-                "Final score = healthScore + latencyScore + liteEvalScore - instabilityPenalty; metadataScore is 0.",
-                "Native Anthropic provider routes are marked unsupported by this direct provider eval.",
+                "OpenRouter metadata is matched by model basename when the official openrouter provider and API key are configured; unmatched targets use the median known metadata score.",
+                "Final score = metadataScore + healthScore + latencyScore + liteEvalScore - instabilityPenalty.",
+                "OpenAI-compatible providers are evaluated through /chat/completions; Anthropic providers are evaluated through /v1/messages.",
             ],
         )
+
+    async def _load_openrouter_metadata(
+        self,
+        *,
+        providers_config: dict[str, ProviderDetails],
+        http_client: httpx.AsyncClient,
+        proxy_http_clients: dict[str, httpx.AsyncClient],
+    ) -> dict[str, Any]:
+        provider_config = providers_config.get(OPENROUTER_PROVIDER_NAME)
+        if provider_config is None or not _is_official_openrouter_url(provider_config.baseUrl):
+            return {}
+        try:
+            raw_api_key = resolve_provider_api_key_value(provider_config.apikey)
+        except Exception:
+            return {}
+        if not has_api_key(raw_api_key):
+            return {}
+
+        api_key = resolve_provider_api_key(provider_config.apikey)
+        if not api_key:
+            return {}
+
+        openrouter_client = proxy_http_clients.get(OPENROUTER_PROVIDER_NAME, http_client)
+        response = await openrouter_client.get(
+            f"{provider_config.baseUrl.rstrip('/')}/models",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+                "X-Title": "LLMGateway Fallback Model Eval",
+            },
+            timeout=HEALTH_PROBE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        entries = payload.get("data")
+        if not isinstance(entries, list):
+            raise ValueError("OpenRouter /models response does not contain a data list.")
+
+        metadata_by_name: dict[str, Any] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            scored_model = _score_metadata(entry, self._time_func())
+            key = _openrouter_metadata_key(scored_model.id)
+            if not key:
+                continue
+            existing = metadata_by_name.get(key)
+            if existing is None or _openrouter_metadata_rank(scored_model) > _openrouter_metadata_rank(existing):
+                metadata_by_name[key] = scored_model
+        return metadata_by_name
 
     async def _apply_health_probe(
         self,
@@ -525,6 +618,9 @@ class FallbackModelEvalService:
         *,
         timeout: float,
     ) -> dict[str, Any]:
+        if getattr(provider_config, "type", "openai") == "anthropic":
+            return await self._anthropic_completion(target, provider_config, http_client, payload, timeout=timeout)
+
         api_key = resolve_provider_api_key(provider_config.apikey)
         headers = {
             "Content-Type": "application/json",
@@ -556,6 +652,39 @@ class FallbackModelEvalService:
         response.raise_for_status()
         return response.json()
 
+    async def _anthropic_completion(
+        self,
+        target: FallbackEvalTarget,
+        provider_config: ProviderDetails,
+        http_client: httpx.AsyncClient,
+        payload: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
+        api_key = resolve_provider_api_key(provider_config.apikey)
+        headers = {
+            "Content-Type": "application/json",
+            "anthropic-version": ANTHROPIC_API_VERSION,
+            **({"x-api-key": api_key} if api_key else {}),
+        }
+        for key, value in target.route.get("custom_headers", {}).items():
+            if key.lower() not in SECURITY_HEADERS:
+                headers[key] = value
+
+        provider_payload = _openai_eval_payload_to_anthropic(payload)
+        provider_payload["model"] = target.model
+        for key, value in target.route.get("custom_body_params", {}).items():
+            provider_payload[key] = value
+
+        response = await http_client.post(
+            f"{provider_config.baseUrl.rstrip('/')}/v1/messages",
+            headers=headers,
+            json=provider_payload,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return _anthropic_response_to_chat_completion(response.json(), target.model)
+
 
 def _collect_unique_fallback_targets(fallback_rules: dict[str, dict[str, Any]]) -> list[FallbackEvalTarget]:
     targets: dict[tuple[str, str], FallbackEvalTarget] = {}
@@ -579,3 +708,159 @@ def _iter_fallback_routes(config: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(context_overflow_fallback, dict):
         routes.append(context_overflow_fallback)
     return routes
+
+
+def _openai_eval_payload_to_anthropic(payload: dict[str, Any]) -> dict[str, Any]:
+    system_parts: list[str] = []
+    messages: list[dict[str, str]] = []
+    for message in payload.get("messages", []):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "user")
+        content = _plain_text_content(message.get("content"))
+        if role == "system":
+            if content:
+                system_parts.append(content)
+            continue
+        messages.append({
+            "role": "assistant" if role == "assistant" else "user",
+            "content": content,
+        })
+
+    if not messages:
+        messages.append({"role": "user", "content": ""})
+
+    anthropic_payload: dict[str, Any] = {
+        "model": payload.get("model"),
+        "messages": messages,
+        "max_tokens": _positive_int(payload.get("max_tokens"), ANTHROPIC_DEFAULT_MAX_TOKENS),
+    }
+    if system_parts:
+        anthropic_payload["system"] = "\n\n".join(system_parts)
+    if "temperature" in payload:
+        anthropic_payload["temperature"] = payload["temperature"]
+    if "top_p" in payload:
+        anthropic_payload["top_p"] = payload["top_p"]
+    stop_value = payload.get("stop")
+    if isinstance(stop_value, str):
+        anthropic_payload["stop_sequences"] = [stop_value]
+    elif isinstance(stop_value, list):
+        anthropic_payload["stop_sequences"] = [item for item in stop_value if isinstance(item, str)]
+    return anthropic_payload
+
+
+def _plain_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return "" if content is None else str(content)
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _anthropic_response_to_chat_completion(payload: dict[str, Any], model: str) -> dict[str, Any]:
+    content = payload.get("content")
+    text_parts: list[str] = []
+    if isinstance(content, str):
+        text_parts.append(content)
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                text_parts.append(block["text"])
+    return {
+        "model": payload.get("model") or model,
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "".join(text_parts),
+                }
+            }
+        ],
+    }
+
+
+def _apply_openrouter_metadata(model: ScoredFallbackModel, openrouter_model: Any) -> None:
+    model.metadata_score = openrouter_model.metadata_score
+    model.context_length = openrouter_model.context_length
+    model.max_completion_tokens = openrouter_model.max_completion_tokens
+    model.created = openrouter_model.created
+    model.pricing = dict(openrouter_model.pricing)
+    model.supported_parameters = list(openrouter_model.supported_parameters)
+    model.supports_tools = openrouter_model.supports_tools
+    model.supports_tool_choice = openrouter_model.supports_tool_choice
+    model.supports_structured_outputs = openrouter_model.supports_structured_outputs
+    model.supports_response_format = openrouter_model.supports_response_format
+    model.supports_reasoning = openrouter_model.supports_reasoning
+    model.supports_include_reasoning = openrouter_model.supports_include_reasoning
+    model.supports_seed = openrouter_model.supports_seed
+    model.supports_stop = openrouter_model.supports_stop
+    model.metadata_source = OPENROUTER_PROVIDER_NAME
+    model.metadata_matched_model = openrouter_model.id
+    metadata_reason = openrouter_model.reason
+    model.reason = (
+        f"OpenRouter metadata: {openrouter_model.id}"
+        f"{f' ({metadata_reason})' if metadata_reason else ''}."
+    )
+    model.recalculate_score()
+
+
+def _apply_missing_openrouter_metadata_median(models: list[ScoredFallbackModel]) -> None:
+    known_scores = [
+        model.metadata_score
+        for model in models
+        if model.metadata_source == OPENROUTER_PROVIDER_NAME
+    ]
+    median_score = _median_score(known_scores)
+    if median_score is None or median_score <= 0:
+        return
+    for model in models:
+        if model.metadata_source is not None:
+            continue
+        model.metadata_score = median_score
+        model.metadata_source = "openrouter_median"
+        model.reason = "OpenRouter metadata not matched; using median metadata score from matched fallback models."
+        model.recalculate_score()
+
+
+def _median_score(scores: list[int]) -> int | None:
+    if not scores:
+        return None
+    ordered = sorted(scores)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) // 2
+
+
+def _is_official_openrouter_url(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    return parsed.scheme == "https" and parsed.hostname == OPENROUTER_HOST
+
+
+def _openrouter_metadata_key(model_id: str) -> str:
+    basename = str(model_id or "").strip().rsplit("/", 1)[-1].strip()
+    return basename.split(":", 1)[0].lower()
+
+
+def _openrouter_metadata_rank(openrouter_model: Any) -> tuple[int, int, str]:
+    return (
+        int(getattr(openrouter_model, "metadata_score", 0) or 0),
+        int(getattr(openrouter_model, "context_length", 0) or 0),
+        str(getattr(openrouter_model, "id", "")),
+    )

@@ -10,6 +10,7 @@ from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ProviderDetails
 from llm_gateway_core.services.openrouter_free_models import (
     OpenRouterFreeModelsService,
+    ScoredOpenRouterModel,
     _catalog_fingerprint,
     _is_eligible_free_text_model,
     _score_metadata,
@@ -153,6 +154,24 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
             _catalog_fingerprint(catalog),
         )
 
+    def test_refresh_full_probes_and_evaluates_all_eligible_models(self):
+        catalog = [_model_entry(f"provider/model-{index}:free") for index in range(21)]
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        fake_client = FakeOpenRouterClient(catalog)
+        service._http_client = fake_client
+
+        run_async(service.refresh_once())
+
+        status = run_async(service.get_status())
+        snapshot = status["snapshot"]
+        self.assertEqual(snapshot["eligibleCount"], 21)
+        self.assertEqual(snapshot["evaluatedCount"], 21)
+        self.assertEqual(len(snapshot["models"]), 21)
+        self.assertTrue(all(model["evalSummary"]["status"] == "completed" for model in snapshot["models"]))
+
     def test_refresh_uses_round_robin_openrouter_keys(self):
         catalog = [_model_entry("provider/a:free")]
         service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
@@ -169,28 +188,31 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
             any(headers["Authorization"] == "Bearer openrouter-rr-b" for headers in fake_client.post_headers)
         )
 
-    def test_lite_eval_continues_when_unevaluated_model_can_overtake(self):
+    def test_lite_eval_runs_for_all_available_models_without_rank_cutoff(self):
         service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
-        first = _score_metadata(_model_entry("provider/a:free"), 1_770_000_000)
-        second = _score_metadata(_model_entry("provider/b:free"), 1_770_000_000)
-        for model in (first, second):
+        first = ScoredOpenRouterModel("provider/a:free", "a", metadata_score=5000)
+        second = ScoredOpenRouterModel("provider/b:free", "b", metadata_score=0)
+        third = ScoredOpenRouterModel("provider/c:free", "c", metadata_score=0)
+        for model in (first, second, third):
             model.health_score = 400
             model.latency_score = 75
             model.recalculate_score()
 
         async def fake_suite(model):
             return {
-                "points": 0 if model.id == "provider/a:free" else 750,
+                "points": 750 if model.id == "provider/a:free" else 0,
                 "maxPoints": 750,
                 "tasks": [],
             }
 
         service._run_lite_eval_suite = fake_suite
 
-        evaluated_count = run_async(service._apply_lite_evals([first, second]))
+        evaluated_count = run_async(service._apply_lite_evals([first, second, third]))
 
-        self.assertEqual(evaluated_count, 2)
-        self.assertEqual(second.lite_eval_score, 750)
+        self.assertEqual(evaluated_count, 3)
+        self.assertEqual(first.lite_eval_score, 750)
+        self.assertEqual(second.lite_eval_score, 0)
+        self.assertEqual(third.lite_eval_score, 0)
 
 
 class OpenRouterFreeModelsApiTests(unittest.TestCase):

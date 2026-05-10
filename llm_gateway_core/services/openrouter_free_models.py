@@ -26,9 +26,7 @@ OPENROUTER_PROVIDER_NAME = "openrouter"
 OPENROUTER_HOST = "openrouter.ai"
 REFRESH_INTERVAL_SECONDS = 8 * 60 * 60
 MIN_CONTEXT_LENGTH = 8192
-HEALTH_PROBE_LIMIT = 20
 MAX_LITE_EVAL_POINTS = 750
-LITE_EVAL_CANDIDATE_LIMIT = 20
 HEALTH_PROBE_TIMEOUT_SECONDS = 30.0
 LITE_EVAL_TIMEOUT_SECONDS = 45.0
 CODE_EVAL_TIMEOUT_SECONDS = 2.0
@@ -307,14 +305,13 @@ class OpenRouterFreeModelsService:
     ) -> OpenRouterFreeModelsSnapshot:
         models = [_score_metadata(entry, self._time_func()) for entry in eligible_entries]
         models.sort(key=_rank_sort_key)
-        probe_candidates = models[:HEALTH_PROBE_LIMIT]
-        for model in probe_candidates:
+        for model in models:
             await self._apply_health_probe(model)
 
-        evaluated_count = await self._apply_lite_evals(models[:LITE_EVAL_CANDIDATE_LIMIT])
+        evaluated_count = await self._apply_lite_evals(models)
         for model in models:
             if not model.eval_summary:
-                model.eval_summary = _not_evaluated_summary("not_in_candidate_pool")
+                model.eval_summary = _not_evaluated_summary("health_probe_failed")
             model.reason = _build_reason(model)
             model.recalculate_score()
 
@@ -332,6 +329,7 @@ class OpenRouterFreeModelsService:
             models=models,
             notes=[
                 "Eligible pool: free text OpenRouter models with at least 8k context and no expired catalog entry.",
+                "Full evaluation probes every eligible model and runs lite eval for every model that passes health.",
                 "Final score = metadataScore + healthScore + latencyScore + liteEvalScore - instabilityPenalty.",
                 "When the eligible model list is unchanged, scheduled refreshes update only health and latency scores.",
             ],
@@ -345,7 +343,7 @@ class OpenRouterFreeModelsService:
         eligible_count: int,
     ) -> OpenRouterFreeModelsSnapshot:
         models = copy.deepcopy(previous_snapshot.models)
-        for model in models[:HEALTH_PROBE_LIMIT]:
+        for model in models:
             await self._apply_health_probe(model)
         for model in models:
             model.reason = _build_reason(model)
@@ -413,17 +411,6 @@ class OpenRouterFreeModelsService:
     async def _apply_lite_evals(self, models: list[ScoredOpenRouterModel]) -> int:
         evaluated_count = 0
         for model in models:
-            current_leader_score = max((candidate.score for candidate in models), default=0)
-            unevaluated_max_possible = max(
-                (
-                    candidate.base_score + MAX_LITE_EVAL_POINTS
-                    for candidate in models
-                    if not candidate.eval_summary
-                ),
-                default=0,
-            )
-            if evaluated_count > 0 and unevaluated_max_possible <= current_leader_score:
-                break
             if model.health_score <= 0:
                 model.eval_summary = _not_evaluated_summary("health_probe_failed")
                 continue
@@ -431,9 +418,6 @@ class OpenRouterFreeModelsService:
             model.lite_eval_score = int(model.eval_summary.get("points", 0))
             model.recalculate_score()
             evaluated_count += 1
-        for model in models:
-            if not model.eval_summary:
-                model.eval_summary = _not_evaluated_summary("not_reached")
         return evaluated_count
 
     async def _run_lite_eval_suite(self, model: ScoredOpenRouterModel) -> dict[str, Any]:

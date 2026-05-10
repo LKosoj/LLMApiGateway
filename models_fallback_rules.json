@@ -206,13 +206,6 @@
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
-      },
-      {
-        "provider": "aitunnel",
-        "model": "deepseek-v4-pro",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {
@@ -397,8 +390,8 @@
       }
     ],
     "context_overflow_fallback": {
-      "provider": "nvidia2",
-      "model": "deepseek-ai/deepseek-v4-flash",
+      "provider": "aitunnel",
+      "model": "gpt-4.1-nano",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}

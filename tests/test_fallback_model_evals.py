@@ -28,8 +28,16 @@ class FakeResponse:
 
 
 class FakeFallbackEvalClient:
-    def __init__(self):
+    def __init__(self, catalog=None):
+        self.catalog = catalog or []
+        self.gets = []
+        self.get_headers = []
         self.posts = []
+
+    async def get(self, url, headers=None, timeout=None):
+        self.gets.append({"url": url, "headers": headers or {}, "timeout": timeout})
+        self.get_headers.append(headers or {})
+        return FakeResponse({"data": self.catalog})
 
     async def post(self, url, headers=None, json=None, timeout=None):
         self.posts.append(
@@ -40,7 +48,7 @@ class FakeFallbackEvalClient:
                 "timeout": timeout,
             }
         )
-        prompt = json["messages"][0]["content"]
+        prompt = _first_message_text(json)
         if "Reply with exactly OK" in prompt:
             content = "OK"
         elif "Return exactly 4 lines" in prompt:
@@ -68,7 +76,38 @@ class FakeFallbackEvalClient:
             content = "Ursula K. Le Guin"
         else:
             content = ""
+        if url.endswith("/v1/messages"):
+            return FakeResponse({"content": [{"type": "text", "text": content}], "model": json.get("model")})
         return FakeResponse({"choices": [{"message": {"content": content}}]})
+
+
+def _first_message_text(payload):
+    messages = payload.get("messages") or []
+    if not messages:
+        return ""
+    content = messages[0].get("content") if isinstance(messages[0], dict) else ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict)
+        )
+    return ""
+
+
+def _openrouter_entry(model_id):
+    return {
+        "id": model_id,
+        "name": model_id,
+        "created": 1_769_000_000,
+        "context_length": 131072,
+        "top_provider": {"max_completion_tokens": 32768},
+        "pricing": {"prompt": "0", "completion": "0"},
+        "supported_parameters": ["tools", "structured_outputs", "response_format", "seed", "stop"],
+        "architecture": {"output_modalities": ["text"]},
+    }
 
 
 def _fallback_rules():
@@ -124,7 +163,7 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         providers_config = {
             "provider-a": ProviderDetails(baseUrl="https://provider.example/v1", apikey="fallback-rr-a, fallback-rr-b"),
             "anthropic-provider": ProviderDetails(
-                baseUrl="https://anthropic.example/v1",
+                baseUrl="https://anthropic.example",
                 apikey="anthropic-key",
                 type="anthropic",
             ),
@@ -144,7 +183,7 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         snapshot = status["snapshot"]
         self.assertFalse(status["running"])
         self.assertEqual(snapshot["configuredCount"], 4)
-        self.assertEqual(snapshot["evaluatedCount"], 2)
+        self.assertEqual(snapshot["evaluatedCount"], 3)
         models = {model["id"]: model for model in snapshot["models"]}
         self.assertEqual(models["provider-a:model-one"]["healthStatus"], "passed")
         self.assertEqual(models["provider-a:model-one"]["liteEvalScore"], 750)
@@ -153,11 +192,18 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         self.assertEqual(models["provider-a:model-one"]["gatewayModels"], ["gateway/a", "gateway/b"])
         self.assertNotIn("metadata score", models["provider-a:model-one"]["reason"].lower())
         self.assertEqual(models["missing-provider:model-missing"]["healthStatus"], "missing_provider")
-        self.assertEqual(models["anthropic-provider:claude-native"]["healthStatus"], "unsupported_provider_type")
+        self.assertEqual(models["anthropic-provider:claude-native"]["healthStatus"], "passed")
+        self.assertEqual(models["anthropic-provider:claude-native"]["liteEvalScore"], 750)
 
         authorizations = [post["headers"].get("Authorization") for post in fake_client.posts]
         self.assertIn("Bearer fallback-rr-a", authorizations)
         self.assertIn("Bearer fallback-rr-b", authorizations)
+        anthropic_posts = [post for post in fake_client.posts if post["url"] == "https://anthropic.example/v1/messages"]
+        self.assertTrue(anthropic_posts)
+        self.assertTrue(all(post["headers"].get("x-api-key") == "anthropic-key" for post in anthropic_posts))
+        self.assertTrue(all(post["headers"].get("anthropic-version") == "2023-06-01" for post in anthropic_posts))
+        self.assertTrue(all(post["json"].get("model") == "claude-native" for post in anthropic_posts))
+        self.assertTrue(all("max_tokens" in post["json"] for post in anthropic_posts))
 
         model_one_posts = [post for post in fake_client.posts if post["json"].get("model") == "model-one"]
         self.assertTrue(model_one_posts)
@@ -167,6 +213,85 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         self.assertTrue(all(post["json"].get("top_p") == 0.9 for post in model_one_posts))
         self.assertTrue(all(post["json"].get("provider") == {"order": ["SubProviderA"]} for post in model_one_posts))
         self.assertTrue(all(post["json"].get("allow_fallbacks") is False for post in model_one_posts))
+
+    def test_run_once_enriches_metadata_from_openrouter_basename_when_key_configured(self):
+        providers_config = {
+            "provider-a": ProviderDetails(baseUrl="https://provider.example/v1", apikey="provider-key"),
+            "openrouter": ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="openrouter-metadata-key"),
+        }
+        fallback_rules = {
+            "gateway/a": {
+                "fallback_models": [
+                    {"provider": "provider-a", "model": "model-one"},
+                ],
+            },
+        }
+        fake_client = FakeFallbackEvalClient(catalog=[_openrouter_entry("openai/model-one:free")])
+        service = FallbackModelEvalService(time_func=lambda: 1_770_000_000)
+
+        run_async(
+            service.run_once(
+                providers_config=providers_config,
+                fallback_rules=fallback_rules,
+                http_client=fake_client,
+            )
+        )
+
+        status = run_async(service.get_status())
+        model = status["snapshot"]["models"][0]
+        self.assertGreater(model["metadataScore"], 0)
+        self.assertEqual(model["contextLength"], 131072)
+        self.assertEqual(model["maxCompletionTokens"], 32768)
+        self.assertTrue(model["supportsTools"])
+        self.assertTrue(model["supportsStructuredOutputs"])
+        self.assertEqual(model["metadataSource"], "openrouter")
+        self.assertEqual(model["metadataMatchedModel"], "openai/model-one:free")
+        self.assertIn("OpenRouter metadata: openai/model-one:free", model["reason"])
+        self.assertEqual(fake_client.gets[0]["url"], "https://openrouter.ai/api/v1/models")
+        self.assertEqual(fake_client.get_headers[0]["Authorization"], "Bearer openrouter-metadata-key")
+
+    def test_run_once_uses_median_known_metadata_score_for_unmatched_models(self):
+        providers_config = {
+            "provider-a": ProviderDetails(baseUrl="https://provider.example/v1", apikey="provider-key"),
+            "openrouter": ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="openrouter-metadata-key"),
+        }
+        fallback_rules = {
+            "gateway/a": {
+                "fallback_models": [
+                    {"provider": "provider-a", "model": "known-one"},
+                    {"provider": "provider-a", "model": "known-two"},
+                    {"provider": "provider-a", "model": "unmatched-model"},
+                ],
+            },
+        }
+        weak_entry = _openrouter_entry("provider/known-two:free")
+        weak_entry["context_length"] = 4096
+        weak_entry["top_provider"] = {"max_completion_tokens": 1024}
+        weak_entry["supported_parameters"] = ["stop"]
+        fake_client = FakeFallbackEvalClient(
+            catalog=[
+                _openrouter_entry("provider/known-one:free"),
+                weak_entry,
+            ]
+        )
+        service = FallbackModelEvalService(time_func=lambda: 1_770_000_000)
+
+        run_async(
+            service.run_once(
+                providers_config=providers_config,
+                fallback_rules=fallback_rules,
+                http_client=fake_client,
+            )
+        )
+
+        status = run_async(service.get_status())
+        models = {model["model"]: model for model in status["snapshot"]["models"]}
+        known_scores = sorted([models["known-one"]["metadataScore"], models["known-two"]["metadataScore"]])
+        self.assertEqual(models["unmatched-model"]["metadataScore"], sum(known_scores) // 2)
+        self.assertEqual(models["unmatched-model"]["metadataSource"], "openrouter_median")
+        self.assertIsNone(models["unmatched-model"]["metadataMatchedModel"])
+        self.assertEqual(models["unmatched-model"]["contextLength"], 0)
+        self.assertIn("median metadata score", models["unmatched-model"]["reason"])
 
 
 class FallbackModelEvalApiTests(unittest.TestCase):
