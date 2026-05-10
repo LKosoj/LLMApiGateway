@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const tabImages = document.getElementById('tabImages');
     const tabAudio = document.getElementById('tabAudio');
     const tabWeb = document.getElementById('tabWeb');
+    const tabOpenRouterFree = document.getElementById('tabOpenRouterFree');
     const tabProviders = document.getElementById('tabProviders');
     const editorContainerRules = document.getElementById('editor-container-rules');
     const editorContainerEmbeddings = document.getElementById('editor-container-embeddings');
@@ -22,6 +23,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const editorContainerImages = document.getElementById('editor-container-images');
     const editorContainerAudio = document.getElementById('editor-container-audio');
     const editorContainerWeb = document.getElementById('editor-container-web');
+    const editorContainerOpenRouterFree = document.getElementById('editor-container-openrouter-free');
     const editorContainerProviders = document.getElementById('editor-container-providers');
     const addProviderButton = document.getElementById('addProviderButton');
     const providersList = document.getElementById('providersList');
@@ -56,6 +58,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const addWebDeepResearchButton = document.getElementById('addWebDeepResearchButton');
     const webDeepResearchList = document.getElementById('webDeepResearchList');
     const webDeepResearchEmptyState = document.getElementById('webDeepResearchEmptyState');
+    const openRouterFreeStatus = document.getElementById('openRouterFreeStatus');
+    const openRouterFreeModels = document.getElementById('openRouterFreeModels');
+    const openRouterFreeEmptyState = document.getElementById('openRouterFreeEmptyState');
 
     const MODELS_CACHE_TTL_MS = 15 * 60 * 1000;
     const IMAGE_REQUEST_FORMAT_OPTIONS = ['openai_images', 'openai_images_multipart', 'nvidia_genai_json'];
@@ -106,6 +111,30 @@ document.addEventListener('DOMContentLoaded', function () {
         pre.textContent = detail;
         messageArea.appendChild(strong);
         messageArea.appendChild(pre);
+    }
+
+    function clearElement(element) {
+        while (element.firstChild) {
+            element.removeChild(element.firstChild);
+        }
+    }
+
+    function formatDateTime(value) {
+        if (!value) {
+            return 'Not available';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return 'Not available';
+        }
+        return date.toLocaleString();
+    }
+
+    function formatNumber(value) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+            return 'n/a';
+        }
+        return value.toLocaleString();
     }
 
     function clearUnavailableFallbackModelMetadata(fallbackRow) {
@@ -271,6 +300,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     function updateControlsVisibility() {
+        saveButton.hidden = activeEditor === 'openrouter-free';
         if (activeEditor === 'rules') {
             saveButton.textContent = 'Save Fallback Rules';
         } else if (activeEditor === 'embeddings') {
@@ -283,6 +313,8 @@ document.addEventListener('DOMContentLoaded', function () {
             saveButton.textContent = 'Save Audio Routes';
         } else if (activeEditor === 'web') {
             saveButton.textContent = 'Save Web Services';
+        } else if (activeEditor === 'openrouter-free') {
+            saveButton.textContent = '';
         } else {
             saveButton.textContent = 'Save Configuration';
         }
@@ -3420,6 +3452,133 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    function appendOpenRouterMeta(parent, label, value) {
+        const item = document.createElement('div');
+        item.className = 'openrouter-free-meta-item';
+        const labelElement = document.createElement('strong');
+        labelElement.textContent = label;
+        const valueElement = document.createElement('span');
+        valueElement.textContent = value;
+        item.appendChild(labelElement);
+        item.appendChild(valueElement);
+        parent.appendChild(item);
+    }
+
+    function renderOpenRouterFreeModels(payload) {
+        clearElement(openRouterFreeStatus);
+        clearElement(openRouterFreeModels);
+
+        const snapshot = payload.snapshot;
+        if (!snapshot) {
+            openRouterFreeEmptyState.hidden = false;
+            appendOpenRouterMeta(openRouterFreeStatus, 'Status', payload.lastError || 'Waiting for first scoring refresh');
+            appendOpenRouterMeta(openRouterFreeStatus, 'Next refresh', formatDateTime(payload.nextRefreshAt));
+            return;
+        }
+
+        openRouterFreeEmptyState.hidden = Array.isArray(snapshot.models) && snapshot.models.length > 0;
+
+        appendOpenRouterMeta(openRouterFreeStatus, 'Refresh mode', snapshot.refreshMode || 'n/a');
+        appendOpenRouterMeta(openRouterFreeStatus, 'Last updated', formatDateTime(snapshot.updatedAt));
+        appendOpenRouterMeta(openRouterFreeStatus, 'Next refresh', formatDateTime(payload.nextRefreshAt));
+        appendOpenRouterMeta(openRouterFreeStatus, 'Catalog models', formatNumber(snapshot.catalogCount));
+        appendOpenRouterMeta(openRouterFreeStatus, 'Eligible models', formatNumber(snapshot.eligibleCount));
+        appendOpenRouterMeta(openRouterFreeStatus, 'Lite evals', formatNumber(snapshot.evaluatedCount));
+        if (payload.lastError) {
+            appendOpenRouterMeta(openRouterFreeStatus, 'Last error', payload.lastError);
+        }
+
+        (snapshot.models || []).forEach(model => {
+            const card = document.createElement('article');
+            card.className = 'openrouter-free-card';
+
+            const header = document.createElement('div');
+            header.className = 'openrouter-free-card-header';
+
+            const title = document.createElement('div');
+            const rank = document.createElement('div');
+            rank.className = 'openrouter-free-rank';
+            rank.textContent = `#${model.rank || '?'}`;
+            const name = document.createElement('strong');
+            name.textContent = model.name || model.id || 'Unknown model';
+            const id = document.createElement('code');
+            id.textContent = model.id || '';
+            title.appendChild(rank);
+            title.appendChild(name);
+            title.appendChild(id);
+
+            const score = document.createElement('div');
+            score.className = 'openrouter-free-score';
+            score.textContent = formatNumber(model.score);
+
+            header.appendChild(title);
+            header.appendChild(score);
+            card.appendChild(header);
+
+            const reason = document.createElement('p');
+            reason.className = 'openrouter-free-reason';
+            reason.textContent = model.reason || 'Free text model';
+            card.appendChild(reason);
+
+            const metrics = document.createElement('div');
+            metrics.className = 'openrouter-free-metrics';
+            [
+                ['metadata', model.metadataScore],
+                ['health', model.healthScore],
+                ['latency', model.latencyScore],
+                ['eval', model.liteEvalScore],
+                ['penalty', model.instabilityPenalty],
+                ['latency ms', model.latencyMs],
+                ['context', model.contextLength],
+                ['health status', model.healthStatus],
+            ].forEach(([label, value]) => {
+                const metric = document.createElement('span');
+                metric.textContent = `${label}: ${typeof value === 'number' ? formatNumber(value) : (value || 'n/a')}`;
+                metrics.appendChild(metric);
+            });
+            card.appendChild(metrics);
+
+            openRouterFreeModels.appendChild(card);
+        });
+    }
+
+    async function loadOpenRouterFreeModels() {
+        renderMessage('info', 'Loading OpenRouter free model ranking...');
+        clearElement(openRouterFreeStatus);
+        clearElement(openRouterFreeModels);
+        openRouterFreeEmptyState.hidden = true;
+        try {
+            const response = await apiFetch('/v1/openrouter/free-models');
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.detail || `HTTP ${response.status}`);
+            }
+            if (!payload.configured) {
+                tabOpenRouterFree.hidden = true;
+                if (activeEditor === 'openrouter-free') {
+                    switchTab('rules');
+                }
+                return;
+            }
+            renderOpenRouterFreeModels(payload);
+            renderMessage('success', 'OpenRouter free model ranking loaded.');
+        } catch (error) {
+            console.error('Error loading OpenRouter free model ranking:', error);
+            renderErrorWithDetails('Error loading OpenRouter free model ranking:', error.message);
+            openRouterFreeEmptyState.hidden = false;
+        }
+    }
+
+    async function initializeOpenRouterFreeTabAvailability() {
+        try {
+            const response = await apiFetch('/v1/openrouter/free-models');
+            const payload = await response.json().catch(() => ({}));
+            tabOpenRouterFree.hidden = !response.ok || !payload.configured;
+        } catch (error) {
+            tabOpenRouterFree.hidden = true;
+        }
+    }
+
     async function saveRules() {
         let payload;
         try {
@@ -3611,6 +3770,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
         activeEditor = tabName;
         updateControlsVisibility();
+        tabOpenRouterFree.classList.remove('active');
+        editorContainerOpenRouterFree.classList.remove('active');
+        editorContainerOpenRouterFree.style.display = 'none';
 
         if (tabName === 'rules') {
             tabRules.classList.add('active');
@@ -3750,6 +3912,32 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerProviders.classList.remove('active');
             editorContainerProviders.style.display = 'none';
             loadWebEditor();
+        } else if (tabName === 'openrouter-free') {
+            tabRules.classList.remove('active');
+            tabEmbeddings.classList.remove('active');
+            tabRerank.classList.remove('active');
+            tabImages.classList.remove('active');
+            tabAudio.classList.remove('active');
+            tabWeb.classList.remove('active');
+            tabOpenRouterFree.classList.add('active');
+            tabProviders.classList.remove('active');
+            editorContainerRules.classList.remove('active');
+            editorContainerRules.style.display = 'none';
+            editorContainerEmbeddings.classList.remove('active');
+            editorContainerEmbeddings.style.display = 'none';
+            editorContainerRerank.classList.remove('active');
+            editorContainerRerank.style.display = 'none';
+            editorContainerImages.classList.remove('active');
+            editorContainerImages.style.display = 'none';
+            editorContainerAudio.classList.remove('active');
+            editorContainerAudio.style.display = 'none';
+            editorContainerWeb.classList.remove('active');
+            editorContainerWeb.style.display = 'none';
+            editorContainerOpenRouterFree.classList.add('active');
+            editorContainerOpenRouterFree.style.display = 'flex';
+            editorContainerProviders.classList.remove('active');
+            editorContainerProviders.style.display = 'none';
+            loadOpenRouterFreeModels();
         } else if (tabName === 'providers') {
             tabRules.classList.remove('active');
             tabEmbeddings.classList.remove('active');
@@ -3782,6 +3970,7 @@ document.addEventListener('DOMContentLoaded', function () {
     tabImages.addEventListener('click', () => switchTab('images'));
     tabAudio.addEventListener('click', () => switchTab('audio'));
     tabWeb.addEventListener('click', () => switchTab('web'));
+    tabOpenRouterFree.addEventListener('click', () => switchTab('openrouter-free'));
     tabProviders.addEventListener('click', () => switchTab('providers'));
     addProviderButton.addEventListener('click', () => {
         const providerCard = buildProviderCard({});
@@ -3906,5 +4095,6 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     updateControlsVisibility();
+    void initializeOpenRouterFreeTabAvailability();
     void loadRulesEditor();
 });

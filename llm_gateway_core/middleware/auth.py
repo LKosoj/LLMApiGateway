@@ -75,6 +75,7 @@ MASTER_ONLY_PREFIXES = (
     "/v1/ui/playground",
     "/v1/ui/web-playground",
     "/v1/config/",
+    "/v1/openrouter/free-models",
     "/v1/admin/",
 )
 

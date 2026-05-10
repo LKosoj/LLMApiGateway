@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 # Import settings using relative path within the package
 from .settings import settings
+from ..utils.api_keys import select_next_api_key
 
 
 class ConfigError(RuntimeError):
@@ -75,6 +76,10 @@ KNOWN_PROVIDER_ENV_NAMES = frozenset(
 
 
 def resolve_provider_api_key(api_key_reference_or_literal: str | None) -> str | None:
+    return select_next_api_key(resolve_provider_api_key_value(api_key_reference_or_literal))
+
+
+def resolve_provider_api_key_value(api_key_reference_or_literal: str | None) -> str | None:
     if not api_key_reference_or_literal:
         return None
 

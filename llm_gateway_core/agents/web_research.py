@@ -14,7 +14,7 @@ from typing import Any, cast
 from fastapi import HTTPException
 import httpx
 
-from ..utils.api_keys import has_api_key, select_random_api_key
+from ..utils.api_keys import has_api_key, select_next_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -135,13 +135,13 @@ class WebResearchClient:
         self._proxy_url = proxy_url
 
     def _get_jina_api_key(self) -> str | None:
-        return select_random_api_key(self._jina_api_key)
+        return select_next_api_key(self._jina_api_key)
 
     def _get_tavily_api_key(self) -> str | None:
-        return select_random_api_key(self._tavily_api_key)
+        return select_next_api_key(self._tavily_api_key)
 
     def _get_zai_api_key(self) -> str | None:
-        return select_random_api_key(self._zai_api_key)
+        return select_next_api_key(self._zai_api_key)
 
     def _get_proxy_url(self) -> str | None:
         return self._proxy_url

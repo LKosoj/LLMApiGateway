@@ -1515,7 +1515,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(calls[0]["json"]["search_engine"], "search_pro_quark")
         self.assertEqual(results[0]["url"], "https://example.com/zai")
 
-    def test_builtin_web_adapters_choose_random_key_from_comma_separated_settings(self):
+    def test_builtin_web_adapters_use_round_robin_key_from_comma_separated_settings(self):
         calls = []
 
         class FakeResponse:
@@ -1560,7 +1560,6 @@ class WebApiTests(unittest.TestCase):
             patch.object(web_api.settings, "jina_api_key", "jina-one, jina-two"),
             patch.object(web_api.settings, "zai_api_key", "zai-one, zai-two"),
             patch.object(web_api.httpx, "AsyncClient", return_value=FakeAsyncClient()),
-            patch("llm_gateway_core.utils.api_keys.random.choice", side_effect=lambda keys: keys[-1]),
         ):
             run_async(web_api._search_tavily("topic", 1))
             run_async(web_api._read_tavily("https://example.com/article"))
@@ -1570,11 +1569,11 @@ class WebApiTests(unittest.TestCase):
             run_async(web_api._read_zai("https://example.com/article"))
 
         tavily_payloads = [call["json"] for call in calls if "tavily.com" in call["url"]]
-        self.assertEqual([payload["api_key"] for payload in tavily_payloads], ["tavily-two", "tavily-two"])
+        self.assertEqual([payload["api_key"] for payload in tavily_payloads], ["tavily-one", "tavily-two"])
         jina_headers = [call["headers"]["Authorization"] for call in calls if "jina.ai" in call["url"]]
-        self.assertEqual(jina_headers, ["Bearer jina-two", "Bearer jina-two"])
+        self.assertEqual(jina_headers, ["Bearer jina-one", "Bearer jina-two"])
         zai_headers = [call["headers"]["Authorization"] for call in calls if "z.ai" in call["url"]]
-        self.assertEqual(zai_headers, ["Bearer zai-two", "Bearer zai-two"])
+        self.assertEqual(zai_headers, ["Bearer zai-one", "Bearer zai-two"])
 
     def test_web_adapter_enabled_ignores_empty_comma_separated_keys(self):
         with (
@@ -1612,14 +1611,11 @@ class WebApiTests(unittest.TestCase):
             zai_api_key="first-zai-key, second-zai-key",
         )
 
-        with (
-            patch.object(web_research_agent.httpx, "AsyncClient", return_value=FakeAsyncClient()),
-            patch("llm_gateway_core.utils.api_keys.random.choice", side_effect=lambda keys: keys[-1]),
-        ):
+        with patch.object(web_research_agent.httpx, "AsyncClient", return_value=FakeAsyncClient()):
             links = run_async(client._zai_search("topic", 1))
 
         self.assertEqual(calls[0]["json"]["search_engine"], "search_pro_quark")
-        self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer second-zai-key")
+        self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer first-zai-key")
         self.assertEqual(links, ["https://example.com/research"])
 
     def test_web_read_prefers_direct_fetch_before_adapters(self):

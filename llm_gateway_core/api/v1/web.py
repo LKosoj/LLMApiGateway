@@ -25,7 +25,7 @@ from ...config.settings import settings
 from ...services.access_control import enforce_virtual_key_access
 from ...services.active_requests import update_active_request_from_state
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
-from ...utils.api_keys import has_api_key, select_random_api_key
+from ...utils.api_keys import has_api_key, select_next_api_key
 from ...utils.usage_tracking import extract_tokens_usage, initialize_tokens_usage
 from .chat import _attempt_model_fallback_rule, _gateway_internal_api_key_for_request
 from .embeddings import apply_top_n, map_rerank_payload, normalize_rerank_response
@@ -860,7 +860,7 @@ async def _search_proxy(query: str, max_results: int) -> list[dict[str, str]]:
 
 
 async def _search_tavily(query: str, max_results: int) -> list[dict[str, str]]:
-    tavily_api_key = select_random_api_key(settings.tavily_api_key)
+    tavily_api_key = select_next_api_key(settings.tavily_api_key)
     if not tavily_api_key:
         return []
     async with httpx.AsyncClient() as client:
@@ -884,7 +884,7 @@ async def _search_tavily(query: str, max_results: int) -> list[dict[str, str]]:
 
 
 async def _search_jina(query: str, max_results: int) -> list[dict[str, str]]:
-    jina_api_key = select_random_api_key(settings.jina_api_key)
+    jina_api_key = select_next_api_key(settings.jina_api_key)
     if not jina_api_key:
         return []
     url = f"https://s.jina.ai/?q={urllib.parse.quote(query)}"
@@ -912,7 +912,7 @@ async def _search_jina(query: str, max_results: int) -> list[dict[str, str]]:
 
 
 async def _search_zai(query: str, max_results: int) -> list[dict[str, str]]:
-    zai_api_key = select_random_api_key(settings.zai_api_key)
+    zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return []
     async with httpx.AsyncClient() as client:
@@ -982,7 +982,7 @@ async def _read_proxy(url: str) -> dict[str, str] | None:
 
 
 async def _read_tavily(url: str) -> dict[str, str] | None:
-    tavily_api_key = select_random_api_key(settings.tavily_api_key)
+    tavily_api_key = select_next_api_key(settings.tavily_api_key)
     if not tavily_api_key:
         return None
     async with httpx.AsyncClient() as client:
@@ -1004,7 +1004,7 @@ async def _read_tavily(url: str) -> dict[str, str] | None:
 
 
 async def _read_jina(url: str) -> dict[str, str] | None:
-    jina_api_key = select_random_api_key(settings.jina_api_key)
+    jina_api_key = select_next_api_key(settings.jina_api_key)
     if not jina_api_key:
         return None
     async with httpx.AsyncClient() as client:
@@ -1026,7 +1026,7 @@ async def _read_jina(url: str) -> dict[str, str] | None:
 
 
 async def _read_zai(url: str) -> dict[str, str] | None:
-    zai_api_key = select_random_api_key(settings.zai_api_key)
+    zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return None
     async with httpx.AsyncClient() as client:

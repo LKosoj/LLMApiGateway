@@ -32,6 +32,7 @@ from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
 from llm_gateway_core.api.v1 import chat as _chat_router_module
 from llm_gateway_core.services.provider_models import ProviderModelsService
+from llm_gateway_core.services.openrouter_free_models import OpenRouterFreeModelsService
 from llm_gateway_core.services.model_availability import run_startup_model_verification
 from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
@@ -280,6 +281,14 @@ async def lifespan(app: FastAPI):
     app.state.provider_models_service = provider_models_service
     logger.info("ProviderModelsService initialized and attached to app.state.")
 
+    openrouter_scoring_http_client = proxy_http_clients.get("openrouter", http_client)
+    openrouter_free_models_service = OpenRouterFreeModelsService()
+    app.state.openrouter_free_models_service = openrouter_free_models_service
+    await openrouter_free_models_service.start(
+        providers_config=config_loader.providers_config,
+        http_client=openrouter_scoring_http_client,
+    )
+
     await run_startup_model_verification(
         mode=settings.verify_models_on_startup,
         providers_config=config_loader.providers_config,
@@ -309,6 +318,9 @@ async def lifespan(app: FastAPI):
             deep_research_images_cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await deep_research_images_cleanup_task
+        openrouter_free_models_service = getattr(app.state, "openrouter_free_models_service", None)
+        if openrouter_free_models_service is not None:
+            await openrouter_free_models_service.stop()
         await write_batcher.stop()
         logger.info("WriteBatcher stopped — all pending writes flushed.")
         for name, proxy_client in proxy_http_clients.items():

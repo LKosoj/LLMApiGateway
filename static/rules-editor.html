@@ -44,6 +44,7 @@
             <button id="tabImages" class="tab-button" data-tab="images">Images</button>
             <button id="tabAudio" class="tab-button" data-tab="audio">Audio</button>
             <button id="tabWeb" class="tab-button" data-tab="web">Web</button>
+            <button id="tabOpenRouterFree" class="tab-button" data-tab="openrouter-free" hidden>OpenRouter Free</button>
             <button id="tabProviders" class="tab-button" data-tab="providers">Providers</button>
         </div>
 
@@ -209,6 +210,22 @@
                     <div id="webDeepResearchList" class="rules-list"></div>
                     <div id="webDeepResearchEmptyState" class="rules-empty-state" hidden>
                         No web deep research services yet. Add the first deep research service to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-openrouter-free" class="editor-tab-content" style="display: none;">
+                <div class="rules-builder openrouter-free-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>OpenRouter Free Model Ranking</strong>
+                            <span>Read-only ranking of free text OpenRouter models scored by metadata, health, latency, and lite eval checks.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The tab is shown only when the official OpenRouter provider and API key are configured.</span>
+                        </div>
+                    </div>
+                    <div id="openRouterFreeStatus" class="openrouter-free-status"></div>
+                    <div id="openRouterFreeModels" class="openrouter-free-models"></div>
+                    <div id="openRouterFreeEmptyState" class="rules-empty-state" hidden>
+                        OpenRouter scoring has not produced a snapshot yet.
                     </div>
                 </div>
             </div>

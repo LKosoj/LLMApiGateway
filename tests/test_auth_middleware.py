@@ -5,7 +5,12 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.auth_ui import auth_router
-from llm_gateway_core.middleware.auth import SESSION_COOKIE_NAME, api_key_auth
+from llm_gateway_core.middleware.auth import (
+    ROLE_USER,
+    SESSION_COOKIE_NAME,
+    api_key_auth,
+    create_authenticated_session,
+)
 from llm_gateway_core.services.active_requests import get_active_requests_registry
 
 
@@ -46,6 +51,10 @@ def build_test_app() -> FastAPI:
     @app.get("/v1/config/providers")
     async def config():
         return {"status": "protected-config"}
+
+    @app.get("/v1/openrouter/free-models")
+    async def openrouter_free_models():
+        return {"status": "protected-openrouter-free-models"}
 
     @app.get("/v1/api/usage-records")
     async def stats():
@@ -154,6 +163,7 @@ class AuthMiddlewareTests(unittest.TestCase):
         self.assertEqual(self.client.post("/v1/chat/completions", json={"model": "demo"}, headers=headers).status_code, 200)
         self.assertEqual(self.client.get("/v1/models", headers=headers).status_code, 200)
         self.assertEqual(self.client.get("/v1/ui/rules-editor", headers=headers).status_code, 200)
+        self.assertEqual(self.client.get("/v1/openrouter/free-models", headers=headers).status_code, 200)
 
         root_response = self.client.get("/", headers=headers, follow_redirects=False)
         self.assertEqual(root_response.status_code, 303)
@@ -201,6 +211,20 @@ class AuthMiddlewareTests(unittest.TestCase):
                     self.client.get("/v1/models", headers=headers).status_code,
                     200,
                 )
+
+    def test_openrouter_free_models_status_is_master_only(self):
+        self.client.cookies.set(
+            SESSION_COOKIE_NAME,
+            create_authenticated_session(role=ROLE_USER, key_id=7),
+        )
+
+        response = self.client.get("/v1/openrouter/free-models")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )
 
 
 if __name__ == "__main__":

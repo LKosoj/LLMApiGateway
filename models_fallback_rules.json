@@ -64,6 +64,13 @@
         "custom_headers": {}
       },
       {
+        "provider": "openrouter",
+        "model": "openrouter/owl-alpha",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "cloudru",
         "model": "zai-org/GLM-4.7-Flash",
         "use_provider_order_as_fallback": false,

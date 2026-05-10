@@ -206,6 +206,10 @@ body.dark-mode .tab-button:hover {
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
+.tab-button[hidden] {
+    display: none;
+}
+
 body.dark-mode .tab-button.active {
     color: #818cf8;
     background-color: var(--container-dark);
@@ -290,6 +294,101 @@ body.dark-mode .editor-tab-content {
     text-align: center;
     color: #61788c;
     background: #f9fcff;
+}
+
+.openrouter-free-status {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.openrouter-free-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px;
+    border: 1px solid #dce5ec;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.openrouter-free-meta-item strong {
+    color: #1f3d5b;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+}
+
+.openrouter-free-meta-item span {
+    color: #334155;
+    font-size: 0.95rem;
+    overflow-wrap: anywhere;
+}
+
+.openrouter-free-models {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.openrouter-free-card {
+    border: 1px solid #dce5ec;
+    border-radius: 10px;
+    padding: 14px;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.openrouter-free-card-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.openrouter-free-card-header > div:first-child {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.openrouter-free-rank {
+    color: #64748b;
+    font-weight: 700;
+    font-size: 0.82rem;
+}
+
+.openrouter-free-score {
+    flex: 0 0 auto;
+    min-width: 78px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: #eef2ff;
+    color: var(--accent);
+    text-align: center;
+    font-weight: 700;
+}
+
+.openrouter-free-reason {
+    text-align: left;
+    margin: 0;
+    color: #475569;
+}
+
+.openrouter-free-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.openrouter-free-metrics span {
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 0.82rem;
 }
 
 .rule-card {
@@ -838,6 +937,8 @@ body.dark-mode .rules-builder {
 body.dark-mode .rules-toolbar,
 body.dark-mode .rules-empty-state,
 body.dark-mode .rule-card,
+body.dark-mode .openrouter-free-meta-item,
+body.dark-mode .openrouter-free-card,
 body.dark-mode .context-overflow-section,
 body.dark-mode .fallback-row {
     background: #16202a;
@@ -851,6 +952,7 @@ body.dark-mode .fallback-row.dragging {
 }
 
 body.dark-mode .rules-toolbar-copy strong,
+body.dark-mode .openrouter-free-meta-item strong,
 body.dark-mode .context-overflow-copy strong,
 body.dark-mode .field-label,
 body.dark-mode .toggle-field,
@@ -859,9 +961,24 @@ body.dark-mode .advanced-options summary {
 }
 
 body.dark-mode .rules-toolbar-copy span,
+body.dark-mode .openrouter-free-meta-item span,
 body.dark-mode .context-overflow-copy span,
 body.dark-mode .model-status {
     color: #b7c5d3;
+}
+
+body.dark-mode .openrouter-free-reason {
+    color: #b7c5d3;
+}
+
+body.dark-mode .openrouter-free-score {
+    background: rgba(129, 140, 248, 0.18);
+    color: #e0e7ff;
+}
+
+body.dark-mode .openrouter-free-metrics span {
+    background: #1e293b;
+    color: #cbd5e1;
 }
 
 body.dark-mode .field-group input[type="text"],

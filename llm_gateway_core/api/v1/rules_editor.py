@@ -1032,3 +1032,20 @@ async def get_provider_models(request: Request, provider_name: str):
         "models": [{"id": model_id} for model_id in models],
         "cache_ttl_seconds": provider_models_service.ttl_seconds,
     }
+
+
+@editor_router.get("/openrouter/free-models", tags=["Config Editor API"])
+async def get_openrouter_free_models_status(request: Request):
+    service = getattr(request.app.state, "openrouter_free_models_service", None)
+    if service is None:
+        return {
+            "configured": False,
+            "running": False,
+            "provider": "openrouter",
+            "intervalSeconds": 8 * 60 * 60,
+            "lastCheckedAt": None,
+            "nextRefreshAt": None,
+            "lastError": None,
+            "snapshot": None,
+        }
+    return await service.get_status()

@@ -28,3 +28,15 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "buildProviderCard" in content
     assert "provider-name-input" in content
     assert "Provider models metadata must be valid JSON." in content
+    assert "/v1/openrouter/free-models" in content
+    assert "tabOpenRouterFree.hidden = !response.ok || !payload.configured" in content
+    assert "OpenRouter free model ranking" in content
+
+
+def test_rules_editor_html_contains_openrouter_free_tab():
+    content = Path("static/rules-editor.html").read_text(encoding="utf-8")
+
+    assert 'id="tabOpenRouterFree"' in content
+    assert 'data-tab="openrouter-free"' in content
+    assert 'id="openRouterFreeModels"' in content
+    assert "OpenRouter Free Model Ranking" in content

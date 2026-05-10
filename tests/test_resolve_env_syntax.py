@@ -16,6 +16,12 @@ class ResolveEnvSyntaxTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-env-value"}, clear=False):
             self.assertEqual(resolve_provider_api_key("${OPENAI_API_KEY}"), "sk-env-value")
 
+    def test_api_key_explicit_env_reference_uses_round_robin_for_comma_separated_values(self):
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "env-rr-a, ,env-rr-b"}, clear=False):
+            self.assertEqual(resolve_provider_api_key("${OPENROUTER_API_KEY}"), "env-rr-a")
+            self.assertEqual(resolve_provider_api_key("${OPENROUTER_API_KEY}"), "env-rr-b")
+            self.assertEqual(resolve_provider_api_key("${OPENROUTER_API_KEY}"), "env-rr-a")
+
     def test_api_key_explicit_env_reference_missing_raises_config_error(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_API_KEY", None)
