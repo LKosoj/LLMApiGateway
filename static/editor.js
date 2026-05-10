@@ -3651,10 +3651,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const reason = document.createElement('p');
             reason.className = 'openrouter-free-reason';
-            const gatewayModels = Array.isArray(model.gatewayModels) && model.gatewayModels.length > 0
-                ? ` Gateway models: ${model.gatewayModels.join(', ')}.`
-                : '';
-            reason.textContent = `${model.reason || 'Configured fallback model.'}${gatewayModels}`;
+            const reasonParts = [];
+            if (Array.isArray(model.gatewayModels) && model.gatewayModels.length > 0) {
+                reasonParts.push(`Gateway models: ${model.gatewayModels.join(', ')}.`);
+            }
+            if (model.reason) {
+                reasonParts.push(model.reason);
+            }
+            reason.textContent = reasonParts.join(' ') || 'Configured fallback target.';
             card.appendChild(reason);
 
             const metrics = document.createElement('div');

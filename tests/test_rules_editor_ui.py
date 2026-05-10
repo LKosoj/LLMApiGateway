@@ -37,6 +37,8 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "tabOpenRouterFree.hidden = !response.ok || !payload.configured" in content
     assert "OpenRouter free model ranking" in content
     assert "runFallbackModelEval" in content
+    assert "reasonParts.push(`Gateway models:" in content
+    assert "Configured fallback model; metadata score is 0" not in content
 
 
 def test_rules_editor_html_contains_openrouter_free_tab():

@@ -241,7 +241,6 @@ class FallbackModelEvalService:
                 provider=target.provider,
                 model=target.model,
                 gateway_models=target.gateway_models,
-                reason="Configured fallback model; metadata score is 0 because this eval does not normalize provider catalogs.",
             )
             for target in targets
         ]

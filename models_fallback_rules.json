@@ -4,27 +4,6 @@
     "fallback_models": [
       {
         "provider": "nvidia",
-        "model": "minimaxai/minimax-m2.7",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "qwen/qwen3.5-397b-a17b",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "deepseek-ai/deepseek-v4-pro",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
         "model": "z-ai/glm-5.1",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
@@ -86,34 +65,6 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
-      },
-      {
-        "provider": "nvidia2",
-        "model": "google/gemma-4-31b-it",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "qwen/qwen3-next-80b-a3b-instruct",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "nvidia/nemotron-3-super-120b-a12b",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "openai/gpt-oss-120b",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {
@@ -133,21 +84,14 @@
     "fallback_models": [
       {
         "provider": "nvidia",
-        "model": "qwen/qwen3.5-397b-a17b",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
         "model": "z-ai/glm-5.1",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
       },
       {
-        "provider": "nvidia",
-        "model": "deepseek-ai/deepseek-v4-pro",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -186,25 +130,9 @@
         }
       },
       {
-        "provider": "nvidia",
-        "model": "minimaxai/minimax-m2.7",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "openai_codex",
         "model": "gpt-5.3-codex",
         "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "qwen/qwen3.5-397b-a17b",
-        "use_provider_order_as_fallback": false,
-        "retry_delay": 1,
-        "retry_count": 2,
         "custom_body_params": {},
         "custom_headers": {}
       }
@@ -234,20 +162,6 @@
       {
         "provider": "devbox",
         "model": "google.models/gemini-2.5-flash",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "deepseek-ai/deepseek-v4-flash",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "qwen/qwen3.5-122b-a10b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -294,8 +208,8 @@
         "custom_headers": {}
       },
       {
-        "provider": "nvidia",
-        "model": "deepseek-ai/deepseek-v4-pro",
+        "provider": "aitunnel",
+        "model": "deepseek-v4-pro",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -382,21 +296,7 @@
       },
       {
         "provider": "nvidia",
-        "model": "minimaxai/minimax-m2.7",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
         "model": "z-ai/glm-5.1",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "google/gemma-4-31b-it",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -447,29 +347,8 @@
         }
       },
       {
-        "provider": "nvidia2",
-        "model": "deepseek-ai/deepseek-v4-pro",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia2",
-        "model": "qwen/qwen3.5-397b-a17b",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia2",
-        "model": "z-ai/glm-5.1",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia",
-        "model": "qwen/qwen3.5-397b-a17b",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -496,29 +375,22 @@
     "gateway_model_name": "llmgateway/free_gd",
     "fallback_models": [
       {
-        "provider": "nvidia2",
-        "model": "moonshotai/kimi-k2.6",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia2",
-        "model": "minimaxai/minimax-m2.7",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "nvidia2",
-        "model": "z-ai/glm-5.1",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
       },
       {
         "provider": "nvidia",
-        "model": "minimaxai/minimax-m2.7",
+        "model": "moonshotai/kimi-k2.6",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.1",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}

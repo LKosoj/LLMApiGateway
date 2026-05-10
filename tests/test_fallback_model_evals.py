@@ -149,7 +149,9 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         self.assertEqual(models["provider-a:model-one"]["healthStatus"], "passed")
         self.assertEqual(models["provider-a:model-one"]["liteEvalScore"], 750)
         self.assertEqual(models["provider-a:model-one"]["metadataScore"], 0)
+        self.assertEqual(models["provider-a:model-one"]["reason"], "")
         self.assertEqual(models["provider-a:model-one"]["gatewayModels"], ["gateway/a", "gateway/b"])
+        self.assertNotIn("metadata score", models["provider-a:model-one"]["reason"].lower())
         self.assertEqual(models["missing-provider:model-missing"]["healthStatus"], "missing_provider")
         self.assertEqual(models["anthropic-provider:claude-native"]["healthStatus"], "unsupported_provider_type")
 
