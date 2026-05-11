@@ -67,7 +67,9 @@
           "model": "gpt-image-2",
           "target_path": "/images/generations",
           "custom_headers": {},
-          "custom_body_params": {},
+          "custom_body_params": {
+            "quality": "medium"
+          },
           "request_format": "openai_images",
           "response_format": "openai_images"
         },
@@ -76,7 +78,9 @@
           "model": "img-openai/gpt-image-2",
           "target_path": "/images/generations",
           "custom_headers": {},
-          "custom_body_params": {}
+          "custom_body_params": {
+            "quality": "medium"
+          }
         }
       ]
     },
@@ -119,6 +123,36 @@
       "gateway_model_name": "llmgateway/ai-klein-generation",
       "routes": [
         {
+          "provider": "nvidia",
+          "model": "qwen-image",
+          "target_path": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
+          "custom_headers": {},
+          "custom_body_params": {
+            "steps": 4
+          },
+          "request_format": "nvidia_genai_json",
+          "response_format": "nvidia_artifacts",
+          "request_mapping": {
+            "fields": {
+              "prompt": "prompt",
+              "seed": "seed",
+              "width": {
+                "from": "size",
+                "transform": "size_width"
+              },
+              "height": {
+                "from": "size",
+                "transform": "size_height"
+              },
+              "": "n"
+            }
+          },
+          "response_mapping": {
+            "artifacts_path": "artifacts",
+            "base64_field": "base64"
+          }
+        },
+        {
           "provider": "llm_ai",
           "model": "flux2-klein-4b",
           "target_path": "/images/generations",
@@ -128,11 +162,11 @@
       ]
     },
     {
-      "gateway_model_name": "llmgateway/ai-krea-generation",
+      "gateway_model_name": "llmgateway/ai-qwen-image",
       "routes": [
         {
           "provider": "llm_ai",
-          "model": "flux1-krea-dev-fp8",
+          "model": "qwen-image",
           "target_path": "/images/generations",
           "custom_headers": {},
           "custom_body_params": {}
@@ -151,25 +185,41 @@
           "response_format": "openai_images"
         }
       ]
+    },
+    {
+      "gateway_model_name": "llmgateway/gpt-image-2",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "gpt-image-2",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {
+            "quality": "medium"
+          }
+        }
+      ]
     }
   ],
   "images_edits": [
     {
-      "gateway_model_name": "llmgateway/flux.image-edit",
+      "gateway_model_name": "llmgateway/flux.image-generation",
       "routes": [
         {
           "provider": "aitunnel",
           "model": "gpt-image-2",
           "target_path": "/images/edits",
           "custom_headers": {},
-          "custom_body_params": {},
+          "custom_body_params": {
+            "quality": "medium"
+          },
           "request_format": "openai_images",
           "response_format": "openai_images"
         }
       ]
     },
     {
-      "gateway_model_name": "llmgateway/ai-klein-edit",
+      "gateway_model_name": "llmgateway/ai-klein-generation",
       "routes": [
         {
           "provider": "llm_ai",
@@ -182,7 +232,7 @@
       ]
     },
     {
-      "gateway_model_name": "llmgateway/banana-edit",
+      "gateway_model_name": "llmgateway/banana",
       "routes": [
         {
           "provider": "aitunnel",
@@ -191,6 +241,32 @@
           "custom_headers": {},
           "custom_body_params": {},
           "response_format": "openai_images"
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/ai-qwen-image",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "qwen-image",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/gpt-image-2",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "gpt-image-2",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {
+            "quality": "medium"
+          }
         }
       ]
     }
