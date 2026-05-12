@@ -36,6 +36,13 @@
     "gateway_model_name": "llmgateway/light_model",
     "fallback_models": [
       {
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b:free",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "aitunnel",
         "model": "gpt-4.1-nano",
         "use_provider_order_as_fallback": false,
@@ -51,13 +58,6 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
-      },
-      {
-        "provider": "openrouter",
-        "model": "openai/gpt-oss-120b:free",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
       },
       {
         "provider": "cloudru",
@@ -398,7 +398,7 @@
     ],
     "context_overflow_fallback": {
       "provider": "aitunnel",
-      "model": "gpt-4.1-nano",
+      "model": "deepseek-v4-flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}

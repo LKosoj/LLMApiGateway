@@ -80,6 +80,43 @@ class TestTiktokenCache:
         assert enc1 is enc2
 
 
+class TestChatCountTokensTiktokenCache:
+    """Verify Anthropic count-tokens tiktoken resolver is cached."""
+
+    def test_resolve_tiktoken_encoding_is_cached(self):
+        from llm_gateway_core.api.v1.chat import _resolve_tiktoken_encoding
+
+        assert hasattr(_resolve_tiktoken_encoding, "cache_info"), \
+            "_resolve_tiktoken_encoding should be decorated with lru_cache"
+
+        _resolve_tiktoken_encoding.cache_clear()
+
+        enc1 = _resolve_tiktoken_encoding("gpt-4")
+        enc2 = _resolve_tiktoken_encoding("gpt-4")
+
+        assert enc1 is enc2
+        assert _resolve_tiktoken_encoding.cache_info().hits >= 1
+
+
+class TestImagePathPartsCache:
+    """Verify image adapter path parsing is cached."""
+
+    def test_iter_path_parts_is_cached(self):
+        from llm_gateway_core.api.v1.image_adapters import _iter_path_parts
+
+        assert hasattr(_iter_path_parts, "cache_info"), \
+            "_iter_path_parts should be decorated with lru_cache"
+
+        _iter_path_parts.cache_clear()
+
+        parts1 = _iter_path_parts("data.items[0].url")
+        parts2 = _iter_path_parts("data.items[0].url")
+
+        assert parts1 == ("data", "items", 0, "url")
+        assert parts1 is parts2
+        assert _iter_path_parts.cache_info().hits >= 1
+
+
 class TestWriteLogCleanupInterval:
     """#8: Verify log cleanup runs periodically, not on every write."""
 

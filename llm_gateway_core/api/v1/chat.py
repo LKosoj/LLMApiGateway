@@ -3,6 +3,7 @@ import json
 import copy
 import asyncio
 import codecs
+import functools
 import random
 import re
 import tiktoken
@@ -1797,6 +1798,7 @@ def _resolve_model_name_for_token_count(config_loader_instance: ConfigLoader, re
     return requested_model
 
 
+@functools.lru_cache(maxsize=64)
 def _resolve_tiktoken_encoding(model_name: str):
     try:
         return tiktoken.encoding_for_model(model_name)

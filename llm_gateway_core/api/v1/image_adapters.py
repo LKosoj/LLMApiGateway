@@ -1,5 +1,6 @@
 import base64
 import copy
+import functools
 import re
 import time
 from dataclasses import dataclass
@@ -49,7 +50,8 @@ def _deepcopy_if_needed(value: Any) -> Any:
         return value
 
 
-def _iter_path_parts(path: str) -> list[str | int]:
+@functools.lru_cache(maxsize=512)
+def _iter_path_parts(path: str) -> tuple[str | int, ...]:
     path_parts: list[str | int] = []
     for match in PATH_SEGMENT_RE.finditer(path):
         key_name, index_value = match.groups()
@@ -57,7 +59,7 @@ def _iter_path_parts(path: str) -> list[str | int]:
             path_parts.append(key_name)
         else:
             path_parts.append(int(index_value))
-    return path_parts
+    return tuple(path_parts)
 
 
 def extract_path_value(source: Any, path: str) -> Any:
