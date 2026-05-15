@@ -84,7 +84,11 @@ def _default_pool_limits() -> httpx.Limits:
 
 
 def create_shared_http_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=_default_timeout(), limits=_default_pool_limits())
+    return httpx.AsyncClient(
+        timeout=_default_timeout(),
+        limits=_default_pool_limits(),
+        http2=True,
+    )
 
 
 def create_proxy_http_clients(
@@ -101,6 +105,7 @@ def create_proxy_http_clients(
                 proxy=proxy_url,
                 timeout=_default_timeout(),
                 limits=_default_pool_limits(),
+                http2=True,
             )
             logger.info("Created proxy HTTP client for provider '%s'.", provider_name)
     return clients

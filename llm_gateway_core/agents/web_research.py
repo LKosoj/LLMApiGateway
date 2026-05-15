@@ -4,7 +4,8 @@ import asyncio
 import logging
 import re
 import ssl
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from html import unescape
 from html.parser import HTMLParser
 from io import BytesIO
@@ -60,6 +61,41 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 def _extract_youtube_video_id(url: str) -> str | None:
     m = _YOUTUBE_URL_RE.search(url)
     return m.group(1) if m else None
+
+
+_SELECTOLAX_NOISE_TAGS = (
+    "script",
+    "style",
+    "iframe",
+    "noscript",
+    "nav",
+    "footer",
+    "header",
+    "aside",
+    "form",
+    "button",
+)
+
+
+def _extract_text_with_selectolax(html_text: str) -> str:
+    """Strip noise tags and pull main text via selectolax. "" on failure."""
+    try:
+        from selectolax.parser import HTMLParser as SelectolaxParser
+    except ImportError:
+        return ""
+    try:
+        tree = SelectolaxParser(html_text)
+        for tag in _SELECTOLAX_NOISE_TAGS:
+            for node in tree.css(tag):
+                node.decompose()
+        root = tree.body if tree.body is not None else tree.root
+        if root is None:
+            return ""
+        raw_text = root.text(separator="\n", strip=False)
+    except Exception as exc:
+        logger.warning("selectolax extraction failed: %s", exc)
+        return ""
+    return "\n".join(line.strip() for line in raw_text.splitlines() if line.strip())
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -134,6 +170,16 @@ class WebResearchClient:
         self._zai_api_key = zai_api_key
         self._proxy_url = proxy_url
 
+    @asynccontextmanager
+    async def _httpx_client(
+        self, **client_kwargs: Any
+    ) -> AsyncIterator[httpx.AsyncClient]:
+        if self._http_client is not None and not client_kwargs:
+            yield self._http_client
+            return
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            yield client
+
     def _get_jina_api_key(self) -> str | None:
         return select_next_api_key(self._jina_api_key)
 
@@ -189,7 +235,7 @@ class WebResearchClient:
                 "X-Respond-With": "no-content",
             }
 
-            async with httpx.AsyncClient() as client:
+            async with self._httpx_client() as client:
                 response = await client.get(url, headers=headers, timeout=30.0)
                 response.raise_for_status()
                 data = response.json()
@@ -213,7 +259,7 @@ class WebResearchClient:
             return []
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._httpx_client() as client:
                 response = await client.post(
                     "https://api.tavily.com/search",
                     json={"api_key": tavily_key, "query": query, "max_results": max_results},
@@ -239,7 +285,7 @@ class WebResearchClient:
             return []
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._httpx_client() as client:
                 response = await client.post(
                     "https://api.z.ai/api/paas/v4/web_search",
                     headers={
@@ -273,7 +319,7 @@ class WebResearchClient:
             return []
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._httpx_client() as client:
                 response = await client.get(
                     f"{proxy_url}/zai/search",
                     params={"q": query},
@@ -351,7 +397,7 @@ class WebResearchClient:
                 "Upgrade-Insecure-Requests": "1",
             }
 
-            async with httpx.AsyncClient(follow_redirects=True) as client:
+            async with self._httpx_client(follow_redirects=True) as client:
                 response = await client.get(url, headers=enhanced_headers, timeout=20.0)
                 response.raise_for_status()
 
@@ -393,9 +439,14 @@ class WebResearchClient:
                 except Exception as exc:
                     logger.warning("Ошибка trafilatura для %s: %s", url, exc)
 
-                clean_content = self._clean_html_content(html_content)
+                selectolax_text = await asyncio.to_thread(_extract_text_with_selectolax, html_content)
+                if selectolax_text:
+                    logger.info("Успешно загружен через selectolax: %s", url)
+                    return {"url": url, "title": title, "content": selectolax_text}
+
+                clean_content = await asyncio.to_thread(self._clean_html_content, html_content)
                 if clean_content and clean_content.strip():
-                    logger.info("Успешно загружен через BeautifulSoup: %s", url)
+                    logger.info("Успешно загружен через html.parser: %s", url)
                     return {"url": url, "title": title, "content": clean_content}
 
                 logger.warning("Пустой контент после extraction для %s, пробуем API readers", url)
@@ -410,7 +461,7 @@ class WebResearchClient:
         proxy_url = self._get_proxy_url()
         if proxy_url:
             try:
-                async with httpx.AsyncClient() as client:
+                async with self._httpx_client() as client:
                     resp = await client.get(
                         f"{proxy_url}/zai/read",
                         params={"url": url},
@@ -455,7 +506,7 @@ class WebResearchClient:
         zai_key = self._get_zai_api_key()
         if zai_key:
             try:
-                async with httpx.AsyncClient() as client:
+                async with self._httpx_client() as client:
                     resp = await client.post(
                         "https://api.z.ai/api/paas/v4/reader",
                         headers={
@@ -531,7 +582,7 @@ class WebResearchClient:
             from pdfminer.high_level import extract_text
 
             pdf_stream = BytesIO(pdf_bytes)
-            text = extract_text(pdf_stream)
+            text = await asyncio.to_thread(extract_text, pdf_stream)
 
             if text and text.strip():
                 clean_text = self._clean_extra_spaces(text)
@@ -570,7 +621,7 @@ class WebResearchClient:
         payload = {"urls": [url]}
 
         try:
-            async with httpx.AsyncClient(verify=True) as client:
+            async with self._httpx_client() as client:
                 resp = await client.post(
                     "https://api.tavily.com/extract",
                     headers=headers,
@@ -611,7 +662,7 @@ class WebResearchClient:
         }
         data = {"url": url}
 
-        async with httpx.AsyncClient() as client:
+        async with self._httpx_client() as client:
             response = await client.post(self.JINA_READER_URL, headers=headers, json=data, timeout=30.0)
             response.raise_for_status()
 

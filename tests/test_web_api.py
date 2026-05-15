@@ -6,7 +6,7 @@ import time
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -457,7 +457,7 @@ class WebApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["data"][0]["raw_content"], "Downloaded article content")
         self.assertEqual(payload["data"][0]["images"], [])
-        read_adapter.assert_awaited_once_with("https://example.com/article")
+        read_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
 
     def test_web_search_include_raw_content_text_returns_plain_text(self):
         read_adapter = AsyncMock(
@@ -575,8 +575,8 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["raw_content"], "Downloaded article content")
         self.assertEqual(payload["results"][0]["images"], [])
         self.assertIsInstance(payload["results"][0]["score"], float)
-        search_adapter.assert_awaited_once_with("topic", 3)
-        read_adapter.assert_awaited_once_with("https://example.com/article")
+        search_adapter.assert_awaited_once_with(fake_http_client, "topic", 3)
+        read_adapter.assert_awaited_once_with(fake_http_client, "https://example.com/article")
         fake_http_client.post.assert_not_awaited()
 
     def test_tavily_extract_endpoint_reads_urls(self):
@@ -598,7 +598,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["images"], [])
         self.assertEqual(payload["failed_results"], [])
         self.assertIsInstance(payload["request_id"], str)
-        read_adapter.assert_awaited_once_with("https://example.com/article")
+        read_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
 
     def test_web_search_query_model_falls_back_after_empty_text_content(self):
         self.rules_path.write_text(
@@ -630,7 +630,7 @@ class WebApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(fake_http_client.post.await_count, 2)
-        search_adapter.assert_awaited_once_with("fallback optimized query", 3)
+        search_adapter.assert_awaited_once_with(ANY, "fallback optimized query", 3)
 
     def test_web_search_reports_internal_query_model_error_when_fallbacks_return_empty_text(self):
         self.generated_query_text = ""
@@ -695,7 +695,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["title"], "Reader Title")
         self.assertEqual(payload["content"], "Downloaded article content")
         self.assertEqual(payload["images"], [])
-        read_adapter.assert_awaited_once_with("https://example.com/article")
+        read_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
 
     def test_web_research_virtual_key_checks_only_external_model(self):
         record = ApiKeyRecord(
@@ -743,7 +743,7 @@ class WebApiTests(unittest.TestCase):
             generate_calls.append((query_model, query, language, num_queries))
             return [f"{language}-query-{index}" for index in range(num_queries)]
 
-        async def fake_search(query: str, max_results: int):
+        async def fake_search(_client, query: str, max_results: int):
             language = query.split("-", 1)[0]
             return [
                 {
@@ -754,7 +754,7 @@ class WebApiTests(unittest.TestCase):
                 for index in range(max_results)
             ]
 
-        async def fake_read(url: str):
+        async def fake_read(_client, url: str):
             language = url.split("://", 1)[1].split(".", 1)[0]
             return {
                 "url": url,
@@ -798,8 +798,11 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(article_languages.count("en"), 8)
         self.assertEqual(article_languages.count("zh"), 8)
 
-    def test_web_research_rerank_document_uses_full_article_content_without_url(self):
-        long_content = "start " + ("x" * 5000) + " end"
+    def test_web_research_rerank_document_truncates_content_to_max_chars_and_omits_url(self):
+        max_chars = web_api.ARTICLE_RERANK_DOCUMENT_MAX_CHARS
+        head = "head-marker "
+        tail_marker = " end-marker"
+        long_content = head + ("x" * (max_chars + 500)) + tail_marker
 
         document = web_api._article_rerank_document(
             {
@@ -810,8 +813,24 @@ class WebApiTests(unittest.TestCase):
         )
 
         self.assertIn("Title: Full Article", document)
-        self.assertIn(long_content, document)
+        self.assertIn(head.strip(), document)
+        self.assertNotIn(tail_marker.strip(), document)
+        # The "Content:\n" prefix is fixed, payload after it is capped at max_chars.
+        content_section = document.split("Content:\n", 1)[1]
+        self.assertEqual(len(content_section), max_chars)
         self.assertNotIn("https://example.com/full", document)
+
+    def test_web_research_rerank_document_keeps_short_content_unchanged(self):
+        short_content = "short body"
+        document = web_api._article_rerank_document(
+            {
+                "url": "https://example.com/short",
+                "title": "Short",
+                "content": short_content,
+            }
+        )
+
+        self.assertEqual(document, "Title: Short\nContent:\nshort body")
 
     def test_web_research_refines_long_article_content_before_rerank_and_analysis(self):
         long_content = "irrelevant lead " + ("x" * web_api.ARTICLE_RELEVANCE_THRESHOLD_CHARS)
@@ -924,7 +943,7 @@ class WebApiTests(unittest.TestCase):
             generate_calls.append((query_model, query, language, num_queries))
             return [f"{language}-query-{index}" for index in range(num_queries)]
 
-        async def fake_search(query: str, max_results: int):
+        async def fake_search(_client, query: str, max_results: int):
             language = query.split("-", 1)[0]
             return [
                 {
@@ -935,7 +954,7 @@ class WebApiTests(unittest.TestCase):
                 for index in range(max_results)
             ]
 
-        async def fake_read(url: str):
+        async def fake_read(_client, url: str):
             language = url.split("://", 1)[1].split(".", 1)[0]
             return {
                 "url": url,
@@ -1496,21 +1515,12 @@ class WebApiTests(unittest.TestCase):
                 }
 
         class FakeAsyncClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, traceback):
-                return None
-
             async def post(self, url, *, headers=None, json=None, **kwargs):
                 calls.append({"url": url, "headers": headers, "json": json})
                 return FakeResponse()
 
-        with (
-            patch.object(web_api.settings, "zai_api_key", "dummy-zai-key"),
-            patch.object(web_api.httpx, "AsyncClient", return_value=FakeAsyncClient()),
-        ):
-            results = run_async(web_api._search_zai("topic", 1))
+        with patch.object(web_api.settings, "zai_api_key", "dummy-zai-key"):
+            results = run_async(web_api._search_zai(FakeAsyncClient(), "topic", 1))
 
         self.assertEqual(calls[0]["json"]["search_engine"], "search_pro_quark")
         self.assertEqual(results[0]["url"], "https://example.com/zai")
@@ -1529,12 +1539,6 @@ class WebApiTests(unittest.TestCase):
                 return self._payload
 
         class FakeAsyncClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, traceback):
-                return None
-
             async def post(self, url, *, headers=None, json=None, **kwargs):
                 calls.append({"method": "POST", "url": url, "headers": headers or {}, "json": json or {}})
                 if url.endswith("/search"):
@@ -1555,18 +1559,18 @@ class WebApiTests(unittest.TestCase):
                     return FakeResponse({"data": {"content": "Jina content"}})
                 raise AssertionError(f"Unexpected GET URL: {url}")
 
+        fake_client = FakeAsyncClient()
         with (
             patch.object(web_api.settings, "tavily_api_key", "tavily-one, tavily-two"),
             patch.object(web_api.settings, "jina_api_key", "jina-one, jina-two"),
             patch.object(web_api.settings, "zai_api_key", "zai-one, zai-two"),
-            patch.object(web_api.httpx, "AsyncClient", return_value=FakeAsyncClient()),
         ):
-            run_async(web_api._search_tavily("topic", 1))
-            run_async(web_api._read_tavily("https://example.com/article"))
-            run_async(web_api._search_jina("topic", 1))
-            run_async(web_api._read_jina("https://example.com/article"))
-            run_async(web_api._search_zai("topic", 1))
-            run_async(web_api._read_zai("https://example.com/article"))
+            run_async(web_api._search_tavily(fake_client, "topic", 1))
+            run_async(web_api._read_tavily(fake_client, "https://example.com/article"))
+            run_async(web_api._search_jina(fake_client, "topic", 1))
+            run_async(web_api._read_jina(fake_client, "https://example.com/article"))
+            run_async(web_api._search_zai(fake_client, "topic", 1))
+            run_async(web_api._read_zai(fake_client, "https://example.com/article"))
 
         tavily_payloads = [call["json"] for call in calls if "tavily.com" in call["url"]]
         self.assertEqual([payload["api_key"] for payload in tavily_payloads], ["tavily-one", "tavily-two"])
@@ -1757,8 +1761,106 @@ class WebApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["title"], "Secondary Title")
         self.assertEqual(payload["content"], "From secondary reader")
-        primary_adapter.assert_awaited_once_with("https://example.com/article")
-        secondary_adapter.assert_awaited_once_with("https://example.com/article")
+        primary_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
+        secondary_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
+
+
+    def test_extract_text_with_selectolax_strips_noise_and_returns_main_text(self):
+        html = (
+            "<html><body>"
+            "<script>alert(1)</script>"
+            "<style>body{}</style>"
+            "<nav>menu</nav>"
+            "<footer>bottom</footer>"
+            "<main><p>Hello world</p><p>Second paragraph.</p></main>"
+            "</body></html>"
+        )
+
+        text = web_api._extract_text_with_selectolax(html)
+
+        self.assertIn("Hello world", text)
+        self.assertIn("Second paragraph.", text)
+        self.assertNotIn("alert", text)
+        self.assertNotIn("body{}", text)
+        self.assertNotIn("menu", text)
+        self.assertNotIn("bottom", text)
+
+    def test_prepare_relevant_articles_skips_failed_relevance_calls(self):
+        articles = [
+            {"url": "https://example.com/ok", "title": "OK", "content": "x" * 20_000},
+            {"url": "https://example.com/fail", "title": "Fail", "content": "y" * 20_000},
+        ]
+
+        async def fake_extract(_req, _cfg, _hc, *, relevance_model, query, article, usage_accumulator):
+            if article["url"] == "https://example.com/fail":
+                raise RuntimeError("relevance llm boom")
+            return "trimmed content"
+
+        async def scenario():
+            with patch(
+                "llm_gateway_core.api.v1.web._extract_relevant_article_content",
+                side_effect=fake_extract,
+            ):
+                return await web_api._prepare_relevant_articles(
+                    Mock(),
+                    Mock(),
+                    Mock(),
+                    relevance_model="llmgateway/light_model",
+                    query="topic",
+                    articles=articles,
+                    usage_accumulator=web_api._UsageAccumulator(),
+                )
+
+        prepared = run_async(scenario())
+        prepared_urls = [a["url"] for a in prepared]
+        self.assertEqual(prepared_urls, ["https://example.com/ok"])
+
+    def test_web_research_continues_when_one_url_read_raises(self):
+        async def fake_read(_client, url: str):
+            if url.endswith("/bad"):
+                raise RuntimeError("read crashed")
+            return {
+                "url": url,
+                "title": "Reader Title",
+                "content": "Downloaded article content",
+            }
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/bad", "title": "Bad", "snippet": "s"},
+                {"url": "https://example.com/good", "title": "Good", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(side_effect=fake_read)
+
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "topic",
+                    "max_results": 2,
+                    "max_articles": 5,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        urls = [item["url"] for item in payload["sources"]]
+        self.assertIn("https://example.com/good", urls)
+        self.assertNotIn("https://example.com/bad", urls)
 
 
 if __name__ == "__main__":

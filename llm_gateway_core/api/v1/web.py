@@ -19,7 +19,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from ...agents.deep_research import DeepResearchManager, DeepResearchUnavailableError
-from ...agents.web_research import WebResearchClient
+from ...agents.web_research import WebResearchClient, _extract_text_with_selectolax
 from ...config.loader import ConfigLoader, OperationRoute, resolve_provider_api_key
 from ...config.settings import settings
 from ...services.access_control import enforce_virtual_key_access
@@ -72,6 +72,7 @@ MAX_RESEARCH_ARTICLES_PER_LANGUAGE = 10
 MAX_RESEARCH_QUERY_REWRITES = 5
 ARTICLE_RELEVANCE_THRESHOLD_CHARS = 16_000
 ARTICLE_RELEVANCE_MAX_TOKENS = 8_000
+ARTICLE_RERANK_DOCUMENT_MAX_CHARS = 3_000
 MAX_DEEP_RESEARCH_WORDS = 8000
 MAX_DEEP_RESEARCH_BREADTH = 10
 MAX_DEEP_RESEARCH_DEPTH = 5
@@ -492,7 +493,13 @@ def _clean_read_url(url: str) -> str:
 
 
 async def _direct_http_fetch(url: str) -> dict[str, str] | None:
-    from ...agents.web_research import _HTMLTextExtractor, _extract_youtube_video_id, _HTML_TITLE_RE, _HTML_H1_RE, _HTML_TAG_RE
+    from ...agents.web_research import (
+        _HTMLTextExtractor,
+        _extract_youtube_video_id,
+        _HTML_TITLE_RE,
+        _HTML_H1_RE,
+        _HTML_TAG_RE,
+    )
     from html import unescape
 
     cleaned = _clean_read_url(url)
@@ -529,6 +536,8 @@ async def _direct_http_fetch(url: str) -> dict[str, str] | None:
             logger.warning("YouTube transcript failed for %s: %s", cleaned, exc)
 
     try:
+        # Per-request client: _direct_http_fetch hits arbitrary user-supplied URLs,
+        # so we keep cookies / HTTP/2 connection state isolated from the shared pool.
         async with httpx.AsyncClient() as client:
             response, final_url = await _get_with_public_redirects(client, cleaned)
             response.raise_for_status()
@@ -539,7 +548,7 @@ async def _direct_http_fetch(url: str) -> dict[str, str] | None:
 
                     from pdfminer.high_level import extract_text
 
-                    pdf_text = extract_text(BytesIO(response.content))
+                    pdf_text = await asyncio.to_thread(extract_text, BytesIO(response.content))
                     if pdf_text and pdf_text.strip():
                         return {
                             "url": final_url,
@@ -575,9 +584,18 @@ async def _direct_http_fetch(url: str) -> dict[str, str] | None:
             except Exception as exc:
                 logger.warning("trafilatura extraction failed for %s: %s", cleaned, exc)
 
-            parser = _HTMLTextExtractor()
-            parser.feed(html_text)
-            text = "\n".join(line.strip() for line in "\n".join(parser.parts).splitlines() if line.strip())
+            selectolax_text = await asyncio.to_thread(_extract_text_with_selectolax, html_text)
+            if selectolax_text:
+                return {"url": final_url, "title": title, "content": selectolax_text}
+
+            def _parse_html_to_text(raw_html: str) -> str:
+                parser = _HTMLTextExtractor()
+                parser.feed(raw_html)
+                return "\n".join(
+                    line.strip() for line in "\n".join(parser.parts).splitlines() if line.strip()
+                )
+
+            text = await asyncio.to_thread(_parse_html_to_text, html_text)
             if text:
                 return {"url": final_url, "title": title, "content": text}
     except HTTPException:
@@ -835,18 +853,17 @@ def _normalize_search_item(url: Any, title: Any = "", snippet: Any = "") -> dict
     }
 
 
-async def _search_proxy(query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_proxy(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
     proxy_url = (settings.proxy_url or "").strip()
     if not proxy_url:
         return []
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{proxy_url.rstrip('/')}/zai/search",
-            params={"q": query},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = response.json() or {}
+    response = await client.get(
+        f"{proxy_url.rstrip('/')}/zai/search",
+        params={"q": query},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    data = response.json() or {}
     items = data.get("search_result", [])[:max_results]
     normalized = [
         _normalize_search_item(
@@ -859,18 +876,17 @@ async def _search_proxy(query: str, max_results: int) -> list[dict[str, str]]:
     return [item for item in normalized if item is not None]
 
 
-async def _search_tavily(query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_tavily(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
     tavily_api_key = select_next_api_key(settings.tavily_api_key)
     if not tavily_api_key:
         return []
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.tavily.com/search",
-            json={"api_key": tavily_api_key, "query": query, "max_results": max_results},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = response.json() or {}
+    response = await client.post(
+        "https://api.tavily.com/search",
+        json={"api_key": tavily_api_key, "query": query, "max_results": max_results},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    data = response.json() or {}
     items = data.get("results", [])[:max_results]
     normalized = [
         _normalize_search_item(
@@ -883,7 +899,7 @@ async def _search_tavily(query: str, max_results: int) -> list[dict[str, str]]:
     return [item for item in normalized if item is not None]
 
 
-async def _search_jina(query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_jina(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
     jina_api_key = select_next_api_key(settings.jina_api_key)
     if not jina_api_key:
         return []
@@ -893,10 +909,9 @@ async def _search_jina(query: str, max_results: int) -> list[dict[str, str]]:
         "Authorization": f"Bearer {jina_api_key}",
         "X-Respond-With": "no-content",
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers, timeout=30.0)
-        response.raise_for_status()
-        data = response.json() or {}
+    response = await client.get(url, headers=headers, timeout=30.0)
+    response.raise_for_status()
+    data = response.json() or {}
     if data.get("code") != 200:
         return []
     items = data.get("data", [])[:max_results]
@@ -911,26 +926,25 @@ async def _search_jina(query: str, max_results: int) -> list[dict[str, str]]:
     return [item for item in normalized if item is not None]
 
 
-async def _search_zai(query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_zai(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
     zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return []
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.z.ai/api/paas/v4/web_search",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {zai_api_key}",
-            },
-            json={
-                "search_engine": "search_pro_quark",
-                "search_query": query,
-                "count": max_results,
-            },
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = response.json() or {}
+    response = await client.post(
+        "https://api.z.ai/api/paas/v4/web_search",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {zai_api_key}",
+        },
+        json={
+            "search_engine": "search_pro_quark",
+            "search_query": query,
+            "count": max_results,
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    data = response.json() or {}
     items = data.get("search_result", [])[:max_results]
     normalized = [
         _normalize_search_item(
@@ -963,36 +977,34 @@ def _search_adapter_enabled(name: str) -> bool:
     return False
 
 
-async def _read_proxy(url: str) -> dict[str, str] | None:
+async def _read_proxy(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
     proxy_url = (settings.proxy_url or "").strip()
     if not proxy_url:
         return None
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{proxy_url.rstrip('/')}/zai/read",
-            params={"url": url},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = (response.json() or {}).get("reader_result") or {}
+    response = await client.get(
+        f"{proxy_url.rstrip('/')}/zai/read",
+        params={"url": url},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    data = (response.json() or {}).get("reader_result") or {}
     content = (data.get("content") or "").strip()
     if not content:
         return None
     return {"url": url, "title": str(data.get("title") or ""), "content": content}
 
 
-async def _read_tavily(url: str) -> dict[str, str] | None:
+async def _read_tavily(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
     tavily_api_key = select_next_api_key(settings.tavily_api_key)
     if not tavily_api_key:
         return None
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.tavily.com/extract",
-            json={"api_key": tavily_api_key, "urls": [url]},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        payload = response.json() or {}
+    response = await client.post(
+        "https://api.tavily.com/extract",
+        json={"api_key": tavily_api_key, "urls": [url]},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    payload = response.json() or {}
     results = payload.get("results") or []
     if not results or not isinstance(results[0], dict):
         return None
@@ -1003,21 +1015,20 @@ async def _read_tavily(url: str) -> dict[str, str] | None:
     return {"url": url, "title": str(item.get("title") or ""), "content": content}
 
 
-async def _read_jina(url: str) -> dict[str, str] | None:
+async def _read_jina(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
     jina_api_key = select_next_api_key(settings.jina_api_key)
     if not jina_api_key:
         return None
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"https://r.jina.ai/{url}",
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {jina_api_key}",
-            },
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        payload = response.json() or {}
+    response = await client.get(
+        f"https://r.jina.ai/{url}",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {jina_api_key}",
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    payload = response.json() or {}
     data = payload.get("data") or {}
     content = (data.get("content") or data.get("text") or "").strip()
     if not content:
@@ -1025,27 +1036,26 @@ async def _read_jina(url: str) -> dict[str, str] | None:
     return {"url": url, "title": str(data.get("title") or ""), "content": content}
 
 
-async def _read_zai(url: str) -> dict[str, str] | None:
+async def _read_zai(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
     zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return None
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.z.ai/api/paas/v4/reader",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {zai_api_key}",
-            },
-            json={
-                "url": url,
-                "format": "markdown",
-                "keep_images": False,
-                "timeout": 20,
-            },
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = (response.json() or {}).get("reader_result") or {}
+    response = await client.post(
+        "https://api.z.ai/api/paas/v4/reader",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {zai_api_key}",
+        },
+        json={
+            "url": url,
+            "format": "markdown",
+            "keep_images": False,
+            "timeout": 20,
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    data = (response.json() or {}).get("reader_result") or {}
     content = (data.get("content") or "").strip()
     if not content:
         return None
@@ -1117,7 +1127,7 @@ async def _search_with_model(
         for adapter_name in enabled_adapters:
             adapter = _SEARCH_ADAPTERS[adapter_name]
             try:
-                query_results = await adapter(search_query, per_query_limit)
+                query_results = await adapter(http_client, search_query, per_query_limit)
             except Exception as exc:
                 logger.warning(
                     "Web search adapter '%s' failed for query '%s': %s",
@@ -1169,7 +1179,7 @@ async def _read_with_model(
     url: str,
     output_format: str,
 ) -> dict[str, str]:
-    _dispatcher, _http_client, config_loader, _proxy_http_clients = _get_operation_runtime(request)
+    _dispatcher, http_client, config_loader, _proxy_http_clients = _get_operation_runtime(request)
     _get_model_config(config_loader, WEB_READ_SECTION, read_model)
     enabled_adapters = [name for name in _BUILTIN_READ_ADAPTERS if _read_adapter_enabled(name)]
     request.state.llmgateway_provider = "llmgateway"
@@ -1189,7 +1199,7 @@ async def _read_with_model(
     for adapter_name in enabled_adapters:
         adapter = _READ_ADAPTERS[adapter_name]
         try:
-            result = await adapter(url)
+            result = await adapter(http_client, url)
         except Exception as exc:
             logger.warning("Web read adapter '%s' failed for %s: %s", adapter_name, url, exc)
             last_error = f"{adapter_name}: {exc}"
@@ -1308,7 +1318,24 @@ async def _attach_raw_content_to_results(
         enriched["raw_content"] = article.get("content") or None
         return enriched
 
-    return list(await asyncio.gather(*[_read_result(result) for result in results]))
+    gathered = await asyncio.gather(
+        *[_read_result(result) for result in results],
+        return_exceptions=True,
+    )
+    enriched_results: list[dict[str, Any]] = []
+    for result, item in zip(results, gathered):
+        if isinstance(item, Exception):
+            logger.warning(
+                "Failed to attach raw content for %s: %s",
+                result.get("url"),
+                item,
+            )
+            fallback = dict(result)
+            fallback["raw_content"] = None
+            enriched_results.append(fallback)
+            continue
+        enriched_results.append(item)
+    return enriched_results
 
 
 def _tavily_rank_score(index: int) -> float:
@@ -1380,6 +1407,8 @@ def _extract_tavily_urls(payload: dict) -> list[str]:
 def _article_rerank_document(article: dict[str, str]) -> str:
     title = (article.get("title") or "").strip()
     content = (article.get("content") or "").strip()
+    if len(content) > ARTICLE_RERANK_DOCUMENT_MAX_CHARS:
+        content = content[:ARTICLE_RERANK_DOCUMENT_MAX_CHARS]
     parts = []
     if title:
         parts.append(f"Title: {title}")
@@ -1496,8 +1525,22 @@ async def _prepare_relevant_articles(
         prepared["content"] = relevant_content
         return prepared
 
-    prepared_articles = await asyncio.gather(*[_prepare(article) for article in articles])
-    return [article for article in prepared_articles if article is not None]
+    prepared_articles = await asyncio.gather(
+        *[_prepare(article) for article in articles],
+        return_exceptions=True,
+    )
+    result: list[dict[str, str]] = []
+    for article, prepared in zip(articles, prepared_articles):
+        if isinstance(prepared, Exception):
+            logger.warning(
+                "Article relevance preparation failed for %s: %s",
+                article.get("url", ""),
+                prepared,
+            )
+            continue
+        if prepared is not None:
+            result.append(prepared)
+    return result
 
 
 def _should_try_next_rerank_route(exc: HTTPException, route_index: int, routes: list[OperationRoute]) -> bool:
@@ -1939,9 +1982,22 @@ async def tavily_extract(request: Request):
         }
         return item, None
 
-    extracted = await asyncio.gather(*[_extract_url(url) for url in urls])
-    results = [result for result, _failed in extracted if result is not None]
-    failed_results = [failed for _result, failed in extracted if failed is not None]
+    extracted = await asyncio.gather(
+        *[_extract_url(url) for url in urls],
+        return_exceptions=True,
+    )
+    results: list[dict[str, Any]] = []
+    failed_results: list[dict[str, str]] = []
+    for url, item in zip(urls, extracted):
+        if isinstance(item, Exception):
+            logger.warning("Tavily-compatible extract crashed for %s: %s", url, item)
+            failed_results.append({"url": url, "error": str(item)})
+            continue
+        result, failed = item
+        if result is not None:
+            results.append(result)
+        if failed is not None:
+            failed_results.append(failed)
     response_payload = {
         "results": results,
         "failed_results": failed_results,
@@ -2057,15 +2113,28 @@ async def web_research(request: Request):
             return None
 
     if search_candidates:
-        async def _read_articles() -> list[dict[str, str] | None]:
-            return await asyncio.gather(*[_read_search_result(result) for result in search_candidates])
+        async def _read_articles() -> list[dict[str, str] | None | BaseException]:
+            return await asyncio.gather(
+                *[_read_search_result(result) for result in search_candidates],
+                return_exceptions=True,
+            )
 
         article_results = await _run_with_client_disconnect_cancellation(
             request,
             WEB_RESEARCH_OPERATION,
             _read_articles,
         )
-        downloaded_articles = [article for article in article_results if article is not None]
+        downloaded_articles: list[dict[str, str]] = []
+        for candidate, article in zip(search_candidates, article_results):
+            if isinstance(article, Exception):
+                logger.warning(
+                    "Failed to read search result %s: %s",
+                    candidate.get("url"),
+                    article,
+                )
+                continue
+            if article is not None:
+                downloaded_articles.append(article)
         if downloaded_articles:
             downloaded_articles = await _run_with_client_disconnect_cancellation(
                 request,
