@@ -27,6 +27,10 @@ OPENROUTER_HOST = "openrouter.ai"
 REFRESH_INTERVAL_SECONDS = 8 * 60 * 60
 MIN_CONTEXT_LENGTH = 8192
 MAX_LITE_EVAL_POINTS = 750
+# Eval тесты весомее остальных метрик: модель с большим контекстом, но
+# проваленными тестами не должна обгонять модель с реально работающими навыками.
+NON_EVAL_SCORE_WEIGHT = 0.8
+EVAL_SCORE_WEIGHT = 1.6
 HEALTH_PROBE_TIMEOUT_SECONDS = 30.0
 HEALTH_PROBE_MAX_TOKENS = 16
 LITE_EVAL_TIMEOUT_SECONDS = 45.0
@@ -80,13 +84,8 @@ class ScoredOpenRouterModel:
     eval_summary: dict[str, Any] = field(default_factory=dict)
 
     def recalculate_score(self) -> None:
-        self.score = (
-            self.metadata_score
-            + self.health_score
-            + self.latency_score
-            + self.lite_eval_score
-            - self.instability_penalty
-        )
+        non_eval = self.metadata_score + self.health_score + self.latency_score - self.instability_penalty
+        self.score = round(non_eval * NON_EVAL_SCORE_WEIGHT + self.lite_eval_score * EVAL_SCORE_WEIGHT)
 
     @property
     def base_score(self) -> int:

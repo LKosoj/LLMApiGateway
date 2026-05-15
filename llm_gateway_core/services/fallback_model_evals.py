@@ -20,9 +20,11 @@ from ..config.loader import (
 )
 from ..utils.api_keys import has_api_key
 from .openrouter_free_models import (
+    EVAL_SCORE_WEIGHT,
     HEALTH_PROBE_TIMEOUT_SECONDS,
     HEALTH_PROBE_MAX_TOKENS,
     LITE_EVAL_TIMEOUT_SECONDS,
+    NON_EVAL_SCORE_WEIGHT,
     OPENROUTER_HOST,
     OPENROUTER_PROVIDER_NAME,
     REFRESH_INTERVAL_SECONDS,
@@ -96,7 +98,9 @@ class ScoredFallbackModel:
         return self.metadata_score + self.health_score + self.latency_score - self.instability_penalty
 
     def recalculate_score(self) -> None:
-        self.score = self.base_score + self.lite_eval_score
+        self.score = round(
+            self.base_score * NON_EVAL_SCORE_WEIGHT + self.lite_eval_score * EVAL_SCORE_WEIGHT
+        )
 
     def to_dict(self, rank: int) -> dict[str, Any]:
         return {

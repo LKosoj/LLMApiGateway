@@ -255,6 +255,34 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
         self.assertEqual(model["evalSummary"]["reason"], "health_probe_rate_limited")
         self.assertEqual(len(fake_client.posts), 1)
 
+    def test_recalculate_score_weights_eval_heavier_than_other_signals(self):
+        weak_eval = ScoredOpenRouterModel(
+            "provider/big-context-no-eval",
+            "weak",
+            metadata_score=1000,
+            health_score=400,
+            latency_score=75,
+            lite_eval_score=0,
+            instability_penalty=0,
+        )
+        strong_eval = ScoredOpenRouterModel(
+            "provider/small-context-good-eval",
+            "strong",
+            metadata_score=200,
+            health_score=400,
+            latency_score=75,
+            lite_eval_score=750,
+            instability_penalty=0,
+        )
+
+        weak_eval.recalculate_score()
+        strong_eval.recalculate_score()
+
+        # non_eval * 0.8 + eval * 1.6
+        self.assertEqual(weak_eval.score, round(1475 * 0.8 + 0 * 1.6))
+        self.assertEqual(strong_eval.score, round(675 * 0.8 + 750 * 1.6))
+        self.assertGreater(strong_eval.score, weak_eval.score)
+
 
 class OpenRouterFreeModelsApiTests(unittest.TestCase):
     def test_status_endpoint_returns_disabled_payload_without_service(self):

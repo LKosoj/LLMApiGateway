@@ -11,6 +11,7 @@ from llm_gateway_core.config.loader import ProviderDetails
 from llm_gateway_core.services.fallback_model_evals import (
     FallbackModelEvalService,
     HEALTH_PROBE_MAX_TOKENS,
+    ScoredFallbackModel,
     _collect_unique_fallback_targets,
 )
 from tests._async_compat import run_async
@@ -371,6 +372,39 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
         self.assertIsNone(models["unmatched-model"]["metadataMatchedModel"])
         self.assertEqual(models["unmatched-model"]["contextLength"], 0)
         self.assertIn("median metadata score", models["unmatched-model"]["reason"])
+
+    def test_recalculate_score_weights_eval_heavier_than_other_signals(self):
+        weak_eval = ScoredFallbackModel(
+            id="provider/big-context-no-eval",
+            name="weak",
+            provider="provider",
+            model="big-context-no-eval",
+            gateway_models=["llmgateway/x"],
+            metadata_score=1000,
+            health_score=400,
+            latency_score=75,
+            lite_eval_score=0,
+            instability_penalty=0,
+        )
+        strong_eval = ScoredFallbackModel(
+            id="provider/small-context-good-eval",
+            name="strong",
+            provider="provider",
+            model="small-context-good-eval",
+            gateway_models=["llmgateway/x"],
+            metadata_score=200,
+            health_score=400,
+            latency_score=75,
+            lite_eval_score=750,
+            instability_penalty=0,
+        )
+
+        weak_eval.recalculate_score()
+        strong_eval.recalculate_score()
+
+        self.assertEqual(weak_eval.score, round(1475 * 0.8 + 0 * 1.6))
+        self.assertEqual(strong_eval.score, round(675 * 0.8 + 750 * 1.6))
+        self.assertGreater(strong_eval.score, weak_eval.score)
 
 
 class FallbackModelEvalApiTests(unittest.TestCase):
