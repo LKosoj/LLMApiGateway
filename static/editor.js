@@ -63,6 +63,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const openRouterFreeStatus = document.getElementById('openRouterFreeStatus');
     const openRouterFreeModels = document.getElementById('openRouterFreeModels');
     const openRouterFreeEmptyState = document.getElementById('openRouterFreeEmptyState');
+    const runOpenRouterFreeEvalButton = document.getElementById('runOpenRouterFreeEvalButton');
     const runFallbackEvalButton = document.getElementById('runFallbackEvalButton');
     const fallbackEvalStatus = document.getElementById('fallbackEvalStatus');
     const fallbackEvalModels = document.getElementById('fallbackEvalModels');
@@ -104,6 +105,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const providerModelsCache = new Map();
     const providerModelsRequests = new Map();
     let fallbackEvalPollTimer = null;
+    let openRouterFreePollTimer = null;
 
     function renderMessage(type, text) {
         messageArea.className = type;
@@ -3500,6 +3502,7 @@ document.addEventListener('DOMContentLoaded', function () {
         openRouterFreeEmptyState.hidden = Array.isArray(snapshot.models) && snapshot.models.length > 0;
 
         appendOpenRouterMeta(openRouterFreeStatus, 'Refresh mode', snapshot.refreshMode || 'n/a');
+        appendOpenRouterMeta(openRouterFreeStatus, 'Manual refresh', payload.manualRefreshRunning ? 'Running' : 'Idle');
         appendOpenRouterMeta(openRouterFreeStatus, 'Last updated', formatDateTime(snapshot.updatedAt));
         appendOpenRouterMeta(openRouterFreeStatus, 'Next refresh', formatDateTime(payload.nextRefreshAt));
         appendOpenRouterMeta(openRouterFreeStatus, 'Catalog models', formatNumber(snapshot.catalogCount));
@@ -3563,11 +3566,28 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    async function loadOpenRouterFreeModels() {
-        renderMessage('info', 'Loading OpenRouter free model ranking...');
-        clearElement(openRouterFreeStatus);
-        clearElement(openRouterFreeModels);
-        openRouterFreeEmptyState.hidden = true;
+    function scheduleOpenRouterFreePolling(payload) {
+        if (openRouterFreePollTimer) {
+            clearTimeout(openRouterFreePollTimer);
+            openRouterFreePollTimer = null;
+        }
+        if (runOpenRouterFreeEvalButton) {
+            runOpenRouterFreeEvalButton.disabled = Boolean(payload.manualRefreshRunning);
+        }
+        if (payload.manualRefreshRunning) {
+            openRouterFreePollTimer = window.setTimeout(() => {
+                void loadOpenRouterFreeModels(false);
+            }, 3000);
+        }
+    }
+
+    async function loadOpenRouterFreeModels(showMessage = true) {
+        if (showMessage) {
+            renderMessage('info', 'Loading OpenRouter free model ranking...');
+            clearElement(openRouterFreeStatus);
+            clearElement(openRouterFreeModels);
+            openRouterFreeEmptyState.hidden = true;
+        }
         try {
             const response = await apiFetch('/v1/openrouter/free-models');
             const payload = await response.json();
@@ -3582,11 +3602,37 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
             renderOpenRouterFreeModels(payload);
-            renderMessage('success', 'OpenRouter free model ranking loaded.');
+            scheduleOpenRouterFreePolling(payload);
+            if (showMessage) {
+                renderMessage('success', 'OpenRouter free model ranking loaded.');
+            }
         } catch (error) {
             console.error('Error loading OpenRouter free model ranking:', error);
             renderErrorWithDetails('Error loading OpenRouter free model ranking:', error.message);
             openRouterFreeEmptyState.hidden = false;
+            if (runOpenRouterFreeEvalButton) {
+                runOpenRouterFreeEvalButton.disabled = false;
+            }
+        }
+    }
+
+    async function runOpenRouterFreeEval() {
+        if (!runOpenRouterFreeEvalButton) return;
+        runOpenRouterFreeEvalButton.disabled = true;
+        renderMessage('info', 'Starting OpenRouter free model full eval...');
+        try {
+            const response = await apiFetch('/v1/openrouter/free-models/run', { method: 'POST' });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.detail || `HTTP ${response.status}`);
+            }
+            renderOpenRouterFreeModels(payload);
+            scheduleOpenRouterFreePolling(payload);
+            renderMessage('success', 'OpenRouter free model full eval started.');
+        } catch (error) {
+            console.error('Error starting OpenRouter free model full eval:', error);
+            renderErrorWithDetails('Error starting OpenRouter free model full eval:', error.message);
+            runOpenRouterFreeEvalButton.disabled = false;
         }
     }
 
@@ -4265,6 +4311,12 @@ document.addEventListener('DOMContentLoaded', function () {
     runFallbackEvalButton.addEventListener('click', () => {
         void runFallbackModelEval();
     });
+
+    if (runOpenRouterFreeEvalButton) {
+        runOpenRouterFreeEvalButton.addEventListener('click', () => {
+            void runOpenRouterFreeEval();
+        });
+    }
 
     saveButton.addEventListener('click', function () {
         if (activeEditor === 'rules') {

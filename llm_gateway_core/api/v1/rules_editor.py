@@ -15,6 +15,7 @@ from threading import Lock
 
 from ...config.loader import ConfigError, ModelFallbackConfig, ModelsOperationConfig, resolve_provider_proxy
 from ...services.fallback_model_evals import FallbackModelEvalAlreadyRunning
+from ...services.openrouter_free_models import OpenRouterFreeModelsNotConfigured
 from ...config.paths import STATIC_DIR
 from ...services.request_handler import OperationDispatcher, SUPPORTED_OPERATION_TYPES
 from ...services.provider_models import ProviderModelsService
@@ -1047,8 +1048,23 @@ async def get_openrouter_free_models_status(request: Request):
             "lastCheckedAt": None,
             "nextRefreshAt": None,
             "lastError": None,
+            "manualRefreshRunning": False,
             "snapshot": None,
         }
+    return await service.get_status()
+
+
+@editor_router.post("/openrouter/free-models/run", tags=["Config Editor API"])
+async def start_openrouter_free_models_refresh(request: Request):
+    service = getattr(request.app.state, "openrouter_free_models_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="OpenRouter free model scoring service is not initialized.")
+    try:
+        started = await service.start_manual_full_refresh()
+    except OpenRouterFreeModelsNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not started:
+        raise HTTPException(status_code=409, detail="OpenRouter free model refresh is already running.")
     return await service.get_status()
 
 

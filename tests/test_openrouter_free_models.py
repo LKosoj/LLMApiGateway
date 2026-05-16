@@ -11,6 +11,7 @@ from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ProviderDetails
 from llm_gateway_core.services.openrouter_free_models import (
     HEALTH_PROBE_MAX_TOKENS,
+    OpenRouterFreeModelsNotConfigured,
     OpenRouterFreeModelsService,
     ScoredOpenRouterModel,
     _catalog_fingerprint,
@@ -284,6 +285,74 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
         self.assertGreater(strong_eval.score, weak_eval.score)
 
 
+    def test_latency_only_refresh_catches_up_lite_eval_for_recovered_models(self):
+        catalog = [_model_entry("provider/a:free")]
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        fake_client = FakeOpenRouterClient(catalog, health_status_code=429)
+        service._http_client = fake_client
+
+        run_async(service.refresh_once())
+        first_status = run_async(service.get_status())
+        self.assertEqual(first_status["snapshot"]["refreshMode"], "fullEval")
+        self.assertEqual(first_status["snapshot"]["evaluatedCount"], 0)
+
+        fake_client.health_status_code = 200
+        run_async(service.refresh_once())
+        second_status = run_async(service.get_status())
+        snapshot = second_status["snapshot"]
+        self.assertEqual(snapshot["refreshMode"], "latencyOnly")
+        self.assertEqual(snapshot["evaluatedCount"], 1)
+        self.assertEqual(snapshot["models"][0]["evalSummary"]["status"], "completed")
+        self.assertTrue(
+            any("Lite eval was additionally run" in note for note in snapshot["notes"])
+        )
+
+    def test_force_full_refresh_reruns_full_eval_even_when_catalog_unchanged(self):
+        catalog = [_model_entry("provider/a:free")]
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        service._http_client = FakeOpenRouterClient(catalog)
+
+        run_async(service.refresh_once())
+        run_async(service.refresh_once())
+        intermediate_status = run_async(service.get_status())
+        self.assertEqual(intermediate_status["snapshot"]["refreshMode"], "latencyOnly")
+
+        run_async(service.refresh_once(force_full=True))
+        forced_status = run_async(service.get_status())
+        self.assertEqual(forced_status["snapshot"]["refreshMode"], "fullEval")
+
+    def test_start_manual_full_refresh_returns_false_when_already_running(self):
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._manual_refresh_running = True
+
+        result = run_async(service.start_manual_full_refresh())
+        self.assertFalse(result)
+
+    def test_start_manual_full_refresh_raises_when_not_configured(self):
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+
+        with self.assertRaises(OpenRouterFreeModelsNotConfigured):
+            run_async(service.start_manual_full_refresh())
+
+    def test_get_status_exposes_manual_refresh_running_flag(self):
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+
+        idle_status = run_async(service.get_status())
+        self.assertFalse(idle_status["manualRefreshRunning"])
+
+        service._manual_refresh_running = True
+        running_status = run_async(service.get_status())
+        self.assertTrue(running_status["manualRefreshRunning"])
+
+
 class OpenRouterFreeModelsApiTests(unittest.TestCase):
     def test_status_endpoint_returns_disabled_payload_without_service(self):
         app = FastAPI()
@@ -305,3 +374,58 @@ class OpenRouterFreeModelsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["configured"])
+
+    def test_run_endpoint_returns_409_when_already_running(self):
+        class FakeService:
+            async def start_manual_full_refresh(self):
+                return False
+
+            async def get_status(self):
+                return {"configured": True, "manualRefreshRunning": True}
+
+        app = FastAPI()
+        app.state.openrouter_free_models_service = FakeService()
+        app.include_router(editor_router, prefix="/v1")
+        response = TestClient(app).post("/v1/openrouter/free-models/run")
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_run_endpoint_returns_status_when_started(self):
+        class FakeService:
+            def __init__(self):
+                self.started = False
+
+            async def start_manual_full_refresh(self):
+                self.started = True
+                return True
+
+            async def get_status(self):
+                return {"configured": True, "manualRefreshRunning": self.started}
+
+        app = FastAPI()
+        app.state.openrouter_free_models_service = FakeService()
+        app.include_router(editor_router, prefix="/v1")
+        response = TestClient(app).post("/v1/openrouter/free-models/run")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["manualRefreshRunning"])
+
+    def test_run_endpoint_returns_503_when_not_configured(self):
+        class FakeService:
+            async def start_manual_full_refresh(self):
+                raise OpenRouterFreeModelsNotConfigured("not configured")
+
+        app = FastAPI()
+        app.state.openrouter_free_models_service = FakeService()
+        app.include_router(editor_router, prefix="/v1")
+        response = TestClient(app).post("/v1/openrouter/free-models/run")
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_run_endpoint_returns_503_when_service_missing(self):
+        app = FastAPI()
+        app.include_router(editor_router, prefix="/v1")
+        response = TestClient(app).post("/v1/openrouter/free-models/run")
+
+        self.assertEqual(response.status_code, 503)

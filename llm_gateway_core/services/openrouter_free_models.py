@@ -37,6 +37,10 @@ LITE_EVAL_TIMEOUT_SECONDS = 45.0
 CODE_EVAL_TIMEOUT_SECONDS = 2.0
 
 
+class OpenRouterFreeModelsNotConfigured(RuntimeError):
+    """Поднимается при попытке управления сервисом, который не сконфигурирован."""
+
+
 @dataclass
 class LiteEvalTaskResult:
     id: str
@@ -172,6 +176,8 @@ class OpenRouterFreeModelsService:
         self._provider_config: ProviderDetails | None = None
         self._provider_api_key: str | None = None
         self._http_client: httpx.AsyncClient | None = None
+        self._manual_refresh_running = False
+        self._manual_refresh_task: asyncio.Task | None = None
 
     async def start(
         self,
@@ -217,20 +223,43 @@ class OpenRouterFreeModelsService:
                 "lastCheckedAt": self._last_checked_at,
                 "nextRefreshAt": self._next_refresh_at,
                 "lastError": self._last_error,
+                "manualRefreshRunning": self._manual_refresh_running,
                 "snapshot": snapshot,
             }
 
-    async def refresh_once(self) -> None:
+    async def refresh_once(self, *, force_full: bool = False) -> None:
         if not self._configured or self._provider_config is None or not has_api_key(self._provider_api_key) or self._http_client is None:
             return
 
         try:
-            await self._refresh_once()
+            await self._refresh_once(force_full=force_full)
         except Exception as exc:
             logger.exception("OpenRouter free model scoring refresh failed.")
             async with self._lock:
                 self._last_checked_at = _utc_now_iso(self._time_func)
                 self._last_error = str(exc)
+
+    async def start_manual_full_refresh(self) -> bool:
+        """Запустить полноценную переоценку в фоне. Возвращает False если уже запущено."""
+        if not self._configured:
+            raise OpenRouterFreeModelsNotConfigured(
+                "OpenRouter free model scoring is not configured."
+            )
+        async with self._lock:
+            if self._manual_refresh_running:
+                return False
+            self._manual_refresh_running = True
+        self._manual_refresh_task = asyncio.create_task(
+            self._run_manual_refresh(), name="openrouter-free-models-manual-refresh"
+        )
+        return True
+
+    async def _run_manual_refresh(self) -> None:
+        try:
+            await self.refresh_once(force_full=True)
+        finally:
+            async with self._lock:
+                self._manual_refresh_running = False
 
     async def _run_loop(self) -> None:
         while self._running:
@@ -241,7 +270,7 @@ class OpenRouterFreeModelsService:
                 self._next_refresh_at = _timestamp_to_iso(next_refresh_at)
             await asyncio.sleep(max(0.0, next_refresh_at - self._time_func()))
 
-    async def _refresh_once(self) -> None:
+    async def _refresh_once(self, *, force_full: bool = False) -> None:
         assert self._provider_config is not None
         assert self._provider_api_key is not None
         assert self._http_client is not None
@@ -257,7 +286,7 @@ class OpenRouterFreeModelsService:
         async with self._lock:
             previous_snapshot = copy.deepcopy(self._snapshot)
 
-        if previous_snapshot and previous_snapshot.catalog_fingerprint == fingerprint:
+        if not force_full and previous_snapshot and previous_snapshot.catalog_fingerprint == fingerprint:
             snapshot = await self._refresh_latency_only(
                 previous_snapshot,
                 catalog_count=len(catalog),
@@ -345,10 +374,29 @@ class OpenRouterFreeModelsService:
         models = copy.deepcopy(previous_snapshot.models)
         for model in models:
             await self._apply_health_probe(model)
+
+        # Догнать lite eval для моделей, которые в прошлый раз не прошли health
+        # (поэтому evaluated_count «застревал»), а сейчас стали passed/imperfect.
+        pending = [model for model in models if _needs_lite_eval(model)]
+        newly_evaluated = await self._apply_lite_evals(pending)
+
         for model in models:
+            if not model.eval_summary:
+                model.eval_summary = _not_evaluated_summary("health_probe_failed")
             model.reason = _build_reason(model)
             model.recalculate_score()
         models.sort(key=_rank_sort_key)
+
+        notes = [
+            "Eligible model list did not change; only health and latency probes were refreshed.",
+            "Existing metadata and lite eval scores were reused from the previous full evaluation.",
+        ]
+        if newly_evaluated:
+            notes.append(
+                f"Lite eval was additionally run for {newly_evaluated} model(s) "
+                "that recovered from a previously failing health probe."
+            )
+
         return OpenRouterFreeModelsSnapshot(
             updated_at=_utc_now_iso(self._time_func),
             source="openrouter-models-api",
@@ -357,13 +405,10 @@ class OpenRouterFreeModelsService:
             catalog_fingerprint=previous_snapshot.catalog_fingerprint,
             catalog_count=catalog_count,
             eligible_count=eligible_count,
-            evaluated_count=previous_snapshot.evaluated_count,
+            evaluated_count=previous_snapshot.evaluated_count + newly_evaluated,
             base_url=previous_snapshot.base_url,
             models=models,
-            notes=[
-                "Eligible model list did not change; only health and latency probes were refreshed.",
-                "Existing metadata and lite eval scores were reused from the previous full evaluation.",
-            ],
+            notes=notes,
         )
 
     async def _apply_health_probe(self, model: ScoredOpenRouterModel) -> None:
@@ -784,6 +829,13 @@ def _health_status_allows_lite_eval(health_status: str) -> bool:
 
 def _lite_eval_skip_reason(health_status: str) -> str:
     return "health_probe_rate_limited" if health_status == "http_429" else "health_probe_failed"
+
+
+def _needs_lite_eval(model: ScoredOpenRouterModel) -> bool:
+    """True если health сейчас ок, но прошлый lite eval не был completed."""
+    if not _health_status_allows_lite_eval(model.health_status):
+        return False
+    return model.eval_summary.get("status") != "completed"
 
 
 def _build_reason(model: ScoredOpenRouterModel) -> str:
