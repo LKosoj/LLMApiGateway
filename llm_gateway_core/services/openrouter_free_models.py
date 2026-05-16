@@ -359,8 +359,8 @@ class OpenRouterFreeModelsService:
             notes=[
                 "Eligible pool: free text OpenRouter models with at least 8k context and no expired catalog entry.",
                 "Full evaluation probes every eligible model and runs lite eval for every model that passes health.",
-                "Final score = metadataScore + healthScore + latencyScore + liteEvalScore - instabilityPenalty.",
-                "When the eligible model list is unchanged, scheduled refreshes update only health and latency scores.",
+                "Final score = round((metadataScore + healthScore + latencyScore - instabilityPenalty) * 0.8 + liteEvalScore * 1.6) — eval tests weigh twice the other metrics.",
+                "When the eligible model list is unchanged, scheduled refreshes update health/latency and catch up lite eval for models recovered from a failing health probe.",
             ],
         )
 

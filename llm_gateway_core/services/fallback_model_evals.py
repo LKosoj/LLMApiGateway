@@ -332,7 +332,7 @@ class FallbackModelEvalService:
             notes=[
                 "Unique fallback targets are grouped by provider and model.",
                 "OpenRouter metadata is matched by model basename when the official openrouter provider and API key are configured; unmatched targets use the median known metadata score.",
-                "Final score = metadataScore + healthScore + latencyScore + liteEvalScore - instabilityPenalty.",
+                "Final score = round((metadataScore + healthScore + latencyScore - instabilityPenalty) * 0.8 + liteEvalScore * 1.6) — eval tests weigh twice the other metrics.",
                 "OpenAI-compatible providers are evaluated through /chat/completions; Anthropic providers are evaluated through /v1/messages.",
             ],
         )
