@@ -21,6 +21,7 @@ from ...services.request_handler import FORBIDDEN_CUSTOM_BODY_PARAM_KEYS
 DEFAULT_IMAGE_MEDIA_TYPE = "image/png"
 SUPPORTED_OPENAI_IMAGE_RESPONSE_FORMATS = frozenset({"", "b64_json"})
 PROTECTED_IMAGE_REQUEST_FIELDS = frozenset({"prompt", "images", "mask"})
+REQUEST_MAPPING_OMIT_CLIENT_FIELDS = "omit_client_fields"
 MISSING = object()
 PATH_SEGMENT_RE = re.compile(r"([^[.\]]+)|\[(\d+)\]")
 DATA_URL_RE = re.compile(r"^data:([^;,]+)?(?:;[^,]*)?;base64,(.*)$", re.IGNORECASE | re.DOTALL)
@@ -105,8 +106,36 @@ def _merge_route_custom_body_params(base_payload: dict[str, Any], route: Operati
     return merged_payload
 
 
-def build_openai_json_payload(payload: dict[str, Any], route: OperationRoute) -> dict[str, Any]:
+def _configured_omitted_client_fields(route: OperationRoute) -> frozenset[str]:
+    request_mapping = route.request_mapping or {}
+    raw_fields = request_mapping.get(REQUEST_MAPPING_OMIT_CLIENT_FIELDS)
+    if raw_fields is None:
+        return frozenset()
+    if not isinstance(raw_fields, list):
+        raise ImageRouteConfigError("request_mapping.omit_client_fields must be a list of field names.")
+
+    omitted_fields: set[str] = set()
+    for field_name in raw_fields:
+        if not isinstance(field_name, str) or not field_name.strip():
+            raise ImageRouteConfigError("request_mapping.omit_client_fields must contain non-empty strings.")
+        omitted_fields.add(field_name.strip().lower())
+    return frozenset(omitted_fields)
+
+
+def _copy_without_configured_client_fields(payload: dict[str, Any], route: OperationRoute) -> dict[str, Any]:
     downstream_payload = copy.deepcopy(payload)
+    omitted_fields = _configured_omitted_client_fields(route)
+    if not omitted_fields:
+        return downstream_payload
+
+    for field_name in list(downstream_payload.keys()):
+        if field_name.lower() in omitted_fields:
+            downstream_payload.pop(field_name)
+    return downstream_payload
+
+
+def build_openai_json_payload(payload: dict[str, Any], route: OperationRoute) -> dict[str, Any]:
+    downstream_payload = _copy_without_configured_client_fields(payload, route)
     for key in list(downstream_payload.keys()):
         if key.lower() in FORBIDDEN_CUSTOM_BODY_PARAM_KEYS:
             downstream_payload.pop(key)
@@ -116,6 +145,7 @@ def build_openai_json_payload(payload: dict[str, Any], route: OperationRoute) ->
 
 
 def build_openai_multipart_payload(payload: dict[str, Any], route: OperationRoute) -> tuple[list[tuple[str, object]], list[tuple[str, tuple[str, bytes, str | None]]]]:
+    payload = _copy_without_configured_client_fields(payload, route)
     data_payload: dict[str, object] = {}
     files_payload: list[tuple[str, tuple[str, bytes, str | None]]] = []
 
@@ -423,12 +453,13 @@ def build_downstream_image_request(
     if effective_request_format != REQUEST_FORMAT_NVIDIA_GENAI_JSON:
         raise ImageRouteConfigError(f"Unsupported image request_format '{effective_request_format}'.")
 
-    _validate_openai_image_response_format(request_payload, route.response_mapping or {})
+    normalized_request_payload = _copy_without_configured_client_fields(request_payload, route)
+    _validate_openai_image_response_format(normalized_request_payload, route.response_mapping or {})
     request_mapping = _validate_request_mapping_config(route, operation)
-    _validate_supported_client_fields(request_payload, request_mapping, operation)
+    _validate_supported_client_fields(normalized_request_payload, request_mapping, operation)
     return PreparedImageRequest(
         transport="json",
-        json_payload=apply_request_mapping(request_payload, route, operation),
+        json_payload=apply_request_mapping(normalized_request_payload, route, operation),
     )
 
 

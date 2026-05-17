@@ -196,6 +196,12 @@
           "custom_headers": {},
           "custom_body_params": {
             "quality": "medium"
+          },
+          "request_mapping": {
+            "omit_client_fields": [
+              "response_format",
+              "seed"
+            ]
           }
         }
       ]
@@ -219,7 +225,36 @@
       ]
     },
     {
+      "gateway_model_name": "llmgateway/flux.image-edit",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "gpt-image-2",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {
+            "quality": "medium"
+          },
+          "request_format": "openai_images",
+          "response_format": "openai_images"
+        }
+      ]
+    },
+    {
       "gateway_model_name": "llmgateway/ai-klein-generation",
+      "routes": [
+        {
+          "provider": "llm_ai",
+          "model": "flux2-klein-4b",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {},
+          "request_format": "openai_images_multipart"
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/ai-klein-edit",
       "routes": [
         {
           "provider": "llm_ai",

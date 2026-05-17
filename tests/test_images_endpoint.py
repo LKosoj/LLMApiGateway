@@ -107,6 +107,19 @@ VALID_OPERATION_RULES_TEXT = """
           }
         }
       ]
+    },
+    {
+      "gateway_model_name": "gateway/image-gen-compat",
+      "routes": [
+        {
+          "provider": "openai",
+          "model": "gpt-image-1",
+          "target_path": "/images/generations",
+          "request_mapping": {
+            "omit_client_fields": ["response_format", "seed"]
+          }
+        }
+      ]
     }
   ],
   "images_edits": [
@@ -348,6 +361,37 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"], "Image streaming is not supported.")
         fake_http_client.post.assert_not_awaited()
+
+    def test_post_images_generations_can_omit_client_fields_for_downstream_compatibility(self):
+        downstream_payload = {
+            "created": 125,
+            "data": [{"b64_json": "image-bytes"}],
+        }
+
+        with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, _dispatcher, fake_http_client):
+            response = client.post(
+                "/v1/images/generations",
+                json={
+                    "model": "gateway/image-gen-compat",
+                    "prompt": "Draw a lighthouse at sunrise",
+                    "size": "1024x1024",
+                    "response_format": "b64_json",
+                    "seed": 42,
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), downstream_payload)
+        fake_http_client.post.assert_awaited_once()
+        self.assertEqual(
+            fake_http_client.post.await_args.kwargs["json"],
+            {
+                "model": "gpt-image-1",
+                "prompt": "Draw a lighthouse at sunrise",
+                "size": "1024x1024",
+            },
+        )
 
     def test_post_images_edits_json_uses_edit_route(self):
         downstream_payload = {
