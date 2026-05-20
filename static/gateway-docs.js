@@ -83,7 +83,8 @@
     function setFreeTierStatus(message, className) {
         const status = document.getElementById("freeTierDocStatus");
         if (!status) return;
-        status.textContent = message;
+        status.textContent = message || "";
+        status.hidden = !message;
         status.classList.remove("ready", "error");
         if (className) status.classList.add(className);
     }
@@ -336,7 +337,7 @@
             }
             renderMarkdown(await response.text());
             freeTierDocLoaded = true;
-            setFreeTierStatus("Каталог загружен из examples/free-tier-providers.md", "ready");
+            setFreeTierStatus("");
         } catch (error) {
             setFreeTierStatus(`Каталог free-tier недоступен: ${error.message}`, "error");
             const container = document.getElementById("freeTierMarkdown");

@@ -30,6 +30,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -72,6 +73,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -104,6 +106,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -151,6 +154,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -179,6 +183,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -229,6 +234,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -271,6 +277,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -323,6 +330,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -344,6 +352,7 @@
       }
     ],
     "rotate_models": false,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -384,6 +393,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -421,6 +431,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "strip_think_tags": false
+    "dynamic_penalty": true,
+    "strip_think_tags": true
   }
 ]

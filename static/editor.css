@@ -555,6 +555,203 @@ body.dark-mode .field-hint {
     font-size: 0.86rem;
     font-weight: 600;
     color: #435366;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.field-tooltip {
+    position: relative;
+    display: inline-flex;
+}
+
+.field-tooltip-button {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid #c4cad6;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.field-tooltip-button:hover,
+.field-tooltip-button:focus-visible {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    outline: none;
+}
+
+.field-tooltip-popover {
+    position: absolute;
+    z-index: 30;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 220px;
+    max-width: 320px;
+    background: #1f2937;
+    color: #f8fafc;
+    padding: 10px 12px;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px -8px rgba(15, 23, 42, 0.6);
+    font-size: 0.78rem;
+    font-weight: 400;
+    line-height: 1.4;
+    white-space: normal;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+}
+
+.field-tooltip-popover::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #1f2937;
+}
+
+.field-tooltip:hover .field-tooltip-popover,
+.field-tooltip-button:focus-visible + .field-tooltip-popover,
+.field-tooltip-popover:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+body.dark-mode .field-tooltip-button {
+    background: #0f172a;
+    border-color: #475569;
+    color: #cbd5f5;
+}
+
+body.dark-mode .field-tooltip-button:hover,
+body.dark-mode .field-tooltip-button:focus-visible {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+body.dark-mode .field-tooltip-popover {
+    background: #e2e8f0;
+    color: #1e293b;
+    box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.65);
+}
+
+body.dark-mode .field-tooltip-popover::after {
+    border-top-color: #e2e8f0;
+}
+
+.upstream-limits-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.upstream-limits-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.upstream-limits-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #435366;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+body.dark-mode .upstream-limits-title {
+    color: #cbd5f5;
+}
+
+.upstream-limits-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.upstream-limit-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 2fr) repeat(4, minmax(80px, 1fr)) auto;
+    gap: 10px;
+    align-items: end;
+    padding: 10px;
+    border: 1px dashed var(--border-light);
+    border-radius: 10px;
+    background: rgba(241, 245, 249, 0.5);
+}
+
+body.dark-mode .upstream-limit-row {
+    border-color: var(--border-dark);
+    background: rgba(15, 17, 26, 0.4);
+}
+
+.upstream-limit-row .field-group {
+    gap: 4px;
+}
+
+.upstream-limit-row .field-label {
+    font-size: 0.78rem;
+}
+
+.upstream-limit-remove {
+    align-self: stretch;
+    background: none;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    color: #b91c1c;
+    cursor: pointer;
+    padding: 8px 10px;
+    font-weight: 600;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.upstream-limit-remove:hover,
+.upstream-limit-remove:focus-visible {
+    background: #fee2e2;
+    outline: none;
+}
+
+body.dark-mode .upstream-limit-remove {
+    color: #fca5a5;
+    border-color: var(--border-dark);
+}
+
+body.dark-mode .upstream-limit-remove:hover,
+body.dark-mode .upstream-limit-remove:focus-visible {
+    background: rgba(239, 68, 68, 0.15);
+}
+
+.upstream-limits-empty {
+    font-size: 0.82rem;
+    color: #6b7280;
+    padding: 8px 0;
+}
+
+body.dark-mode .upstream-limits-empty {
+    color: #9ca3af;
+}
+
+@media (max-width: 720px) {
+    .upstream-limit-row {
+        grid-template-columns: 1fr 1fr;
+    }
 }
 
 .field-group input[type="text"],

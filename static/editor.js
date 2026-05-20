@@ -3133,6 +3133,30 @@ document.addEventListener('DOMContentLoaded', function () {
         fieldGroup.appendChild(hint);
     }
 
+    function attachFieldTooltip(fieldGroup, tooltipText) {
+        if (!tooltipText) return;
+        const label = fieldGroup.querySelector('.field-label');
+        if (!label) return;
+        const wrapper = document.createElement('span');
+        wrapper.className = 'field-tooltip';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'field-tooltip-button';
+        button.textContent = 'i';
+        button.setAttribute('aria-label', `What is ${label.textContent || 'this field'}?`);
+        button.title = tooltipText;
+
+        const popover = document.createElement('span');
+        popover.className = 'field-tooltip-popover';
+        popover.setAttribute('role', 'tooltip');
+        popover.textContent = tooltipText;
+
+        wrapper.appendChild(button);
+        wrapper.appendChild(popover);
+        label.appendChild(wrapper);
+    }
+
     function buildWebSearchCard(initialData, options) {
         const { card, cardBody, gatewayModelInput } = createWebCardShell(
             initialData,
@@ -3423,6 +3447,180 @@ document.addEventListener('DOMContentLoaded', function () {
         return JSON.stringify(value, null, 2);
     }
 
+    const PROVIDER_FIELD_TOOLTIPS = {
+        name: 'Unique provider id used in fallback rules and the routes. Must be unique across providers.json (duplicates are rejected on save).',
+        baseUrl: 'Upstream API root URL, must start with http:// or https://. Example: https://openrouter.ai/api/v1',
+        apikey: 'Upstream credential. Reference an env var via ${VAR_NAME}; multiple keys may be listed comma-separated inside that variable for per-key rotation.',
+        type: 'API dialect. openai = OpenAI-compatible /chat/completions with Bearer auth. anthropic = native /v1/messages with x-api-key and anthropic-version headers.',
+        proxy: 'Optional outbound proxy. Reference via ${PROXY_VAR} or a literal http(s):// URL. Leave empty to call the upstream directly.',
+        modelsMetadata: 'Free-form per-model metadata stored under providers.json -> models. Use for pricing or other custom fields. upstream_limits is managed structurally above and merged in on save.',
+        upstreamLimits: 'Per-model upstream quota ledger (separate from client virtual-key limits). Gateway tracks per-key rpm/rpd/tpm/tpd and skips upstream keys that would breach these caps.',
+        modelId: 'Upstream model id exactly as the provider expects it. Example: deepseek/deepseek-r1:free',
+        rpm: 'Requests per minute allowed per upstream key. Leave empty to disable the per-minute request cap.',
+        rpd: 'Requests per day allowed per upstream key. Leave empty to disable the daily request cap.',
+        tpm: 'Tokens per minute allowed per upstream key (prompt + completion). Leave empty to disable.',
+        tpd: 'Tokens per day allowed per upstream key. Leave empty to disable.',
+    };
+
+    const UPSTREAM_LIMIT_KEYS = ['rpm', 'rpd', 'tpm', 'tpd'];
+
+    function splitProviderModelsMetadata(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return { upstreamLimits: [], extra: value === undefined ? undefined : value };
+        }
+        const upstreamLimits = [];
+        const extra = {};
+        Object.entries(value).forEach(([modelId, modelMeta]) => {
+            if (modelMeta && typeof modelMeta === 'object' && !Array.isArray(modelMeta) &&
+                modelMeta.upstream_limits && typeof modelMeta.upstream_limits === 'object') {
+                const limits = modelMeta.upstream_limits;
+                const row = { modelId };
+                UPSTREAM_LIMIT_KEYS.forEach(key => {
+                    row[key] = limits[key] === undefined || limits[key] === null ? '' : String(limits[key]);
+                });
+                upstreamLimits.push(row);
+                const rest = { ...modelMeta };
+                delete rest.upstream_limits;
+                if (Object.keys(rest).length > 0) {
+                    extra[modelId] = rest;
+                }
+            } else {
+                extra[modelId] = modelMeta;
+            }
+        });
+        return {
+            upstreamLimits,
+            extra: Object.keys(extra).length > 0 ? extra : undefined,
+        };
+    }
+
+    function buildUpstreamLimitsSection(initialModels) {
+        const container = document.createElement('div');
+        container.className = 'upstream-limits-section';
+
+        const header = document.createElement('div');
+        header.className = 'upstream-limits-section-header';
+
+        const title = document.createElement('div');
+        title.className = 'upstream-limits-title field-label';
+        title.textContent = 'Upstream Limits per Model';
+        header.appendChild(title);
+        const titleFieldWrapper = { querySelector: () => title };
+        attachFieldTooltip(titleFieldWrapper, PROVIDER_FIELD_TOOLTIPS.upstreamLimits);
+
+        const addButton = document.createElement('button');
+        addButton.type = 'button';
+        addButton.className = 'secondary-button upstream-limit-add';
+        addButton.textContent = 'Add Model';
+        header.appendChild(addButton);
+
+        container.appendChild(header);
+
+        const list = document.createElement('div');
+        list.className = 'upstream-limits-list';
+        container.appendChild(list);
+
+        const emptyState = document.createElement('div');
+        emptyState.className = 'upstream-limits-empty';
+        emptyState.textContent = 'No upstream limits configured. Add a model to set per-key rpm/rpd/tpm/tpd.';
+        container.appendChild(emptyState);
+
+        function refreshEmptyState() {
+            emptyState.hidden = list.children.length > 0;
+        }
+
+        function appendRow(initialRow) {
+            const row = document.createElement('div');
+            row.className = 'upstream-limit-row';
+
+            const modelInput = createTextInput('upstream-limit-model', 'deepseek/deepseek-r1:free');
+            modelInput.value = initialRow && initialRow.modelId ? initialRow.modelId : '';
+            const modelField = createFieldGroup('Model', modelInput, 'upstream-limit-model-field');
+            attachFieldTooltip(modelField, PROVIDER_FIELD_TOOLTIPS.modelId);
+            row.appendChild(modelField);
+
+            UPSTREAM_LIMIT_KEYS.forEach(key => {
+                const input = createNumberInput(`upstream-limit-${key}`, '');
+                input.min = '1';
+                input.value = initialRow && initialRow[key] !== undefined ? initialRow[key] : '';
+                const field = createFieldGroup(key.toUpperCase(), input, `upstream-limit-${key}-field`);
+                attachFieldTooltip(field, PROVIDER_FIELD_TOOLTIPS[key]);
+                row.appendChild(field);
+            });
+
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.className = 'upstream-limit-remove';
+            removeButton.textContent = 'Remove';
+            removeButton.addEventListener('click', () => {
+                row.remove();
+                refreshEmptyState();
+            });
+            row.appendChild(removeButton);
+
+            list.appendChild(row);
+            refreshEmptyState();
+        }
+
+        const splitInitial = splitProviderModelsMetadata(initialModels);
+        splitInitial.upstreamLimits.forEach(appendRow);
+        refreshEmptyState();
+
+        addButton.addEventListener('click', () => appendRow());
+
+        function getRows() {
+            return Array.from(list.querySelectorAll('.upstream-limit-row')).map(row => {
+                const result = {
+                    modelId: row.querySelector('.upstream-limit-model').value.trim(),
+                };
+                UPSTREAM_LIMIT_KEYS.forEach(key => {
+                    result[key] = row.querySelector(`.upstream-limit-${key}`).value.trim();
+                });
+                return result;
+            });
+        }
+
+        return { container, getRows };
+    }
+
+    function mergeUpstreamLimitsIntoModels(extraMetadata, rows, providerName) {
+        const merged = (extraMetadata && typeof extraMetadata === 'object' && !Array.isArray(extraMetadata))
+            ? { ...extraMetadata }
+            : {};
+        const seen = new Set();
+        rows.forEach((row, index) => {
+            const modelId = row.modelId;
+            if (!modelId) {
+                const hasAnyValue = UPSTREAM_LIMIT_KEYS.some(key => row[key]);
+                if (hasAnyValue) {
+                    throw new Error(`Provider '${providerName}' upstream limits row #${index + 1} is missing a model id.`);
+                }
+                return;
+            }
+            if (seen.has(modelId)) {
+                throw new Error(`Provider '${providerName}' has duplicate upstream limits for model '${modelId}'.`);
+            }
+            seen.add(modelId);
+            const limits = {};
+            UPSTREAM_LIMIT_KEYS.forEach(key => {
+                const raw = row[key];
+                if (raw === '' || raw === undefined) return;
+                const parsed = Number(raw);
+                if (!Number.isInteger(parsed) || parsed <= 0) {
+                    throw new Error(`Provider '${providerName}' model '${modelId}' ${key} must be a positive integer.`);
+                }
+                limits[key] = parsed;
+            });
+            if (Object.keys(limits).length === 0) return;
+            const base = (merged[modelId] && typeof merged[modelId] === 'object' && !Array.isArray(merged[modelId]))
+                ? { ...merged[modelId] }
+                : {};
+            base.upstream_limits = limits;
+            merged[modelId] = base;
+        });
+        return Object.keys(merged).length > 0 ? merged : undefined;
+    }
+
     function normalizeProviderCardForSave(providerCard) {
         const nameInput = providerCard.querySelector('.provider-name-input');
         const baseUrlInput = providerCard.querySelector('.provider-base-url-input');
@@ -3462,9 +3660,13 @@ document.addEventListener('DOMContentLoaded', function () {
         if (proxy) {
             providerPayload.proxy = proxy;
         }
-        const models = parseProviderModelsMetadata(modelsInput.value);
-        if (models !== undefined) {
-            providerPayload.models = models;
+        const extraModels = parseProviderModelsMetadata(modelsInput.value);
+        const upstreamRows = providerCard._getUpstreamLimitsRows ? providerCard._getUpstreamLimitsRows() : [];
+        const mergedModels = mergeUpstreamLimitsIntoModels(extraModels, upstreamRows, name);
+        if (mergedModels !== undefined) {
+            providerPayload.models = mergedModels;
+        } else if (extraModels !== undefined) {
+            providerPayload.models = extraModels;
         }
         return providerPayload;
     }
@@ -3500,7 +3702,9 @@ document.addEventListener('DOMContentLoaded', function () {
         titleWrap.className = 'rule-card-title';
         const providerNameInput = createTextInput('provider-name-input', 'openrouter');
         providerNameInput.value = initialData.name || '';
-        titleWrap.appendChild(createFieldGroup('Provider Name', providerNameInput, 'gateway-model-field'));
+        const providerNameField = createFieldGroup('Provider Name', providerNameInput, 'gateway-model-field');
+        attachFieldTooltip(providerNameField, PROVIDER_FIELD_TOOLTIPS.name);
+        titleWrap.appendChild(providerNameField);
 
         const headerLeft = document.createElement('div');
         headerLeft.className = 'rule-card-header-left';
@@ -3534,10 +3738,19 @@ document.addEventListener('DOMContentLoaded', function () {
         const proxyInput = createTextInput('provider-proxy-input', '${PROXY_PROVIDER} or https://proxy:8080');
         proxyInput.value = initialData.proxy || '';
 
-        fieldsGrid.appendChild(createFieldGroup('Base URL', baseUrlInput, 'provider-base-url-field'));
-        fieldsGrid.appendChild(createFieldGroup('API Key', apiKeyInput, 'provider-api-key-field'));
-        fieldsGrid.appendChild(createFieldGroup('API Type', typeSelect, 'provider-type-field'));
-        fieldsGrid.appendChild(createFieldGroup('Proxy (optional)', proxyInput, 'provider-proxy-field'));
+        const baseUrlField = createFieldGroup('Base URL', baseUrlInput, 'provider-base-url-field');
+        attachFieldTooltip(baseUrlField, PROVIDER_FIELD_TOOLTIPS.baseUrl);
+        const apiKeyField = createFieldGroup('API Key', apiKeyInput, 'provider-api-key-field');
+        attachFieldTooltip(apiKeyField, PROVIDER_FIELD_TOOLTIPS.apikey);
+        const typeField = createFieldGroup('API Type', typeSelect, 'provider-type-field');
+        attachFieldTooltip(typeField, PROVIDER_FIELD_TOOLTIPS.type);
+        const proxyField = createFieldGroup('Proxy (optional)', proxyInput, 'provider-proxy-field');
+        attachFieldTooltip(proxyField, PROVIDER_FIELD_TOOLTIPS.proxy);
+
+        fieldsGrid.appendChild(baseUrlField);
+        fieldsGrid.appendChild(apiKeyField);
+        fieldsGrid.appendChild(typeField);
+        fieldsGrid.appendChild(proxyField);
 
         const advancedDetails = document.createElement('details');
         advancedDetails.className = 'advanced-options';
@@ -3545,19 +3758,29 @@ document.addEventListener('DOMContentLoaded', function () {
         advancedSummary.textContent = 'Advanced options';
         advancedDetails.appendChild(advancedSummary);
 
-        const modelsInput = createTextarea('provider-models-input', '{"pricing": {"input": 0.1}}');
-        modelsInput.value = normalizeProviderModelsMetadata(initialData.models);
-        const modelsField = createFieldGroup('Models Metadata (JSON)', modelsInput, 'textarea-group');
-        appendFieldHint(modelsField, 'Optional provider-specific metadata stored as the providers.json models field.');
         const advancedGrid = document.createElement('div');
         advancedGrid.className = 'advanced-grid';
+
+        const { container: upstreamLimitsContainer, getRows: getUpstreamLimitsRows } =
+            buildUpstreamLimitsSection(initialData.models);
+        advancedGrid.appendChild(upstreamLimitsContainer);
+
+        const splitModels = splitProviderModelsMetadata(initialData.models);
+        const modelsInput = createTextarea('provider-models-input', '{"pricing": {"input": 0.1}}');
+        modelsInput.value = normalizeProviderModelsMetadata(splitModels.extra);
+        const modelsField = createFieldGroup('Models Metadata (JSON)', modelsInput, 'textarea-group');
+        attachFieldTooltip(modelsField, PROVIDER_FIELD_TOOLTIPS.modelsMetadata);
+        appendFieldHint(modelsField, 'Other provider-specific metadata. upstream_limits are managed structurally above and merged on save.');
         advancedGrid.appendChild(modelsField);
+
         advancedDetails.appendChild(advancedGrid);
 
         cardBody.appendChild(fieldsGrid);
         cardBody.appendChild(advancedDetails);
         card.appendChild(cardHeader);
         card.appendChild(cardBody);
+
+        card._getUpstreamLimitsRows = getUpstreamLimitsRows;
 
         return card;
     }

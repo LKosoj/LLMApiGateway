@@ -41,6 +41,32 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "Configured fallback model; metadata score is 0" not in content
 
 
+def test_editor_js_exposes_provider_field_tooltips_and_upstream_limits_editor():
+    content = Path("static/editor.js").read_text(encoding="utf-8")
+
+    assert "PROVIDER_FIELD_TOOLTIPS" in content
+    assert "attachFieldTooltip" in content
+    assert "buildUpstreamLimitsSection" in content
+    assert "splitProviderModelsMetadata" in content
+    assert "mergeUpstreamLimitsIntoModels" in content
+    assert "upstream-limit-row" in content
+    assert "upstream-limit-${key}" in content
+    assert "UPSTREAM_LIMIT_KEYS = ['rpm', 'rpd', 'tpm', 'tpd']" in content
+    assert "Upstream Limits per Model" in content
+    assert "Per-model upstream quota ledger" in content
+    assert "Requests per minute allowed per upstream key" in content
+
+
+def test_editor_css_includes_tooltip_and_upstream_limits_styles():
+    content = Path("static/editor.css").read_text(encoding="utf-8")
+
+    assert ".field-tooltip" in content
+    assert ".field-tooltip-button" in content
+    assert ".field-tooltip-popover" in content
+    assert ".upstream-limits-section" in content
+    assert ".upstream-limit-row" in content
+
+
 def test_rules_editor_html_contains_openrouter_free_tab():
     content = Path("static/rules-editor.html").read_text(encoding="utf-8")
 

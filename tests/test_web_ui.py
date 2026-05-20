@@ -214,8 +214,8 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
 
     expect(page.get_by_role("tab", name="Free-tier Providers")).to_be_visible()
     page.get_by_role("tab", name="Free-tier Providers").click()
-    expect(page.locator("#freeTierDocStatus")).to_contain_text("Каталог загружен")
     expect(page.locator("#freeTierMarkdown")).to_contain_text("Каталог free-tier провайдеров")
+    expect(page.locator("#freeTierDocStatus")).to_be_hidden()
     expect(page.locator("#freeTierMarkdown table")).to_have_count(1)
     expect(page.locator("#freeTierMarkdown pre code")).to_contain_text("upstream_limits")
     expect(page.locator("#freeTierMarkdown a[href='https://openrouter.ai/collections/free-models']")).to_have_count(1)

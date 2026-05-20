@@ -166,8 +166,19 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     provider_card.locator(".provider-api-key-input").fill("DIRECT-KEY")
     provider_card.locator(".provider-type-select").select_option("anthropic")
     provider_card.locator(".provider-proxy-input").fill("http://proxy.local:8080")
+    expect(provider_card.locator(".provider-api-key-field .field-tooltip-button")).to_have_count(1)
+    expect(provider_card.locator(".provider-api-key-field .field-tooltip-popover")).to_contain_text("${VAR_NAME}")
     provider_card.locator("details.advanced-options summary").click()
-    provider_card.locator(".provider-models-input").fill('{"pricing":{"input":0.1}}')
+    expect(provider_card.locator(".upstream-limits-section")).to_have_count(1)
+    expect(provider_card.locator(".upstream-limits-empty")).to_be_visible()
+    provider_card.locator(".upstream-limit-add").click()
+    upstream_row = provider_card.locator(".upstream-limit-row").first
+    upstream_row.locator(".upstream-limit-model").fill("deepseek/deepseek-r1:free")
+    upstream_row.locator(".upstream-limit-rpm").fill("20")
+    upstream_row.locator(".upstream-limit-rpd").fill("200")
+    upstream_row.locator(".upstream-limit-tpm").fill("60000")
+    upstream_row.locator(".upstream-limit-tpd").fill("1000000")
+    provider_card.locator(".provider-models-input").fill('{"deepseek/deepseek-r1:free":{"pricing":{"input":0.1}}}')
 
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
@@ -181,6 +192,17 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     expect(saved_provider.locator(".provider-base-url-input")).to_have_value("https://anthropic.local")
     expect(saved_provider.locator(".provider-type-select")).to_have_value("anthropic")
     expect(saved_provider.locator(".provider-proxy-input")).to_have_value("http://proxy.local:8080")
+    saved_provider.locator(".accordion-toggle").first.click()
+    saved_provider.locator("details.advanced-options summary").click()
+    saved_row = saved_provider.locator(".upstream-limit-row").first
+    expect(saved_row.locator(".upstream-limit-model")).to_have_value("deepseek/deepseek-r1:free")
+    expect(saved_row.locator(".upstream-limit-rpm")).to_have_value("20")
+    expect(saved_row.locator(".upstream-limit-rpd")).to_have_value("200")
+    expect(saved_row.locator(".upstream-limit-tpm")).to_have_value("60000")
+    expect(saved_row.locator(".upstream-limit-tpd")).to_have_value("1000000")
+    expect(saved_provider.locator(".provider-models-input")).to_have_value(
+        '{\n  "deepseek/deepseek-r1:free": {\n    "pricing": {\n      "input": 0.1\n    }\n  }\n}'
+    )
 
 
 def _build_master_session_cookie_value(gateway_api_key: str) -> str:
