@@ -16,7 +16,7 @@ from threading import Lock
 from ...config.loader import ConfigError, ModelFallbackConfig, ModelsOperationConfig, resolve_provider_proxy
 from ...services.fallback_model_evals import FallbackModelEvalAlreadyRunning
 from ...services.openrouter_free_models import OpenRouterFreeModelsNotConfigured
-from ...config.paths import STATIC_DIR
+from ...config.paths import PROJECT_ROOT, STATIC_DIR
 from ...services.request_handler import OperationDispatcher, SUPPORTED_OPERATION_TYPES
 from ...services.provider_models import ProviderModelsService
 from ...utils.html_cache import get_template
@@ -29,6 +29,7 @@ def _get_config_paths(request: Request):
     return config_loader.providers_path, config_loader.fallback_rules_path, config_loader.operation_rules_path
 
 HTML_DIR = STATIC_DIR
+FREE_TIER_PROVIDERS_DOC_PATH = PROJECT_ROOT / "examples" / "free-tier-providers.md"
 MAX_COMMENT_BACKUPS = 10
 _backup_timestamp_lock = Lock()
 _last_backup_timestamp: datetime | None = None
@@ -694,6 +695,22 @@ async def get_gateway_docs_models(request: Request):
     api_key_record = getattr(request.state, "api_key_record", None)
     allowed_models = set(api_key_record.allowed_models) if api_key_record and api_key_record.allowed_models else None
     return JSONResponse(content=_build_gateway_docs_catalog(config_loader, allowed_models))
+
+
+@editor_router.get("/ui/docs/free-tier-providers.md", response_class=PlainTextResponse, tags=["Config Editor API"])
+async def get_free_tier_providers_doc():
+    """Returns the free-tier provider catalog Markdown for client-side rendering."""
+    if not FREE_TIER_PROVIDERS_DOC_PATH.exists():
+        logging.error("Free-tier provider catalog not found at %s", FREE_TIER_PROVIDERS_DOC_PATH)
+        raise HTTPException(status_code=404, detail="Free-tier provider catalog not found.")
+    try:
+        return PlainTextResponse(
+            FREE_TIER_PROVIDERS_DOC_PATH.read_text(encoding="utf-8"),
+            media_type="text/plain; charset=utf-8",
+        )
+    except OSError as exc:
+        logging.error("Error reading free-tier provider catalog: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load free-tier provider catalog.")
 
 
 def _build_playground_models(config_loader) -> dict[str, list[str]]:

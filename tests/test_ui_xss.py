@@ -3,7 +3,7 @@ import os
 
 def test_no_inner_html_in_ui():
     """Check that innerHTML is not used in UI JS files."""
-    for filepath in ['static/editor.js', 'static/usage-stats.js']:
+    for filepath in ['static/editor.js', 'static/usage-stats.js', 'static/gateway-docs.js']:
         with open(filepath, 'r') as f:
             lines = f.readlines()
             for line in lines:

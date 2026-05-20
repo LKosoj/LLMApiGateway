@@ -49,6 +49,16 @@
             <div class="docs-status" id="catalogStatus">Загрузка каталога моделей...</div>
         </header>
 
+        <div class="docs-tabs" role="tablist" aria-label="Разделы документации">
+            <button class="docs-tab-button active" type="button" role="tab" aria-selected="true" aria-controls="apiDocsPanel" data-docs-tab="api">
+                Gateway API
+            </button>
+            <button class="docs-tab-button" type="button" role="tab" aria-selected="false" aria-controls="freeTierDocsPanel" data-docs-tab="free-tier">
+                Free-tier Providers
+            </button>
+        </div>
+
+        <div id="apiDocsPanel" class="docs-tab-panel active" role="tabpanel">
         <nav class="docs-toc" aria-label="Разделы документации">
             <a href="#models">Модели</a>
             <a href="#auth">Авторизация</a>
@@ -593,6 +603,20 @@
                 <code>read_model</code>, потому что скачивание страниц выполняет отдельный read-сервис. Для PDF job
                 status/result/download модель передаётся в query string и проверяется так же, как при создании job.
             </p>
+        </section>
+        </div>
+
+        <section id="freeTierDocsPanel" class="docs-tab-panel docs-section" role="tabpanel" hidden>
+            <div class="section-heading">
+                <p class="docs-kicker">Free-tier catalog</p>
+                <h2>Free-tier провайдеры</h2>
+            </div>
+            <p>
+                Каталог ниже рендерится напрямую из <code>examples/free-tier-providers.md</code>, чтобы UI и документация
+                оставались синхронизированы без дублирования текста.
+            </p>
+            <div id="freeTierDocStatus" class="docs-status">Каталог ещё не загружен.</div>
+            <div id="freeTierMarkdown" class="markdown-doc" aria-live="polite"></div>
         </section>
     </main>
 

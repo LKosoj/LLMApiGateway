@@ -80,6 +80,41 @@
         if (className) status.classList.add(className);
     }
 
+    function setFreeTierStatus(message, className) {
+        const status = document.getElementById("freeTierDocStatus");
+        if (!status) return;
+        status.textContent = message;
+        status.classList.remove("ready", "error");
+        if (className) status.classList.add(className);
+    }
+
+    function setupDocsTabs() {
+        const buttons = document.querySelectorAll(".docs-tab-button");
+        const panels = {
+            api: document.getElementById("apiDocsPanel"),
+            "free-tier": document.getElementById("freeTierDocsPanel"),
+        };
+        buttons.forEach((button) => {
+            button.addEventListener("click", () => {
+                const tab = button.dataset.docsTab || "api";
+                buttons.forEach((item) => {
+                    const isActive = item === button;
+                    item.classList.toggle("active", isActive);
+                    item.setAttribute("aria-selected", isActive ? "true" : "false");
+                });
+                Object.entries(panels).forEach(([key, panel]) => {
+                    if (!panel) return;
+                    const isActive = key === tab;
+                    panel.hidden = !isActive;
+                    panel.classList.toggle("active", isActive);
+                });
+                if (tab === "free-tier") {
+                    loadFreeTierDoc();
+                }
+            });
+        });
+    }
+
     function appendModelChip(parent, name, modelsById) {
         const chip = document.createElement("span");
         chip.className = "model-chip";
@@ -98,6 +133,221 @@
         }
 
         parent.appendChild(chip);
+    }
+
+    function appendInlineMarkdown(parent, text) {
+        const pattern = /(`[^`]+`|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s)]+)/g;
+        let lastIndex = 0;
+        let match = pattern.exec(text);
+        while (match) {
+            if (match.index > lastIndex) {
+                parent.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+            }
+            const token = match[0];
+            if (token.startsWith("`")) {
+                const code = document.createElement("code");
+                code.textContent = token.slice(1, -1);
+                parent.appendChild(code);
+            } else if (token.startsWith("http://") || token.startsWith("https://")) {
+                const link = document.createElement("a");
+                link.href = token;
+                link.rel = "noopener noreferrer";
+                link.target = "_blank";
+                link.textContent = token;
+                parent.appendChild(link);
+            } else {
+                const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+                const label = linkMatch ? linkMatch[1] : token;
+                const url = linkMatch ? linkMatch[2] : "";
+                if (/^https?:\/\//.test(url)) {
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.rel = "noopener noreferrer";
+                    link.target = "_blank";
+                    link.textContent = label;
+                    parent.appendChild(link);
+                } else {
+                    parent.appendChild(document.createTextNode(label));
+                }
+            }
+            lastIndex = pattern.lastIndex;
+            match = pattern.exec(text);
+        }
+        if (lastIndex < text.length) {
+            parent.appendChild(document.createTextNode(text.slice(lastIndex)));
+        }
+    }
+
+    function parseTableRow(line) {
+        return line
+            .trim()
+            .replace(/^\|/, "")
+            .replace(/\|$/, "")
+            .split("|")
+            .map((cell) => cell.trim());
+    }
+
+    function isTableSeparator(line) {
+        return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+    }
+
+    function appendParagraph(container, lines) {
+        if (lines.length === 0) return;
+        const paragraph = document.createElement("p");
+        appendInlineMarkdown(paragraph, lines.join(" "));
+        container.appendChild(paragraph);
+    }
+
+    function appendList(container, lines, ordered) {
+        const list = document.createElement(ordered ? "ol" : "ul");
+        lines.forEach((line) => {
+            const item = document.createElement("li");
+            const text = ordered ? line.replace(/^\s*\d+\.\s+/, "") : line.replace(/^\s*[-*]\s+/, "");
+            appendInlineMarkdown(item, text);
+            list.appendChild(item);
+        });
+        container.appendChild(list);
+    }
+
+    function appendTable(container, lines) {
+        if (lines.length < 2 || !isTableSeparator(lines[1])) {
+            appendParagraph(container, lines);
+            return;
+        }
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        parseTableRow(lines[0]).forEach((cell) => {
+            const th = document.createElement("th");
+            appendInlineMarkdown(th, cell);
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        lines.slice(2).forEach((line) => {
+            const row = document.createElement("tr");
+            parseTableRow(line).forEach((cell) => {
+                const td = document.createElement("td");
+                appendInlineMarkdown(td, cell);
+                row.appendChild(td);
+            });
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+
+    function renderMarkdown(markdown) {
+        const container = document.getElementById("freeTierMarkdown");
+        if (!container) return;
+        container.replaceChildren();
+
+        const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+        let index = 0;
+        while (index < lines.length) {
+            const line = lines[index];
+            if (!line.trim()) {
+                index += 1;
+                continue;
+            }
+
+            if (line.startsWith("```")) {
+                const codeLines = [];
+                index += 1;
+                while (index < lines.length && !lines[index].startsWith("```")) {
+                    codeLines.push(lines[index]);
+                    index += 1;
+                }
+                if (index < lines.length) index += 1;
+                const pre = document.createElement("pre");
+                const code = document.createElement("code");
+                code.textContent = codeLines.join("\n");
+                pre.appendChild(code);
+                container.appendChild(pre);
+                continue;
+            }
+
+            const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+            if (headingMatch) {
+                const heading = document.createElement(`h${headingMatch[1].length}`);
+                appendInlineMarkdown(heading, headingMatch[2]);
+                container.appendChild(heading);
+                index += 1;
+                continue;
+            }
+
+            if (/^\s*\|/.test(line) && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
+                const tableLines = [];
+                while (index < lines.length && /^\s*\|/.test(lines[index])) {
+                    tableLines.push(lines[index]);
+                    index += 1;
+                }
+                appendTable(container, tableLines);
+                continue;
+            }
+
+            if (/^\s*[-*]\s+/.test(line)) {
+                const listLines = [];
+                while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
+                    listLines.push(lines[index]);
+                    index += 1;
+                }
+                appendList(container, listLines, false);
+                continue;
+            }
+
+            if (/^\s*\d+\.\s+/.test(line)) {
+                const listLines = [];
+                while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
+                    listLines.push(lines[index]);
+                    index += 1;
+                }
+                appendList(container, listLines, true);
+                continue;
+            }
+
+            const paragraphLines = [];
+            while (
+                index < lines.length
+                && lines[index].trim()
+                && !lines[index].startsWith("```")
+                && !/^(#{1,3})\s+/.test(lines[index])
+                && !/^\s*\|/.test(lines[index])
+                && !/^\s*[-*]\s+/.test(lines[index])
+                && !/^\s*\d+\.\s+/.test(lines[index])
+            ) {
+                paragraphLines.push(lines[index]);
+                index += 1;
+            }
+            appendParagraph(container, paragraphLines);
+        }
+    }
+
+    let freeTierDocLoaded = false;
+    async function loadFreeTierDoc() {
+        if (freeTierDocLoaded) return;
+        setFreeTierStatus("Загрузка free-tier каталога...");
+        try {
+            const response = await apiFetch("/v1/ui/docs/free-tier-providers.md");
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            renderMarkdown(await response.text());
+            freeTierDocLoaded = true;
+            setFreeTierStatus("Каталог загружен из examples/free-tier-providers.md", "ready");
+        } catch (error) {
+            setFreeTierStatus(`Каталог free-tier недоступен: ${error.message}`, "error");
+            const container = document.getElementById("freeTierMarkdown");
+            if (container) {
+                container.replaceChildren();
+                const message = document.createElement("p");
+                message.className = "markdown-error";
+                message.textContent = "Проверьте, что файл examples/free-tier-providers.md существует и доступен gateway.";
+                container.appendChild(message);
+            }
+        }
     }
 
     function renderCatalog(payload) {
@@ -157,6 +407,7 @@
 
     document.addEventListener("DOMContentLoaded", () => {
         setupThemeToggle();
+        setupDocsTabs();
         loadCatalog();
     });
 })();
