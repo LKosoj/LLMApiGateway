@@ -774,6 +774,7 @@ class ConfigLoader:
             rule_config = {
                 "fallback_models": [fm.model_dump(exclude_none=True) for fm in rule.fallback_models],
                 "rotate_models": rule.rotate_models,
+                "dynamic_penalty": rule.dynamic_penalty,
                 "strip_think_tags": rule.strip_think_tags,
             }
             if rule.max_total_attempts is not None:

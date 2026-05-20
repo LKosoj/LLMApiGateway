@@ -257,6 +257,32 @@ def test_fallback_rules_max_total_attempts_and_use_provider_order_persist(page: 
     expect(page.locator(".use-provider-order-checkbox")).to_be_checked()
 
 
+def test_fallback_rules_dynamic_penalty_toggle_persists(page: Page, server):
+    """Round-trip for dynamic_penalty: the toggle must come back checked after
+    save+reload. Regression for a path where _build_fallback_rules_config
+    dropped dynamic_penalty from the in-memory rule_config, so the GET endpoint
+    re-served False even when the file on disk had true."""
+    session = create_authenticated_session("test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    page.click("#addRuleButton")
+    page.fill(".gateway-model-input", "dynamic-penalty-model")
+    page.select_option(".provider-select", "openai")
+    page.wait_for_selector(".model-select:not([disabled])")
+    page.select_option(".model-select", "gpt-4o")
+    page.check(".dynamic-penalty-checkbox")
+
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+    page.reload()
+    expect(page.locator(".gateway-model-input")).to_have_value("dynamic-penalty-model")
+    expect(page.locator(".dynamic-penalty-checkbox")).to_be_checked()
+
+
 def test_fallback_rules_strip_think_tags_toggle_persists(page: Page, server):
     session = create_authenticated_session("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])

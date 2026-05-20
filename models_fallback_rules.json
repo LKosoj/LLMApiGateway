@@ -73,7 +73,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": true,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -106,7 +106,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": true,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -154,7 +154,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": true,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -183,7 +183,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": true,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -234,7 +234,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": true,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -393,7 +393,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": true,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   },
   {
@@ -431,7 +431,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": true,
+    "dynamic_penalty": false,
     "strip_think_tags": true
   }
 ]

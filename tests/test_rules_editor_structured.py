@@ -359,6 +359,47 @@ class RulesEditorStructuredTests(unittest.TestCase):
         rule = response.json()["rules"][0]
         self.assertNotIn("max_total_attempts", rule)
 
+    def test_structured_save_persists_dynamic_penalty(self):
+        """Regression: _build_fallback_rules_config previously dropped
+        dynamic_penalty from the in-memory rule_config, so the GET endpoint
+        re-served False even when the file on disk had true. chat.py also
+        reads from the in-memory state, so the feature never activated via
+        the UI round-trip."""
+        fake_http_client = Mock()
+        fake_http_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"id": "provider-model"}]},
+                request=httpx.Request("GET", "https://devbox.example/models"),
+            )
+        )
+
+        with self._client(fake_http_client) as (client, _):
+            response = client.post(
+                "/v1/config/models-rules/structured",
+                json={
+                    "rules": [
+                        {
+                            "gateway_model_name": "gateway-model",
+                            "fallback_models": [
+                                {
+                                    "provider": "devbox",
+                                    "model": "provider-model",
+                                }
+                            ],
+                            "rotate_models": False,
+                            "dynamic_penalty": True,
+                        }
+                    ]
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["rules"][0]["dynamic_penalty"])
+        self.assertTrue(self.config_loader.fallback_rules["gateway-model"]["dynamic_penalty"])
+        self.assertIn('"dynamic_penalty": true', self.rules_path.read_text(encoding="utf-8"))
+
     def test_structured_save_persists_strip_think_tags(self):
         fake_http_client = Mock()
         fake_http_client.get = AsyncMock(
