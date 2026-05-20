@@ -58,8 +58,13 @@
                             <span>Choose providers and only their available models. Provider model lists are cached for 15 minutes and refreshed on demand.</span>
                             <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Format: JSON5 (supports // single-line and /* multi-line */ comments)</span>
                         </div>
-                        <button id="addRuleButton" type="button" class="secondary-button">Add Gateway Model</button>
+                        <div class="rules-toolbar-actions">
+                            <button id="previewRulesButton" type="button" class="secondary-button">Preview Changes</button>
+                            <button id="suggestEvalOrderButton" type="button" class="secondary-button">Suggest Eval Order</button>
+                            <button id="addRuleButton" type="button" class="secondary-button">Add Gateway Model</button>
+                        </div>
                     </div>
+                    <div id="rulesPreviewArea" class="rules-preview" hidden></div>
                     <div id="rulesList" class="rules-list"></div>
                     <div id="rulesEmptyState" class="rules-empty-state" hidden>
                         No fallback rules yet. Add the first gateway model rule to begin.

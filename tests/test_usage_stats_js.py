@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 
 def test_usage_stats_js_no_double_load():
     """
@@ -83,3 +85,21 @@ def test_usage_stats_js_hides_provider_column_in_latest_records():
     assert "'provider'" not in content.split("const preferredHeaders = [", 1)[1].split("];", 1)[0]
     assert "'status'" not in content.split("const preferredHeaders = [", 1)[1].split("];", 1)[0]
     assert "key !== 'id' && key !== 'request_id' && key !== 'provider' && key !== 'status'" in content
+
+
+def test_usage_stats_html_contains_upstream_analytics_subtab():
+    content = Path("static/usage-stats.html").read_text(encoding="utf-8")
+
+    assert "Upstream Analytics" in content
+    assert 'id="upstreamStatsArea"' in content
+    assert 'id="upstreamPeriodSelector"' in content
+    assert 'id="upstreamRefreshButton"' in content
+
+
+def test_usage_stats_js_fetches_upstream_stats_for_selected_period():
+    content = Path("static/usage-stats.js").read_text(encoding="utf-8")
+
+    assert "fetchAndRenderUpstreamStats" in content
+    assert "createUpstreamStatsTable" in content
+    assert "upstreamStatsArea.appendChild(createUpstreamStatsTable(data));" in content
+    assert "apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`)" in content

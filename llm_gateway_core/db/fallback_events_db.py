@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 INSERT_EVENT_SQL = """
 INSERT INTO fallback_events
 (timestamp, request_id, gateway_model, attempt_number, provider, model,
- success, error_type, error_message, duration_ms)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ success, error_type, error_message, duration_ms, operation, api_key_id, upstream_key_fingerprint)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -67,9 +67,21 @@ class FallbackEventsDB:
                 success INTEGER NOT NULL DEFAULT 0,
                 error_type TEXT,
                 error_message TEXT,
-                duration_ms INTEGER NOT NULL DEFAULT 0
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                operation TEXT,
+                api_key_id INTEGER,
+                upstream_key_fingerprint TEXT
             )
             ''')
+
+            cursor.execute("PRAGMA table_info(fallback_events)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            if "operation" not in existing_columns:
+                cursor.execute("ALTER TABLE fallback_events ADD COLUMN operation TEXT")
+            if "api_key_id" not in existing_columns:
+                cursor.execute("ALTER TABLE fallback_events ADD COLUMN api_key_id INTEGER")
+            if "upstream_key_fingerprint" not in existing_columns:
+                cursor.execute("ALTER TABLE fallback_events ADD COLUMN upstream_key_fingerprint TEXT")
 
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_fallback_events_timestamp
@@ -79,6 +91,11 @@ class FallbackEventsDB:
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_fallback_events_request_id
             ON fallback_events (request_id)
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_fallback_events_provider_model_key
+            ON fallback_events (provider, model, upstream_key_fingerprint)
             ''')
 
             conn.commit()
@@ -107,6 +124,9 @@ class FallbackEventsDB:
         error_type: str | None,
         error_message: str | None,
         duration_ms: int,
+        operation: str | None = None,
+        api_key_id: int | None = None,
+        upstream_key_fingerprint: str | None = None,
     ) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
         params = (
@@ -120,6 +140,9 @@ class FallbackEventsDB:
             error_type,
             error_message[:500] if error_message else None,
             duration_ms,
+            operation,
+            api_key_id,
+            upstream_key_fingerprint,
         )
         if self._batcher is not None:
             self._batcher.enqueue(INSERT_EVENT_SQL, params)
@@ -230,7 +253,8 @@ class FallbackEventsDB:
                 cursor = await db.execute(f"""
                 SELECT
                     request_id, timestamp, gateway_model, attempt_number,
-                    provider, model, success, error_type, error_message, duration_ms
+                    provider, model, success, error_type, error_message, duration_ms,
+                    operation, api_key_id, upstream_key_fingerprint
                 FROM fallback_events
                 WHERE request_id IN ({placeholders})
                 ORDER BY request_id, attempt_number
@@ -268,6 +292,8 @@ class FallbackEventsDB:
                         "success": any_success,
                         "final_provider": last["provider"],
                         "final_model": last["model"],
+                        "operation": first["operation"],
+                        "upstream_key_fingerprint": last["upstream_key_fingerprint"],
                         "attempts": [
                             {
                                 "attempt_number": a["attempt_number"],
@@ -277,6 +303,8 @@ class FallbackEventsDB:
                                 "error_type": a["error_type"],
                                 "error_message": a["error_message"],
                                 "duration_ms": a["duration_ms"],
+                                "operation": a["operation"],
+                                "upstream_key_fingerprint": a["upstream_key_fingerprint"],
                             }
                             for a in attempts
                         ],
@@ -286,6 +314,72 @@ class FallbackEventsDB:
         except Exception as e:
             logger.error("Error retrieving fallback records: %s", e)
             return [], 0
+
+    async def get_upstream_stats(
+        self,
+        period: str,
+        start_date: datetime = None,
+        end_date: datetime = None,
+        *,
+        api_key_id: int | None = None,
+    ):
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                for pragma in RUNTIME_PRAGMAS:
+                    await db.execute(pragma)
+                db.row_factory = aiosqlite.Row
+
+                if period == 'hour':
+                    date_format = '%Y-%m-%d %H:00:00'
+                elif period == 'day':
+                    date_format = '%Y-%m-%d'
+                elif period == 'week':
+                    date_format = '%Y-W%W'
+                elif period == 'month':
+                    date_format = '%Y-%m'
+                else:
+                    raise ValueError(f"Invalid period: {period}. Must be 'hour', 'day', 'week', or 'month'.")
+
+                where_parts = ["provider IS NOT NULL", "model IS NOT NULL"]
+                params: list = []
+                if start_date:
+                    where_parts.append("timestamp >= ?")
+                    params.append(start_date.isoformat())
+                if end_date:
+                    where_parts.append("timestamp <= ?")
+                    params.append(end_date.isoformat())
+                if api_key_id is not None:
+                    where_parts.append("api_key_id = ?")
+                    params.append(api_key_id)
+                where_clause = "WHERE " + " AND ".join(where_parts)
+
+                query = f"""
+                SELECT
+                    strftime('{date_format}', timestamp) as time_period,
+                    COALESCE(operation, 'chat') as operation,
+                    gateway_model,
+                    provider,
+                    model,
+                    COALESCE(upstream_key_fingerprint, 'unknown') as upstream_key_fingerprint,
+                    COUNT(*) as attempts,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successes,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as errors,
+                    ROUND(100.0 * SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) as success_rate,
+                    CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms,
+                    MAX(duration_ms) as max_duration_ms
+                FROM fallback_events
+                {where_clause}
+                GROUP BY time_period, operation, gateway_model, provider, model, upstream_key_fingerprint
+                ORDER BY time_period DESC, attempts DESC
+                """
+                cursor = await db.execute(query, params)
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error("Error retrieving upstream stats: %s", e)
+            return []
 
     def cleanup_old_records(self, retention_days: int = 180):
         conn = None

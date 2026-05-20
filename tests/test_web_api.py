@@ -19,6 +19,8 @@ from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from tests._async_compat import run_async
 
+_json_dumps = json.dumps
+
 
 VALID_PROVIDERS_TEXT = """
 [
@@ -301,7 +303,20 @@ class WebApiTests(unittest.TestCase):
 
         # Chat LLM used for query expansion and analysis.
         last_message = (json.get("messages") or [{}])[-1].get("content", "")
-        if "Проанализируй источник" in last_message:
+        if "Определи, нужно ли включать evidence matrix" in last_message:
+            content = _json_dumps(
+                {
+                    "mode": "not_applicable",
+                    "task_type": "general_research",
+                    "candidate_type": "",
+                    "requirements": [],
+                }
+            )
+        elif "Извлеки evidence matrix" in last_message:
+            content = _json_dumps({"candidates": []})
+        elif "Собери итоговый исследовательский ответ строго по evidence matrix" in last_message:
+            content = "Synthesized evidence answer with citations."
+        elif "Проанализируй источник" in last_message:
             content = "- Relevant fact (https://example.com/article)"
         elif "Собери единый связный исследовательский ответ" in last_message:
             content = "Synthesized research answer with citations."
@@ -724,7 +739,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["output_language"], "русском")
         self.assertIn("Synthesized research answer", payload["output"])
         self.assertEqual(api_keys_db.spent_calls[0][0], 7)
-        self.assertAlmostEqual(api_keys_db.spent_calls[0][1], 0.10)
+        self.assertAlmostEqual(api_keys_db.spent_calls[0][1], 0.11)
 
     def test_web_research_searches_ru_en_zh_and_reads_language_limited_sources(self):
         generate_calls = []
@@ -866,6 +881,15 @@ class WebApiTests(unittest.TestCase):
             usage_accumulator,
         ):
             prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "not_applicable",
+                        "task_type": "general_research",
+                        "candidate_type": "",
+                        "requirements": [],
+                    }
+                )
             if "Оставь только текст статьи" in prompt:
                 relevance_prompts.append(prompt)
                 article_text = prompt.split("Текст статьи:\n", 1)[1]
@@ -1012,6 +1036,786 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["output_language"], "English")
         self.assertEqual([item["language"] for item in payload["sources"]], ["en", "en"])
         self.assertEqual([item["language"] for item in payload["articles"]], ["en", "en"])
+
+    def test_web_research_evidence_matrix_not_applicable_preserves_current_flow(self):
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "not_applicable",
+                        "task_type": "general_research",
+                        "candidate_type": "",
+                        "requirements": [],
+                    }
+                )
+            if "Проанализируй источник" in prompt:
+                return "- Relevant fact with source"
+            if "Собери единый связный исследовательский ответ" in prompt:
+                return "Synthesized answer."
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/one", "title": "One", "snippet": "s"},
+                {"url": "https://example.com/two", "title": "Two", "snippet": "s"},
+            ]
+        )
+
+        async def fake_read(_client, url: str):
+            return {
+                "url": url,
+                "title": f"Title {url.rsplit('/', 1)[-1]}",
+                "content": f"Content for {url}",
+            }
+
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter, read_adapter=AsyncMock(side_effect=fake_read)) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "what happened",
+                    "max_results": 2,
+                    "max_articles": 2,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["output"], "Synthesized answer.")
+        self.assertNotIn("evidence_matrix", payload)
+        self.assertEqual([item["url"] for item in payload["articles"]], ["https://example.com/one", "https://example.com/two"])
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(len(rerank_payloads), 1)
+        self.assertEqual(len(rerank_payloads[0]["text_2"]), 2)
+
+    def test_web_research_evidence_matrix_applied_keeps_candidate_with_required_evidence(self):
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "applied",
+                        "task_type": "vendor_selection",
+                        "candidate_type": "design studio",
+                        "requirements": [
+                            {
+                                "id": "specialization",
+                                "label": "Specialization",
+                                "description": "Candidate has relevant specialization",
+                                "required": True,
+                                "min_sources": 1,
+                            }
+                        ],
+                    }
+                )
+            if "Извлеки evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "candidates": [
+                            {
+                                "name": "Studio A",
+                                "aliases": ["A"],
+                                "evidence": [
+                                    {
+                                        "criterion_id": "specialization",
+                                        "status": "supports",
+                                        "claim": "Studio A designs offices.",
+                                        "quote": "Studio A designs offices.",
+                                        "confidence": 0.9,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            if "Собери итоговый исследовательский ответ строго по evidence matrix" in prompt:
+                self.assertIn("Studio A", prompt)
+                return "Studio A is supported."
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/studio-a", "title": "Studio A", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(
+            return_value={
+                "url": "https://example.com/studio-a",
+                "title": "Studio A",
+                "content": "Studio A designs offices.",
+            }
+        )
+
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["output"], "Studio A is supported.")
+        self.assertEqual([item["url"] for item in payload["articles"]], ["https://example.com/studio-a"])
+        self.assertEqual(payload["evidence_matrix"]["mode"], "applied")
+        self.assertEqual(payload["evidence_matrix"]["passed_candidates"], ["Studio A"])
+        self.assertEqual(payload["evidence_matrix"]["candidates"][0]["status"], "passed")
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(len(rerank_payloads), 1)
+        self.assertEqual(len(rerank_payloads[0]["text_2"]), 1)
+
+    def test_web_research_evidence_matrix_applied_drops_candidate_missing_required_criterion(self):
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "applied",
+                        "task_type": "vendor_selection",
+                        "candidate_type": "design studio",
+                        "requirements": [
+                            {
+                                "id": "specialization",
+                                "label": "Specialization",
+                                "description": "Candidate has relevant specialization",
+                                "required": True,
+                                "min_sources": 1,
+                            }
+                        ],
+                    }
+                )
+            if "Извлеки evidence matrix" in prompt and "https://example.com/supported" in prompt:
+                return _json_dumps(
+                    {
+                        "candidates": [
+                            {
+                                "name": "Studio A",
+                                "aliases": [],
+                                "evidence": [
+                                    {
+                                        "criterion_id": "specialization",
+                                        "status": "supports",
+                                        "claim": "Studio A designs offices.",
+                                        "quote": "Studio A designs offices.",
+                                        "confidence": 0.9,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            if "Извлеки evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "candidates": [
+                            {
+                                "name": "Studio B",
+                                "aliases": [],
+                                "evidence": [
+                                    {
+                                        "criterion_id": "specialization",
+                                        "status": "unclear",
+                                        "claim": "",
+                                        "quote": "",
+                                        "confidence": 0.1,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            if "Собери итоговый исследовательский ответ строго по evidence matrix" in prompt:
+                self.assertIn("Studio A", prompt)
+                self.assertIn("Studio B", prompt)
+                return "Studio A is the only supported candidate."
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/supported", "title": "Supported", "snippet": "s"},
+                {"url": "https://example.com/missing", "title": "Missing", "snippet": "s"},
+            ]
+        )
+
+        async def fake_read(_client, url: str):
+            if url.endswith("/supported"):
+                content = "Studio A designs offices."
+            else:
+                content = "Studio B is mentioned."
+            return {"url": url, "title": url.rsplit("/", 1)[-1], "content": content}
+
+        read_adapter = AsyncMock(side_effect=fake_read)
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 2,
+                    "max_articles": 2,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(read_adapter.await_count, 2)
+        self.assertEqual([item["url"] for item in payload["articles"]], ["https://example.com/supported"])
+        self.assertEqual([item["url"] for item in payload["sources"]], ["https://example.com/supported"])
+        self.assertEqual(payload["evidence_matrix"]["passed_candidates"], ["Studio A"])
+        self.assertEqual(payload["evidence_matrix"]["rejected_candidates"], ["Studio B"])
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(len(rerank_payloads), 1)
+        self.assertEqual(len(rerank_payloads[0]["text_2"]), 1)
+
+    def test_web_research_evidence_matrix_invalid_analysis_json_fails_explicitly(self):
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return "not json"
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/article", "title": "Article", "snippet": "s"},
+            ]
+        )
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose a vendor",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        detail = response.json()["detail"]
+        self.assertIn("evidence_matrix", detail)
+        self.assertIn("analysis_model", detail)
+        self.assertIn("invalid JSON", detail)
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(rerank_payloads, [])
+
+    def test_web_research_evidence_matrix_malformed_not_applicable_plan_fails_explicitly(self):
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "not_applicable",
+                        "task_type": "general_research",
+                        "candidate_type": 123,
+                        "requirements": [],
+                    }
+                )
+            return ""
+
+        search_adapter = AsyncMock(return_value=[{"url": "https://example.com/a", "title": "A", "snippet": "s"}])
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "what happened",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("candidate_type must be a string", response.json()["detail"])
+        search_adapter.assert_not_awaited()
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(rerank_payloads, [])
+
+    def test_web_research_evidence_matrix_optional_requirement_fails_explicitly(self):
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "applied",
+                        "task_type": "vendor_selection",
+                        "candidate_type": "design studio",
+                        "requirements": [
+                            {
+                                "id": "nice_to_have",
+                                "label": "Nice to have",
+                                "description": "Optional criterion",
+                                "required": False,
+                                "min_sources": 1,
+                            }
+                        ],
+                    }
+                )
+            return ""
+
+        search_adapter = AsyncMock(return_value=[{"url": "https://example.com/a", "title": "A", "snippet": "s"}])
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("requirements must be required", response.json()["detail"])
+        search_adapter.assert_not_awaited()
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(rerank_payloads, [])
+
+    def test_web_research_evidence_matrix_relevance_failure_fails_explicitly(self):
+        long_content = "Studio A designs offices. " + ("x" * web_api.ARTICLE_RELEVANCE_THRESHOLD_CHARS)
+
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "applied",
+                        "task_type": "vendor_selection",
+                        "candidate_type": "design studio",
+                        "requirements": [
+                            {
+                                "id": "specialization",
+                                "label": "Specialization",
+                                "description": "Candidate has relevant specialization",
+                                "required": True,
+                                "min_sources": 1,
+                            }
+                        ],
+                    }
+                )
+            if "Оставь только текст статьи" in prompt:
+                raise RuntimeError("relevance model unavailable")
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/long", "title": "Long", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(
+            return_value={
+                "url": "https://example.com/long",
+                "title": "Long",
+                "content": long_content,
+            }
+        )
+
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Article relevance preparation failed", response.json()["detail"])
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(rerank_payloads, [])
+
+    def test_web_research_evidence_matrix_invalid_extraction_structure_fails_explicitly(self):
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "applied",
+                        "task_type": "vendor_selection",
+                        "candidate_type": "design studio",
+                        "requirements": [
+                            {
+                                "id": "specialization",
+                                "label": "Specialization",
+                                "description": "Candidate has relevant specialization",
+                                "required": True,
+                                "min_sources": 1,
+                            }
+                        ],
+                    }
+                )
+            if "Извлеки evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "candidates": [
+                            {
+                                "name": "Studio A",
+                                "aliases": [],
+                                "evidence": "not a list",
+                            }
+                        ]
+                    }
+                )
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/studio-a", "title": "Studio A", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(
+            return_value={
+                "url": "https://example.com/studio-a",
+                "title": "Studio A",
+                "content": "Studio A designs offices.",
+            }
+        )
+
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        detail = response.json()["detail"]
+        self.assertIn("extraction", detail)
+        self.assertIn("evidence must be a list", detail)
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(rerank_payloads, [])
+
+    def test_web_research_evidence_matrix_checks_quotes_against_original_article_content(self):
+        original_content = "Studio A designs offices. " + ("x" * web_api.ARTICLE_RELEVANCE_THRESHOLD_CHARS)
+        prepared_content = "Studio A has certified office practice."
+
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "applied",
+                        "task_type": "vendor_selection",
+                        "candidate_type": "design studio",
+                        "requirements": [
+                            {
+                                "id": "specialization",
+                                "label": "Specialization",
+                                "description": "Candidate has relevant specialization",
+                                "required": True,
+                                "min_sources": 1,
+                            }
+                        ],
+                    }
+                )
+            if "Оставь только текст статьи" in prompt:
+                return prepared_content
+            if "Извлеки evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "candidates": [
+                            {
+                                "name": "Studio A",
+                                "aliases": [],
+                                "evidence": [
+                                    {
+                                        "criterion_id": "specialization",
+                                        "status": "supports",
+                                        "claim": prepared_content,
+                                        "quote": prepared_content,
+                                        "confidence": 0.9,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/studio-a", "title": "Studio A", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(
+            return_value={
+                "url": "https://example.com/studio-a",
+                "title": "Studio A",
+                "content": original_content,
+            }
+        )
+
+        with (
+            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["evidence_matrix"]["passed_candidates"], [])
+        self.assertEqual(payload["articles"], [])
+        self.assertIn("Insufficient evidence", payload["output"])
+        rerank_payloads = [
+            call.kwargs["json"]
+            for call in fake_http_client.post.await_args_list
+            if "text_2" in call.kwargs.get("json", {})
+        ]
+        self.assertEqual(rerank_payloads, [])
 
     def test_web_research_rerank_uses_next_route_after_downstream_failure(self):
         operation_rules = json.loads(self.operation_rules_path.read_text(encoding="utf-8"))

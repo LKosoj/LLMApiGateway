@@ -427,6 +427,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const fallbackPrevPage = document.getElementById('fallbackPrevPage');
     const fallbackNextPage = document.getElementById('fallbackNextPage');
     const fallbackPageInfo = document.getElementById('fallbackPageInfo');
+    const upstreamPeriodSelector = document.getElementById('upstreamPeriodSelector');
+    const upstreamRefreshButton = document.getElementById('upstreamRefreshButton');
+    const upstreamStatsArea = document.getElementById('upstreamStatsArea');
     const fallbackRecordsPerPage = 25;
     let fallbackCurrentPage = 1;
 
@@ -440,10 +443,17 @@ document.addEventListener('DOMContentLoaded', () => {
             fallbackSubTabs.forEach(b => b.classList.remove('active'));
             fallbackSubContents.forEach(c => c.classList.remove('active'));
             btn.classList.add('active');
-            document.getElementById(subtab === 'summary' ? 'fallbackSummaryContent' : 'fallbackChainsContent').classList.add('active');
+            const contentBySubTab = {
+                summary: 'fallbackSummaryContent',
+                chains: 'fallbackChainsContent',
+                upstream: 'upstreamAnalyticsContent',
+            };
+            document.getElementById(contentBySubTab[subtab] || 'fallbackSummaryContent').classList.add('active');
             if (subtab === 'chains') {
                 fallbackCurrentPage = 1;
                 fetchAndRenderFallbackChains();
+            } else if (subtab === 'upstream') {
+                fetchAndRenderUpstreamStats();
             } else {
                 fetchAndRenderFallbackStats();
             }
@@ -454,6 +464,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const activeSubTab = document.querySelector('.fallback-sub-tab.active');
         if (activeSubTab && activeSubTab.dataset.subtab === 'chains') {
             fetchAndRenderFallbackChains();
+        } else if (activeSubTab && activeSubTab.dataset.subtab === 'upstream') {
+            fetchAndRenderUpstreamStats();
         } else {
             fetchAndRenderFallbackStats();
         }
@@ -771,8 +783,114 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    const createUpstreamStatsTable = (data) => {
+        const fragment = document.createDocumentFragment();
+        if (!data || data.length === 0) {
+            const p = document.createElement('p');
+            p.textContent = 'No upstream analytics for the selected period.';
+            fragment.appendChild(p);
+            return fragment;
+        }
+
+        const groupedByPeriod = data.reduce((acc, row) => {
+            const key = row.time_period;
+            if (!acc[key]) acc[key] = [];
+            acc[key].push(row);
+            return acc;
+        }, {});
+
+        for (const periodKey in groupedByPeriod) {
+            const h2 = document.createElement('h2');
+            h2.textContent = `Period: ${periodKey}`;
+            fragment.appendChild(h2);
+
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const trHead = document.createElement('tr');
+            [
+                'Gateway Model',
+                'Provider',
+                'Model',
+                'Operation',
+                'Key',
+                'Attempts',
+                'Success',
+                'Errors',
+                'Success Rate',
+                'Avg Duration',
+                'Max Duration',
+            ].forEach(text => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                trHead.appendChild(th);
+            });
+            thead.appendChild(trHead);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            groupedByPeriod[periodKey].forEach(row => {
+                const tr = document.createElement('tr');
+                const successRate = typeof row.success_rate === 'number' ? `${row.success_rate.toFixed(1)}%` : 'N/A';
+                const cells = [
+                    row.gateway_model || 'N/A',
+                    row.provider || 'N/A',
+                    row.model || 'N/A',
+                    row.operation || 'N/A',
+                    row.upstream_key_fingerprint || 'N/A',
+                    row.attempts,
+                    row.successes,
+                    row.errors,
+                    successRate,
+                    formatDuration(row.avg_duration_ms || 0),
+                    formatDuration(row.max_duration_ms || 0),
+                ];
+                cells.forEach(value => {
+                    const td = document.createElement('td');
+                    td.textContent = typeof value === 'number' ? value.toLocaleString() : value;
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            fragment.appendChild(table);
+        }
+        return fragment;
+    };
+
+    const fetchAndRenderUpstreamStats = async () => {
+        const selectedPeriod = upstreamPeriodSelector.value;
+        upstreamStatsArea.textContent = 'Loading upstream analytics...';
+        showMessage('');
+        upstreamRefreshButton.disabled = true;
+        upstreamRefreshButton.classList.add('loading');
+
+        try {
+            const response = await apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`);
+            const data = await response.json();
+
+            if (!response.ok) {
+                showMessage(data.detail || `Error: ${response.status}`, true);
+                upstreamStatsArea.textContent = '';
+                return;
+            }
+
+            upstreamStatsArea.textContent = '';
+            upstreamStatsArea.appendChild(createUpstreamStatsTable(data));
+            showMessage(data.length === 0 ? 'No upstream analytics for the selected period.' : 'Upstream analytics loaded.');
+        } catch (error) {
+            console.error('Failed to fetch upstream analytics:', error);
+            showMessage(`Failed to load upstream analytics: ${error.message}`, true);
+            upstreamStatsArea.textContent = '';
+        } finally {
+            upstreamRefreshButton.disabled = false;
+            upstreamRefreshButton.classList.remove('loading');
+        }
+    };
+
     fallbackRefreshButton.addEventListener('click', fetchAndRenderFallbackStats);
     fallbackPeriodSelector.addEventListener('change', fetchAndRenderFallbackStats);
+    upstreamRefreshButton.addEventListener('click', fetchAndRenderUpstreamStats);
+    upstreamPeriodSelector.addEventListener('change', fetchAndRenderUpstreamStats);
 
     fallbackChainsRefreshButton.addEventListener('click', () => {
         fallbackCurrentPage = 1;

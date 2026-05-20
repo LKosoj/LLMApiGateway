@@ -1,15 +1,18 @@
 import asyncio
 import logging
+import httpx
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # Import the TokensUsageDB
+from llm_gateway_core.config.loader import ANTHROPIC_API_VERSION, resolve_provider_api_keys
 from llm_gateway_core.config.paths import STATIC_DIR
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB, validate_usage_records_pagination
 from llm_gateway_core.db.fallback_events_db import FallbackEventsDB, validate_fallback_records_pagination
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.active_requests import get_active_requests_registry
+from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState, fingerprint_api_key
 from llm_gateway_core.utils.html_cache import get_template
 from llm_gateway_core.utils.ttl_cache import AsyncTtlCache
 
@@ -25,6 +28,7 @@ HTML_DIR = STATIC_DIR
 USAGE_STATS_CACHE_TTL_SECONDS = 30.0
 _usage_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
 _fallback_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
+_upstream_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
 
 
 def _effective_api_key_filter(request: Request, requested_api_key_id: int | None = None) -> int | None:
@@ -192,6 +196,57 @@ def _get_period_start_date(period: str) -> datetime | None:
     return None
 
 
+def _get_upstream_routing_state(request: Request) -> UpstreamRoutingState:
+    upstream_state = getattr(request.app.state, "upstream_routing_state", None)
+    if not isinstance(upstream_state, UpstreamRoutingState):
+        raise HTTPException(status_code=500, detail="Internal server error: upstream routing state not available.")
+    return upstream_state
+
+
+def _iter_fallback_targets(fallback_rules: dict):
+    for config in fallback_rules.values():
+        if not isinstance(config, dict):
+            continue
+        for rule in config.get("fallback_models") or []:
+            if isinstance(rule, dict):
+                yield rule
+        context_rule = config.get("context_overflow_fallback")
+        if isinstance(context_rule, dict):
+            yield context_rule
+
+
+def _build_health_probe_request(provider_config, model: str, api_key: str | None):
+    if getattr(provider_config, "type", "openai") == "anthropic":
+        return (
+            f"{provider_config.baseUrl.rstrip('/')}/v1/messages",
+            {
+                "Content-Type": "application/json",
+                "anthropic-version": ANTHROPIC_API_VERSION,
+                **({"x-api-key": api_key} if api_key else {}),
+            },
+            {
+                "model": model,
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+                "max_tokens": 1,
+            },
+        )
+    return (
+        f"{provider_config.baseUrl.rstrip('/')}/chat/completions",
+        {
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+            "X-Title": "LLMGateway Upstream Health",
+            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+        },
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "max_tokens": 1,
+            "temperature": 0,
+        },
+    )
+
+
 @stats_router.get("/api/fallback-stats/{period}", response_class=JSONResponse, tags=["Fallback Analytics API"])
 async def get_fallback_stats(request: Request, period: str):
     """
@@ -253,3 +308,113 @@ async def get_fallback_records(request: Request, limit: int = 25, offset: int = 
     except Exception as e:
         logging.error(f"Error fetching fallback records: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Could not retrieve fallback records: {e}")
+
+
+@stats_router.get("/api/upstream-status", response_class=JSONResponse, tags=["Upstream Analytics API"])
+async def get_upstream_status(request: Request):
+    if not _is_master_caller(request):
+        raise HTTPException(status_code=403, detail="Upstream status is available only to the master API key.")
+    upstream_state = _get_upstream_routing_state(request)
+    return JSONResponse(content={"rows": upstream_state.get_status_rows()})
+
+
+@stats_router.post("/api/upstream-health/run", response_class=JSONResponse, tags=["Upstream Analytics API"])
+async def run_upstream_health_checks(request: Request):
+    if not _is_master_caller(request):
+        raise HTTPException(status_code=403, detail="Upstream health checks are available only to the master API key.")
+
+    upstream_state = _get_upstream_routing_state(request)
+    config_loader = getattr(request.app.state, "config_loader", None)
+    http_client = getattr(request.app.state, "http_client", None)
+    if config_loader is None or http_client is None:
+        raise HTTPException(status_code=500, detail="Internal server error: runtime configuration not available.")
+
+    proxy_http_clients = getattr(request.app.state, "proxy_http_clients", {}) or {}
+    checked_rows: list[dict] = []
+    seen_targets: set[tuple[str, str, str]] = set()
+    for rule in _iter_fallback_targets(config_loader.fallback_rules):
+        provider_name = rule.get("provider")
+        provider_model = rule.get("model")
+        if not provider_name or not provider_model:
+            continue
+        provider_config = config_loader.providers_config.get(provider_name)
+        if provider_config is None:
+            continue
+        api_keys = resolve_provider_api_keys(provider_config.apikey) or [None]
+        effective_client = proxy_http_clients.get(provider_name, http_client)
+        for api_key in api_keys:
+            key_fingerprint = fingerprint_api_key(api_key)
+            target_key = (provider_name, provider_model, key_fingerprint)
+            if target_key in seen_targets:
+                continue
+            seen_targets.add(target_key)
+            target_url, headers, payload = _build_health_probe_request(
+                provider_config,
+                provider_model,
+                api_key,
+            )
+            health_status = "error"
+            last_error = None
+            try:
+                response = await effective_client.post(
+                    target_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=15.0,
+                )
+                if response.status_code < 400:
+                    health_status = "healthy"
+                elif response.status_code in {401, 403}:
+                    health_status = "invalid"
+                    last_error = f"HTTP {response.status_code}"
+                else:
+                    last_error = f"HTTP {response.status_code}"
+            except httpx.HTTPError as exc:
+                last_error = exc.__class__.__name__
+            upstream_state.mark_health(provider_name, provider_model, key_fingerprint, health_status, last_error)
+            checked_rows.append(
+                {
+                    "provider": provider_name,
+                    "model": provider_model,
+                    "upstream_key_fingerprint": key_fingerprint,
+                    "health_status": health_status,
+                    "last_error": last_error,
+                }
+            )
+
+    return JSONResponse(content={"checked": len(checked_rows), "rows": checked_rows})
+
+
+@stats_router.get("/api/upstream-stats/{period}", response_class=JSONResponse, tags=["Upstream Analytics API"])
+async def get_upstream_stats(request: Request, period: str, api_key_id: int | None = None):
+    if not _is_master_caller(request):
+        raise HTTPException(status_code=403, detail="Upstream analytics are available only to the master API key.")
+
+    fallback_events_db: FallbackEventsDB = getattr(request.app.state, "fallback_events_db", None)
+    if not fallback_events_db:
+        logging.error("FallbackEventsDB not found in application state.")
+        raise HTTPException(status_code=500, detail="Internal server error: FallbackEventsDB not available.")
+
+    try:
+        if period not in ['hour', 'day', 'week', 'month']:
+            raise HTTPException(status_code=400, detail="Invalid period. Must be 'hour', 'day', 'week', or 'month'.")
+        api_key_id_filter = _effective_api_key_filter(request, api_key_id)
+
+        async def _fetch():
+            start_date = _get_period_start_date(period)
+            end_date = datetime.now(timezone.utc)
+            return await fallback_events_db.get_upstream_stats(
+                period,
+                start_date=start_date,
+                end_date=end_date,
+                api_key_id=api_key_id_filter,
+            )
+
+        cache_key = (period, api_key_id_filter)
+        upstream_stats = await _upstream_stats_cache.get_or_compute(cache_key, _fetch)
+        return JSONResponse(content=upstream_stats)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching upstream stats for period '{period}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Could not retrieve upstream statistics: {e}")

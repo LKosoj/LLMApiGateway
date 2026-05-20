@@ -15,7 +15,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 # Relative imports from the new structure
-from ...config.loader import ANTHROPIC_API_VERSION, ConfigLoader, resolve_provider_api_key
+from ...config.loader import ANTHROPIC_API_VERSION, ConfigLoader, resolve_provider_api_key, resolve_provider_api_keys
 from ...config.settings import settings
 from ...db.model_rotation_db import ModelRotationDB
 from ...db.fallback_events_db import FallbackEventsDB
@@ -33,6 +33,11 @@ from ...services.request_handler import (
     SECURITY_HEADER_NAMES,
     make_llm_request,
     normalize_retry_settings,
+)
+from ...services.upstream_routing_state import (
+    UpstreamRoutingState,
+    fingerprint_api_key,
+    upstream_limits_for_model,
 )
 from ...utils.log_redaction import redact_payload_for_log
 from ...utils.text_sanitize import sanitize_payload
@@ -2885,19 +2890,6 @@ async def _attempt_model_fallback_rule(
     """
     provider_name = model_fallback_rule.get("provider")
     provider_model = model_fallback_rule.get("model")
-    cooldown_remaining = _get_active_model_failure_cooldown_remaining(
-        request,
-        provider_name,
-        provider_model,
-    )
-    if cooldown_remaining is not None:
-        error_detail = (
-            f"Model '{provider_model}' via provider '{provider_name}' is in temporary cooldown "
-            f"for {cooldown_remaining:.0f} more seconds after a recent transient failure."
-        )
-        logging.warning(error_detail)
-        return None, error_detail, attempt_number_start
-
     retry_count, retry_delay = normalize_retry_settings(
         model_fallback_rule.get("retry_count"),
         model_fallback_rule.get("retry_delay"),
@@ -2925,6 +2917,7 @@ async def _attempt_model_fallback_rule(
         error_detail_val: str | None,
         duration_ms: int,
         attempt_payload_for_error: dict | None = None,
+        upstream_key_fingerprint: str | None = None,
     ):
         nonlocal attempt_number
         if fallback_events_db and request_id:
@@ -2943,6 +2936,9 @@ async def _attempt_model_fallback_rule(
                         is_streaming=is_streaming,
                     ),
                     duration_ms=duration_ms,
+                    operation=getattr(request.state, "llmgateway_operation", "chat"),
+                    api_key_id=getattr(request.state, "api_key_id", None),
+                    upstream_key_fingerprint=upstream_key_fingerprint,
                 )
             except Exception as exc:
                 logging.debug("Failed to record fallback event: %s", exc)
@@ -2959,7 +2955,28 @@ async def _attempt_model_fallback_rule(
         return None, "Configured provider is unavailable for the requested model.", attempt_number
 
     provider_base_url = provider_config.baseUrl
-    provider_api_key = resolve_provider_api_key(provider_config.apikey)
+    upstream_state = getattr(request.app.state, "upstream_routing_state", None)
+    if isinstance(upstream_state, UpstreamRoutingState):
+        provider_api_keys = resolve_provider_api_keys(provider_config.apikey)
+        selected_key = upstream_state.select_key(
+            provider_name or "unknown",
+            provider_model or "unknown",
+            provider_api_keys,
+            limits=upstream_limits_for_model(provider_config, provider_model or ""),
+        )
+        if not selected_key.available:
+            error_detail = (
+                f"No upstream key is currently available for provider '{provider_name}' "
+                f"and model '{provider_model}': {selected_key.blocked_reason}."
+            )
+            logging.warning(error_detail)
+            _record_event(False, error_detail, 0, upstream_key_fingerprint=selected_key.fingerprint)
+            return None, error_detail, attempt_number
+        provider_api_key = selected_key.api_key
+        upstream_key_fingerprint = selected_key.fingerprint
+    else:
+        provider_api_key = resolve_provider_api_key(provider_config.apikey)
+        upstream_key_fingerprint = fingerprint_api_key(provider_api_key)
     is_anthropic_provider = getattr(provider_config, "type", "openai") == "anthropic"
     client_expects_anthropic = isinstance(
         getattr(request.state, "llmgateway_original_anthropic_payload", None),
@@ -3039,10 +3056,49 @@ async def _attempt_model_fallback_rule(
         _normalize_provider_attempt_payload(provider_payload_template, provider_model=provider_model)
 
     last_error_detail = f"Model '{provider_model}' failed without an explicit provider error."
-    cooldown_candidate_error_detail: object | None = None
-
     def _budget_exhausted() -> bool:
         return total_attempts_budget is not None and attempt_number > total_attempts_budget
+
+    def _track_attempt_start() -> None:
+        request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
+        attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
+        if not isinstance(attempts, list):
+            attempts = []
+            request.state.llmgateway_fallback_attempts = attempts
+        attempts.append(
+            {
+                "provider": provider_name,
+                "model": provider_model,
+                "upstream_key_fingerprint": upstream_key_fingerprint,
+            }
+        )
+        if isinstance(upstream_state, UpstreamRoutingState):
+            upstream_state.record_attempt_start(
+                provider_name or "unknown",
+                provider_model or "unknown",
+                upstream_key_fingerprint,
+            )
+
+    def _track_attempt_result(success: bool, error_detail_val: object | None) -> None:
+        if not isinstance(upstream_state, UpstreamRoutingState):
+            return
+        if success:
+            upstream_state.record_success(
+                provider_name or "unknown",
+                provider_model or "unknown",
+                upstream_key_fingerprint,
+            )
+            return
+        temporary = _is_temporary_model_failure(error_detail_val)
+        upstream_state.record_failure(
+            provider_name or "unknown",
+            provider_model or "unknown",
+            upstream_key_fingerprint,
+            error_detail_val,
+            temporary=temporary,
+            apply_penalty=bool(model_fallback_rule.get("dynamic_penalty_enabled")),
+            retry_after=_extract_retry_after(error_detail_val),
+        )
 
     remaining_attempts = retry_count
     while remaining_attempts >= 0:
@@ -3084,6 +3140,7 @@ async def _attempt_model_fallback_rule(
                 provider=provider_name,
                 model=provider_model,
             )
+            _track_attempt_start()
             t0 = time.monotonic()
             response_data, error_detail = await make_llm_request(
                 http_client,
@@ -3116,7 +3173,9 @@ async def _attempt_model_fallback_rule(
                         )
                 request.state.llmgateway_provider = provider_name
                 request.state.llmgateway_provider_model = provider_model
-                _record_event(True, None, duration_ms)
+                request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
+                _track_attempt_result(True, None)
+                _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
                 logging.info(
                     "Connection success to model '%s' in provider '%s'. %s response...",
                     provider_model,
@@ -3125,9 +3184,8 @@ async def _attempt_model_fallback_rule(
                 )
                 return response_data, None, attempt_number
 
-            _record_event(False, error_detail, duration_ms, attempt_payload)
-            if _is_temporary_model_failure(error_detail):
-                cooldown_candidate_error_detail = error_detail
+            _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
+            _track_attempt_result(False, error_detail)
             _log_failed_attempt_warning(
                 provider_model,
                 provider_name,
@@ -3182,6 +3240,7 @@ async def _attempt_model_fallback_rule(
                     provider=provider_name,
                     model=provider_model,
                 )
+                _track_attempt_start()
                 t0 = time.monotonic()
                 response_data, error_detail = await make_llm_request(
                     http_client,
@@ -3195,7 +3254,9 @@ async def _attempt_model_fallback_rule(
                 if response_data and error_detail is None:
                     request.state.llmgateway_provider = provider_name
                     request.state.llmgateway_provider_model = provider_model
-                    _record_event(True, None, duration_ms)
+                    request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
+                    _track_attempt_result(True, None)
+                    _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
                     logging.info(
                         "Connection success with model '%s' in provider '%s' via '%s'. %s response...",
                         provider_model,
@@ -3205,9 +3266,8 @@ async def _attempt_model_fallback_rule(
                     )
                     return response_data, None, attempt_number
 
-                _record_event(False, error_detail, duration_ms, attempt_payload)
-                if _is_temporary_model_failure(error_detail):
-                    cooldown_candidate_error_detail = error_detail
+                _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
+                _track_attempt_result(False, error_detail)
                 _log_failed_attempt_warning(
                     provider_model,
                     provider_name,
@@ -3242,14 +3302,6 @@ async def _attempt_model_fallback_rule(
                 )
                 await asyncio.sleep(sleep_seconds)
         remaining_attempts -= 1
-
-    if cooldown_candidate_error_detail is not None:
-        _mark_model_failure_cooldown(
-            request,
-            provider_name,
-            provider_model,
-            cooldown_candidate_error_detail,
-        )
 
     return None, last_error_detail, attempt_number
 
@@ -3345,6 +3397,7 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
     context_overflow_fallback = None
     strip_think_tags = False
     max_total_attempts: int | None = None
+    dynamic_penalty_enabled = False
     if not model_config:
         logging.warning(f"No specific fallback sequence found for model '{requested_model}'. Using '{settings.fallback_provider}' fallback provider.")
 
@@ -3357,12 +3410,33 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
         context_overflow_fallback = model_config.get("context_overflow_fallback")
         strip_think_tags = bool(model_config.get("strip_think_tags", False))
         max_total_attempts = model_config.get("max_total_attempts")
+        dynamic_penalty_enabled = bool(model_config.get("dynamic_penalty", False))
         logging.info(f"Found routing rule for model '{requested_model}'. Provider sequence length: {len(model_fallbacks_sequence)}")
         logging.info(f"Model rotation is {'enabled' if rotate_models else 'disabled'} for model '{requested_model}'")
         if context_overflow_fallback:
             logging.info("Special context overflow fallback is configured for model '%s'.", requested_model)
         if strip_think_tags:
             logging.info("Literal <think> tag stripping is enabled for gateway model '%s'.", requested_model)
+        if dynamic_penalty_enabled:
+            logging.info("Dynamic upstream penalty ordering is enabled for gateway model '%s'.", requested_model)
+
+    if dynamic_penalty_enabled:
+        upstream_state = getattr(request.app.state, "upstream_routing_state", None)
+        if isinstance(upstream_state, UpstreamRoutingState):
+            model_fallbacks_sequence = upstream_state.order_rules_by_penalty(
+                list(model_fallbacks_sequence),
+                providers_config,
+            )
+
+    model_fallbacks_sequence = [
+        {**model_fallback_rule, "dynamic_penalty_enabled": dynamic_penalty_enabled}
+        for model_fallback_rule in model_fallbacks_sequence
+    ]
+    if context_overflow_fallback:
+        context_overflow_fallback = {
+            **context_overflow_fallback,
+            "dynamic_penalty_enabled": dynamic_penalty_enabled,
+        }
 
     api_key = _extract_gateway_auth_token_from_request(request)
 

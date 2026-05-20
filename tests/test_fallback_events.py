@@ -203,6 +203,82 @@ class FallbackEventsDBTests(unittest.TestCase):
         self.assertEqual(stats[0]["error_type"], "http_429")
         self.assertEqual(stats[0]["count"], 1)
 
+    def test_aggregated_stats_do_not_split_existing_summary_by_upstream_key(self):
+        for request_id, key_fingerprint in [("req-key-1", "key-a"), ("req-key-2", "key-b")]:
+            self.db.insert_event(
+                request_id=request_id,
+                gateway_model="model",
+                attempt_number=1,
+                provider="p1",
+                model="m1",
+                success=False,
+                error_type="http_429",
+                error_message="Rate limited",
+                duration_ms=1000,
+                upstream_key_fingerprint=key_fingerprint,
+            )
+
+        stats = run_async(self.db.get_aggregated_stats("day"))
+
+        self.assertEqual(len(stats), 1)
+        self.assertEqual(stats[0]["provider"], "p1")
+        self.assertEqual(stats[0]["model"], "m1")
+        self.assertEqual(stats[0]["error_type"], "http_429")
+        self.assertEqual(stats[0]["count"], 2)
+
+    def test_upstream_stats_group_by_key_and_use_ui_expected_aliases(self):
+        self.db.insert_event(
+            request_id="req-upstream-1",
+            gateway_model="model",
+            attempt_number=1,
+            provider="p1",
+            model="m1",
+            success=False,
+            error_type="http_429",
+            error_message="Rate limited",
+            duration_ms=1000,
+            operation="chat",
+            api_key_id=7,
+            upstream_key_fingerprint="key-a",
+        )
+        self.db.insert_event(
+            request_id="req-upstream-2",
+            gateway_model="model",
+            attempt_number=1,
+            provider="p1",
+            model="m1",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=500,
+            operation="chat",
+            api_key_id=7,
+            upstream_key_fingerprint="key-a",
+        )
+        self.db.insert_event(
+            request_id="req-upstream-3",
+            gateway_model="model",
+            attempt_number=1,
+            provider="p1",
+            model="m1",
+            success=False,
+            error_type="http_429",
+            error_message="Rate limited",
+            duration_ms=700,
+            operation="chat",
+            api_key_id=8,
+            upstream_key_fingerprint="key-b",
+        )
+
+        stats = run_async(self.db.get_upstream_stats("day", api_key_id=7))
+
+        self.assertEqual(len(stats), 1)
+        self.assertEqual(stats[0]["upstream_key_fingerprint"], "key-a")
+        self.assertEqual(stats[0]["attempts"], 2)
+        self.assertEqual(stats[0]["successes"], 1)
+        self.assertEqual(stats[0]["errors"], 1)
+        self.assertEqual(stats[0]["success_rate"], 50.0)
+
     def test_insert_event_timestamp_matches_utc_stats_window(self):
         self.db.insert_event(
             request_id="req-utc",

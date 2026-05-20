@@ -280,6 +280,31 @@ body.dark-mode .editor-tab-content {
     font-size: 0.92rem;
 }
 
+.rules-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.rules-preview {
+    border: 1px solid #c7d8e7;
+    border-radius: 8px;
+    background: #fbfdff;
+    padding: 12px;
+    color: #24435f;
+}
+
+.rules-preview pre {
+    max-height: 320px;
+    overflow: auto;
+    margin: 10px 0 0;
+    padding: 10px;
+    border-radius: 6px;
+    background: #eef5fb;
+    white-space: pre-wrap;
+}
+
 .rules-list {
     display: flex;
     flex-direction: column;

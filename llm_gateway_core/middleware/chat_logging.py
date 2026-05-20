@@ -20,6 +20,7 @@ from ..db.tokens_usage_db import TokensUsageDB
 from ..services.rate_limiter import RateLimiter
 from ..services.access_control import UsdBudgetLedger
 from ..services.active_requests import update_active_request
+from ..services.upstream_routing_state import UpstreamRoutingState
 from ..utils.log_redaction import redact_headers_for_log, redact_request_body_text
 from ..utils.usage_tracking import (
     backfill_zero_token_counts,
@@ -343,6 +344,25 @@ def _merge_request_usage_tracker(tokens_usage: dict, request: Request | None) ->
     return tokens_usage
 
 
+def _record_upstream_tokens_for_request(request: Request | None, tokens_usage: dict) -> None:
+    if request is None:
+        return
+    upstream_state = getattr(request.app.state, "upstream_routing_state", None)
+    if not isinstance(upstream_state, UpstreamRoutingState):
+        return
+    provider = getattr(request.state, "llmgateway_provider", None)
+    model = getattr(request.state, "llmgateway_provider_model", None)
+    key_fingerprint = getattr(request.state, "llmgateway_upstream_key_fingerprint", None)
+    if not provider or not model or not key_fingerprint:
+        return
+    upstream_state.record_tokens(
+        provider,
+        model,
+        key_fingerprint,
+        tokens_usage.get("total_tokens"),
+    )
+
+
 class ChunkProcessor:
     """Asyncio-based stream chunk processor.
 
@@ -413,6 +433,7 @@ class ChunkProcessor:
             return
 
         _merge_request_usage_tracker(self.tokens_usage, self.request)
+        _record_upstream_tokens_for_request(self.request, self.tokens_usage)
         record_chat_observability(
             self.req_headers,
             self.req_body_str,
@@ -883,6 +904,7 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
             if key_tpm_rec is not None and getattr(key_tpm_rec, "tpm", None):
                 tokens_usage["_key_tpm_limit"] = key_tpm_rec.tpm
             tokens_usage["duration_ms"] = int((time.monotonic() - request_started_at) * 1000)
+            _record_upstream_tokens_for_request(request, tokens_usage)
             # Write log file immediately for non-streaming responses
             # Run observability tasks in a thread to avoid blocking the event loop
             await anyio.to_thread.run_sync(

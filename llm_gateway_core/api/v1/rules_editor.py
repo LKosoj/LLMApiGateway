@@ -275,6 +275,7 @@ def _build_structured_rules_response(config_loader) -> dict:
             "gateway_model_name": gateway_model_name,
             "fallback_models": config.get("fallback_models", []),
             "rotate_models": config.get("rotate_models", False),
+            "dynamic_penalty": config.get("dynamic_penalty", False),
             "strip_think_tags": config.get("strip_think_tags", False),
         }
         max_total_attempts = config.get("max_total_attempts")

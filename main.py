@@ -39,6 +39,7 @@ from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
 from llm_gateway_core.services.rate_limiter import RateLimiter
 from llm_gateway_core.services.request_handler import OperationDispatcher
+from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 from llm_gateway_core.utils.html_cache import preload_templates
 
 # --- Application Setup ---
@@ -262,6 +263,7 @@ async def lifespan(app: FastAPI):
     _chat_logging_module.set_rate_limiter(rate_limiter)
 
     app.state.chat_model_failure_cooldowns = {}
+    app.state.upstream_routing_state = UpstreamRoutingState()
 
     model_rotation_db = ModelRotationDB()
     app.state.model_rotation_db = model_rotation_db
@@ -395,6 +397,27 @@ async def add_anthropic_version_header(request: Request, call_next):
     if "/v1/messages" in request.url.path or "/v1/models" in request.url.path or "anthropic-version" in request.headers:
         if "anthropic-version" not in response.headers:
             response.headers["anthropic-version"] = "2023-06-01"
+    return response
+
+
+@app.middleware("http")
+async def add_routing_diagnostic_headers(request: Request, call_next):
+    response = await call_next(request)
+    if not settings.routing_diagnostic_headers:
+        return response
+
+    provider = getattr(request.state, "llmgateway_provider", None)
+    model = getattr(request.state, "llmgateway_provider_model", None)
+    key_fingerprint = getattr(request.state, "llmgateway_upstream_key_fingerprint", None)
+    if provider and model:
+        routed_via = f"{provider}/{model}"
+        if key_fingerprint:
+            routed_via = f"{routed_via};key={key_fingerprint}"
+        response.headers["X-Routed-Via"] = routed_via
+
+    attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
+    if isinstance(attempts, list) and attempts:
+        response.headers["X-Fallback-Attempts"] = str(len(attempts))
     return response
 
 # 4. Chat Completion Observability Middleware

@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 INSERT_USAGE_SQL = """
 INSERT INTO tokens_usage
 (timestamp, duration_ms, prompt_tokens, completion_tokens, total_tokens,
- reasoning_tokens, cached_tokens, cost, gateway_model, operation, model, provider, request_id, is_estimated, usage_source, cost_saved, api_key_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ reasoning_tokens, cached_tokens, cost, gateway_model, operation, model, provider, request_id, is_estimated, usage_source, cost_saved, api_key_id, upstream_key_fingerprint)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -82,7 +82,8 @@ class TokensUsageDB:
                 is_estimated INTEGER NOT NULL DEFAULT 0,
                 usage_source TEXT,
                 cost_saved REAL NOT NULL DEFAULT 0.0,
-                api_key_id INTEGER
+                api_key_id INTEGER,
+                upstream_key_fingerprint TEXT
             )
             ''')
 
@@ -106,6 +107,8 @@ class TokensUsageDB:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN cost_saved REAL NOT NULL DEFAULT 0.0")
             if "api_key_id" not in existing_columns:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN api_key_id INTEGER")
+            if "upstream_key_fingerprint" not in existing_columns:
+                cursor.execute("ALTER TABLE tokens_usage ADD COLUMN upstream_key_fingerprint TEXT")
 
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_tokens_usage_timestamp
@@ -160,6 +163,7 @@ class TokensUsageDB:
             tokens_usage.get("usage_source"),
             float(tokens_usage.get("cost_saved") or 0.0),
             tokens_usage.get("api_key_id"),
+            tokens_usage.get("upstream_key_fingerprint"),
         )
         if self._batcher is not None:
             self._batcher.enqueue(INSERT_USAGE_SQL, params)
@@ -209,7 +213,7 @@ class TokensUsageDB:
                     id, timestamp, duration_ms, prompt_tokens, completion_tokens,
                     total_tokens, reasoning_tokens, cached_tokens, cost,
                     gateway_model, operation, model, provider, request_id,
-                    is_estimated, usage_source, cost_saved, api_key_id
+                    is_estimated, usage_source, cost_saved, api_key_id, upstream_key_fingerprint
                 FROM tokens_usage
                 {where}
                 ORDER BY timestamp DESC

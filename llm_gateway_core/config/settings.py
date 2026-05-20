@@ -32,6 +32,13 @@ def _get_non_empty_str_env(var_name: str, default: str) -> str:
     value = raw_value.strip()
     return value or default
 
+
+def _get_bool_env(var_name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(var_name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
 class Settings(BaseSettings):
     # It's generally better practice to load .env once at the start
     # and access variables directly via os.getenv within the class definition
@@ -45,6 +52,7 @@ class Settings(BaseSettings):
     provider_injection_enabled: bool = os.getenv("PROVIDER_INJECTION_ENABLED", "true").lower() == "true"
     log_chat_messages: bool = os.getenv("LOG_CHAT_ENABLED", "false").lower() == "true"
     log_fallback_full_messages: bool = os.getenv("LOG_FALLBACK_FULL_MESSAGES", "false").lower() == "true"
+    routing_diagnostic_headers: bool = _get_bool_env("ROUTING_DIAGNOSTIC_HEADERS", False)
     # Add CORS settings
     cors_allow_origins_str: str | None = os.getenv("CORS_ALLOW_ORIGINS") # Load as string
 

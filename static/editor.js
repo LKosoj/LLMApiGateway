@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const bodyElement = document.body;
     const saveButton = document.getElementById('saveButton');
     const addRuleButton = document.getElementById('addRuleButton');
+    const previewRulesButton = document.getElementById('previewRulesButton');
+    const suggestEvalOrderButton = document.getElementById('suggestEvalOrderButton');
+    const rulesPreviewArea = document.getElementById('rulesPreviewArea');
     const rulesList = document.getElementById('rulesList');
     const rulesEmptyState = document.getElementById('rulesEmptyState');
 
@@ -186,6 +189,110 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function stableSerialize(value) {
         return JSON.stringify(value, null, 2);
+    }
+
+    function renderRulesPreview(title, lines, payload) {
+        if (!rulesPreviewArea) return;
+        clearElement(rulesPreviewArea);
+        const heading = document.createElement('strong');
+        heading.textContent = title;
+        rulesPreviewArea.appendChild(heading);
+
+        const list = document.createElement('ul');
+        (lines.length > 0 ? lines : ['No changes detected.']).forEach(line => {
+            const item = document.createElement('li');
+            item.textContent = line;
+            list.appendChild(item);
+        });
+        rulesPreviewArea.appendChild(list);
+
+        if (payload) {
+            const pre = document.createElement('pre');
+            pre.textContent = stableSerialize(payload);
+            rulesPreviewArea.appendChild(pre);
+        }
+        rulesPreviewArea.hidden = false;
+    }
+
+    function routeKey(route) {
+        return `${route.provider || ''}/${route.model || ''}`;
+    }
+
+    function previewRulesChanges() {
+        let currentPayload;
+        try {
+            currentPayload = getRulesPayloadForSave();
+        } catch (error) {
+            renderMessage('error', error.message);
+            return;
+        }
+
+        const previousPayload = originalRulesContent ? JSON.parse(originalRulesContent) : { rules: [] };
+        const previousByModel = new Map((previousPayload.rules || []).map(rule => [rule.gateway_model_name, rule]));
+        const currentByModel = new Map((currentPayload.rules || []).map(rule => [rule.gateway_model_name, rule]));
+        const lines = [];
+
+        currentByModel.forEach((rule, gatewayModel) => {
+            const previousRule = previousByModel.get(gatewayModel);
+            if (!previousRule) {
+                lines.push(`Added gateway model ${gatewayModel}.`);
+                return;
+            }
+            const previousOrder = (previousRule.fallback_models || []).map(routeKey).join(' -> ');
+            const currentOrder = (rule.fallback_models || []).map(routeKey).join(' -> ');
+            if (previousOrder !== currentOrder) {
+                lines.push(`Changed order for ${gatewayModel}: ${previousOrder || 'empty'} => ${currentOrder || 'empty'}.`);
+            }
+            if (Boolean(previousRule.dynamic_penalty) !== Boolean(rule.dynamic_penalty)) {
+                lines.push(`Changed dynamic penalty for ${gatewayModel}: ${Boolean(previousRule.dynamic_penalty)} => ${Boolean(rule.dynamic_penalty)}.`);
+            }
+        });
+        previousByModel.forEach((_rule, gatewayModel) => {
+            if (!currentByModel.has(gatewayModel)) {
+                lines.push(`Removed gateway model ${gatewayModel}.`);
+            }
+        });
+
+        renderRulesPreview('Fallback Rules Preview', lines, currentPayload);
+    }
+
+    async function renderSuggestedFallbackOrder() {
+        let currentPayload;
+        try {
+            currentPayload = getRulesPayloadForSave();
+        } catch (error) {
+            renderMessage('error', error.message);
+            return;
+        }
+
+        try {
+            const response = await apiFetch('/v1/fallback-model-evals');
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.detail || `HTTP ${response.status}`);
+            }
+            const models = payload.snapshot && Array.isArray(payload.snapshot.models)
+                ? payload.snapshot.models
+                : [];
+            const scoreByTarget = new Map(models.map(model => [`${model.provider}/${model.model}`, Number(model.score) || 0]));
+            const suggestions = currentPayload.rules.map(rule => {
+                const currentOrder = rule.fallback_models || [];
+                const suggestedOrder = [...currentOrder].sort((left, right) => (
+                    (scoreByTarget.get(routeKey(right)) || 0) - (scoreByTarget.get(routeKey(left)) || 0)
+                ));
+                return {
+                    gateway_model_name: rule.gateway_model_name,
+                    current_order: currentOrder.map(routeKey),
+                    suggested_order: suggestedOrder.map(routeKey),
+                };
+            });
+            const lines = suggestions
+                .filter(item => item.current_order.join('|') !== item.suggested_order.join('|'))
+                .map(item => `${item.gateway_model_name}: ${item.suggested_order.join(' -> ') || 'no suggestion'}.`);
+            renderRulesPreview('Suggested Eval Order', lines, { suggestions });
+        } catch (error) {
+            renderErrorWithDetails('Error loading fallback eval suggestions:', error.message);
+        }
     }
 
     function normalizeOperationRulesPayload(payload = {}) {
@@ -597,6 +704,7 @@ document.addEventListener('DOMContentLoaded', function () {
     function normalizeRuleCardForSave(ruleCard) {
         const gatewayModelInput = ruleCard.querySelector('.gateway-model-input');
         const rotateModelsCheckbox = ruleCard.querySelector('.rotate-models-checkbox');
+        const dynamicPenaltyCheckbox = ruleCard.querySelector('.dynamic-penalty-checkbox');
         const stripThinkTagsCheckbox = ruleCard.querySelector('.strip-think-tags-checkbox');
         const maxTotalAttemptsInput = ruleCard.querySelector('.max-total-attempts-input');
         const contextOverflowEnabledCheckbox = ruleCard.querySelector('.context-overflow-enabled-checkbox');
@@ -614,6 +722,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const normalizedRule = {
             gateway_model_name: gatewayModelName,
             rotate_models: rotateModelsCheckbox.checked,
+            dynamic_penalty: Boolean(dynamicPenaltyCheckbox?.checked),
             strip_think_tags: Boolean(stripThinkTagsCheckbox?.checked),
             fallback_models: fallbackRows.map(normalizeFallbackModelForSave),
         };
@@ -678,6 +787,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const rules = Array.from(rulesList.querySelectorAll('.rule-card')).map(ruleCard => {
             const gatewayModelInput = ruleCard.querySelector('.gateway-model-input');
             const rotateModelsCheckbox = ruleCard.querySelector('.rotate-models-checkbox');
+            const dynamicPenaltyCheckbox = ruleCard.querySelector('.dynamic-penalty-checkbox');
             const stripThinkTagsCheckbox = ruleCard.querySelector('.strip-think-tags-checkbox');
             const maxTotalAttemptsInput = ruleCard.querySelector('.max-total-attempts-input');
             const contextOverflowEnabledCheckbox = ruleCard.querySelector('.context-overflow-enabled-checkbox');
@@ -687,6 +797,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const normalizedRule = {
                 gateway_model_name: gatewayModelInput.value.trim(),
                 rotate_models: rotateModelsCheckbox.checked,
+                dynamic_penalty: Boolean(dynamicPenaltyCheckbox?.checked),
                 strip_think_tags: Boolean(stripThinkTagsCheckbox?.checked),
                 fallback_models: fallbackRows.map(snapshotFallbackModelState),
             };
@@ -1013,6 +1124,19 @@ document.addEventListener('DOMContentLoaded', function () {
         rotateLabel.textContent = 'Rotate fallback models';
         rotateToggle.appendChild(rotateLabel);
         titleWrap.appendChild(rotateToggle);
+
+        const dynamicPenaltyCheckbox = document.createElement('input');
+        dynamicPenaltyCheckbox.type = 'checkbox';
+        dynamicPenaltyCheckbox.className = 'dynamic-penalty-checkbox';
+        dynamicPenaltyCheckbox.checked = Boolean(initialData.dynamic_penalty);
+
+        const dynamicPenaltyToggle = document.createElement('label');
+        dynamicPenaltyToggle.className = 'toggle-field';
+        dynamicPenaltyToggle.appendChild(dynamicPenaltyCheckbox);
+        const dynamicPenaltyLabel = document.createElement('span');
+        dynamicPenaltyLabel.textContent = 'Use dynamic penalty ordering';
+        dynamicPenaltyToggle.appendChild(dynamicPenaltyLabel);
+        titleWrap.appendChild(dynamicPenaltyToggle);
 
         const stripThinkTagsCheckbox = document.createElement('input');
         stripThinkTagsCheckbox.type = 'checkbox';
@@ -4237,6 +4361,12 @@ document.addEventListener('DOMContentLoaded', function () {
         ruleCard.classList.remove('collapsed');
         rulesList.appendChild(ruleCard);
         refreshRulesEmptyState();
+    });
+    previewRulesButton.addEventListener('click', () => {
+        previewRulesChanges();
+    });
+    suggestEvalOrderButton.addEventListener('click', () => {
+        void renderSuggestedFallbackOrder();
     });
     addEmbeddingButton.addEventListener('click', () => {
         const embeddingCard = buildEmbeddingCard({});

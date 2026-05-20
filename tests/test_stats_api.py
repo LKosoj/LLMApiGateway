@@ -51,6 +51,34 @@ class _FakeTokensUsageDB:
         return None
 
 
+class _FakeFallbackEventsDB:
+    def __init__(self):
+        self.upstream_calls: list[tuple[str, object, object, object]] = []
+        self.upstream_rows = [
+            {
+                "time_period": "2026-05-20",
+                "gateway_model": "llmgateway/free-stack",
+                "operation": "chat",
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-r1:free",
+                "upstream_key_fingerprint": "abc123",
+                "attempts": 3,
+                "successes": 2,
+                "errors": 1,
+                "success_rate": 66.6667,
+                "avg_duration_ms": 1200,
+                "max_duration_ms": 1800,
+            }
+        ]
+
+    async def get_upstream_stats(self, period: str, start_date=None, end_date=None, *, api_key_id=None):
+        self.upstream_calls.append((period, start_date, end_date, api_key_id))
+        return self.upstream_rows
+
+    def cleanup_old_records(self, retention_days: int = 180):
+        return None
+
+
 class _FakeApiKeysDB:
     def __init__(self, valid_key_id: int):
         self.valid_key_id = valid_key_id
@@ -65,23 +93,27 @@ class StatsApiPaginationTests(unittest.TestCase):
     def setUp(self):
         stats_module._usage_stats_cache.invalidate()
         stats_module._fallback_stats_cache.invalidate()
+        stats_module._upstream_stats_cache.invalidate()
 
     @contextmanager
     def _client(
         self,
         fake_tokens_usage_db: _FakeTokensUsageDB,
         fake_api_keys_db: _FakeApiKeysDB | None = None,
+        fake_fallback_events_db: _FakeFallbackEventsDB | None = None,
     ):
         fake_http_client = Mock()
         fake_http_client.aclose = AsyncMock()
         fake_config_loader = Mock()
         fake_config_loader.load_providers.return_value = {}
         fake_config_loader.load_fallback_rules.return_value = {}
+        fallback_events_db = fake_fallback_events_db or _FakeFallbackEventsDB()
 
         with ExitStack() as stack:
             stack.enter_context(patch("main.ConfigLoader", return_value=fake_config_loader))
             stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
             stack.enter_context(patch("main.TokensUsageDB", return_value=fake_tokens_usage_db))
+            stack.enter_context(patch("main.FallbackEventsDB", return_value=fallback_events_db))
             if fake_api_keys_db is not None:
                 stack.enter_context(patch("main.ApiKeysDB", return_value=fake_api_keys_db))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
@@ -301,6 +333,69 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(fake_tokens_usage_db.aggregated_calls), 1)
         self.assertEqual(fake_tokens_usage_db.aggregated_calls[0][0], "day")
+
+    def test_master_upstream_stats_can_filter_by_api_key_id(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+        fake_fallback_events_db = _FakeFallbackEventsDB()
+
+        with self._client(
+            fake_tokens_usage_db,
+            fake_fallback_events_db=fake_fallback_events_db,
+        ) as client:
+            response = client.get(
+                "/v1/api/upstream-stats/day?api_key_id=7",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), fake_fallback_events_db.upstream_rows)
+        self.assertEqual(len(fake_fallback_events_db.upstream_calls), 1)
+        period, start_date, end_date, api_key_id = fake_fallback_events_db.upstream_calls[0]
+        self.assertEqual(period, "day")
+        self.assertIs(start_date.tzinfo, timezone.utc)
+        self.assertIs(end_date.tzinfo, timezone.utc)
+        self.assertEqual(api_key_id, 7)
+
+    def test_upstream_stats_are_master_only(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+        fake_fallback_events_db = _FakeFallbackEventsDB()
+
+        with self._client(
+            fake_tokens_usage_db,
+            _FakeApiKeysDB(valid_key_id=11),
+            fake_fallback_events_db=fake_fallback_events_db,
+        ) as client:
+            client.cookies.set(
+                SESSION_COOKIE_NAME,
+                create_authenticated_session(role=ROLE_USER, key_id=11),
+            )
+            response = client.get("/v1/api/upstream-stats/day")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(fake_fallback_events_db.upstream_calls, [])
+
+    def test_upstream_status_returns_runtime_rows(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+
+        with self._client(fake_tokens_usage_db) as client:
+            client.app.state.upstream_routing_state.mark_health(
+                "openrouter",
+                "deepseek/deepseek-r1:free",
+                "abc123",
+                "healthy",
+                None,
+            )
+            response = client.get(
+                "/v1/api/upstream-status",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        rows = response.json()["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["provider"], "openrouter")
+        self.assertEqual(rows[0]["upstream_key_fingerprint"], "abc123")
+        self.assertEqual(rows[0]["health_status"], "healthy")
 
 
 if __name__ == "__main__":

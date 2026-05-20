@@ -81,6 +81,7 @@
             <div class="fallback-sub-tabs">
                 <button class="fallback-sub-tab active" data-subtab="summary">Summary</button>
                 <button class="fallback-sub-tab" data-subtab="chains">Chains</button>
+                <button class="fallback-sub-tab" data-subtab="upstream">Upstream Analytics</button>
             </div>
 
             <div id="fallbackSummaryContent" class="fallback-sub-content active">
@@ -113,6 +114,22 @@
                 </div>
                 <div id="fallbackChainsArea">
                     <p>Loading fallback chains...</p>
+                </div>
+            </div>
+
+            <div id="upstreamAnalyticsContent" class="fallback-sub-content">
+                <div class="controls">
+                    <label for="upstreamPeriodSelector">Group by:</label>
+                    <select id="upstreamPeriodSelector">
+                        <option value="hour">Hour</option>
+                        <option value="day" selected>Day</option>
+                        <option value="week">Week</option>
+                        <option value="month">Month</option>
+                    </select>
+                    <button id="upstreamRefreshButton">Refresh</button>
+                </div>
+                <div id="upstreamStatsArea">
+                    <p>Select a period and click 'Refresh' to view upstream analytics.</p>
                 </div>
             </div>
         </div>

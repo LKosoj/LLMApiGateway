@@ -401,6 +401,7 @@ def enrich_tokens_usage(
 
     request_id = getattr(request.state, "llmgateway_request_id", None)
     api_key_id = getattr(request.state, "api_key_id", None)
+    upstream_key_fingerprint = getattr(request.state, "llmgateway_upstream_key_fingerprint", None)
 
     if provider_name:
         enriched_tokens_usage["provider"] = provider_name
@@ -414,6 +415,8 @@ def enrich_tokens_usage(
         enriched_tokens_usage["request_id"] = request_id
     if api_key_id is not None:
         enriched_tokens_usage["api_key_id"] = api_key_id
+    if upstream_key_fingerprint:
+        enriched_tokens_usage["upstream_key_fingerprint"] = upstream_key_fingerprint
 
     _apply_rate_based_cost_saved(
         enriched_tokens_usage,

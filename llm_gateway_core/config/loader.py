@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 # Import settings using relative path within the package
 from .settings import settings
-from ..utils.api_keys import select_next_api_key
+from ..utils.api_keys import select_next_api_key, split_api_keys
 
 
 class ConfigError(RuntimeError):
@@ -77,6 +77,10 @@ KNOWN_PROVIDER_ENV_NAMES = frozenset(
 
 def resolve_provider_api_key(api_key_reference_or_literal: str | None) -> str | None:
     return select_next_api_key(resolve_provider_api_key_value(api_key_reference_or_literal))
+
+
+def resolve_provider_api_keys(api_key_reference_or_literal: str | None) -> list[str]:
+    return split_api_keys(resolve_provider_api_key_value(api_key_reference_or_literal))
 
 
 def resolve_provider_api_key_value(api_key_reference_or_literal: str | None) -> str | None:
@@ -362,6 +366,7 @@ class ModelFallbackConfig(BaseModel):
     fallback_models: List[FallbackModelRule]
     context_overflow_fallback: Optional[FallbackModelRule] = None
     rotate_models: bool = False
+    dynamic_penalty: bool = False
     strip_think_tags: bool = False
     # Global attempt budget for the entire fallback chain. When set, the retry
     # counter is not reset when switching to a fallback model: once this many
@@ -370,7 +375,7 @@ class ModelFallbackConfig(BaseModel):
     # each model burns its own per-model ``retry_count`` independently.
     max_total_attempts: Optional[int] = None
 
-    @field_validator('rotate_models', 'strip_think_tags', mode='before')
+    @field_validator('rotate_models', 'dynamic_penalty', 'strip_think_tags', mode='before')
     def validate_rotate_models(cls, v):
         if isinstance(v, str):
             return v.lower() == 'true'
