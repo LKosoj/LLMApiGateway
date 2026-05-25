@@ -361,6 +361,7 @@ async def proxy_multipart_raw_to_downstream(
     http_client: httpx.AsyncClient,
     retry_count: int = 0,
     retry_delay: float = 0.0,
+    timeout: httpx.Timeout | float | None = None,
 ) -> tuple[bytes, int, str | None]:
     sanitized_target_url = sanitize_target_url_for_log(target_url)
     logger.info("Proxying raw multipart operation request to downstream %s", sanitized_target_url)
@@ -373,7 +374,10 @@ async def proxy_multipart_raw_to_downstream(
         attempt_number += 1
 
         try:
-            response = await http_client.post(target_url, headers=headers, data=normalized_data, files=files)
+            request_kwargs = {"headers": headers, "data": normalized_data, "files": files}
+            if timeout is not None:
+                request_kwargs["timeout"] = timeout
+            response = await http_client.post(target_url, **request_kwargs)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.warning(
                 "Raw multipart operation downstream request to %s failed with network error: %s",

@@ -30,6 +30,7 @@ AUDIO_SPEECH_SECTION = "audio_speech"
 AUDIO_SPEECH_OPERATION = "audio_speech"
 AUDIO_TRANSCRIPTIONS_SECTION = "audio_transcriptions"
 AUDIO_TRANSCRIPTION_OPERATION = "audio_transcription"
+AUDIO_TRANSCRIPTION_DOWNSTREAM_TIMEOUT = httpx.Timeout(connect=30.0, read=1200.0, write=60.0, pool=30.0)
 TRUTHY_FORM_VALUES = frozenset({"1", "on", "true", "yes"})
 PROTECTED_AUDIO_CUSTOM_PARAM_KEYS = frozenset({"file", "model"})
 PROTECTED_AUDIO_SPEECH_CUSTOM_PARAM_KEYS = frozenset({"input", "model"})
@@ -572,6 +573,7 @@ async def create_audio_transcription(request: Request):
                 effective_client,
                 retry_count=retry_count,
                 retry_delay=retry_delay,
+                timeout=AUDIO_TRANSCRIPTION_DOWNSTREAM_TIMEOUT,
             )
 
             duration_ms = request_duration_ms(request_started_at)

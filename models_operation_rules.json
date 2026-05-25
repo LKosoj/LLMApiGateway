@@ -353,7 +353,7 @@
       "routes": [
         {
           "provider": "llm_ai",
-          "model": "large-v3-turbo",
+          "model": "Qwen/Qwen3-ASR-1.7B",
           "target_path": "/audio/transcriptions",
           "custom_headers": {},
           "custom_body_params": {}

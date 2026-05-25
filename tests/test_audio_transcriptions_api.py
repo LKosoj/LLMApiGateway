@@ -194,6 +194,11 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             },
         )
         self.assertNotIn("Content-Type", fake_http_client.post.await_args.kwargs["headers"])
+        timeout = fake_http_client.post.await_args.kwargs["timeout"]
+        self.assertEqual(timeout.connect, 30.0)
+        self.assertEqual(timeout.read, 1200.0)
+        self.assertEqual(timeout.write, 60.0)
+        self.assertEqual(timeout.pool, 30.0)
         self.assertEqual(
             fake_http_client.post.await_args.kwargs["files"][0][0],
             "file",

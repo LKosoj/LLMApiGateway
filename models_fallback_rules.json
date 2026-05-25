@@ -3,13 +3,6 @@
     "gateway_model_name": "llmgateway/glm-5",
     "fallback_models": [
       {
-        "provider": "nvidia",
-        "model": "z-ai/glm-5.1",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "z.ai",
         "model": "glm-5.1",
         "use_provider_order_as_fallback": false,
@@ -18,6 +11,13 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
+      },
+      {
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.1",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {
@@ -73,7 +73,7 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true
   },
   {
@@ -190,6 +190,13 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
+        "provider": "alibaba",
+        "model": "qwen3.7-max",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "kimicode",
         "model": "kimi-for-coding",
         "use_provider_order_as_fallback": false,
@@ -214,13 +221,6 @@
       {
         "provider": "devbox",
         "model": "mm.MiniMax-M2.7",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "alibaba",
-        "model": "qwen3.6-plus-2026-04-02",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -374,6 +374,13 @@
         "use_provider_order_as_fallback": false,
         "retry_delay": 1,
         "retry_count": 1,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "aitunnel",
+        "model": "deepseek-v4-pro",
+        "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
       },
