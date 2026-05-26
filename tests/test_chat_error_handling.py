@@ -17,6 +17,16 @@ class _InvalidJsonResponse:
         raise ValueError("Expecting value")
 
 
+class _NullJsonResponse:
+    def __init__(self, parsed=None, text: str = "null", status_code: int = 200):
+        self._parsed = parsed
+        self.text = text
+        self.status_code = status_code
+
+    def json(self):
+        return self._parsed
+
+
 class ChatErrorHandlingTests(unittest.TestCase):
     @patch("main.TokensUsageDB")
     @patch("main.httpx.AsyncClient")
@@ -85,6 +95,45 @@ class ChatErrorHandlingTests(unittest.TestCase):
         self.assertIsNotNone(error_detail)
         self.assertIn("Invalid JSON response", error_detail)
         self.assertNotIn("name 'e'", error_detail)
+
+    def test_make_llm_request_null_json_body_returns_controlled_error(self):
+        fake_client = Mock()
+        fake_client.post = AsyncMock(return_value=_NullJsonResponse(parsed=None, text="null"))
+
+        response_data, error_detail = run_async(
+            make_llm_request(
+                fake_client,
+                "https://example.com/chat/completions",
+                {"Content-Type": "application/json"},
+                {"model": "demo-model", "messages": [{"role": "user", "content": "hello"}]},
+                False,
+            )
+        )
+
+        self.assertIsNone(response_data)
+        self.assertIsNotNone(error_detail)
+        self.assertIn("Non-object JSON body", error_detail)
+        self.assertIn("type=NoneType", error_detail)
+        self.assertNotIn("NoneType' is not iterable", error_detail)
+
+    def test_make_llm_request_list_json_body_returns_controlled_error(self):
+        fake_client = Mock()
+        fake_client.post = AsyncMock(return_value=_NullJsonResponse(parsed=[1, 2, 3], text="[1,2,3]"))
+
+        response_data, error_detail = run_async(
+            make_llm_request(
+                fake_client,
+                "https://example.com/chat/completions",
+                {"Content-Type": "application/json"},
+                {"model": "demo-model", "messages": [{"role": "user", "content": "hello"}]},
+                False,
+            )
+        )
+
+        self.assertIsNone(response_data)
+        self.assertIsNotNone(error_detail)
+        self.assertIn("Non-object JSON body", error_detail)
+        self.assertIn("type=list", error_detail)
 
     @patch("main.TokensUsageDB")
     @patch("main.httpx.AsyncClient")

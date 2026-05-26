@@ -651,25 +651,34 @@ async def _make_json_request(
 
     try:
         response_json = response.json()
-        if "error" in response_json or "detail" in response_json:
-            if "error" in response_json:
-                error = response_json.get("error")
-                if isinstance(error, dict):
-                    error_detail = error.get("message")
-                elif isinstance(error, str):
-                    error_detail = error
-                else:
-                    error_detail = repr(error)
-            else:
-                error_detail = None
-            error_detail = error_detail or response_json.get("detail")
-            logging.warning(f"Error detected in non-stream response from {target_url}: {error_detail}")
-            return None, error_detail
-        return response_json, None
     except ValueError as json_err:
         error_detail = f"Invalid JSON response from {target_url}. Error={json_err}. Response= {response.text[:1000]}..."
         logging.error(error_detail, exc_info=True)
         return None, error_detail
+
+    if not isinstance(response_json, dict):
+        error_detail = (
+            f"Non-object JSON body from {target_url}: "
+            f"type={type(response_json).__name__}. Response= {response.text[:1000]}..."
+        )
+        logging.error(error_detail)
+        return None, error_detail
+
+    if "error" in response_json or "detail" in response_json:
+        if "error" in response_json:
+            error = response_json.get("error")
+            if isinstance(error, dict):
+                error_detail = error.get("message")
+            elif isinstance(error, str):
+                error_detail = error
+            else:
+                error_detail = repr(error)
+        else:
+            error_detail = None
+        error_detail = error_detail or response_json.get("detail")
+        logging.warning(f"Error detected in non-stream response from {target_url}: {error_detail}")
+        return None, error_detail
+    return response_json, None
 
 
 async def make_llm_request(client: httpx.AsyncClient, target_url: str, headers: dict, payload: dict, is_streaming: bool):
