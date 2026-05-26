@@ -27,6 +27,7 @@ from ...services.active_requests import update_active_request_from_state
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from ...utils.api_keys import has_api_key, select_next_api_key
 from ...utils.usage_tracking import extract_tokens_usage, initialize_tokens_usage
+from ...utils.zai_mcp import detect_zai_search_location, zai_mcp_tool_call
 from .chat import _attempt_model_fallback_rule, _gateway_internal_api_key_for_request
 from .embeddings import apply_top_n, map_rerank_payload, normalize_rerank_response
 from .operation_proxy import (
@@ -522,7 +523,6 @@ async def _direct_http_fetch(url: str) -> dict[str, str] | None:
     video_id = _extract_youtube_video_id(cleaned)
     if video_id:
         try:
-            import asyncio
             from youtube_transcript_api import YouTubeTranscriptApi
 
             def _fetch() -> tuple[str, str]:
@@ -646,7 +646,11 @@ def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: s
     markdown = (getattr(result, "content_markdown", None) or getattr(result, "main_content", None) or "").strip()
     if not markdown:
         return None
-    title = str(getattr(result, "title", None) or page_title or "")
+    # Prefer Playwright's page.title() (reads document.title) over rs_trafilatura's
+    # heuristic title extraction — the latter sometimes returns the article's lead
+    # sentence instead of the real <title> (e.g. en.wikipedia.org/wiki/Type_system).
+    extractor_title = (getattr(result, "title", None) or "").strip()
+    title = (page_title or "").strip() or extractor_title
     return {"url": final_url, "title": title, "content": markdown}
 
 
@@ -1074,29 +1078,25 @@ async def _search_zai(client: httpx.AsyncClient, query: str, max_results: int) -
     zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return []
-    response = await client.post(
-        "https://api.z.ai/api/paas/v4/web_search",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {zai_api_key}",
-        },
-        json={
-            "search_engine": "search_pro_quark",
+    payload = await zai_mcp_tool_call(
+        client,
+        api_key=zai_api_key,
+        server_path="web_search_prime",
+        tool_name="web_search_prime",
+        arguments={
             "search_query": query,
-            "count": max_results,
+            "location": detect_zai_search_location(query),
         },
-        timeout=30.0,
+        timeout=60.0,
     )
-    response.raise_for_status()
-    data = response.json() or {}
-    items = data.get("search_result", [])[:max_results]
+    items = payload if isinstance(payload, list) else []
     normalized = [
         _normalize_search_item(
-            item.get("url") or item.get("link"),
+            item.get("link") or item.get("url"),
             item.get("title"),
             item.get("content") or item.get("snippet"),
         )
-        for item in items if isinstance(item, dict)
+        for item in items[:max_results] if isinstance(item, dict)
     ]
     return [item for item in normalized if item is not None]
 
@@ -1184,22 +1184,20 @@ async def _read_zai(client: httpx.AsyncClient, url: str) -> dict[str, str] | Non
     zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return None
-    response = await client.post(
-        "https://api.z.ai/api/paas/v4/reader",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {zai_api_key}",
-        },
-        json={
+    payload = await zai_mcp_tool_call(
+        client,
+        api_key=zai_api_key,
+        server_path="web_reader",
+        tool_name="webReader",
+        arguments={
             "url": url,
-            "format": "markdown",
-            "keep_images": False,
+            "return_format": "markdown",
+            "retain_images": False,
             "timeout": 20,
         },
-        timeout=30.0,
+        timeout=60.0,
     )
-    response.raise_for_status()
-    data = (response.json() or {}).get("reader_result") or {}
+    data = payload if isinstance(payload, dict) else {}
     content = (data.get("content") or "").strip()
     if not content:
         return None

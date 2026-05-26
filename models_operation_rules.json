@@ -71,7 +71,13 @@
             "quality": "medium"
           },
           "request_format": "openai_images",
-          "response_format": "openai_images"
+          "response_format": "openai_images",
+          "request_mapping": {
+            "omit_client_fields": [
+              "response_format",
+              "seed"
+            ]
+          }
         },
         {
           "provider": "vsegpt",

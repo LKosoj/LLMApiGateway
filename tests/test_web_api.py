@@ -17,7 +17,74 @@ from llm_gateway_core.agents import web_research as web_research_agent
 from llm_gateway_core.api.v1 import web as web_api
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
+from llm_gateway_core.utils import zai_mcp as zai_mcp_module
 from tests._async_compat import run_async
+
+
+class _FakeMCPResponse:
+    """Lightweight stand-in for httpx.Response used by Z.AI MCP fakes."""
+
+    def __init__(self, *, status_code: int = 200, headers: dict | None = None, text: str = ""):
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.text = text
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self):
+        return json.loads(self.text) if self.text else {}
+
+
+def _make_zai_mcp_handler(*, payload_obj):
+    """Return a coroutine handler that fakes the 3-step Z.AI MCP protocol.
+
+    `payload_obj` is the value the tool would return; it gets JSON-encoded
+    twice (once for the SSE envelope, once for the inner text content) to
+    match what the real Z.AI MCP servers send.
+    """
+    session_counter = {"n": 0}
+
+    async def handler(url, *, headers=None, json=None, **_kwargs):  # noqa: A002 - matches httpx api
+        method = (json or {}).get("method", "")
+        if method == "initialize":
+            session_counter["n"] += 1
+            envelope = {
+                "jsonrpc": "2.0",
+                "id": (json or {}).get("id"),
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {"listChanged": True}},
+                    "serverInfo": {"name": "fake", "version": "0.0"},
+                },
+            }
+            return _FakeMCPResponse(
+                headers={"mcp-session-id": f"sid-{session_counter['n']}"},
+                text=f"data: {jsonlib_dumps(envelope)}\n",
+            )
+        if method == "notifications/initialized":
+            return _FakeMCPResponse(text="")
+        if method == "tools/call":
+            # Real Z.AI MCP servers double-encode the payload: the `text`
+            # field is a JSON string whose decoded value is itself another
+            # JSON string. Emulate that here so tests catch parsing bugs.
+            if isinstance(payload_obj, str):
+                inner_text = payload_obj
+            else:
+                inner_text = jsonlib_dumps(jsonlib_dumps(payload_obj))
+            envelope = {
+                "jsonrpc": "2.0",
+                "id": (json or {}).get("id"),
+                "result": {"content": [{"type": "text", "text": inner_text}]},
+            }
+            return _FakeMCPResponse(text=f"data: {jsonlib_dumps(envelope)}\n")
+        raise AssertionError(f"Unexpected MCP method: {method!r}")
+
+    return handler
+
+
+def jsonlib_dumps(obj) -> str:
+    return json.dumps(obj)
 
 _json_dumps = json.dumps
 
@@ -2300,33 +2367,32 @@ class WebApiTests(unittest.TestCase):
         primary_adapter.assert_awaited()
         secondary_adapter.assert_awaited()
 
-    def test_zai_web_search_uses_engine_that_returns_links(self):
+    def test_zai_web_search_uses_mcp_streamable_http(self):
         calls = []
-
-        class FakeResponse:
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {
-                    "search_result": [
-                        {
-                            "link": "https://example.com/zai",
-                            "title": "Z.AI result",
-                            "content": "Search result content",
-                        }
-                    ]
+        mcp_handler = _make_zai_mcp_handler(
+            payload_obj=[
+                {
+                    "link": "https://example.com/zai",
+                    "title": "Z.AI result",
+                    "content": "Search result content",
                 }
+            ]
+        )
 
         class FakeAsyncClient:
             async def post(self, url, *, headers=None, json=None, **kwargs):
                 calls.append({"url": url, "headers": headers, "json": json})
-                return FakeResponse()
+                return await mcp_handler(url, headers=headers, json=json, **kwargs)
 
         with patch.object(web_api.settings, "zai_api_key", "dummy-zai-key"):
             results = run_async(web_api._search_zai(FakeAsyncClient(), "topic", 1))
 
-        self.assertEqual(calls[0]["json"]["search_engine"], "search_pro_quark")
+        self.assertEqual(calls[0]["url"], "https://api.z.ai/api/mcp/web_search_prime/mcp")
+        self.assertEqual(calls[0]["json"]["method"], "initialize")
+        tool_call = next(c for c in calls if (c["json"] or {}).get("method") == "tools/call")
+        self.assertEqual(tool_call["json"]["params"]["name"], "web_search_prime")
+        self.assertEqual(tool_call["json"]["params"]["arguments"]["search_query"], "topic")
+        self.assertEqual(tool_call["json"]["params"]["arguments"]["location"], "us")
         self.assertEqual(results[0]["url"], "https://example.com/zai")
 
     def test_builtin_web_adapters_use_round_robin_key_from_comma_separated_settings(self):
@@ -2342,6 +2408,16 @@ class WebApiTests(unittest.TestCase):
             def json(self):
                 return self._payload
 
+        zai_search_handler = _make_zai_mcp_handler(
+            payload_obj=[{"link": "https://example.com/zai"}]
+        )
+        zai_read_handler = _make_zai_mcp_handler(
+            payload_obj={
+                "title": "Z.AI title",
+                "content": "Z.AI content",
+            }
+        )
+
         class FakeAsyncClient:
             async def post(self, url, *, headers=None, json=None, **kwargs):
                 calls.append({"method": "POST", "url": url, "headers": headers or {}, "json": json or {}})
@@ -2349,10 +2425,10 @@ class WebApiTests(unittest.TestCase):
                     return FakeResponse({"results": [{"url": "https://example.com/tavily"}]})
                 if url.endswith("/extract"):
                     return FakeResponse({"results": [{"raw_content": "Tavily content"}]})
-                if url.endswith("/web_search"):
-                    return FakeResponse({"search_result": [{"link": "https://example.com/zai"}]})
-                if url.endswith("/reader"):
-                    return FakeResponse({"reader_result": {"content": "Z.AI content"}})
+                if "/web_search_prime/" in url:
+                    return await zai_search_handler(url, headers=headers, json=json, **kwargs)
+                if "/web_reader/" in url:
+                    return await zai_read_handler(url, headers=headers, json=json, **kwargs)
                 raise AssertionError(f"Unexpected POST URL: {url}")
 
             async def get(self, url, *, headers=None, **kwargs):
@@ -2381,7 +2457,8 @@ class WebApiTests(unittest.TestCase):
         jina_headers = [call["headers"]["Authorization"] for call in calls if "jina.ai" in call["url"]]
         self.assertEqual(jina_headers, ["Bearer jina-one", "Bearer jina-two"])
         zai_headers = [call["headers"]["Authorization"] for call in calls if "z.ai" in call["url"]]
-        self.assertEqual(zai_headers, ["Bearer zai-one", "Bearer zai-two"])
+        deduped = [h for i, h in enumerate(zai_headers) if i == 0 or zai_headers[i] != zai_headers[i - 1]]
+        self.assertEqual(deduped, ["Bearer zai-one", "Bearer zai-two"])
 
     def test_web_adapter_enabled_ignores_empty_comma_separated_keys(self):
         with (
@@ -2393,15 +2470,11 @@ class WebApiTests(unittest.TestCase):
             self.assertFalse(web_api._search_adapter_enabled("jina"))
             self.assertFalse(web_api._search_adapter_enabled("zai"))
 
-    def test_web_research_zai_search_uses_engine_that_returns_links(self):
+    def test_web_research_zai_search_uses_mcp_streamable_http(self):
         calls = []
-
-        class FakeResponse:
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {"search_result": [{"link": "https://example.com/research"}]}
+        mcp_handler = _make_zai_mcp_handler(
+            payload_obj=[{"link": "https://example.com/research", "title": "Research"}]
+        )
 
         class FakeAsyncClient:
             async def __aenter__(self):
@@ -2412,7 +2485,7 @@ class WebApiTests(unittest.TestCase):
 
             async def post(self, url, *, headers=None, json=None, **kwargs):
                 calls.append({"url": url, "headers": headers, "json": json})
-                return FakeResponse()
+                return await mcp_handler(url, headers=headers, json=json, **kwargs)
 
         client = web_research_agent.WebResearchClient(
             research_model="llmgateway/light_model",
@@ -2422,9 +2495,78 @@ class WebApiTests(unittest.TestCase):
         with patch.object(web_research_agent.httpx, "AsyncClient", return_value=FakeAsyncClient()):
             links = run_async(client._zai_search("topic", 1))
 
-        self.assertEqual(calls[0]["json"]["search_engine"], "search_pro_quark")
+        self.assertEqual(calls[0]["url"], "https://api.z.ai/api/mcp/web_search_prime/mcp")
         self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer first-zai-key")
+        tool_call = next(c for c in calls if (c["json"] or {}).get("method") == "tools/call")
+        self.assertEqual(tool_call["json"]["params"]["name"], "web_search_prime")
+        self.assertEqual(tool_call["json"]["params"]["arguments"]["search_query"], "topic")
         self.assertEqual(links, ["https://example.com/research"])
+
+    def test_zai_mcp_tool_call_handles_three_step_protocol_and_decodes_payload(self):
+        calls = []
+        handler = _make_zai_mcp_handler(payload_obj={"title": "T", "content": "C"})
+
+        class FakeAsyncClient:
+            async def post(self, url, *, headers=None, json=None, **kwargs):
+                calls.append({"url": url, "headers": headers, "json": json})
+                return await handler(url, headers=headers, json=json, **kwargs)
+
+        result = run_async(
+            zai_mcp_module.zai_mcp_tool_call(
+                FakeAsyncClient(),
+                api_key="key-X",
+                server_path="web_reader",
+                tool_name="webReader",
+                arguments={"url": "https://example.com"},
+            )
+        )
+
+        self.assertEqual(result, {"title": "T", "content": "C"})
+        methods = [(c["json"] or {}).get("method") for c in calls]
+        self.assertEqual(methods, ["initialize", "notifications/initialized", "tools/call"])
+        self.assertEqual(calls[0]["url"], "https://api.z.ai/api/mcp/web_reader/mcp")
+        self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer key-X")
+        self.assertEqual(calls[1]["headers"]["Mcp-Session-Id"], "sid-1")
+        self.assertEqual(calls[2]["headers"]["Mcp-Session-Id"], "sid-1")
+
+    def test_zai_mcp_tool_call_raises_on_tool_error_envelope(self):
+        async def handler(url, *, headers=None, json=None, **kwargs):
+            method = (json or {}).get("method", "")
+            if method == "initialize":
+                envelope = {"jsonrpc": "2.0", "id": (json or {}).get("id"), "result": {}}
+                return _FakeMCPResponse(
+                    headers={"mcp-session-id": "sid-err"},
+                    text=f"data: {jsonlib_dumps(envelope)}\n",
+                )
+            if method == "notifications/initialized":
+                return _FakeMCPResponse(text="")
+            envelope = {
+                "jsonrpc": "2.0",
+                "id": (json or {}).get("id"),
+                "error": {"code": -32603, "message": "Tool not found: webReader"},
+            }
+            return _FakeMCPResponse(text=f"data: {jsonlib_dumps(envelope)}\n")
+
+        class FakeAsyncClient:
+            async def post(self, url, *, headers=None, json=None, **kwargs):
+                return await handler(url, headers=headers, json=json, **kwargs)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            run_async(
+                zai_mcp_module.zai_mcp_tool_call(
+                    FakeAsyncClient(),
+                    api_key="k",
+                    server_path="web_reader",
+                    tool_name="webReader",
+                    arguments={"url": "https://example.com"},
+                )
+            )
+        self.assertIn("Tool not found", str(ctx.exception))
+
+    def test_zai_mcp_search_location_autodetect(self):
+        self.assertEqual(zai_mcp_module.detect_zai_search_location("hello world"), "us")
+        self.assertEqual(zai_mcp_module.detect_zai_search_location("привет мир"), "us")
+        self.assertEqual(zai_mcp_module.detect_zai_search_location("北京天气"), "cn")
 
     def test_web_read_prefers_direct_fetch_before_adapters(self):
         direct_payload = {
@@ -2481,6 +2623,35 @@ class WebApiTests(unittest.TestCase):
                 "content": "hello world",
             },
         )
+
+    def test_cloakbrowser_extract_prefers_playwright_title_over_extractor_heuristic(self):
+        class FakeResult:
+            title = "set of rules that assign a property called type"
+            content_markdown = "# Type system\n\nbody content"
+
+        fake_module = Mock()
+        fake_module.extract = Mock(return_value=FakeResult())
+        with patch.dict("sys.modules", {"rs_trafilatura": fake_module}):
+            result = web_api._extract_cloakbrowser_markdown(
+                "<html><title>Type system - Wikipedia</title></html>",
+                "https://en.wikipedia.org/wiki/Type_system",
+                "Type system - Wikipedia",
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["title"], "Type system - Wikipedia")
+        self.assertEqual(result["content"], "# Type system\n\nbody content")
+
+    def test_cloakbrowser_extract_falls_back_to_extractor_title_when_page_title_blank(self):
+        class FakeResult:
+            title = "Some Extracted Title"
+            content_markdown = "body"
+
+        fake_module = Mock()
+        fake_module.extract = Mock(return_value=FakeResult())
+        with patch.dict("sys.modules", {"rs_trafilatura": fake_module}):
+            result = web_api._extract_cloakbrowser_markdown("<html></html>", "https://x", "   ")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["title"], "Some Extracted Title")
 
     def test_web_read_tries_cloakbrowser_before_paid_adapters(self):
         rendered_payload = {

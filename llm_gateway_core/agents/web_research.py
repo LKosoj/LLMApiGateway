@@ -16,6 +16,7 @@ from fastapi import HTTPException
 import httpx
 
 from ..utils.api_keys import has_api_key, select_next_api_key
+from ..utils.zai_mcp import detect_zai_search_location, zai_mcp_tool_call
 
 logger = logging.getLogger(__name__)
 
@@ -286,29 +287,27 @@ class WebResearchClient:
 
         try:
             async with self._httpx_client() as client:
-                response = await client.post(
-                    "https://api.z.ai/api/paas/v4/web_search",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {zai_key}",
-                    },
-                    json={
-                        "search_engine": "search_pro_quark",
+                payload = await zai_mcp_tool_call(
+                    client,
+                    api_key=zai_key,
+                    server_path="web_search_prime",
+                    tool_name="web_search_prime",
+                    arguments={
                         "search_query": query,
-                        "count": max_results,
+                        "location": detect_zai_search_location(query),
                     },
-                    timeout=30.0,
+                    timeout=60.0,
                 )
-                response.raise_for_status()
-                data = response.json() or {}
-                items = data.get("search_result", [])[:max_results]
-                links = [
-                    item.get("url") or item.get("link", "")
-                    for item in items
-                    if item.get("url") or item.get("link")
-                ]
-                logger.info("Z.AI поиск '%s': найдено %s ссылок", query, len(links))
-                return links
+            items = payload if isinstance(payload, list) else []
+            links: list[str] = []
+            for item in items[:max_results]:
+                if not isinstance(item, dict):
+                    continue
+                link = item.get("link") or item.get("url")
+                if link:
+                    links.append(link)
+            logger.info("Z.AI поиск '%s': найдено %s ссылок", query, len(links))
+            return links
         except Exception as exc:
             logger.warning("Ошибка поиска через Z.AI для запроса '%s': %s", query, exc)
             return []
@@ -507,28 +506,26 @@ class WebResearchClient:
         if zai_key:
             try:
                 async with self._httpx_client() as client:
-                    resp = await client.post(
-                        "https://api.z.ai/api/paas/v4/reader",
-                        headers={
-                            "Content-Type": "application/json",
-                            "Authorization": f"Bearer {zai_key}",
-                        },
-                        json={
+                    payload = await zai_mcp_tool_call(
+                        client,
+                        api_key=zai_key,
+                        server_path="web_reader",
+                        tool_name="webReader",
+                        arguments={
                             "url": url,
-                            "format": "markdown",
-                            "keep_images": False,
+                            "return_format": "markdown",
+                            "retain_images": False,
                             "timeout": 20,
                         },
-                        timeout=30.0,
+                        timeout=60.0,
                     )
-                    resp.raise_for_status()
-                    data = (resp.json() or {}).get("reader_result") or {}
-                    api_content = data.get("content")
-                    if api_content and api_content.strip():
-                        api_title = data.get("title") or title
-                        logger.info("Успешно загружен через Z.AI Reader (fallback): %s", url)
-                        return {"url": url, "title": api_title, "content": api_content}
-                    logger.warning("Z.AI Reader вернул пустой контент для %s", url)
+                data = payload if isinstance(payload, dict) else {}
+                api_content = data.get("content")
+                if api_content and str(api_content).strip():
+                    api_title = data.get("title") or title
+                    logger.info("Успешно загружен через Z.AI Reader (fallback): %s", url)
+                    return {"url": url, "title": api_title, "content": api_content}
+                logger.warning("Z.AI Reader вернул пустой контент для %s", url)
             except Exception as exc:
                 logger.warning("Ошибка Z.AI Reader fallback для %s: %s", url, exc)
 
