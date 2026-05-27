@@ -3,10 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway - Quota Dashboard</title>
-    <link rel="stylesheet" href="/static/theme.css">
-    <link rel="stylesheet" href="/static/quota.css">
-    <script src="/static/theme.js"></script>
+    <title>LLM Gateway - Pricing</title>
+    <link rel="stylesheet" href="/static/usage-stats.css">
+    <link rel="stylesheet" href="/static/pricing.css">
 </head>
 <body>
     <div class="top-nav">
@@ -19,7 +18,7 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
                 Usage Statistics
             </a>
-            <a href="/v1/ui/quota" class="nav-button active">
+            <a href="/v1/ui/quota" class="nav-button">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 Quota
             </a>
@@ -35,11 +34,7 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
                 API Keys
             </a>
-            <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                Translator Debug
-            </a>
-            <a href="/v1/ui/pricing" class="nav-button" data-master-only>
+            <a href="/v1/ui/pricing" class="nav-button active" data-master-only>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
                 Pricing
             </a>
@@ -50,21 +45,67 @@
     </div>
 
     <div class="container">
-        <h1>LLM Gateway - Quota Dashboard</h1>
+        <h1>LLM Gateway - Pricing <span style="font-size:small">(v1.10)</span></h1>
 
-        <div id="quota-grid">
-            <p class="quota-empty">Loading quota data...</p>
-        </div>
+        <!-- Toast notification -->
+        <div id="toast" class="pricing-toast" role="alert" aria-live="polite"></div>
 
-        <div id="quota-status"></div>
+        <!-- Section 1: Editor -->
+        <section class="pricing-section">
+            <div class="pricing-section-header">
+                <h2>Editor</h2>
+                <div class="pricing-toolbar-actions">
+                    <button id="addRowBtn" type="button" class="secondary-button">Add Row</button>
+                    <button id="saveBtn" type="button" class="primary-button">Save Changes</button>
+                </div>
+            </div>
+            <p class="pricing-hint">Rates are in <strong>USD per 1 million tokens</strong>. Changes are written to <code>providers.json</code> atomically.</p>
+            <div class="pricing-table-wrap">
+                <table class="pricing-table" id="pricingTable">
+                    <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Model</th>
+                            <th>Input rate ($/1M)</th>
+                            <th>Output rate ($/1M)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="pricingTableBody">
+                    </tbody>
+                </table>
+                <div id="pricingEmptyState" class="pricing-empty-state">
+                    No pricing configured. Add rows to define per-model rates.
+                </div>
+            </div>
+        </section>
 
-        <section id="upstream-quotas-section" class="upstream-quotas-section" style="display:none;">
-            <h2 class="upstream-quotas-title">Upstream Subscriptions</h2>
-            <div id="upstream-quotas-grid"></div>
+        <!-- Section 2: Calculator -->
+        <section class="pricing-section">
+            <h2>Calculator</h2>
+            <div class="pricing-calc-grid">
+                <div class="pricing-calc-field">
+                    <label for="calcModel">Model</label>
+                    <select id="calcModel">
+                        <option value="">— select model —</option>
+                    </select>
+                </div>
+                <div class="pricing-calc-field">
+                    <label for="calcPromptTokens">Prompt tokens</label>
+                    <input type="number" id="calcPromptTokens" min="0" value="1000000" />
+                </div>
+                <div class="pricing-calc-field">
+                    <label for="calcCompletionTokens">Completion tokens</label>
+                    <input type="number" id="calcCompletionTokens" min="0" value="500000" />
+                </div>
+                <div class="pricing-calc-field pricing-calc-action">
+                    <button id="calcBtn" type="button" class="primary-button">Calculate</button>
+                </div>
+            </div>
+            <div id="calcResult" class="pricing-calc-result" hidden></div>
         </section>
     </div>
 
-    <script src="/static/shared-auth.js"></script>
-    <script src="/static/quota.js"></script>
+    <script src="/static/pricing.js"></script>
 </body>
 </html>

@@ -8,9 +8,9 @@
 .playground-panel {
     margin-top: 16px;
     padding: 18px;
-    border: 1px solid var(--border-light, #d7d7dd);
+    border: 1px solid var(--border, #d7d7dd);
     border-radius: 10px;
-    background: var(--container-light, #fafafa);
+    background: var(--bg-elevated, #fafafa);
 }
 
 .playground-section-tabs {
@@ -143,7 +143,7 @@ body.dark-mode .playground-form select {
 .playground-result {
     margin-top: 18px;
     padding: 16px;
-    border: 1px solid var(--border-light, #d7d7dd);
+    border: 1px solid var(--border, #d7d7dd);
     border-radius: 8px;
     background: #ffffff;
 }

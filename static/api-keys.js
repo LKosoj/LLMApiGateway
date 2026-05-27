@@ -462,16 +462,7 @@
         if (event.target === modalOverlay) closeModal();
     });
 
-    // Dark mode toggle, mirroring other pages.
-    const darkModeToggle = document.getElementById("darkModeToggle");
-    function applyDarkMode(enabled) {
-        document.body.classList.toggle("dark-mode", enabled);
-        localStorage.setItem("darkMode", enabled ? "1" : "0");
-    }
-    if (darkModeToggle) {
-        applyDarkMode(localStorage.getItem("darkMode") === "1");
-        darkModeToggle.addEventListener("click", () => applyDarkMode(!document.body.classList.contains("dark-mode")));
-    }
+    Theme.attachToggle("darkModeToggle");
 
     (async function init() {
         await loadAvailableModels();

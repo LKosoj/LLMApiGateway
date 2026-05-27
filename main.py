@@ -40,6 +40,7 @@ from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
 from llm_gateway_core.services.rate_limiter import RateLimiter
 from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
+from llm_gateway_core.services.upstream_subscription_quota import UpstreamSubscriptionQuotaService
 from llm_gateway_core.utils.html_cache import preload_templates
 
 # --- Application Setup ---
@@ -213,6 +214,8 @@ async def lifespan(app: FastAPI):
         STATIC_DIR / "rules-editor.html",
         STATIC_DIR / "web-playground.html",
         STATIC_DIR / "gateway-docs.html",
+        STATIC_DIR / "translator-debug.html",
+        STATIC_DIR / "pricing.html",
     ])
 
     # Initialize ConfigLoader and load configurations
@@ -273,6 +276,12 @@ async def lifespan(app: FastAPI):
     http_client = create_shared_http_client()
     app.state.http_client = http_client
     logger.info("Shared httpx.AsyncClient initialized and attached to app.state.")
+
+    upstream_subscription_quota_service = UpstreamSubscriptionQuotaService(
+        http_client=http_client
+    )
+    app.state.upstream_subscription_quota_service = upstream_subscription_quota_service
+    logger.info("UpstreamSubscriptionQuotaService initialized and attached to app.state.")
 
     proxy_http_clients = create_proxy_http_clients(config_loader.providers_config)
     app.state.proxy_http_clients = proxy_http_clients

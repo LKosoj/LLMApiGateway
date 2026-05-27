@@ -1,0 +1,248 @@
+/* Pricing page styles — uses variables from usage-stats.css */
+
+.pricing-section {
+    margin-bottom: 36px;
+}
+
+.pricing-section h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    margin-top: 0;
+}
+
+.pricing-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.pricing-section-header h2 {
+    margin-bottom: 0;
+}
+
+.pricing-toolbar-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.pricing-hint {
+    font-size: 13px;
+    opacity: 0.75;
+    margin: 0 0 12px 0;
+}
+
+/* Table */
+.pricing-table-wrap {
+    overflow-x: auto;
+}
+
+.pricing-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.pricing-table th,
+.pricing-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.pricing-table th {
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+
+.pricing-table td input[type="text"],
+.pricing-table td input[type="number"] {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+.pricing-table td input[type="text"]:focus,
+.pricing-table td input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent, #6366f1);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.pricing-table tr.dirty td input {
+    border-color: #f59e0b;
+}
+
+.pricing-table tr.dirty td input:focus {
+    border-color: var(--accent, #6366f1);
+}
+
+.pricing-empty-state {
+    text-align: center;
+    padding: 32px 16px;
+    opacity: 0.6;
+    font-size: 14px;
+    display: none;
+}
+
+.pricing-empty-state.visible {
+    display: block;
+}
+
+/* Delete button inside table */
+.pricing-table .btn-delete {
+    background: none;
+    border: 1px solid rgba(185, 74, 72, 0.5);
+    color: #b94a48;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.pricing-table .btn-delete:hover {
+    background: rgba(185, 74, 72, 0.08);
+}
+
+/* Calculator */
+.pricing-calc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    align-items: end;
+}
+
+.pricing-calc-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.pricing-calc-field label {
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.pricing-calc-field select,
+.pricing-calc-field input[type="number"] {
+    padding: 6px 8px;
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 14px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.pricing-calc-field select:focus,
+.pricing-calc-field input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent, #6366f1);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.pricing-calc-action {
+    justify-content: flex-end;
+}
+
+.pricing-calc-result {
+    margin-top: 16px;
+    padding: 14px 18px;
+    border: 1px solid rgba(128, 128, 128, 0.25);
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.pricing-calc-result .cost-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent, #6366f1);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.pricing-calc-result .rates-info {
+    opacity: 0.75;
+    font-size: 13px;
+}
+
+/* Toast */
+.pricing-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #fff;
+    background: #22c55e;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+    z-index: 9999;
+}
+
+.pricing-toast.error {
+    background: #ef4444;
+}
+
+.pricing-toast.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Button styles (if not inherited from usage-stats.css) */
+.primary-button {
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.primary-button:hover {
+    background: var(--accent-hover, #4f46e5);
+}
+
+.secondary-button {
+    background: transparent;
+    border: 1px solid rgba(128, 128, 128, 0.4);
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: inherit;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.secondary-button:hover {
+    background: rgba(128, 128, 128, 0.08);
+    border-color: rgba(128, 128, 128, 0.6);
+}

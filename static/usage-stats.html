@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLM Gateway v1.10-  Usage Statistics</title>
+    <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/usage-stats.css">
+    <script src="/static/theme.js"></script>
 </head>
 <body>
     <div class="top-nav">
@@ -33,6 +35,14 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
                 API Keys
             </a>
+            <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                Translator Debug
+            </a>
+            <a href="/v1/ui/pricing" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                Pricing
+            </a>
             <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
                 <span class="icon-placeholder"></span>
             </button>
@@ -45,6 +55,7 @@
             <button class="tab-button active" data-tab="stats">Usage Statistics</button>
             <button class="tab-button" data-tab="records">Usage Records</button>
             <button class="tab-button" data-tab="fallback" data-master-only>Fallback Analytics</button>
+            <button class="tab-button" data-tab="topology">Topology</button>
         </div>
 
         <div id="statsTabContent" class="tab-content active">
@@ -136,6 +147,13 @@
                     <p>Select a period and click 'Refresh' to view upstream analytics.</p>
                 </div>
             </div>
+        </div>
+
+        <div id="topologyTabContent" class="tab-content">
+            <div class="topology-toolbar">
+                <button id="topologyRefreshButton">Refresh</button>
+            </div>
+            <div id="topology-container" style="height: 600px;"></div>
         </div>
 
         <div id="messageArea"></div>

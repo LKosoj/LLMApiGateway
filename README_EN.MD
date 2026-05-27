@@ -164,6 +164,72 @@ The other sections call existing OpenAI-compatible gateway routes. **Text to Spe
 
 Generated illustrations are returned in the `/v1/web/deep-research` response as a dedicated `images[]` field (each entry `{url, prompt, alt_text}`). Files are persisted on the server at `outputs/images/{research_id}/image_*.png` and served by a mounted StaticFiles route at `/outputs/images/...`. Access to `/outputs/images` goes through the same auth layer as the rest of the gateway endpoints; no separate `api_key` is required when the same session that received the URL fetches the file. A background task prunes these files automatically **10 days** after they were created, running once per day.
 
+### Unified UI Theme System
+All UI pages (`rules-editor`, `usage-stats`, `api-keys`, `gateway-docs`, `web-playground`, `quota`) share a single `static/theme.js` and `static/theme.css`. `theme.js` manages light/dark/system mode switching via the `llmgateway:theme` `localStorage` key, automatically migrates legacy keys (`darkMode`, `theme`), and dispatches `llmgateway:theme-changed` events. CSS custom properties (`--bg`, `--bg-elevated`, `--text`, `--border`, `--accent`, etc.) are declared once in `theme.css`.
+
+### Translator Debugger
+
+A developer tool for inspecting how the gateway transforms request bodies between OpenAI and Anthropic formats, without sending a real request to any provider.
+
+- **URL**: `/v1/ui/translator-debug`
+- **Access**: master only (GATEWAY_API_KEY). Virtual keys receive 403.
+- **What it shows**: a 7-step transformation chain — from the original client request to the final response in the client's format, including intermediate OpenAI representations and a mock provider response.
+- **How to use**: select source/target formats, paste the request JSON, optionally paste a mock provider response, and click "Run translation". Each step is displayed in a read-only block with a copy button.
+- **Presets**: "OpenAI sample", "Anthropic sample", and "Tool-use sample" buttons populate the input field with minimal valid examples.
+
+API endpoint: `POST /v1/admin/translator/debug` — accepts `{source_format, target_format, request_body, mock_provider_response?}` and returns an array of 7 steps.
+
+### Pricing UI
+
+The page `/v1/ui/pricing` is accessible to the master key only and lets you manage per-model token pricing and calculate request costs.
+
+- **URL**: `/v1/ui/pricing`
+- **Access**: master only (GATEWAY_API_KEY); virtual keys receive 403.
+
+**Editor section** shows a table (provider, model, input rate, output rate) with in-cell editing. «Add Row» appends a new row, «Delete» removes it, «Save Changes» writes the full list to `providers.json` via a PUT request. Modified rows are highlighted. Writes are atomic; if the file contained JSON5 comments they are backed up before overwrite.
+
+**Calculator section** — select a model from the drop-down, enter prompt and completion token counts, click «Calculate». The server returns the exact cost in USD with 6 decimal places along with the current model rates.
+
+Rates are stored under the `models` key of each provider in `providers.json`:
+
+```json
+[
+  {
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apikey": "${APIKEY_OPENAI}",
+      "models": {
+        "gpt-4o": { "input_rate": 2.5, "output_rate": 10.0 },
+        "gpt-4o-mini": { "input_rate": 0.15, "output_rate": 0.60 }
+      }
+    }
+  }
+]
+```
+
+Units are **USD per 1 million tokens**. After saving, the configuration is hot-reloaded without restarting the server.
+
+API endpoints (master-only):
+- `GET /v1/admin/pricing` — list all (provider, model) pairs with rates.
+- `PUT /v1/admin/pricing` — update the full pricing list; atomically written to `providers.json`.
+- `POST /v1/admin/pricing/calculate` — `{provider, model, prompt_tokens, completion_tokens}` → `{cost_usd, input_rate, output_rate}`.
+
+### Provider Topology
+
+The statistics page includes a **Topology** tab with an interactive provider graph powered by [@xyflow/react](https://reactflow.dev/). The graph is built on demand each time the tab is opened and shows:
+
+- A central **LLM Gateway** node in the middle.
+- One node per configured provider, arranged in a circle.
+- Border colour: green — `ok`, red — `error`, grey — `invalid`.
+- Pulse animation when the provider has active requests.
+- Hover tooltip: health status, active request count, penalty score, model list.
+
+Virtual-key callers see only their own requests in the `active_requests` field. Data is cached in memory for 5 seconds.
+
+API endpoint: `GET /v1/topology` (auth required; accessible to all keys).
+
+The graph uses ESM CDN (esm.sh). If the CDN is unavailable, an error message with a Retry button is displayed.
+
 ### Quota Dashboard
 The page at http://localhost:9000/v1/ui/quota is available to all authenticated users and shows the current rate-limit window utilisation in real time.
 
@@ -173,6 +239,44 @@ The page at http://localhost:9000/v1/ui/quota is available to all authenticated 
 - **Polling**: data refreshes every 5 seconds; the countdown updates client-side every second without contacting the server.
 
 API endpoint: `GET /v1/api/quota/keys` — returns a JSON array with a per-key snapshot; cached for 5 seconds.
+
+### Upstream subscription quotas
+
+The gateway can display remaining quotas from upstream providers (GitHub Copilot, Gemini CLI, Antigravity) directly in the Quota Dashboard.
+
+**Supported providers:**
+- `github_copilot` — paid and free response formats from the GitHub Copilot API (`quota_snapshots` / `monthly_quotas` + `limited_user_quotas`).
+- `gemini_cli` — checks Google Cloud availability via Cloud Resource Manager.
+- `antigravity` — stub provider, returns an empty snapshot.
+
+**Required environment variables:**
+- `GITHUB_COPILOT_TOKEN` (or any other name specified via `token_env`) — Copilot access token.
+- `GEMINI_CLI_TOKEN` — Google Cloud access token for Gemini CLI.
+
+**`providers.json` configuration:**
+```json
+[
+  {
+    "github_copilot": {
+      "baseUrl": "https://api.github.com",
+      "apikey": "${APIKEY_X}",
+      "subscription_quota": {
+        "kind": "github_copilot",
+        "token_env": "GITHUB_COPILOT_TOKEN"
+      }
+    }
+  }
+]
+```
+
+The `subscription_quota` block is optional. Providers without it are completely ignored by the fetcher — backward compatibility is preserved.
+
+**Endpoint:** `GET /v1/admin/upstream-quotas` — accessible to the master key only (403 for virtual keys). Returns a list of `SubscriptionQuotaSnapshot` objects with fields:
+- `provider`, `kind`, `plan`, `reset_date` — meta information.
+- `categories` — dictionary `{name: {used, total, remaining, unlimited}}`.
+- `error` — `null` on success, otherwise an error message string.
+
+Data is cached for 60 seconds (errors for min(30, ttl/2)). In the Quota Dashboard, the upstream section is only shown to master users and is hidden on 403.
 
 ### Fallback Analytics
 The statistics page includes a **Fallback Analytics** tab that provides detailed information about provider transitions (fallback events). The tab contains two sub-tabs:

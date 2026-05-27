@@ -1,29 +1,22 @@
 :root {
-    --bg-light: #f8fafc;
-    --bg-dark: #0f111a;
-    --container-light: #ffffff;
-    --container-dark: #1e2130;
-    --text-light: #334155;
-    --text-dark: #e2e8f0;
-    --accent: #6366f1;
-    --accent-hover: #4f46e5;
-    --border-light: #e2e8f0;
-    --border-dark: #334155;
+    /* Semantic aliases for container-level background */
+    --container-light: var(--bg-elevated, #ffffff);
+    --container-dark: var(--bg-elevated, #1e2130);
 }
 
 /* Basic styles for the HTML page */
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;    
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     margin: 0;
-    background-color: var(--bg-light);
-    color: var(--text-light);
+    background-color: var(--bg);
+    color: var(--text);
     transition: background-color 0.3s, color 0.3s;
 }
 
 /* Dark mode styles for body */
 body.dark-mode {
-    background-color: var(--bg-dark);
-    color: var(--text-dark);
+    background-color: var(--bg);
+    color: var(--text);
 }
 
 .container {
@@ -187,20 +180,20 @@ body.dark-mode #darkModeToggle:hover {
 
 .controls label {
     font-weight: 600;
-    color: var(--text-light);
+    color: var(--text);
     font-size: 14px;
 }
 
 body.dark-mode .controls label {
-    color: var(--text-dark);
+    color: var(--text);
 }
 
 select, button {
     padding: 10px 16px;
     border-radius: 10px;
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border);
     background-color: #f8fafc;
-    color: var(--text-light);
+    color: var(--text);
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
@@ -222,8 +215,8 @@ select:focus, button:focus {
 
 button {
     background-color: var(--container-light);
-    color: var(--text-light);
-    border: 1px solid var(--border-light);
+    color: var(--text);
+    border: 1px solid var(--border);
     box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
@@ -270,8 +263,8 @@ button.loading::after {
 
 body.dark-mode select {
     background-color: #1e293b;
-    border-color: var(--border-dark);
-    color: var(--text-dark);
+    border-color: var(--border);
+    color: var(--text);
 }
 
 body.dark-mode select:focus {
@@ -282,8 +275,8 @@ body.dark-mode select:focus {
 
 body.dark-mode button {
     background-color: #1e293b;
-    border-color: var(--border-dark);
-    color: var(--text-dark);
+    border-color: var(--border);
+    color: var(--text);
 }
 
 body.dark-mode button:hover:not(:disabled) {
@@ -300,7 +293,7 @@ body.dark-mode button.loading::after {
     color: #1e293b;
     margin-top: 30px;
     margin-bottom: 15px;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 10px;
     text-align: center;
     font-weight: 600;
@@ -308,7 +301,7 @@ body.dark-mode button.loading::after {
 
 body.dark-mode #statsArea h2 {
     color: #f8fafc;
-    border-bottom: 1px solid var(--border-dark);
+    border-bottom: 1px solid var(--border);
 }
 
 table {
@@ -318,37 +311,37 @@ table {
     margin-top: 15px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     font-size: 8px; /* Required by tests */
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
 }
 
 th, td {
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border);
     text-align: left;
     white-space: nowrap; /* Prevent text wrapping in table headers/cells */
 }
 
 body.dark-mode table {
-    border: 1px solid var(--border-dark);
+    border: 1px solid var(--border);
 }
 
 body.dark-mode th, body.dark-mode td {
-    border-bottom: 1px solid var(--border-dark);
+    border-bottom: 1px solid var(--border);
 }
 
 th {
     background-color: #f8fafc; /* Light mode default */
     font-weight: 600;
-    color: var(--text-light); /* Light mode default */
+    color: var(--text); /* Light mode default */
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
 
 body.dark-mode th {
     background-color: #1e293b; /* Dark mode color */
-    color: var(--text-dark); /* Dark mode color */
+    color: var(--text); /* Dark mode color */
 }
 
 tr:nth-child(even) {
@@ -489,11 +482,11 @@ body.dark-mode .tab-button.active:hover {
 
 #pageInfo {
     font-weight: bold;
-    color: var(--text-light);
+    color: var(--text);
 }
 
 body.dark-mode #pageInfo {
-    color: var(--text-dark);
+    color: var(--text);
 }
 
 #recordsArea {
@@ -580,7 +573,7 @@ body.dark-mode .fallback-sub-tab.active {
     color: #1e293b;
     margin-top: 30px;
     margin-bottom: 15px;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 10px;
     text-align: center;
     font-weight: 600;
@@ -588,7 +581,7 @@ body.dark-mode .fallback-sub-tab.active {
 
 body.dark-mode #fallbackStatsArea h2 {
     color: #f8fafc;
-    border-bottom: 1px solid var(--border-dark);
+    border-bottom: 1px solid var(--border);
 }
 
 /* Error type badges */
@@ -654,7 +647,7 @@ body.dark-mode .error-badge-default {
 
 /* Chain cards */
 .chain-card {
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border);
     border-radius: 12px;
     margin-bottom: 8px;
     overflow: hidden;
@@ -662,7 +655,7 @@ body.dark-mode .error-badge-default {
 }
 
 body.dark-mode .chain-card {
-    border-color: var(--border-dark);
+    border-color: var(--border);
 }
 
 .chain-card:hover {
@@ -723,11 +716,11 @@ body.dark-mode .chain-timestamp {
 
 .chain-model {
     font-weight: 600;
-    color: var(--text-light);
+    color: var(--text);
 }
 
 body.dark-mode .chain-model {
-    color: var(--text-dark);
+    color: var(--text);
 }
 
 .chain-attempts {
@@ -785,11 +778,11 @@ body.dark-mode .chain-failure {
 /* Chain details (expanded) */
 .chain-details {
     padding: 0 16px 12px 16px;
-    border-top: 1px solid var(--border-light);
+    border-top: 1px solid var(--border);
 }
 
 body.dark-mode .chain-details {
-    border-top-color: var(--border-dark);
+    border-top-color: var(--border);
 }
 
 .chain-attempt {
@@ -838,14 +831,14 @@ body.dark-mode .attempt-number {
 .attempt-provider {
     font-family: monospace;
     font-size: 12px;
-    color: var(--text-light);
+    color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 body.dark-mode .attempt-provider {
-    color: var(--text-dark);
+    color: var(--text);
 }
 
 .attempt-error-message {
@@ -912,4 +905,98 @@ body.dark-mode .attempt-duration-text {
 
 .attempt-failure .attempt-result {
     color: #ef4444;
+}
+
+/* ── Topology tab ─────────────────────────────────────────── */
+.topology-toolbar {
+    margin-bottom: 12px;
+}
+
+#topology-container {
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    background: var(--bg-light);
+    overflow: hidden;
+    position: relative;
+}
+
+body.dark-mode #topology-container {
+    border-color: var(--border-dark);
+    background: var(--bg-dark);
+}
+
+.topology-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+    color: var(--text-light);
+    font-size: 14px;
+}
+
+body.dark-mode .topology-error {
+    color: var(--text-dark);
+}
+
+/* ReactFlow custom node styles */
+.topology-node {
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: 2px solid var(--border-light);
+    background: var(--container-light);
+    color: var(--text-light);
+    font-size: 13px;
+    font-weight: 500;
+    min-width: 120px;
+    text-align: center;
+    cursor: default;
+    transition: box-shadow 0.2s;
+}
+
+.topology-node:hover {
+    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.25);
+}
+
+.topology-node.health-ok {
+    border-color: #22c55e;
+}
+
+.topology-node.health-error {
+    border-color: #ef4444;
+}
+
+.topology-node.health-invalid {
+    border-color: #94a3b8;
+    opacity: 0.7;
+}
+
+.topology-node.node-central {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent-hover);
+    font-weight: 700;
+}
+
+.topology-node-metrics {
+    font-size: 11px;
+    margin-top: 6px;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+body.dark-mode .topology-node-metrics {
+    color: #94a3b8;
+}
+
+/* Pulse animation for nodes with active requests */
+@keyframes topology-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.5); }
+    70%  { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+
+.topology-node.pulse {
+    animation: topology-pulse 1.8s ease-out infinite;
 }

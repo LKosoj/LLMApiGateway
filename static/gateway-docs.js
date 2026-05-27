@@ -59,19 +59,6 @@
         },
     ];
 
-    function setupThemeToggle() {
-        const toggle = document.getElementById("darkModeToggle");
-        if (!toggle) return;
-
-        const stored = localStorage.getItem("darkMode");
-        if (stored === "1") document.body.classList.add("dark-mode");
-
-        toggle.addEventListener("click", () => {
-            const enabled = document.body.classList.toggle("dark-mode");
-            localStorage.setItem("darkMode", enabled ? "1" : "0");
-        });
-    }
-
     function setStatus(message, className) {
         const status = document.getElementById("catalogStatus");
         if (!status) return;
@@ -407,7 +394,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-        setupThemeToggle();
+        Theme.attachToggle("darkModeToggle");
         setupDocsTabs();
         loadCatalog();
     });

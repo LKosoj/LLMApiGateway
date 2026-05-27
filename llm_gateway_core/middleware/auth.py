@@ -74,6 +74,8 @@ MASTER_ONLY_PREFIXES = (
     "/v1/ui/api-keys",
     "/v1/ui/playground",
     "/v1/ui/web-playground",
+    "/v1/ui/translator-debug",
+    "/v1/ui/pricing",
     "/v1/config/",
     "/v1/openrouter/free-models",
     "/v1/admin/",

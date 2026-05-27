@@ -2,8 +2,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const { apiFetch } = window.gatewayAuth;
 
     const messageArea = document.getElementById('messageArea');
-    const darkModeToggle = document.getElementById('darkModeToggle');
-    const bodyElement = document.body;
     const saveButton = document.getElementById('saveButton');
     const addRuleButton = document.getElementById('addRuleButton');
     const previewRulesButton = document.getElementById('previewRulesButton');
@@ -384,37 +382,7 @@ document.addEventListener('DOMContentLoaded', function () {
         return payload;
     }
 
-    function setDarkMode(isDark) {
-        bodyElement.classList.toggle('dark-mode', isDark);
-        localStorage.setItem('darkMode', isDark ? 'enabled' : 'disabled');
-        updateDarkModeIcon();
-    }
-
-    function updateDarkModeIcon() {
-        if (bodyElement.classList.contains('dark-mode')) {
-            darkModeToggle.setAttribute('aria-label', 'Switch to light mode');
-        } else {
-            darkModeToggle.setAttribute('aria-label', 'Switch to dark mode');
-        }
-    }
-
-    darkModeToggle.addEventListener('click', () => {
-        setDarkMode(!bodyElement.classList.contains('dark-mode'));
-    });
-
-    const savedDarkMode = localStorage.getItem('darkMode');
-    if (savedDarkMode === 'enabled') {
-        setDarkMode(true);
-    } else if (savedDarkMode === 'disabled') {
-        setDarkMode(false);
-    } else {
-        setDarkMode(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-        if (localStorage.getItem('darkMode') === null) {
-            setDarkMode(e.matches);
-        }
-    });
+    Theme.attachToggle('darkModeToggle');
 
     function updateControlsVisibility() {
         saveButton.hidden = activeEditor === 'openrouter-free' || activeEditor === 'fallback-eval';

@@ -2,26 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const { apiFetch, bootstrapRoleUI } = window.gatewayAuth;
 
     // ── Dark mode ──────────────────────────────────────────────────────────
-    const darkModeToggle = document.getElementById('darkModeToggle');
-
-    const applyTheme = (theme) => {
-        if (theme === 'dark') {
-            document.body.classList.add('dark-mode');
-        } else {
-            document.body.classList.remove('dark-mode');
-        }
-        localStorage.setItem('theme', theme);
-    };
-
-    const savedTheme = localStorage.getItem('theme') || 'light';
-    applyTheme(savedTheme);
-
-    if (darkModeToggle) {
-        darkModeToggle.addEventListener('click', () => {
-            const current = localStorage.getItem('theme') || 'light';
-            applyTheme(current === 'light' ? 'dark' : 'light');
-        });
-    }
+    Theme.attachToggle('darkModeToggle');
 
     // ── State ──────────────────────────────────────────────────────────────
     const quotaGrid = document.getElementById('quota-grid');
@@ -260,8 +241,111 @@ document.addEventListener('DOMContentLoaded', () => {
         window.addEventListener('beforeunload', () => clearInterval(_pollingInterval));
     }
 
+    // ── Upstream Subscriptions ─────────────────────────────────────────────
+
+    const upstreamSection = document.getElementById('upstream-quotas-section');
+    const upstreamGrid = document.getElementById('upstream-quotas-grid');
+
+    function renderUpstreamCard(snapshot) {
+        const card = document.createElement('div');
+        card.className = 'upstream-card';
+
+        const metaParts = [];
+        if (snapshot.plan) metaParts.push(`Plan: ${escapeHtml(snapshot.plan)}`);
+        if (snapshot.reset_date) metaParts.push(`Resets: ${escapeHtml(snapshot.reset_date)}`);
+        const metaHtml = metaParts.length
+            ? `<div class="upstream-card-meta">${metaParts.join(' &nbsp;·&nbsp; ')}</div>`
+            : '';
+
+        let bodyHtml = '';
+        if (snapshot.error) {
+            bodyHtml = `<div class="upstream-card-error">${escapeHtml(snapshot.error)}</div>`;
+        } else {
+            const categories = snapshot.categories || {};
+            const catKeys = Object.keys(categories);
+            if (catKeys.length === 0) {
+                bodyHtml = `<div class="upstream-no-categories">Quota tracked via provider console.</div>`;
+            } else {
+                for (const catName of catKeys) {
+                    const cat = categories[catName];
+                    let pct = 0;
+                    let cls = 'color-neutral';
+                    let countLabel = '';
+                    if (cat.unlimited) {
+                        cls = 'color-ok';
+                        pct = 100;
+                        countLabel = '<span style="opacity:0.6">unlimited</span>';
+                    } else if (cat.total > 0) {
+                        pct = Math.min(100, Math.round(cat.used / cat.total * 100));
+                        cls = pct >= 85 ? 'color-danger' : pct >= 60 ? 'color-warn' : 'color-ok';
+                        const rem = cat.remaining != null ? ` / ${cat.total} (${cat.remaining} left)` : ` / ${cat.total}`;
+                        countLabel = `${cat.used}${rem}`;
+                    } else {
+                        countLabel = `${cat.used} / 0`;
+                    }
+                    bodyHtml += `
+                        <div class="upstream-category">
+                            <div class="upstream-category-label">
+                                <span>${escapeHtml(catName)}</span>
+                                <span class="upstream-category-count">${countLabel}</span>
+                            </div>
+                            <div class="progress-bar-track">
+                                <div class="progress-bar-fill ${cls}" style="width:${pct}%"></div>
+                            </div>
+                        </div>`;
+                }
+            }
+        }
+
+        card.innerHTML = `
+            <div class="upstream-card-header">
+                <span class="upstream-card-provider" title="${escapeHtml(snapshot.provider)}">${escapeHtml(snapshot.provider)}</span>
+                ${snapshot.error
+                    ? '<span class="upstream-badge-error">error</span>'
+                    : `<span class="upstream-badge-kind">${escapeHtml(snapshot.kind)}</span>`
+                }
+            </div>
+            ${metaHtml}
+            ${bodyHtml}
+        `;
+        return card;
+    }
+
+    async function loadUpstreamQuotas() {
+        if (!upstreamGrid || !upstreamSection) return;
+        try {
+            const response = await apiFetch('/v1/admin/upstream-quotas');
+            if (response.status === 403 || response.status === 401) {
+                // Virtual key or unauthenticated — hide section
+                upstreamSection.style.display = 'none';
+                return;
+            }
+            if (!response.ok) {
+                console.warn('Upstream quota fetch failed:', response.status);
+                return;
+            }
+            const data = await response.json();
+            const snapshots = data.snapshots || [];
+            if (snapshots.length === 0) {
+                upstreamSection.style.display = 'none';
+                return;
+            }
+            upstreamSection.style.display = '';
+            upstreamGrid.innerHTML = '';
+            for (const s of snapshots) {
+                upstreamGrid.appendChild(renderUpstreamCard(s));
+            }
+        } catch (err) {
+            if (err.message !== 'Authentication required') {
+                console.error('Upstream quota fetch error:', err);
+            }
+            upstreamSection.style.display = 'none';
+        }
+    }
+
     // ── Bootstrap ──────────────────────────────────────────────────────────
     bootstrapRoleUI().then(() => {
         initPolling();
+        loadUpstreamQuotas();
     });
 });

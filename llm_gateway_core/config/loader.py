@@ -285,6 +285,11 @@ def _empty_operation_rules() -> Dict[str, Dict[str, Any]]:
 
 # Note: Pydantic models defined here. Consider moving them to llm_gateway_core/models/config.py
 # or similar for better separation if the models directory grows.
+class SubscriptionQuotaConfig(BaseModel):
+    kind: Literal["github_copilot", "gemini_cli", "antigravity"]
+    token_env: str
+
+
 class ProviderDetails(BaseModel):
     baseUrl: str
     apikey: str
@@ -294,6 +299,7 @@ class ProviderDetails(BaseModel):
     type: Literal["openai", "anthropic"] = "openai"
     proxy: str | None = None
     models: Any | None = None
+    subscription_quota: Optional[SubscriptionQuotaConfig] = None
 
     @field_validator("baseUrl", mode="before")
     @classmethod

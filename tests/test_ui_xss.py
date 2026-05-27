@@ -127,6 +127,7 @@ def test_xss_prevention_functional():
     global.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
     global.localStorage = { getItem: () => null, setItem: () => {} };
     global.prompt = () => "mock-token";
+    global.Theme = { attachToggle: () => {}, init: () => {}, get: () => ({ mode: 'system', effective: 'light' }), set: () => {}, cycle: () => {} };
     global.window = {
         gatewayAuth: {
             apiFetch: async () => ({

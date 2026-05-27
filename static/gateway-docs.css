@@ -18,12 +18,12 @@ body.dark-mode.docs-page {
     justify-content: space-between;
     gap: 24px;
     align-items: flex-start;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 20px;
 }
 
 body.dark-mode .docs-header {
-    border-bottom-color: var(--border-dark);
+    border-bottom-color: var(--border);
 }
 
 .docs-header h1 {
@@ -101,14 +101,14 @@ body.dark-mode .docs-status.error {
     flex-wrap: wrap;
     gap: 8px;
     padding: 10px;
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border);
     border-radius: 8px;
     background: #f8fafc;
 }
 
 body.dark-mode .docs-toc {
     background: #171b25;
-    border-color: var(--border-dark);
+    border-color: var(--border);
 }
 
 .docs-toc a {
@@ -138,11 +138,11 @@ body.dark-mode .docs-toc a:hover {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border);
 }
 
 body.dark-mode .docs-tabs {
-    border-bottom-color: var(--border-dark);
+    border-bottom-color: var(--border);
 }
 
 .docs-tab-button {
@@ -189,12 +189,12 @@ body.dark-mode .docs-tab-button.active {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    border-top: 1px solid var(--border-light);
+    border-top: 1px solid var(--border);
     padding-top: 26px;
 }
 
 body.dark-mode .docs-section {
-    border-top-color: var(--border-dark);
+    border-top-color: var(--border);
 }
 
 .highlight-section {

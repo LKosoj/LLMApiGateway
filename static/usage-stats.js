@@ -5,29 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const refreshButton = document.getElementById('refreshButton');
     const statsArea = document.getElementById('statsArea');
     const messageArea = document.getElementById('messageArea');
-    const darkModeToggle = document.getElementById('darkModeToggle');
-
-    // --- Dark Mode Logic ---
-    const applyTheme = (theme) => {
-        if (theme === 'dark') {
-            document.body.classList.add('dark-mode');
-        } else {
-            document.body.classList.remove('dark-mode');
-        }
-        localStorage.setItem('theme', theme);
-    };
-
-    const toggleDarkMode = () => {
-        const currentTheme = localStorage.getItem('theme') || 'light';
-        const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-        applyTheme(newTheme);
-    };
-
-    // Initialize theme on load
-    const savedTheme = localStorage.getItem('theme') || 'light';
-    applyTheme(savedTheme);
-
-    darkModeToggle.addEventListener('click', toggleDarkMode);
+    Theme.attachToggle('darkModeToggle');
 
     // --- Fetch and Render Statistics Logic ---
     const showMessage = (message, isError = false) => {
@@ -234,6 +212,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 fetchAndRenderRecords();
             } else if (tab === 'fallback') {
                 loadActiveFallbackSubTab();
+            } else if (tab === 'topology') {
+                loadTopology();
             } else {
                 fetchAndRenderStats();
             }
@@ -915,8 +895,167 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchAndRenderRecords();
     } else if (activeTab && activeTab.dataset.tab === 'fallback') {
         loadActiveFallbackSubTab();
+    } else if (activeTab && activeTab.dataset.tab === 'topology') {
+        loadTopology();
     } else {
         fetchAndRenderStats();
     }
+
+    // ── Topology tab ──────────────────────────────────────────────────────────
+    const topologyContainer = document.getElementById('topology-container');
+    const topologyRefreshButton = document.getElementById('topologyRefreshButton');
+
+    const HEALTH_BORDER_COLOR = {
+        ok: '#22c55e',
+        error: '#ef4444',
+        invalid: '#94a3b8',
+    };
+
+    let _topologyRootInstance = null;
+
+    async function loadTopology() {
+        topologyContainer.textContent = 'Loading topology...';
+        topologyRefreshButton.disabled = true;
+        topologyRefreshButton.classList.add('loading');
+
+        let React, ReactDOM, xyflow;
+        try {
+            [{ default: React }, { default: ReactDOM }, xyflow] = await Promise.all([
+                import('https://esm.sh/react@18'),
+                import('https://esm.sh/react-dom@18/client'),
+                import('https://esm.sh/@xyflow/react@12'),
+            ]);
+        } catch (cdnError) {
+            console.error('CDN import failed:', cdnError);
+            topologyContainer.replaceChildren();
+            const errDiv = document.createElement('div');
+            errDiv.className = 'topology-error';
+            errDiv.textContent = 'Не удалось загрузить визуализацию (CDN недоступен).';
+            const retryBtn = document.createElement('button');
+            retryBtn.textContent = 'Retry';
+            retryBtn.addEventListener('click', loadTopology);
+            errDiv.appendChild(retryBtn);
+            topologyContainer.appendChild(errDiv);
+            topologyRefreshButton.disabled = false;
+            topologyRefreshButton.classList.remove('loading');
+            return;
+        }
+
+        let data;
+        try {
+            const response = await apiFetch('/v1/topology');
+            if (!response.ok) {
+                const body = await response.json().catch(() => ({}));
+                topologyContainer.replaceChildren();
+                const errDiv = document.createElement('div');
+                errDiv.className = 'topology-error';
+                errDiv.textContent = `Ошибка загрузки топологии: ${body.detail || response.status}`;
+                topologyContainer.appendChild(errDiv);
+                return;
+            }
+            data = await response.json();
+        } catch (fetchError) {
+            console.error('Failed to fetch topology:', fetchError);
+            topologyContainer.replaceChildren();
+            const errDiv = document.createElement('div');
+            errDiv.className = 'topology-error';
+            errDiv.textContent = `Ошибка загрузки топологии: ${fetchError.message}`;
+            topologyContainer.appendChild(errDiv);
+            return;
+        } finally {
+            topologyRefreshButton.disabled = false;
+            topologyRefreshButton.classList.remove('loading');
+        }
+
+        const { ReactFlow, Background, Controls } = xyflow;
+
+        // Build styled nodes
+        const styledNodes = (data.nodes || []).map(node => {
+            const isCentral = node.type === 'central';
+            const health = node.data && node.data.health ? node.data.health : 'ok';
+            const hasActive = node.data && node.data.active_requests > 0;
+
+            let classes = 'topology-node';
+            if (isCentral) {
+                classes += ' node-central';
+            } else {
+                classes += ` health-${health}`;
+                if (hasActive) classes += ' pulse';
+            }
+
+            const tooltipLines = [];
+            if (!isCentral && node.data) {
+                tooltipLines.push(`Health: ${health}`);
+                tooltipLines.push(`Active requests: ${node.data.active_requests || 0}`);
+                tooltipLines.push(`Penalty: ${typeof node.data.penalty === 'number' ? node.data.penalty.toFixed(2) : 0}`);
+                if (node.data.models && node.data.models.length > 0) {
+                    tooltipLines.push(`Models: ${node.data.models.join(', ')}`);
+                }
+            }
+
+            return {
+                ...node,
+                style: {
+                    background: isCentral ? 'var(--accent)' : undefined,
+                    borderColor: isCentral ? 'var(--accent-hover)' : (HEALTH_BORDER_COLOR[health] || '#94a3b8'),
+                    borderWidth: 2,
+                    borderStyle: 'solid',
+                    borderRadius: 8,
+                    padding: '10px 16px',
+                    minWidth: 120,
+                    textAlign: 'center',
+                    color: isCentral ? '#fff' : undefined,
+                    fontWeight: isCentral ? 700 : 500,
+                    fontSize: 13,
+                    cursor: 'default',
+                    animation: hasActive ? 'topology-pulse 1.8s ease-out infinite' : undefined,
+                },
+                data: {
+                    ...node.data,
+                    label: React.createElement('div', null,
+                        React.createElement('div', null, node.label || node.id),
+                        tooltipLines.length > 0
+                            ? React.createElement('div', { className: 'topology-node-metrics', title: tooltipLines.join('\n') },
+                                tooltipLines.slice(0, 3).map((line, idx) =>
+                                    React.createElement('div', { key: idx }, line)
+                                )
+                            )
+                            : null
+                    ),
+                },
+            };
+        });
+
+        // Unmount previous root if present
+        if (_topologyRootInstance) {
+            try { _topologyRootInstance.unmount(); } catch (_) { /* ignore */ }
+            _topologyRootInstance = null;
+        }
+        topologyContainer.replaceChildren();
+
+        const mountEl = document.createElement('div');
+        mountEl.style.width = '100%';
+        mountEl.style.height = '100%';
+        topologyContainer.appendChild(mountEl);
+
+        const flowEl = React.createElement(
+            ReactFlow,
+            {
+                nodes: styledNodes,
+                edges: data.edges || [],
+                nodesDraggable: false,
+                fitView: true,
+                fitViewOptions: { padding: 0.2 },
+                attributionPosition: 'bottom-right',
+            },
+            React.createElement(Background, null),
+            React.createElement(Controls, null),
+        );
+
+        _topologyRootInstance = ReactDOM.createRoot(mountEl);
+        _topologyRootInstance.render(flowEl);
+    }
+
+    topologyRefreshButton.addEventListener('click', loadTopology);
 
 });

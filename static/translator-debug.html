@@ -3,10 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway - Quota Dashboard</title>
-    <link rel="stylesheet" href="/static/theme.css">
-    <link rel="stylesheet" href="/static/quota.css">
-    <script src="/static/theme.js"></script>
+    <title>LLM Gateway - Translator Debugger</title>
+    <link rel="stylesheet" href="/static/translator-debug.css">
 </head>
 <body>
     <div class="top-nav">
@@ -19,7 +17,7 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
                 Usage Statistics
             </a>
-            <a href="/v1/ui/quota" class="nav-button active">
+            <a href="/v1/ui/quota" class="nav-button">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 Quota
             </a>
@@ -35,13 +33,9 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
                 API Keys
             </a>
-            <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
+            <a href="/v1/ui/translator-debug" class="nav-button active" data-master-only>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
                 Translator Debug
-            </a>
-            <a href="/v1/ui/pricing" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                Pricing
             </a>
             <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
                 <span class="icon-placeholder"></span>
@@ -50,21 +44,62 @@
     </div>
 
     <div class="container">
-        <h1>LLM Gateway - Quota Dashboard</h1>
+        <h1>Translator Debugger</h1>
+        <p style="margin-top:-12px; margin-bottom:24px; font-size:0.9rem; opacity:0.7;">
+            Inspect how the gateway transforms requests between OpenAI and Anthropic formats.
+            Master-only tool — no real provider call is made.
+        </p>
 
-        <div id="quota-grid">
-            <p class="quota-empty">Loading quota data...</p>
+        <div class="layout-columns">
+            <!-- ── Left panel: input ── -->
+            <div class="panel">
+                <h2>Input</h2>
+
+                <label for="sourceFormat">Source format</label>
+                <select id="sourceFormat">
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                </select>
+
+                <label for="targetFormat">Target format</label>
+                <select id="targetFormat">
+                    <option value="anthropic">Anthropic</option>
+                    <option value="openai">OpenAI</option>
+                </select>
+
+                <label for="requestInput">Request body (JSON)</label>
+                <textarea id="requestInput" rows="14" spellcheck="false" placeholder='{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'></textarea>
+
+                <label for="mockResponse" style="margin-top:10px;">
+                    Mock provider response (JSON, optional)
+                    <span style="font-weight:400; opacity:0.7;">— leave blank for default mock</span>
+                </label>
+                <textarea id="mockResponse" rows="6" spellcheck="false" placeholder='Leave blank to use the built-in mock response'></textarea>
+
+                <div class="btn-row">
+                    <button id="runBtn" class="btn-primary" onclick="runTranslation()">
+                        Run translation
+                    </button>
+                    <button class="btn-secondary" onclick="loadOpenAISample()">OpenAI sample</button>
+                    <button class="btn-secondary" onclick="loadAnthropicSample()">Anthropic sample</button>
+                    <button class="btn-secondary" onclick="loadToolSample()">Tool-use sample</button>
+                </div>
+            </div>
+
+            <!-- ── Right panel: output steps ── -->
+            <div class="panel">
+                <h2>Translation Steps</h2>
+                <div id="errorBanner" class="error-banner"></div>
+                <div id="stepsContainer">
+                    <p style="font-size:0.85rem; opacity:0.6;">
+                        Fill in the input and click <strong>Run translation</strong> to see the pipeline steps.
+                    </p>
+                </div>
+            </div>
         </div>
-
-        <div id="quota-status"></div>
-
-        <section id="upstream-quotas-section" class="upstream-quotas-section" style="display:none;">
-            <h2 class="upstream-quotas-title">Upstream Subscriptions</h2>
-            <div id="upstream-quotas-grid"></div>
-        </section>
     </div>
 
     <script src="/static/shared-auth.js"></script>
-    <script src="/static/quota.js"></script>
+    <script src="/static/translator-debug.js"></script>
 </body>
 </html>

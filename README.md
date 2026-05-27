@@ -164,6 +164,72 @@ CRUD над виртуальными ключами доступен через 
 
 Сгенерированные иллюстрации возвращаются в ответе `/v1/web/deep-research` отдельным полем `images[]` (элементы `{url, prompt, alt_text}`). Файлы сохраняются на сервере в `outputs/images/{research_id}/image_*.png` и отдаются смонтированным StaticFiles по пути `/outputs/images/...`. Доступ к `/outputs/images` защищён той же auth-логикой, что и остальные gateway-эндпоинты; отдельный `api_key` не требуется, когда файл отдаётся тому же сеансу, что получил URL. Файлы автоматически удаляются фоновой задачей через **10 дней** после создания; интервал проверки — раз в сутки.
 
+### Единая система темизации UI
+Все страницы UI (`rules-editor`, `usage-stats`, `api-keys`, `gateway-docs`, `web-playground`, `quota`) подключают единый `static/theme.js` и `static/theme.css`. `theme.js` управляет переключением light/dark/system-режима через единый ключ `llmgateway:theme` в `localStorage`, автоматически мигрирует устаревшие ключи (`darkMode`, `theme`) и диспатчит событие `llmgateway:theme-changed`. CSS-переменные (`--bg`, `--bg-elevated`, `--text`, `--border`, `--accent` и др.) объявлены один раз в `theme.css`.
+
+### Translator Debugger
+
+Инструмент отладки трансляции запросов между форматами OpenAI и Anthropic. Позволяет без реального вызова провайдера посмотреть, как gateway преобразует тело запроса на каждом шаге пайплайна.
+
+- **URL**: `/v1/ui/translator-debug`
+- **Права доступа**: только master (GATEWAY_API_KEY). Виртуальные ключи получают 403.
+- **Что показывает**: 7-шаговую цепочку трансформаций — от оригинального запроса клиента до итогового ответа в формате клиента, включая промежуточные OpenAI-представления и мок ответа провайдера.
+- **Как использовать**: выбрать source/target формат, вставить JSON запроса, опционально вставить мок-ответ провайдера, нажать «Run translation». Каждый шаг отображается в readonly-блоке с кнопкой копирования.
+- **Пресеты**: кнопки «OpenAI sample», «Anthropic sample», «Tool-use sample» заполняют поле примерными запросами.
+
+API эндпоинт: `POST /v1/admin/translator/debug` — принимает `{source_format, target_format, request_body, mock_provider_response?}`, возвращает массив из 7 шагов.
+
+### Pricing UI
+
+Страница `/v1/ui/pricing` доступна только master-ключу и позволяет управлять ценами на токены по каждой модели и рассчитывать стоимость запросов.
+
+- **URL**: `/v1/ui/pricing`
+- **Права доступа**: только master (GATEWAY_API_KEY); виртуальные ключи получают 403.
+
+**Секция Editor** отображает таблицу (provider, model, input rate, output rate) с редактированием в ячейках. Кнопка «Add Row» добавляет новую строку, «Delete» удаляет, «Save Changes» записывает весь список в `providers.json` через PUT-запрос. Изменённые строки подсвечиваются. Запись атомарная; если файл содержал JSON5-комментарии — они сохраняются в резервную копию перед перезаписью.
+
+**Секция Calculator** — выберите модель из списка, введите количество prompt- и completion-токенов, нажмите «Calculate». Серверный расчёт возвращает точную стоимость в USD с 6 знаками после запятой и текущие ставки модели.
+
+Ставки хранятся в блоке `models` каждого провайдера в `providers.json`:
+
+```json
+[
+  {
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apikey": "${APIKEY_OPENAI}",
+      "models": {
+        "gpt-4o": { "input_rate": 2.5, "output_rate": 10.0 },
+        "gpt-4o-mini": { "input_rate": 0.15, "output_rate": 0.60 }
+      }
+    }
+  }
+]
+```
+
+Единицы измерения — **USD за 1 миллион токенов**. После сохранения конфигурация перезагружается без рестарта сервера.
+
+API эндпоинты (master-only):
+- `GET /v1/admin/pricing` — список всех пар (provider, model) с ценами.
+- `PUT /v1/admin/pricing` — обновить весь список цен; атомарная запись в `providers.json`.
+- `POST /v1/admin/pricing/calculate` — `{provider, model, prompt_tokens, completion_tokens}` → `{cost_usd, input_rate, output_rate}`.
+
+### Provider Topology
+
+На странице статистики есть вкладка **Topology** с интерактивным графом провайдеров на основе [@xyflow/react](https://reactflow.dev/). Граф строится при каждом открытии вкладки и показывает:
+
+- Центральный узел **LLM Gateway** в центре.
+- По одному узлу на каждый настроенный провайдер, расположенных по кругу.
+- Цвет рамки узла: зелёный — `ok`, красный — `error`, серый — `invalid`.
+- Анимация пульсации — при наличии активных запросов на провайдере.
+- Тултип на узле: статус, число активных запросов, penalty-score, список моделей.
+
+Виртуальный ключ видит только свои активные запросы в поле `active_requests`. Данные кешируются в памяти на 5 секунд.
+
+API эндпоинт: `GET /v1/topology` (требует авторизации; доступен всем ключам).
+
+Граф использует ESM CDN (esm.sh). При недоступности CDN — отображается сообщение об ошибке с кнопкой Retry.
+
 ### Quota Dashboard
 Страница http://localhost:9000/v1/ui/quota доступна всем авторизованным пользователям и показывает текущую загрузку rate-limit окон в реальном времени.
 
@@ -173,6 +239,44 @@ CRUD над виртуальными ключами доступен через 
 - **Polling**: данные обновляются каждые 5 секунд; countdown обновляется клиентски каждую секунду без обращения к серверу.
 
 API эндпоинт: `GET /v1/api/quota/keys` — возвращает JSON-массив с per-key снэпшотом; кешируется на 5 секунд.
+
+### Upstream subscription quotas
+
+Gateway может отображать остатки квот у upstream-провайдеров (GitHub Copilot, Gemini CLI, Antigravity) прямо в Quota Dashboard.
+
+**Поддерживаемые провайдеры:**
+- `github_copilot` — paid и free форматы ответа GitHub Copilot API (`quota_snapshots` / `monthly_quotas` + `limited_user_quotas`).
+- `gemini_cli` — проверяет доступность Google Cloud через Cloud Resource Manager.
+- `antigravity` — stub-провайдер, возвращает пустой snapshot.
+
+**Необходимые переменные окружения:**
+- `GITHUB_COPILOT_TOKEN` (или любое другое имя через `token_env`) — Copilot access token.
+- `GEMINI_CLI_TOKEN` — Google Cloud access token для Gemini CLI.
+
+**Конфигурация `providers.json`:**
+```json
+[
+  {
+    "github_copilot": {
+      "baseUrl": "https://api.github.com",
+      "apikey": "${APIKEY_X}",
+      "subscription_quota": {
+        "kind": "github_copilot",
+        "token_env": "GITHUB_COPILOT_TOKEN"
+      }
+    }
+  }
+]
+```
+
+Блок `subscription_quota` опционален. Провайдеры без него полностью игнорируются фетчером — обратная совместимость сохраняется.
+
+**Endpoint:** `GET /v1/admin/upstream-quotas` — доступен только master-ключу (403 для виртуальных ключей). Возвращает список `SubscriptionQuotaSnapshot` с полями:
+- `provider`, `kind`, `plan`, `reset_date` — meta-информация.
+- `categories` — словарь `{name: {used, total, remaining, unlimited}}`.
+- `error` — `null` при успехе, иначе текст ошибки.
+
+Данные кешируются на 60 секунд (ошибки — на min(30, ttl/2)). В Quota Dashboard upstream-секция отображается только master-пользователю и скрывается при 403.
 
 ### Fallback Analytics
 На странице статистики доступна вкладка **Fallback Analytics**, которая показывает детальную информацию о переходах между провайдерами (fallback events). Вкладка содержит две подвкладки:
