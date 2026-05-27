@@ -918,19 +918,20 @@ document.addEventListener('DOMContentLoaded', () => {
         topologyRefreshButton.disabled = true;
         topologyRefreshButton.classList.add('loading');
 
-        let React, ReactDOM, xyflow;
+        let React, createRoot, ReactFlow, Background, Controls;
         try {
-            [{ default: React }, { default: ReactDOM }, xyflow] = await Promise.all([
-                import('https://esm.sh/react@18'),
-                import('https://esm.sh/react-dom@18/client'),
-                import('https://esm.sh/@xyflow/react@12'),
-            ]);
-        } catch (cdnError) {
-            console.error('CDN import failed:', cdnError);
+            const bundle = await import('/static/vendor/topology.bundle.mjs');
+            React = bundle.React;
+            createRoot = bundle.createRoot;
+            ReactFlow = bundle.ReactFlow;
+            Background = bundle.Background;
+            Controls = bundle.Controls;
+        } catch (bundleError) {
+            console.error('Topology bundle load failed:', bundleError);
             topologyContainer.replaceChildren();
             const errDiv = document.createElement('div');
             errDiv.className = 'topology-error';
-            errDiv.textContent = 'Не удалось загрузить визуализацию (CDN недоступен).';
+            errDiv.textContent = 'Не удалось загрузить визуализацию (bundle недоступен).';
             const retryBtn = document.createElement('button');
             retryBtn.textContent = 'Retry';
             retryBtn.addEventListener('click', loadTopology);
@@ -966,8 +967,6 @@ document.addEventListener('DOMContentLoaded', () => {
             topologyRefreshButton.disabled = false;
             topologyRefreshButton.classList.remove('loading');
         }
-
-        const { ReactFlow, Background, Controls } = xyflow;
 
         // Build styled nodes
         const styledNodes = (data.nodes || []).map(node => {
@@ -1052,7 +1051,7 @@ document.addEventListener('DOMContentLoaded', () => {
             React.createElement(Controls, null),
         );
 
-        _topologyRootInstance = ReactDOM.createRoot(mountEl);
+        _topologyRootInstance = createRoot(mountEl);
         _topologyRootInstance.render(flowEl);
     }
 

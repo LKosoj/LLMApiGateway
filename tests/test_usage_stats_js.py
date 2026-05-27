@@ -103,3 +103,28 @@ def test_usage_stats_js_fetches_upstream_stats_for_selected_period():
     assert "createUpstreamStatsTable" in content
     assert "upstreamStatsArea.appendChild(createUpstreamStatsTable(data));" in content
     assert "apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`)" in content
+
+
+def test_usage_stats_topology_uses_local_vendor_bundle():
+    """Topology tab must load React + ReactFlow from a locally hosted bundle
+    (`/static/vendor/topology.bundle.mjs`). Loading from public CDNs is
+    forbidden — clients behind firewalls without `esm.sh`/`unpkg` access
+    would see "Failed to load resource", and a re-introduction of separate
+    CDN imports would also bring back the duplicate-React `useState is null`
+    crash.
+    """
+    bundle_path = Path("static/vendor/topology.bundle.mjs")
+    assert bundle_path.exists(), "Vendor bundle missing — run `npm --prefix frontend/topology run build`"
+    assert bundle_path.stat().st_size > 50_000, "Vendor bundle suspiciously small"
+
+    html = Path("static/usage-stats.html").read_text(encoding="utf-8")
+    assert "esm.sh" not in html
+    assert "type=\"importmap\"" not in html
+
+    js = Path("static/usage-stats.js").read_text(encoding="utf-8")
+    assert "'/static/vendor/topology.bundle.mjs'" in js
+    # The old CDN imports must not come back — they break inside firewalled networks
+    # and re-introduce the duplicate React instance bug.
+    assert "esm.sh" not in js
+    assert "import('react')" not in js
+    assert "import('@xyflow/react')" not in js

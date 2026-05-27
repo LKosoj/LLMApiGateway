@@ -228,7 +228,17 @@ API эндпоинты (master-only):
 
 API эндпоинт: `GET /v1/topology` (требует авторизации; доступен всем ключам).
 
-Граф использует ESM CDN (esm.sh). При недоступности CDN — отображается сообщение об ошибке с кнопкой Retry.
+React + ReactFlow поставляются как локальный ESM-бандл `static/vendor/topology.bundle.mjs` (~300 KB minified). Никаких обращений к внешним CDN из браузера не происходит — UI работает в закрытых сетях. При сбое загрузки бандла отображается сообщение об ошибке с кнопкой Retry.
+
+Пересборка бандла (нужна только если меняются версии React/ReactFlow):
+
+```bash
+cd frontend/topology
+npm install
+npm run build  # выводит static/vendor/topology.bundle.mjs
+```
+
+Источник бандла — `frontend/topology/entry.mjs`, версии зафиксированы в `frontend/topology/package.json`. Готовый `topology.bundle.mjs` коммитится в git; `node_modules/` — нет (см. `.gitignore`).
 
 ### Quota Dashboard
 Страница http://localhost:9000/v1/ui/quota доступна всем авторизованным пользователям и показывает текущую загрузку rate-limit окон в реальном времени.

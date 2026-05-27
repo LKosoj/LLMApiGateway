@@ -83,6 +83,12 @@ dmypy.json
 
 /.*/
 
+# Node tooling for the topology vendor bundle (`frontend/topology/`).
+# We do commit the built artefact at `static/vendor/topology.bundle.mjs`,
+# but never the install tree.
+node_modules/
+frontend/*/package-lock.json
+
 # Pyre type checker
 .pyre/
 .trae/

@@ -1,0 +1,17 @@
+{
+  "name": "llmgateway-topology-bundle",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local ESM bundle of React + @xyflow/react for the Topology tab — vendored so the UI works without internet access to esm.sh / unpkg.",
+  "scripts": {
+    "build": "esbuild entry.mjs --bundle --format=esm --target=es2020 --minify --outfile=../../static/vendor/topology.bundle.mjs"
+  },
+  "dependencies": {
+    "@xyflow/react": "12.3.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0"
+  }
+}

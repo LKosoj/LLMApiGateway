@@ -228,7 +228,17 @@ Virtual-key callers see only their own requests in the `active_requests` field. 
 
 API endpoint: `GET /v1/topology` (auth required; accessible to all keys).
 
-The graph uses ESM CDN (esm.sh). If the CDN is unavailable, an error message with a Retry button is displayed.
+React and ReactFlow ship as a locally hosted ESM bundle at `static/vendor/topology.bundle.mjs` (~300 KB minified). The browser never reaches out to any external CDN, so the UI keeps working inside firewalled networks. If the bundle fails to load, an inline error with a Retry button is shown.
+
+Rebuild the bundle (only required when React or ReactFlow versions change):
+
+```bash
+cd frontend/topology
+npm install
+npm run build  # writes static/vendor/topology.bundle.mjs
+```
+
+The bundle source lives in `frontend/topology/entry.mjs`; versions are pinned in `frontend/topology/package.json`. The compiled `topology.bundle.mjs` is committed; `node_modules/` is not (see `.gitignore`).
 
 ### Quota Dashboard
 The page at http://localhost:9000/v1/ui/quota is available to all authenticated users and shows the current rate-limit window utilisation in real time.
