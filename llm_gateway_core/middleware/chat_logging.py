@@ -217,6 +217,21 @@ def record_chat_observability(req_headers, req_body_str, llm_response_accum, tok
         write_log(req_headers, req_body_str, llm_response_accum, tokens_usage)
 
 
+def _log_rtk_compression_stats(request: Request | None) -> None:
+    if request is None:
+        return
+    stats = getattr(request.state, "llmgateway_compression_stats", None)
+    if stats is None:
+        return
+    logger.info(
+        "[RTK Compression] saved: %.1f%% | input: %d bytes | output: %d bytes | filters: %s",
+        stats.saved_pct,
+        stats.input_bytes,
+        stats.output_bytes,
+        stats.filters_applied,
+    )
+
+
 def _mark_usd_budget_reservation_finalized(request: Request) -> None:
     if getattr(request.state, "usd_budget_reserved", False):
         request.state.usd_budget_finalized = True
@@ -434,6 +449,7 @@ class ChunkProcessor:
 
         _merge_request_usage_tracker(self.tokens_usage, self.request)
         _record_upstream_tokens_for_request(self.request, self.tokens_usage)
+        _log_rtk_compression_stats(self.request)
         record_chat_observability(
             self.req_headers,
             self.req_body_str,
@@ -905,13 +921,14 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
                 tokens_usage["_key_tpm_limit"] = key_tpm_rec.tpm
             tokens_usage["duration_ms"] = int((time.monotonic() - request_started_at) * 1000)
             _record_upstream_tokens_for_request(request, tokens_usage)
+            _log_rtk_compression_stats(request)
             # Write log file immediately for non-streaming responses
             # Run observability tasks in a thread to avoid blocking the event loop
             await anyio.to_thread.run_sync(
-                record_chat_observability, 
-                req_headers, 
-                req_body_str, 
-                llm_response_accum, 
+                record_chat_observability,
+                req_headers,
+                req_body_str,
+                llm_response_accum,
                 tokens_usage
             )
             _mark_usd_budget_reservation_finalized(request)

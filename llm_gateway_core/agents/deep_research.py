@@ -6,8 +6,8 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Awaitable, Callable, Mapping
-from contextlib import contextmanager, nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -92,15 +92,25 @@ class GatewayImageGenerator:
         model_name: str | None = None,
         api_key: str | None = None,
         output_dir: str = "outputs",
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.model_name = (model_name or os.environ.get("IMAGE_GENERATION_MODEL", "")).strip()
         self.api_key = api_key or os.environ.get("IMAGE_GENERATION_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
         self.base_url = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
         self.size = os.environ.get("IMAGE_GENERATION_SIZE", "").strip() or None
         self.output_dir = Path(output_dir)
+        self._http_client = http_client
 
     def is_available(self) -> bool:
         return bool(self.model_name and self.base_url and self.api_key)
+
+    @asynccontextmanager
+    async def _get_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        if self._http_client is not None:
+            yield self._http_client
+            return
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            yield c
 
     async def generate_image(
         self,
@@ -129,7 +139,7 @@ class GatewayImageGenerator:
         url = f"{self.base_url}/images/generations"
         headers = {"Authorization": f"Bearer {self.api_key}"}
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with self._get_client() as client:
                 response = await client.post(url, json=request_body, headers=headers)
                 response.raise_for_status()
                 data = response.json()
@@ -238,12 +248,16 @@ def _required_image_prompt(query: str, context: str) -> str:
     )
 
 
-def _install_gateway_image_generator(researcher: Any, image_generation_model: str) -> None:
+def _install_gateway_image_generator(
+    researcher: Any,
+    image_generation_model: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> None:
     image_generator = getattr(researcher, "image_generator", None)
     if image_generator is None:
         raise ValueError("GPT Researcher image generator is not available.")
 
-    provider = GatewayImageGenerator(model_name=image_generation_model)
+    provider = GatewayImageGenerator(model_name=image_generation_model, http_client=http_client)
     if not provider.is_available():
         raise ValueError("Gateway image generator is missing model, base URL, or API key.")
     image_generator.image_provider = provider
@@ -505,47 +519,55 @@ class DeepResearchManager:
 
         generated_images: list[dict[str, Any]] = []
 
-        with _ENV_LOCK:
-            with _temporary_environ(env_values):
-                if (gateway_search is None) != (gateway_read is None):
-                    raise ValueError("Gateway deep research requires both search and read callbacks.")
-                if gateway_search is None or gateway_read is None:
-                    tools_context = nullcontext()
-                else:
-                    tools_context = _gateway_research_tools(
-                        gateway_search,
-                        gateway_read,
-                        gateway_callback_loop=gateway_callback_loop,
-                        image_generation_enabled=image_generation_enabled,
-                        image_accumulator=generated_images if image_generation_enabled else None,
-                    )
-
-                with tools_context:
-                    _raise_if_cancelled(cancellation_event)
-                    researcher = factory(query=query, report_type=report_type, verbose=verbose)
-                    if image_generation_enabled:
-                        _install_gateway_image_generator(researcher, image_generation_model.strip())
-                    _raise_if_cancelled(cancellation_event)
-                    research_result = await researcher.conduct_research()
-                    _raise_if_cancelled(cancellation_event)
-                    if image_generation_enabled:
-                        await _generate_required_images(
-                            researcher,
-                            query=query,
-                            generated_images=generated_images,
+        # Create one shared httpx client for the entire deep research run.
+        # This client lives in the worker's own event loop (asyncio.run inside a
+        # thread) and must NOT be the app.state.http_client from the main loop.
+        async with httpx.AsyncClient(timeout=60.0) as worker_http_client:
+            with _ENV_LOCK:
+                with _temporary_environ(env_values):
+                    if (gateway_search is None) != (gateway_read is None):
+                        raise ValueError("Gateway deep research requires both search and read callbacks.")
+                    if gateway_search is None or gateway_read is None:
+                        tools_context = nullcontext()
+                    else:
+                        tools_context = _gateway_research_tools(
+                            gateway_search,
+                            gateway_read,
+                            gateway_callback_loop=gateway_callback_loop,
+                            image_generation_enabled=image_generation_enabled,
+                            image_accumulator=generated_images if image_generation_enabled else None,
                         )
-                    _raise_if_cancelled(cancellation_event)
-                    report = await researcher.write_report()
-                    _raise_if_cancelled(cancellation_event)
 
-                return {
-                    "success": True,
-                    "query": query,
-                    "report": report,
-                    "research_result": research_result,
-                    "sources": _as_list(getattr(researcher, "sources", [])),
-                    "source_urls": _as_list(getattr(researcher, "source_urls", [])),
-                    "context": _as_list(getattr(researcher, "context", [])),
-                    "costs": getattr(researcher, "costs", None),
-                    "generated_images": generated_images,
-                }
+                    with tools_context:
+                        _raise_if_cancelled(cancellation_event)
+                        researcher = factory(query=query, report_type=report_type, verbose=verbose)
+                        if image_generation_enabled:
+                            _install_gateway_image_generator(
+                                researcher,
+                                image_generation_model.strip(),
+                                http_client=worker_http_client,
+                            )
+                        _raise_if_cancelled(cancellation_event)
+                        research_result = await researcher.conduct_research()
+                        _raise_if_cancelled(cancellation_event)
+                        if image_generation_enabled:
+                            await _generate_required_images(
+                                researcher,
+                                query=query,
+                                generated_images=generated_images,
+                            )
+                        _raise_if_cancelled(cancellation_event)
+                        report = await researcher.write_report()
+                        _raise_if_cancelled(cancellation_event)
+
+                    return {
+                        "success": True,
+                        "query": query,
+                        "report": report,
+                        "research_result": research_result,
+                        "sources": _as_list(getattr(researcher, "sources", [])),
+                        "source_urls": _as_list(getattr(researcher, "source_urls", [])),
+                        "context": _as_list(getattr(researcher, "context", [])),
+                        "costs": getattr(researcher, "costs", None),
+                        "generated_images": generated_images,
+                    }

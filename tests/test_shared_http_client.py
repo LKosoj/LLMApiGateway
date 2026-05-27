@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import main
 from tests._async_compat import run_async
+from llm_gateway_core.agents.deep_research import DeepResearchManager
 from llm_gateway_core.services.request_handler import make_llm_request
 
 
@@ -423,6 +424,72 @@ class SharedHttpClientTests(unittest.TestCase):
         self.assertEqual(
             error_detail,
             "ReadTimeout connecting to https://example.com/chat/completions",
+        )
+
+
+class DeepResearchWorkerHttpClientTests(unittest.TestCase):
+    def test_conduct_deep_research_passes_http_client_to_install_gateway_image_generator(self):
+        """The call site in conduct_deep_research must always pass http_client to
+        _install_gateway_image_generator when image generation is enabled.
+        This ensures GatewayImageGenerator reuses the per-worker client instead of
+        creating a new one per image generation call."""
+        install_calls: list[dict] = []
+
+        def fake_install(researcher, model, *, http_client=None):
+            install_calls.append({"http_client": http_client})
+
+        class _FakeResearcher:
+            env_snapshot = {}
+            image_provider = None
+            context = ["context"]
+            available_images = []
+            sources = []
+            source_urls = []
+            costs = None
+
+            def __init__(self, *, query, report_type, verbose):
+                self.image_generator = _FakeImageGenerator()
+
+            async def conduct_research(self):
+                return "result"
+
+            async def write_report(self):
+                return "report"
+
+            def _generate_research_id(self):
+                return "rid"
+
+        class _FakeImageGenerator:
+            image_provider = None
+
+            def is_enabled(self):
+                return True
+
+            async def plan_and_generate_images(self, **kwargs):
+                return [{"url": "/outputs/images/rid/img.png", "prompt": "p", "alt_text": "a"}]
+
+        class _FakeManager(DeepResearchManager):
+            def _get_researcher_factory(self):
+                return _FakeResearcher
+
+        with patch("llm_gateway_core.agents.deep_research._install_gateway_image_generator", side_effect=fake_install):
+            run_async(
+                _FakeManager().conduct_deep_research(
+                    query="test",
+                    fast_model="model",
+                    smart_model="model",
+                    strategic_model="model",
+                    image_generation_enabled=True,
+                    image_generation_model="img-model",
+                    image_generation_size="512x512",
+                )
+            )
+
+        self.assertEqual(len(install_calls), 1, "Expected exactly one call to _install_gateway_image_generator")
+        self.assertIsInstance(
+            install_calls[0]["http_client"],
+            httpx.AsyncClient,
+            "_install_gateway_image_generator must receive a live httpx.AsyncClient, not None",
         )
 
 

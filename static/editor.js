@@ -706,6 +706,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const rotateModelsCheckbox = ruleCard.querySelector('.rotate-models-checkbox');
         const dynamicPenaltyCheckbox = ruleCard.querySelector('.dynamic-penalty-checkbox');
         const stripThinkTagsCheckbox = ruleCard.querySelector('.strip-think-tags-checkbox');
+        const compressToolResultsCheckbox = ruleCard.querySelector('.compress-tool-results-checkbox');
         const maxTotalAttemptsInput = ruleCard.querySelector('.max-total-attempts-input');
         const contextOverflowEnabledCheckbox = ruleCard.querySelector('.context-overflow-enabled-checkbox');
         const contextOverflowRuleSlot = ruleCard.querySelector('.context-overflow-rule-slot');
@@ -724,6 +725,7 @@ document.addEventListener('DOMContentLoaded', function () {
             rotate_models: rotateModelsCheckbox.checked,
             dynamic_penalty: Boolean(dynamicPenaltyCheckbox?.checked),
             strip_think_tags: Boolean(stripThinkTagsCheckbox?.checked),
+            compress_tool_results: Boolean(compressToolResultsCheckbox?.checked),
             fallback_models: fallbackRows.map(normalizeFallbackModelForSave),
         };
 
@@ -789,6 +791,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const rotateModelsCheckbox = ruleCard.querySelector('.rotate-models-checkbox');
             const dynamicPenaltyCheckbox = ruleCard.querySelector('.dynamic-penalty-checkbox');
             const stripThinkTagsCheckbox = ruleCard.querySelector('.strip-think-tags-checkbox');
+            const compressToolResultsCheckbox = ruleCard.querySelector('.compress-tool-results-checkbox');
             const maxTotalAttemptsInput = ruleCard.querySelector('.max-total-attempts-input');
             const contextOverflowEnabledCheckbox = ruleCard.querySelector('.context-overflow-enabled-checkbox');
             const contextOverflowRuleSlot = ruleCard.querySelector('.context-overflow-rule-slot');
@@ -799,6 +802,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 rotate_models: rotateModelsCheckbox.checked,
                 dynamic_penalty: Boolean(dynamicPenaltyCheckbox?.checked),
                 strip_think_tags: Boolean(stripThinkTagsCheckbox?.checked),
+                compress_tool_results: Boolean(compressToolResultsCheckbox?.checked),
                 fallback_models: fallbackRows.map(snapshotFallbackModelState),
             };
 
@@ -1150,6 +1154,19 @@ document.addEventListener('DOMContentLoaded', function () {
         stripThinkTagsLabel.textContent = 'Strip <think> tags from replies';
         stripThinkTagsToggle.appendChild(stripThinkTagsLabel);
         titleWrap.appendChild(stripThinkTagsToggle);
+
+        const compressToolResultsCheckbox = document.createElement('input');
+        compressToolResultsCheckbox.type = 'checkbox';
+        compressToolResultsCheckbox.className = 'compress-tool-results-checkbox';
+        compressToolResultsCheckbox.checked = Boolean(initialData.compress_tool_results);
+
+        const compressToolResultsToggle = document.createElement('label');
+        compressToolResultsToggle.className = 'toggle-field';
+        compressToolResultsToggle.appendChild(compressToolResultsCheckbox);
+        const compressToolResultsLabel = document.createElement('span');
+        compressToolResultsLabel.textContent = 'Compress tool result outputs (RTK)';
+        compressToolResultsToggle.appendChild(compressToolResultsLabel);
+        titleWrap.appendChild(compressToolResultsToggle);
 
         const maxTotalAttemptsInput = document.createElement('input');
         maxTotalAttemptsInput.type = 'number';

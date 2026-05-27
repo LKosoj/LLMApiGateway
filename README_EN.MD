@@ -164,6 +164,16 @@ The other sections call existing OpenAI-compatible gateway routes. **Text to Spe
 
 Generated illustrations are returned in the `/v1/web/deep-research` response as a dedicated `images[]` field (each entry `{url, prompt, alt_text}`). Files are persisted on the server at `outputs/images/{research_id}/image_*.png` and served by a mounted StaticFiles route at `/outputs/images/...`. Access to `/outputs/images` goes through the same auth layer as the rest of the gateway endpoints; no separate `api_key` is required when the same session that received the URL fetches the file. A background task prunes these files automatically **10 days** after they were created, running once per day.
 
+### Quota Dashboard
+The page at http://localhost:9000/v1/ui/quota is available to all authenticated users and shows the current rate-limit window utilisation in real time.
+
+- **URL**: `/v1/ui/quota`
+- **Access**: master sees all virtual keys; a virtual key sees only its own card.
+- **What it shows**: for each virtual key — current RPM (requests/min) and TPM (tokens/min) in the rolling 60-second window, progress bars with colour coding (green < 60%, yellow 60–85%, red > 85%), a countdown to window reset, remaining budget, and the number of fallback events in the last 24 hours.
+- **Polling**: data refreshes every 5 seconds; the countdown updates client-side every second without contacting the server.
+
+API endpoint: `GET /v1/api/quota/keys` — returns a JSON array with a per-key snapshot; cached for 5 seconds.
+
 ### Fallback Analytics
 The statistics page includes a **Fallback Analytics** tab that provides detailed information about provider transitions (fallback events). The tab contains two sub-tabs:
 
@@ -427,6 +437,53 @@ If the primary model has a smaller context window than a backup model, you can e
 
 If the first attempt fails because of a context overflow, the gateway tries `context_overflow_fallback` first. Only if that special fallback also fails does it continue through the normal fallback sequence.
 
+#### RTK Token Compression
+
+The gateway supports compressing tool-result content before sending it to the LLM provider. This can save 20–40% of tokens in requests with large tool outputs (git diff, grep, find, ls, tree, build output, etc.).
+
+**How to enable:**
+```json
+[
+    {
+        "gateway_model_name": "llmgateway/my-model",
+        "compress_tool_results": true,
+        "fallback_models": [
+            { "provider": "openrouter", "model": "anthropic/claude-3-5-sonnet" }
+        ]
+    }
+]
+```
+
+**How it works:**
+- Applied once before the first request in the fallback chain (not on each retry).
+- Processes only `role: tool` messages (OpenAI format) and `tool_result` blocks (Anthropic/Claude format).
+- Error tool results (`is_error: true`) are never compressed — their tracebacks are preserved in full.
+- Safe-by-design: on any error or if output grows larger than input, the original text is returned unchanged.
+- Compression metrics are logged as: `[RTK Compression] saved: X% | input: N bytes | output: M bytes | filters: [...]`
+
+**12 supported filters:**
+
+| Filter | What it compresses |
+|---|---|
+| `git-diff` | Unified diffs — truncates hunks > 100 lines |
+| `git-status` | Repository status (long and porcelain formats) |
+| `git-log` | Long git log output with head/tail preservation |
+| `grep` | Groups by file, max 10 matches per file |
+| `find` | Groups by directory, max 10 files/dir, 20 dirs total |
+| `ls` | Compact ls -la output, removes noise directories |
+| `tree` | Removes summary line, caps at 200 lines |
+| `dedup-log` | Collapses consecutive duplicate lines |
+| `smart-truncate` | Keeps beginning and end of long output |
+| `read-numbered` | Compacts numbered files (Cursor/Codex read_file format) |
+| `search-list` | Compacts Cursor Glob search result lists |
+| `build-output` | Keeps only errors, warnings, summary; strips Compiling/Downloading lines |
+
+**Typical savings:**
+- git diff 500 lines → ~70% compression
+- grep with 200 matches → ~60% compression
+- npm install output → ~50% compression
+- readFile > 250 lines → ~40% compression
+
 
 **Failover and Rotation Logic:**
 
@@ -620,16 +677,22 @@ The project requires Python 3.12+. Create and activate the local virtual environ
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 python main.py
 ```
 
-### With UV (preferable)
-If uv is installed, it uses dependencies from `pyproject.toml` and creates a Python 3.12+ environment:
+For development, install additional tools (pytest, ruff, playwright):
 ```bash
-uv venv
-uv run main.py
+pip install -r requirements-dev.txt
 ```
+
+> `requirements.txt` and `requirements-dev.txt` are generated files — do not edit them manually.
+> To change dependencies, edit `pyproject.toml`, then regenerate:
+> ```bash
+> pip install pip-tools
+> pip-compile pyproject.toml -o requirements.txt --strip-extras
+> pip-compile pyproject.toml --extra=dev -o requirements-dev.txt --strip-extras
+> ```
 
 ### With Docker
 if you prefer docker deployment see [this guide](/docker/README.md) (Thanks  [canadaduane](https://github.com/canadaduane)!👍)
@@ -650,7 +713,7 @@ Before running it, make sure `.venv` already exists and the dependencies are ins
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Development Checks

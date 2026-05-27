@@ -151,6 +151,25 @@ class RateLimiter:
             state.tpm_tokens += int(tokens)
         return None
 
+    def get_window_snapshot(self, key_id: int) -> tuple[int, int, float | None]:
+        """Return (rpm_count, tpm_tokens, oldest_event_age_seconds) for *key_id*.
+
+        Purges stale events first so the counts reflect the live sliding window.
+        ``oldest_event_age_seconds`` is how many seconds ago the oldest event in
+        the current window occurred; callers use it to compute
+        ``reset_in_seconds = window - oldest_event_age``.  Returns (0, 0, None)
+        when *key_id* has no active window (None explicitly signals "empty window").
+        """
+        now = self._time()
+        with self._lock:
+            state = self._by_key.get(key_id)
+            if state is None:
+                return 0, 0, None
+            if self._purge(key_id, state, now):
+                return 0, 0, None
+            oldest_age = now - state.events[0][0] if state.events else None
+            return state.rpm_count, state.tpm_tokens, oldest_age
+
     def reset(self, key_id: int | None = None) -> None:
         with self._lock:
             if key_id is None:

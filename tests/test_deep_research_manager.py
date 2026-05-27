@@ -437,21 +437,12 @@ class GatewayImageGeneratorTests(unittest.TestCase):
                 return {"data": [{"b64_json": encoded}]}
 
         class _FakeClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *exc):
-                return None
-
             async def post(self, *args, **kwargs):
                 captured_request["json"] = kwargs["json"]
                 return _FakeResponse()
 
         with tempfile.TemporaryDirectory() as tmp:
-            generator = GatewayImageGenerator(output_dir=tmp)
+            generator = GatewayImageGenerator(output_dir=tmp, http_client=_FakeClient())
             # is_available() depends on env; feed minimal identity:
             generator.model_name = "gw/image"
             generator.api_key = "k"
@@ -466,8 +457,7 @@ class GatewayImageGeneratorTests(unittest.TestCase):
                 finally:
                     deep_research_module._CURRENT_IMAGE_ACCUMULATOR.reset(token)
 
-            with patch("llm_gateway_core.agents.deep_research.httpx.AsyncClient", _FakeClient):
-                result = run_async(_run())
+            result = run_async(_run())
 
             self.assertEqual(len(result), 1)
             self.assertEqual(result, accumulator, "accumulator should mirror returned entries")
@@ -489,25 +479,15 @@ class GatewayImageGeneratorTests(unittest.TestCase):
                 return {"data": [{"url": "https://cdn.example/image.png"}]}
 
         class _FakeClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *exc):
-                return None
-
             async def post(self, *args, **kwargs):
                 return _FakeResponse()
 
-        generator = GatewayImageGenerator()
+        generator = GatewayImageGenerator(http_client=_FakeClient())
         generator.model_name = "gw/image"
         generator.api_key = "k"
         generator.base_url = "http://localhost:0/v1"
 
-        with patch("llm_gateway_core.agents.deep_research.httpx.AsyncClient", _FakeClient):
-            result = run_async(generator.generate_image(prompt="hello world", research_id="r1"))
+        result = run_async(generator.generate_image(prompt="hello world", research_id="r1"))
 
         self.assertEqual(
             result,
@@ -521,6 +501,42 @@ class GatewayImageGeneratorTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_gateway_image_generator_uses_injected_http_client(self):
+        """When an http_client is injected, no new httpx.AsyncClient must be created."""
+        from base64 import b64encode
+
+        pixel_bytes = b"\x89PNG\r\n\x1a\n" + b"x" * 16
+        encoded = b64encode(pixel_bytes).decode("ascii")
+
+        class _FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"data": [{"b64_json": encoded}]}
+
+        class _FakeClient:
+            async def post(self, *args, **kwargs):
+                return _FakeResponse()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = _FakeClient()
+            generator = GatewayImageGenerator(output_dir=tmp, http_client=fake_client)
+            generator.model_name = "gw/image"
+            generator.api_key = "k"
+            generator.base_url = "http://localhost:0/v1"
+
+            def _must_not_be_called(*args, **kwargs):
+                raise AssertionError("httpx.AsyncClient constructor must not be called when http_client is injected")
+
+            with patch("llm_gateway_core.agents.deep_research.httpx.AsyncClient", side_effect=_must_not_be_called):
+                result = run_async(generator.generate_image(prompt="test injection", research_id="r99"))
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["prompt"], "test injection")
 
 
 class GeneratedImagesInResultTests(unittest.TestCase):

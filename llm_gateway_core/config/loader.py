@@ -375,7 +375,9 @@ class ModelFallbackConfig(BaseModel):
     # each model burns its own per-model ``retry_count`` independently.
     max_total_attempts: Optional[int] = None
 
-    @field_validator('rotate_models', 'dynamic_penalty', 'strip_think_tags', mode='before')
+    compress_tool_results: bool = False
+
+    @field_validator('rotate_models', 'dynamic_penalty', 'strip_think_tags', 'compress_tool_results', mode='before')
     def validate_rotate_models(cls, v):
         if isinstance(v, str):
             return v.lower() == 'true'
@@ -776,6 +778,7 @@ class ConfigLoader:
                 "rotate_models": rule.rotate_models,
                 "dynamic_penalty": rule.dynamic_penalty,
                 "strip_think_tags": rule.strip_think_tags,
+                "compress_tool_results": rule.compress_tool_results,
             }
             if rule.max_total_attempts is not None:
                 rule_config["max_total_attempts"] = rule.max_total_attempts

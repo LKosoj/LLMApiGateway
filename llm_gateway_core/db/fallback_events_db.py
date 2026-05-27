@@ -98,6 +98,11 @@ class FallbackEventsDB:
             ON fallback_events (provider, model, upstream_key_fingerprint)
             ''')
 
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_fallback_events_timestamp_key
+            ON fallback_events (timestamp, api_key_id)
+            ''')
+
             conn.commit()
             logger.info("Fallback events table initialized at %s", self.db_path)
         except Exception as e:
@@ -380,6 +385,44 @@ class FallbackEventsDB:
         except Exception as e:
             logger.error("Error retrieving upstream stats: %s", e)
             return []
+
+    async def get_events_count_last_24h(self, api_key_id: int | None = None) -> dict[int, int]:
+        """Return a ``{api_key_id: count}`` map for fallback events in the last 24 h.
+
+        When *api_key_id* is given, only that key's count is returned.
+        Events with NULL ``api_key_id`` are ignored (no virtual key attribution).
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            async with aiosqlite.connect(self.db_path) as db:
+                for pragma in RUNTIME_PRAGMAS:
+                    await db.execute(pragma)
+                db.row_factory = aiosqlite.Row
+                if api_key_id is not None:
+                    cursor = await db.execute(
+                        """
+                        SELECT api_key_id, COUNT(*) as cnt
+                        FROM fallback_events
+                        WHERE timestamp >= ? AND api_key_id = ?
+                        GROUP BY api_key_id
+                        """,
+                        (cutoff, api_key_id),
+                    )
+                else:
+                    cursor = await db.execute(
+                        """
+                        SELECT api_key_id, COUNT(*) as cnt
+                        FROM fallback_events
+                        WHERE timestamp >= ? AND api_key_id IS NOT NULL
+                        GROUP BY api_key_id
+                        """,
+                        (cutoff,),
+                    )
+                rows = await cursor.fetchall()
+                return {int(row["api_key_id"]): int(row["cnt"]) for row in rows}
+        except Exception as e:
+            logger.error("Error retrieving 24h fallback event counts: %s", e)
+            return {}
 
     def cleanup_old_records(self, retention_days: int = 180):
         conn = None

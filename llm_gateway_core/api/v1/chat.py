@@ -3420,6 +3420,13 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
         if dynamic_penalty_enabled:
             logging.info("Dynamic upstream penalty ordering is enabled for gateway model '%s'.", requested_model)
 
+    compress_tool_results = bool(model_config.get("compress_tool_results", False)) if model_config else False
+    if compress_tool_results:
+        from llm_gateway_core.services.token_compression import compress_messages
+        _rtk_stats = compress_messages(request_body_json, enabled=True)
+        if _rtk_stats is not None:
+            request.state.llmgateway_compression_stats = _rtk_stats
+
     if dynamic_penalty_enabled:
         upstream_state = getattr(request.app.state, "upstream_routing_state", None)
         if isinstance(upstream_state, UpstreamRoutingState):

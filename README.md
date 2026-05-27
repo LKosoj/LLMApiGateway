@@ -164,6 +164,16 @@ CRUD над виртуальными ключами доступен через 
 
 Сгенерированные иллюстрации возвращаются в ответе `/v1/web/deep-research` отдельным полем `images[]` (элементы `{url, prompt, alt_text}`). Файлы сохраняются на сервере в `outputs/images/{research_id}/image_*.png` и отдаются смонтированным StaticFiles по пути `/outputs/images/...`. Доступ к `/outputs/images` защищён той же auth-логикой, что и остальные gateway-эндпоинты; отдельный `api_key` не требуется, когда файл отдаётся тому же сеансу, что получил URL. Файлы автоматически удаляются фоновой задачей через **10 дней** после создания; интервал проверки — раз в сутки.
 
+### Quota Dashboard
+Страница http://localhost:9000/v1/ui/quota доступна всем авторизованным пользователям и показывает текущую загрузку rate-limit окон в реальном времени.
+
+- **URL**: `/v1/ui/quota`
+- **Права доступа**: master видит все виртуальные ключи; виртуальный ключ видит только свою карточку.
+- **Что показывает**: для каждого виртуального ключа — текущие RPM (requests/min) и TPM (tokens/min) в скользящем 60-секундном окне, прогресс-бары с цветовой индикацией (зелёный < 60%, жёлтый 60–85%, красный > 85%), countdown до сброса окна, остаток бюджета и количество fallback-событий за 24 часа.
+- **Polling**: данные обновляются каждые 5 секунд; countdown обновляется клиентски каждую секунду без обращения к серверу.
+
+API эндпоинт: `GET /v1/api/quota/keys` — возвращает JSON-массив с per-key снэпшотом; кешируется на 5 секунд.
+
 ### Fallback Analytics
 На странице статистики доступна вкладка **Fallback Analytics**, которая показывает детальную информацию о переходах между провайдерами (fallback events). Вкладка содержит две подвкладки:
 
@@ -428,6 +438,53 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 
 Если первая попытка вернула ошибку нехватки контекста, gateway сначала попробует `context_overflow_fallback`, и только если эта попытка тоже завершится ошибкой, продолжит обычную последовательность fallback-моделей.
 
+#### RTK Token Compression
+
+Gateway поддерживает сжатие содержимого tool-результатов перед отправкой к LLM-провайдеру. Это позволяет экономить токены на 20–40% в запросах с большими выводами инструментов (git diff, grep, find, ls, tree, build output и др.).
+
+**Как включить:**
+```json
+[
+    {
+        "gateway_model_name": "llmgateway/my-model",
+        "compress_tool_results": true,
+        "fallback_models": [
+            { "provider": "openrouter", "model": "anthropic/claude-3-5-sonnet" }
+        ]
+    }
+]
+```
+
+**Как работает:**
+- Применяется один раз перед первым запросом в fallback-цепочке (не на каждый retry).
+- Обрабатывает только сообщения с role `tool` (OpenAI-формат) и блоки `tool_result` (Anthropic/Claude-формат).
+- Ошибочные tool-результаты (`is_error: true`) не сжимаются — их трассировки сохраняются полностью.
+- Safe-by-design: при любой ошибке или росте размера возвращается оригинальный текст.
+- Метрики сжатия логируются в виде: `[RTK Compression] saved: X% | input: N bytes | output: M bytes | filters: [...]`
+
+**12 поддерживаемых фильтров:**
+
+| Фильтр | Что сжимает |
+|---|---|
+| `git-diff` | Унифицированные дифференциалы, обрезает хунки > 100 строк |
+| `git-status` | Статус репозитория (long и porcelain форматы) |
+| `git-log` | Длинные git log с head/tail сохранением |
+| `grep` | Группирует по файлу, max 10 совпадений/файл |
+| `find` | Группирует по директории, max 10 файлов/директория, 20 директорий |
+| `ls` | Компактный вывод ls -la, удаляет шумовые директории |
+| `tree` | Удаляет строку-итог, ограничивает 200 строками |
+| `dedup-log` | Сворачивает дублирующиеся строки подряд |
+| `smart-truncate` | Сохраняет начало и конец длинного вывода |
+| `read-numbered` | Компактизирует нумерованные файлы (формат Cursor/Codex) |
+| `search-list` | Компактизирует вывод Cursor Glob search |
+| `build-output` | Оставляет только ошибки, предупреждения, итог; убирает строки Compiling/Downloading |
+
+**Типичная экономия:**
+- git diff 500 строк → ~70% сжатие
+- grep с 200 совпадениями → ~60% сжатие
+- npm install вывод → ~50% сжатие
+- readFile > 250 строк → ~40% сжатие
+
 
 **Логика fallback и ротации:**
 
@@ -621,16 +678,22 @@ PDF-конвертер использует секцию `pdf_conversions`. `POS
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 python main.py
 ```
 
-### Через UV (предпочтительно)
-Если у вас установлен uv, он использует зависимости из `pyproject.toml` и создаёт окружение для Python 3.12+:
+Для разработки установите дополнительные инструменты (pytest, ruff, playwright):
 ```bash
-uv venv
-uv run main.py
+pip install -r requirements-dev.txt
 ```
+
+> `requirements.txt` и `requirements-dev.txt` — сгенерированные файлы, не правьте их вручную.
+> Если нужно изменить зависимости, правьте `pyproject.toml`, затем перегенерируйте:
+> ```bash
+> pip install pip-tools
+> pip-compile pyproject.toml -o requirements.txt --strip-extras
+> pip-compile pyproject.toml --extra=dev -o requirements-dev.txt --strip-extras
+> ```
 
 ### Через Docker
 Если вы предпочитаете запуск через Docker, смотрите [это руководство](/docker/README.md) (спасибо [canadaduane](https://github.com/canadaduane)!👍)
@@ -651,7 +714,7 @@ sudo sh docker/setup-gateway-service.sh
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Проверки при разработке

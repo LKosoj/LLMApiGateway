@@ -506,7 +506,7 @@ def _clean_read_url(url: str) -> str:
     return url.strip().strip("()").strip('"').strip("'").strip()
 
 
-async def _direct_http_fetch(url: str) -> dict[str, str] | None:
+async def _direct_http_fetch(url: str, http_client: httpx.AsyncClient | None = None) -> dict[str, str] | None:
     from ...agents.web_research import (
         _HTMLTextExtractor,
         _extract_youtube_video_id,
@@ -551,7 +551,13 @@ async def _direct_http_fetch(url: str) -> dict[str, str] | None:
     try:
         # Per-request client: _direct_http_fetch hits arbitrary user-supplied URLs,
         # so we keep cookies / HTTP/2 connection state isolated from the shared pool.
-        async with httpx.AsyncClient() as client:
+        # An injected http_client is used only when the caller explicitly opts in.
+        _client_ctx = (
+            contextlib.nullcontext(http_client)
+            if http_client is not None
+            else httpx.AsyncClient()
+        )
+        async with _client_ctx as client:
             response, final_url = await _get_with_public_redirects(client, cleaned)
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "").lower()

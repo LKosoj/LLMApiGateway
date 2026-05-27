@@ -1021,6 +1021,7 @@ def build_research_seed_sync(
     additional_instructions: str,
     temperature: float = 0.2,
     max_results_per_lang: int = 10,
+    http_client: httpx.AsyncClient | None = None,
 ) -> str:
     client = WebResearchClient(
         research_model=research_model,
@@ -1030,6 +1031,7 @@ def build_research_seed_sync(
         zai_api_key=zai_api_key,
         proxy_url=proxy_url,
         temperature=temperature,
+        http_client=http_client,
     )
 
     async def _run() -> str:
@@ -1047,6 +1049,3 @@ def build_research_seed_sync(
             return loop.run_until_complete(_run())
         finally:
             loop.close()
-    except Exception as exc:
-        logger.warning("Web research failed: %s", exc)
-        return ""
