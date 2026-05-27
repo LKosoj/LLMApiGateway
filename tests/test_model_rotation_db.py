@@ -14,6 +14,8 @@ class ModelRotationDBTests(unittest.TestCase):
     def tearDown(self):
         if self.db.db_path.exists():
             self.db.db_path.unlink()
+        self.db.db_path.with_suffix(self.db.db_path.suffix + "-wal").unlink(missing_ok=True)
+        self.db.db_path.with_suffix(self.db.db_path.suffix + "-shm").unlink(missing_ok=True)
 
     def test_get_next_model_index_is_atomic_under_concurrency(self):
         total_calls = 12

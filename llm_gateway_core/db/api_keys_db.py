@@ -25,11 +25,11 @@ import secrets
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
+from ..config.paths import resolve_db_dir
 from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher
 
 logger = logging.getLogger(__name__)
@@ -155,8 +155,7 @@ class ApiKeysDB:
         db_filename: str = "api_keys.db",
         write_batcher: WriteBatcher | None = None,
     ) -> None:
-        project_root = Path(__file__).parent.parent.parent
-        db_dir = project_root / "db"
+        db_dir = resolve_db_dir(__file__)
         os.makedirs(db_dir, exist_ok=True)
         self.db_path = db_dir / db_filename
         self._batcher = write_batcher

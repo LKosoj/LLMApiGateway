@@ -1,11 +1,11 @@
 import sqlite3
 import os
 import logging
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
+from ..config.paths import resolve_db_dir
 from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher
 
 MAX_USAGE_RECORDS_LIMIT = 100
@@ -37,8 +37,7 @@ def validate_usage_records_pagination(limit: int, offset: int) -> tuple[int, int
 
 class TokensUsageDB:
     def __init__(self, db_filename: str = "tokens_usage.db", write_batcher: WriteBatcher | None = None):
-        project_root = Path(__file__).parent.parent.parent
-        db_dir = project_root / "db"
+        db_dir = resolve_db_dir(__file__)
         db_path = db_dir / db_filename
 
         os.makedirs(db_dir, exist_ok=True)

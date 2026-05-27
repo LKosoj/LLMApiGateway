@@ -192,12 +192,16 @@ def quota_server():
             encoding="utf-8",
         )
 
+        db_dir = temp_path / "db"
+        db_dir.mkdir(parents=True, exist_ok=True)
+
         env = os.environ.copy()
         env["GATEWAY_API_KEY"] = "quota-test-key"
         env["FALLBACK_PROVIDER"] = "openai"
         env["PROVIDERS_FILENAME"] = str(providers_path)
         env["FALLBACK_RULES_FILENAME"] = str(fallback_rules_path)
         env["OPERATION_RULES_FILENAME"] = str(operation_rules_path)
+        env["GATEWAY_DB_DIR"] = str(db_dir)
         port = get_free_port()
         env["GATEWAY_PORT"] = str(port)
         env["LOG_LEVEL"] = "WARNING"

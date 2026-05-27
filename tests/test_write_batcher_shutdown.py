@@ -37,6 +37,8 @@ class WriteBatcherShutdownTests(unittest.TestCase):
 
     def tearDown(self):
         self.db_path.unlink(missing_ok=True)
+        self.db_path.with_suffix(self.db_path.suffix + "-wal").unlink(missing_ok=True)
+        self.db_path.with_suffix(self.db_path.suffix + "-shm").unlink(missing_ok=True)
 
     def test_enqueue_after_stop_sentinel_raises_explicit_error(self):
         async def scenario():
