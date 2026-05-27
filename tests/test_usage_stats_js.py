@@ -117,12 +117,20 @@ def test_usage_stats_topology_uses_local_vendor_bundle():
     assert bundle_path.exists(), "Vendor bundle missing — run `npm --prefix frontend/topology run build`"
     assert bundle_path.stat().st_size > 50_000, "Vendor bundle suspiciously small"
 
+    # React Flow ships layout-critical CSS as a sibling file. Without it nodes
+    # render with `position: static` and stack vertically instead of being
+    # placed by their `transform: translate(...)`.
+    css_path = Path("static/vendor/topology.bundle.css")
+    assert css_path.exists(), "Vendor CSS missing — run `npm --prefix frontend/topology run build`"
+    assert css_path.stat().st_size > 5_000, "Vendor CSS suspiciously small"
+
     html = Path("static/usage-stats.html").read_text(encoding="utf-8")
     assert "esm.sh" not in html
     assert "type=\"importmap\"" not in html
 
     js = Path("static/usage-stats.js").read_text(encoding="utf-8")
     assert "'/static/vendor/topology.bundle.mjs'" in js
+    assert "'/static/vendor/topology.bundle.css'" in js
     # The old CDN imports must not come back — they break inside firewalled networks
     # and re-introduce the duplicate React instance bug.
     assert "esm.sh" not in js

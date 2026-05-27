@@ -913,10 +913,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let _topologyRootInstance = null;
 
+    // React Flow ships its layout-critical CSS as a sibling file alongside the
+    // JS bundle. Without it nodes render with `position: static` and stack
+    // vertically instead of honouring their `transform: translate(...)`.
+    function ensureTopologyStylesLoaded() {
+        if (document.querySelector('link[data-topology-styles]')) return;
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '/static/vendor/topology.bundle.css';
+        link.setAttribute('data-topology-styles', '1');
+        document.head.appendChild(link);
+    }
+
     async function loadTopology() {
         topologyContainer.textContent = 'Loading topology...';
         topologyRefreshButton.disabled = true;
         topologyRefreshButton.classList.add('loading');
+        ensureTopologyStylesLoaded();
 
         let React, createRoot, ReactFlow, Background, Controls;
         try {
@@ -968,6 +981,37 @@ document.addEventListener('DOMContentLoaded', () => {
             topologyRefreshButton.classList.remove('loading');
         }
 
+        // Compute a circular layout in screen-pixel coordinates so the graph
+        // fits the 600px-tall container without relying on React Flow's fitView
+        // (which races with display:none → visible tab transitions).
+        const NODE_WIDTH = 180;
+        const NODE_HEIGHT_PROVIDER = 70;
+        const NODE_HEIGHT_CENTRAL = 40;
+        const containerWidth = topologyContainer.clientWidth || 1000;
+        const containerHeight = topologyContainer.clientHeight || 600;
+        const cx = containerWidth / 2;
+        const cy = containerHeight / 2;
+        // Elliptical layout — container is wider than tall, so spread providers
+        // horizontally to keep adjacent nodes from overlapping.
+        const radiusX = Math.max(220, containerWidth / 2 - NODE_WIDTH / 2 - 40);
+        const radiusY = Math.max(180, containerHeight / 2 - NODE_HEIGHT_PROVIDER / 2 - 30);
+        const providers = (data.nodes || []).filter(n => n.type !== 'central');
+        const positionById = new Map();
+        providers.forEach((node, idx) => {
+            const angle = (2 * Math.PI * idx) / providers.length - Math.PI / 2;
+            positionById.set(node.id, {
+                x: cx + radiusX * Math.cos(angle) - NODE_WIDTH / 2,
+                y: cy + radiusY * Math.sin(angle) - NODE_HEIGHT_PROVIDER / 2,
+            });
+        });
+        const centralNode = (data.nodes || []).find(n => n.type === 'central');
+        if (centralNode) {
+            positionById.set(centralNode.id, {
+                x: cx - NODE_WIDTH / 2,
+                y: cy - NODE_HEIGHT_CENTRAL / 2,
+            });
+        }
+
         // Build styled nodes
         const styledNodes = (data.nodes || []).map(node => {
             const isCentral = node.type === 'central';
@@ -994,6 +1038,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
             return {
                 ...node,
+                // Backend emits type: "central" | "provider". React Flow treats those
+                // as custom node types and silently skips them unless a matching
+                // component is registered in `nodeTypes`. We style via `style` +
+                // `data.label`, so drop the custom type and let it fall back to the
+                // built-in default renderer.
+                type: isCentral ? 'input' : 'default',
+                position: positionById.get(node.id) || node.position,
                 style: {
                     background: isCentral ? 'var(--accent)' : undefined,
                     borderColor: isCentral ? 'var(--accent-hover)' : (HEALTH_BORDER_COLOR[health] || '#94a3b8'),
@@ -1001,7 +1052,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     borderStyle: 'solid',
                     borderRadius: 8,
                     padding: '10px 16px',
-                    minWidth: 120,
+                    width: 180,
                     textAlign: 'center',
                     color: isCentral ? '#fff' : undefined,
                     fontWeight: isCentral ? 700 : 500,
@@ -1043,8 +1094,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 nodes: styledNodes,
                 edges: data.edges || [],
                 nodesDraggable: false,
-                fitView: true,
-                fitViewOptions: { padding: 0.2 },
+                // Layout is pre-computed in container-pixel space, so the default
+                // viewport (zoom=1, no translation) already places nodes correctly.
                 attributionPosition: 'bottom-right',
             },
             React.createElement(Background, null),

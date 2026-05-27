@@ -228,17 +228,17 @@ Virtual-key callers see only their own requests in the `active_requests` field. 
 
 API endpoint: `GET /v1/topology` (auth required; accessible to all keys).
 
-React and ReactFlow ship as a locally hosted ESM bundle at `static/vendor/topology.bundle.mjs` (~300 KB minified). The browser never reaches out to any external CDN, so the UI keeps working inside firewalled networks. If the bundle fails to load, an inline error with a Retry button is shown.
+React and ReactFlow ship as a locally hosted ESM bundle at `static/vendor/topology.bundle.mjs` (~300 KB minified), accompanied by `static/vendor/topology.bundle.css` (~15 KB). The CSS is layout-critical — without it nodes fall back to `position: static` and stack vertically instead of being placed on the elliptical layout. The browser never reaches out to any external CDN, so the UI keeps working inside firewalled networks. If the bundle fails to load, an inline error with a Retry button is shown.
 
 Rebuild the bundle (only required when React or ReactFlow versions change):
 
 ```bash
 cd frontend/topology
 npm install
-npm run build  # writes static/vendor/topology.bundle.mjs
+npm run build  # writes static/vendor/topology.bundle.{mjs,css}
 ```
 
-The bundle source lives in `frontend/topology/entry.mjs`; versions are pinned in `frontend/topology/package.json`. The compiled `topology.bundle.mjs` is committed; `node_modules/` is not (see `.gitignore`).
+The bundle source lives in `frontend/topology/entry.mjs`; versions are pinned in `frontend/topology/package.json`. Both compiled `topology.bundle.mjs` and `topology.bundle.css` are committed; `node_modules/` is not (see `.gitignore`).
 
 ### Quota Dashboard
 The page at http://localhost:9000/v1/ui/quota is available to all authenticated users and shows the current rate-limit window utilisation in real time.
