@@ -9,6 +9,7 @@
     const modalTitle = document.getElementById("modalTitle");
     const fieldName = document.getElementById("fieldName");
     const fieldBudget = document.getElementById("fieldBudget");
+    const fieldBudgetPeriod = document.getElementById("fieldBudgetPeriod");
     const fieldRpm = document.getElementById("fieldRpm");
     const fieldTpm = document.getElementById("fieldTpm");
     const fieldMetadata = document.getElementById("fieldMetadata");
@@ -95,6 +96,7 @@
                 ? k.allowed_models.map(escapeHtml).join(", ")
                 : '<span style="opacity:0.6">all</span>';
             const lastUsed = k.last_used_at ? escapeHtml(k.last_used_at.replace("T", " ").slice(0, 19)) : "—";
+            const resetPeriod = (k.budget_period && k.budget_period !== "none") ? escapeHtml(k.budget_period) : '<span style="opacity:0.6">—</span>';
             const keyCode = `<code>${escapeHtml(k.api_key)}</code>`;
             return `
                 <tr data-key-id="${k.id}">
@@ -102,6 +104,7 @@
                     <td>${keyCode}</td>
                     <td>${statusBadge}</td>
                     <td>${spent} / ${budget}</td>
+                    <td>${resetPeriod}</td>
                     <td>${rpm} / ${tpm}</td>
                     <td>${allowed}</td>
                     <td>${lastUsed}</td>
@@ -121,6 +124,7 @@
                         <th>Key</th>
                         <th>Status</th>
                         <th>Spent / Budget, $</th>
+                        <th>Reset</th>
                         <th>RPM / TPM</th>
                         <th>Allowed Models</th>
                         <th>Last used</th>
@@ -329,6 +333,7 @@
         newKeyNotice.style.display = "none";
         fieldName.value = "";
         fieldBudget.value = "";
+        fieldBudgetPeriod.value = "none";
         fieldRpm.value = "";
         fieldTpm.value = "";
         fieldMetadata.value = "";
@@ -347,6 +352,7 @@
         newKeyValue.textContent = record.api_key;
         fieldName.value = record.name;
         fieldBudget.value = record.budget_usd != null ? record.budget_usd : "";
+        fieldBudgetPeriod.value = record.budget_period || "none";
         fieldRpm.value = record.rpm != null ? record.rpm : "";
         fieldTpm.value = record.tpm != null ? record.tpm : "";
         fieldMetadata.value = record.metadata ? JSON.stringify(record.metadata, null, 2) : "";
@@ -396,6 +402,7 @@
             const payload = {
                 name,
                 budget_usd: parseOptionalNumber(fieldBudget.value),
+                budget_period: fieldBudgetPeriod.value,
                 rpm: parseOptionalInt(fieldRpm.value),
                 tpm: parseOptionalInt(fieldTpm.value),
                 allowed_models: readAllowedModels(),

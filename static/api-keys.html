@@ -34,7 +34,7 @@
         .modal h2 { margin-top:0; }
         .modal-field { display:flex; flex-direction:column; gap:4px; margin-bottom:12px; }
         .modal-field label { font-weight:600; font-size:13px; }
-        .modal-field input[type=text], .modal-field input[type=number], .modal-field textarea {
+        .modal-field input[type=text], .modal-field input[type=number], .modal-field select, .modal-field textarea {
             width:100%; padding:6px 8px; border:1px solid rgba(128,128,128,0.4); border-radius:6px; background:transparent; color:inherit; font-family:inherit; font-size:14px;
         }
         .modal-field textarea { min-height:80px; font-family:monospace; }
@@ -72,6 +72,10 @@
             <a href="/v1/ui/api-keys" class="nav-button active" data-master-only>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
                 API Keys
+            </a>
+            <a href="/v1/ui/rejections" class="nav-button" data-master-only>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Rejections
             </a>
             <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -119,6 +123,14 @@
             <div class="modal-field">
                 <label for="fieldBudget">Budget, USD <span class="hint">(leave empty for no limit)</span></label>
                 <input type="number" id="fieldBudget" step="0.0001" placeholder="e.g. 10.00">
+            </div>
+            <div class="modal-field">
+                <label for="fieldBudgetPeriod">Budget reset period <span class="hint">(periodic reset of spent_usd at UTC boundary)</span></label>
+                <select id="fieldBudgetPeriod">
+                    <option value="none">No reset (cumulative)</option>
+                    <option value="daily">Daily (resets at 00:00 UTC)</option>
+                    <option value="monthly">Monthly (resets on the 1st, 00:00 UTC)</option>
+                </select>
             </div>
             <div class="modal-field" style="display:flex; flex-direction:row; gap:12px;">
                 <div style="flex:1;">

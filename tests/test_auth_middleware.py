@@ -1,10 +1,11 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.auth_ui import auth_router
+from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.middleware.auth import (
     ROLE_USER,
     SESSION_COOKIE_NAME,
@@ -225,6 +226,53 @@ class AuthMiddlewareTests(unittest.TestCase):
             response.json(),
             {"detail": "This endpoint is reserved for the master API key"},
         )
+
+    def test_unauthenticated_api_request_records_auth_invalid_rejection(self):
+        mock_db = MagicMock(spec=RejectionsDB)
+        app = build_test_app()
+        app.state.rejections_db = mock_db
+
+        with TestClient(app) as client:
+            response = client.get("/v1/models")
+
+        self.assertEqual(response.status_code, 401)
+        mock_db.insert_rejection.assert_called()
+        call_kwargs = mock_db.insert_rejection.call_args.kwargs
+        self.assertEqual(call_kwargs["category"], "auth_invalid")
+        self.assertEqual(call_kwargs["status_code"], 401)
+
+    def test_invalid_bearer_token_records_auth_invalid_rejection(self):
+        mock_db = MagicMock(spec=RejectionsDB)
+        app = build_test_app()
+        app.state.rejections_db = mock_db
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/v1/models",
+                headers={"Authorization": "Bearer totally-wrong-key"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        mock_db.insert_rejection.assert_called()
+        call_kwargs = mock_db.insert_rejection.call_args.kwargs
+        self.assertEqual(call_kwargs["category"], "auth_invalid")
+        self.assertEqual(call_kwargs["status_code"], 403)
+
+    def test_master_only_path_for_user_role_records_master_only_rejection(self):
+        mock_db = MagicMock(spec=RejectionsDB)
+        app = build_test_app()
+        app.state.rejections_db = mock_db
+
+        session = create_authenticated_session(role=ROLE_USER, key_id=7)
+        with TestClient(app) as client:
+            client.cookies.set(SESSION_COOKIE_NAME, session)
+            response = client.get("/v1/openrouter/free-models")
+
+        self.assertEqual(response.status_code, 403)
+        mock_db.insert_rejection.assert_called()
+        call_kwargs = mock_db.insert_rejection.call_args.kwargs
+        self.assertEqual(call_kwargs["category"], "master_only")
+        self.assertEqual(call_kwargs["status_code"], 403)
 
 
 if __name__ == "__main__":

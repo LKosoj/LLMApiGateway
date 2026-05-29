@@ -138,16 +138,31 @@ The page http://localhost:9000/v1/ui/api-keys (available only under the master `
 - `allowed_models` — whitelist of gateway model names. Empty list = any model allowed; non-empty list = only the listed models. This list also filters `/v1/models` and `GET /v1/models/{id}`: a virtual key only sees the models it is allowed to use, and requesting a single disallowed model returns `403`. The master `GATEWAY_API_KEY` is not subject to this restriction and always sees the full catalog.
 - `disabled` — instantly blocks the key without deleting it. Disabled keys return a uniform `403` with `detail="api_key_disabled"` for both Bearer/`X-Api-Key` and UI-session callers (no login redirect for sessions), so API and browser behavior stay symmetric.
 - `metadata` — free-form JSON object, handy for storing owner/team/tag. The serialized value is capped at 16 KB; exceeding that limit returns `400` and the change is not persisted.
+- `budget_period` — periodic reset of the `spent_usd` counter. Accepted values:
+  - `none` (default) — cumulative mode; `spent_usd` only grows (historical behaviour, unchanged).
+  - `daily` — `spent_usd` is reset to 0 every day at 00:00 UTC.
+  - `monthly` — `spent_usd` is reset to 0 on the first day of each month at 00:00 UTC.
+  The next reset moment is stored in the `budget_reset_at` field (ISO-8601 UTC; computed automatically, `null` when `budget_period` is `none`). The actual reset is performed by a background task that checks the boundary roughly once per minute, so it fires within one minute of the scheduled UTC moment. Changing `budget_period` automatically recalculates `budget_reset_at`. Configurable via the **Budget reset period** dropdown in the «API Keys» Web UI and through the Admin API.
 
 Virtual-key holders that log in via the UI only see `/v1/ui/usage-stats` filtered to their own requests; the **Fallback Analytics**, **Rules Editor**, and **API Keys** tabs are hidden and the corresponding master-only endpoints return `403`. Spend tracking is linked to the request's `api_key_id` and is written through the same shared `WriteBatcher` used by the usage table.
 
 On `/v1/ui/api-keys`, the master admin can click **Usage** on a specific key to see the last-12-month summary and the latest usage records for only that key. For automation, the master can pass the `api_key_id` query parameter to `GET /v1/api/usage-stats/{period}` and `GET /v1/api/usage-records`; for virtual-key holders this parameter is ignored, and statistics remain scoped to their own key.
 
 CRUD over virtual keys is available through the master-only Admin API:
-- `GET /v1/admin/api-keys` — list every key together with its `api_key`, `spent_usd`, `last_used_at`.
-- `POST /v1/admin/api-keys` — create a new key; the response contains the `api_key` value, and master admins can also view the full key in the list and edit modal.
-- `PATCH /v1/admin/api-keys/{id}` — partial update, including `reset_spent: true` to reset the spend counter.
+- `GET /v1/admin/api-keys` — list every key together with its `api_key`, `spent_usd`, `last_used_at`, `budget_period`, `budget_reset_at`.
+- `POST /v1/admin/api-keys` — create a new key; accepts the optional `budget_period` field (`none`/`daily`/`monthly`); the response contains `api_key`, `budget_period`, and `budget_reset_at`, and master admins can also view the full key in the list and edit modal.
+- `PATCH /v1/admin/api-keys/{id}` — partial update, including `reset_spent: true` to reset the spend counter and `budget_period` to change the reset schedule; the response contains the updated `budget_period` and `budget_reset_at`.
 - `DELETE /v1/admin/api-keys/{id}` — remove a key.
+- `GET /v1/admin/rejections` — list gateway governance rejections (master key only). Query parameters:
+  - `api_key_id` (int, optional) — filter by virtual key ID.
+  - `category` (string, optional) — filter by rejection category: `auth_invalid`, `key_disabled`, `model_not_allowed`, `budget_exhausted`, `rate_limited`, `master_only`, `unauthorized`.
+  - `since` (ISO 8601 string, optional) — return only records at or after this timestamp.
+  - `limit` (int, default 50, max 200) — maximum records to return.
+  - `offset` (int, default 0) — pagination offset (used by the UI page).
+  Response: `{"items": [...], "total": <count matching the filter>}`. Each item contains: `id`, `timestamp`, `request_id`, `api_key_id`, `path`, `method`, `client_ip`, `status_code`, `category`, `reason`, `auth_source`.
+
+### Rejections Audit UI
+The page http://localhost:9000/v1/ui/rejections (master only, under `GATEWAY_API_KEY`) shows the gateway's governance-rejection log on top of `GET /v1/admin/rejections`. The table displays the time, category (color badge), HTTP status, method, path, key ID, client IP, and reason. It offers filters by category, key ID, and start time (`since`), a page-size selector (25/50/100/200), and Newer/Older pagination via `offset`. Its purpose is to surface key brute-forcing and probing, diagnose why a client is blocked (`model_not_allowed`/`budget_exhausted`/`rate_limited`), and audit the gateway's own access decisions independently of provider logs. The **Rejections** item in the top navigation is visible only to the master key.
 
 ### Gateway Documentation UI
 The page http://localhost:9000/v1/ui/docs is available to any authenticated user and documents how to call gateway models through the public APIs. It shows the current gateway models from `models_fallback_rules.json` and `models_operation_rules.json`, groups them by capabilities (`chat`, `embeddings`, `rerank`, `images`, `audio_speech`, `audio_transcription`, `pdf_conversion`, `web_*`), and does not make network calls to downstream providers. For a virtual key with `allowed_models`, the catalog shows only the gateway models allowed for that key.

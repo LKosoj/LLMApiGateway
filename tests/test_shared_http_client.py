@@ -80,6 +80,7 @@ class SharedHttpClientTests(unittest.TestCase):
     def test_run_usage_stats_cleanup_loop_deletes_records_older_than_90_days(self):
         fake_tokens_usage_db = Mock()
         fake_fallback_events_db = Mock()
+        fake_rejections_db = Mock()
 
         async def fake_to_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
@@ -90,6 +91,7 @@ class SharedHttpClientTests(unittest.TestCase):
                     main.run_usage_stats_cleanup_loop(
                         fake_tokens_usage_db,
                         fake_fallback_events_db,
+                        fake_rejections_db,
                         retention_days=90,
                         interval_seconds=3600,
                     )
@@ -97,9 +99,39 @@ class SharedHttpClientTests(unittest.TestCase):
                 await asyncio.sleep(0)
                 fake_tokens_usage_db.cleanup_old_records.assert_called_once_with(retention_days=90)
                 fake_fallback_events_db.cleanup_old_records.assert_called_once_with(retention_days=90)
+                fake_rejections_db.cleanup_old_records.assert_called_once_with(retention_days=90)
                 cleanup_task.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await cleanup_task
+
+        run_async(scenario())
+
+    def test_run_budget_reset_loop_resets_due_keys_and_syncs_ledger(self):
+        reset_record = Mock(id=42, budget_usd=10.0, spent_usd=0.0)
+        fake_api_keys_db = Mock()
+        fake_api_keys_db.reset_due_budgets.return_value = [reset_record]
+        fake_ledger = Mock()
+
+        async def fake_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        async def scenario():
+            with patch("asyncio.to_thread", side_effect=fake_to_thread):
+                reset_task = asyncio.create_task(
+                    main.run_budget_reset_loop(
+                        fake_api_keys_db,
+                        fake_ledger,
+                        interval_seconds=3600,
+                    )
+                )
+                await asyncio.sleep(0)
+                fake_api_keys_db.reset_due_budgets.assert_called_once_with()
+                fake_ledger.reset_record.assert_called_once_with(
+                    42, budget_usd=10.0, spent_usd=0.0
+                )
+                reset_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await reset_task
 
         run_async(scenario())
 

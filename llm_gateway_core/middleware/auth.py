@@ -14,6 +14,7 @@ from starlette.routing import Match
 
 from ..config.settings import settings
 from ..db.api_keys_db import ApiKeyRecord, ApiKeysDB
+from ..db.rejections_db import record_rejection
 from ..services.access_control import UsdBudgetLedger
 from ..services.active_requests import get_active_requests_registry
 
@@ -27,6 +28,7 @@ SESSION_TTL_SECONDS = 365 * 24 * 60 * 60
 SESSION_HMAC_CONFIGURATION_ERROR = "GATEWAY_API_KEY must be configured for session HMAC signing."
 API_KEY_DISABLED_DETAIL = "api_key_disabled"
 API_KEY_DISABLED_HTML = "API key disabled"
+API_KEY_INVALID_DETAIL = "Invalid API Key"
 
 ROLE_MASTER = "master"
 ROLE_USER = "user"
@@ -76,6 +78,7 @@ MASTER_ONLY_PREFIXES = (
     "/v1/ui/web-playground",
     "/v1/ui/translator-debug",
     "/v1/ui/pricing",
+    "/v1/ui/rejections",
     "/v1/config/",
     "/v1/openrouter/free-models",
     "/v1/admin/",
@@ -453,7 +456,7 @@ async def _authenticate_request(request: Request) -> tuple[bool, str | None]:
             return True, "bearer-virtual"
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid API Key",
+            detail=API_KEY_INVALID_DETAIL,
         )
 
     if _accepts_anthropic_api_key(request.url.path):
@@ -469,7 +472,7 @@ async def _authenticate_request(request: Request) -> tuple[bool, str | None]:
                 return True, "x-api-key-virtual"
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid API Key",
+                detail=API_KEY_INVALID_DETAIL,
             )
 
     parsed_session = _parse_session(request.cookies.get(SESSION_COOKIE_NAME))
@@ -525,6 +528,31 @@ def _api_key_disabled_response(request: Request) -> Response:
     )
 
 
+def _category_from_exc(exc: HTTPException) -> str:
+    """Map an ``HTTPException`` raised inside the auth middleware body to an
+    audit category.
+
+    Scope: this only classifies rejections originating in ``api_key_auth``
+    itself — invalid/disabled keys during authentication and the USD-budget
+    *reservation* (the 429 from ``_reserve_usd_budget_if_needed``). Rejections
+    decided later in route handlers (``enforce_virtual_key_access``:
+    model-not-allowed, record-level budget, RPM/TPM rate limit) record their
+    own precise category via ``record_rejection`` and never reach here, so the
+    429 below maps to ``budget_exhausted`` rather than ``rate_limited``.
+    """
+    if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+        return "auth_invalid"
+    if exc.status_code == status.HTTP_403_FORBIDDEN and exc.detail == API_KEY_DISABLED_DETAIL:
+        return "key_disabled"
+    if exc.status_code == status.HTTP_403_FORBIDDEN and exc.detail == API_KEY_INVALID_DETAIL:
+        return "auth_invalid"
+    if exc.status_code == status.HTTP_403_FORBIDDEN:
+        return "unauthorized"
+    if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        return "budget_exhausted"
+    return "unauthorized"
+
+
 async def api_key_auth(request: Request, call_next):
     """
     FastAPI middleware to authenticate requests using either a Bearer token or
@@ -567,6 +595,12 @@ async def api_key_auth(request: Request, call_next):
                         url=DEFAULT_UI_PATH,
                         status_code=status.HTTP_303_SEE_OTHER,
                     )
+                record_rejection(
+                    request,
+                    status_code=403,
+                    reason="This endpoint is reserved for the master API key",
+                    category="master_only",
+                )
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"detail": "This endpoint is reserved for the master API key"},
@@ -590,11 +624,23 @@ async def api_key_auth(request: Request, call_next):
             clear_authenticated_session_cookie(response)
             return response
 
+        record_rejection(
+            request,
+            status_code=401,
+            reason="Missing or invalid Authorization header",
+            category="auth_invalid",
+        )
         return _unauthorized_api_response()
     except HTTPException as exc:
         _finish_active_request(request, getattr(request.state, "llmgateway_active_request_id", None))
         _release_usd_budget_reservation(request)
         logging.warning(f"Error in authentication. {exc.detail} (Status: {exc.status_code})")
+        record_rejection(
+            request,
+            status_code=exc.status_code,
+            reason=str(exc.detail),
+            category=_category_from_exc(exc),
+        )
         if exc.status_code == status.HTTP_403_FORBIDDEN and exc.detail == API_KEY_DISABLED_DETAIL:
             return _api_key_disabled_response(request)
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})

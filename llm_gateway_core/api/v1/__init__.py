@@ -15,6 +15,7 @@ from . import admin_subscription_quotas
 from .admin_translator_debug import translator_debug_router
 from .admin_topology import router as admin_topology_router
 from .admin_pricing import admin_pricing_router
+from .admin_rejections import admin_rejections_router
 
 # Aggregate all routers for v1
 router = APIRouter()
@@ -39,5 +40,6 @@ router.include_router(admin_subscription_quotas.router, tags=["Admin Upstream Qu
 router.include_router(translator_debug_router, prefix="", tags=["Translator Debugger V1"])
 router.include_router(admin_topology_router, prefix="", tags=["Topology V1"])
 router.include_router(admin_pricing_router, tags=["Admin Pricing V1"])
+router.include_router(admin_rejections_router, tags=["Admin Rejections V1"])
 
 # You could add other v1 routers here

@@ -257,7 +257,7 @@ def test_web_playground_does_not_render_unsafe_result_urls_as_links(page: Page, 
 def test_admin_navigation_is_consistent_across_ui_pages(page: Page, server):
     add_session(page, server)
 
-    expected_labels = ["Docs", "Usage Statistics", "Quota", "Rules Editor", "Playground", "API Keys", "Translator Debug", "Pricing"]
+    expected_labels = ["Docs", "Usage Statistics", "Quota", "Rules Editor", "Playground", "API Keys", "Rejections", "Translator Debug", "Pricing"]
     pages = [
         ("/v1/ui/docs", "Docs"),
         ("/v1/ui/usage-stats", "Usage Statistics"),

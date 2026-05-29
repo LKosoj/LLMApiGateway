@@ -27,6 +27,7 @@ from llm_gateway_core.api.v1.rules_editor import editor_router as api_v1_editor_
 from llm_gateway_core.api.v1.stats import stats_router as api_v1_stats_router # Import the new stats router
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB # Import TokensUsageDB
 from llm_gateway_core.db.fallback_events_db import FallbackEventsDB
+from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
@@ -57,6 +58,9 @@ HTTP_CLIENT_MAX_CONNECTIONS = 200
 HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS = 40
 USAGE_STATS_RETENTION_DAYS = 90
 USAGE_STATS_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+# Periodic budget reset is checked frequently so daily/monthly boundaries fire
+# within a minute of the scheduled UTC instant rather than once per day.
+BUDGET_RESET_CHECK_INTERVAL_SECONDS = 60
 DEEP_RESEARCH_IMAGES_RETENTION_DAYS = 10
 DEEP_RESEARCH_IMAGES_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
@@ -134,6 +138,7 @@ def resolve_write_batcher_db_path(tokens_usage_db: object) -> Path:
 async def run_usage_stats_cleanup_loop(
     tokens_usage_db: TokensUsageDB,
     fallback_events_db: FallbackEventsDB,
+    rejections_db: RejectionsDB,
     *,
     retention_days: int = USAGE_STATS_RETENTION_DAYS,
     interval_seconds: float = USAGE_STATS_CLEANUP_INTERVAL_SECONDS,
@@ -153,14 +158,24 @@ async def run_usage_stats_cleanup_loop(
                 fallback_events_db.cleanup_old_records,
                 retention_days=retention_days,
             )
+            await asyncio.to_thread(
+                rejections_db.cleanup_old_records,
+                retention_days=retention_days,
+            )
             await scheduler_sleep(interval_seconds)
     except asyncio.CancelledError:
         logger.info("Usage statistics cleanup task stopped.")
         raise
 
 
-def start_usage_stats_cleanup_task(tokens_usage_db: TokensUsageDB, fallback_events_db: FallbackEventsDB) -> asyncio.Task:
-    return asyncio_create_task(run_usage_stats_cleanup_loop(tokens_usage_db, fallback_events_db))
+def start_usage_stats_cleanup_task(
+    tokens_usage_db: TokensUsageDB,
+    fallback_events_db: FallbackEventsDB,
+    rejections_db: RejectionsDB,
+) -> asyncio.Task:
+    return asyncio_create_task(
+        run_usage_stats_cleanup_loop(tokens_usage_db, fallback_events_db, rejections_db)
+    )
 
 
 async def run_deep_research_images_cleanup_loop(
@@ -197,12 +212,56 @@ def start_deep_research_images_cleanup_task(images_root: Path) -> asyncio.Task:
     return asyncio_create_task(run_deep_research_images_cleanup_loop(images_root))
 
 
+async def run_budget_reset_loop(
+    api_keys_db: ApiKeysDB,
+    usd_budget_ledger: UsdBudgetLedger,
+    *,
+    interval_seconds: float = BUDGET_RESET_CHECK_INTERVAL_SECONDS,
+) -> None:
+    logger.info(
+        "Periodic budget reset task started. Interval: %s seconds.",
+        interval_seconds,
+    )
+    try:
+        while True:
+            try:
+                reset_records = await asyncio.to_thread(api_keys_db.reset_due_budgets)
+                for record in reset_records:
+                    usd_budget_ledger.reset_record(
+                        record.id,
+                        budget_usd=record.budget_usd,
+                        spent_usd=record.spent_usd,
+                    )
+                if reset_records:
+                    logger.info(
+                        "Periodic budget reset cleared spent_usd for %d key(s): %s",
+                        len(reset_records),
+                        ", ".join(str(record.id) for record in reset_records),
+                    )
+            except Exception:
+                logger.exception("Periodic budget reset iteration failed.")
+            await scheduler_sleep(interval_seconds)
+    except asyncio.CancelledError:
+        logger.info("Periodic budget reset task stopped.")
+        raise
+
+
+def start_budget_reset_task(
+    api_keys_db: ApiKeysDB,
+    usd_budget_ledger: UsdBudgetLedger,
+) -> asyncio.Task:
+    return asyncio_create_task(
+        run_budget_reset_loop(api_keys_db, usd_budget_ledger)
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("LLM Gateway v1.10: Application startup...")
     ensure_gateway_api_key_configured()
     usage_stats_cleanup_task: asyncio.Task | None = None
     deep_research_images_cleanup_task: asyncio.Task | None = None
+    budget_reset_task: asyncio.Task | None = None
 
     OUTPUTS_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -231,18 +290,20 @@ async def lifespan(app: FastAPI):
     # Initialize DB instances (schema init is sync, runs before event loop yields)
     tokens_usage_db = TokensUsageDB()
     fallback_events_db = FallbackEventsDB()
+    rejections_db = RejectionsDB()
 
     # Create and start the shared WriteBatcher for INSERT operations.
-    # Both DBs share the same underlying SQLite file (tokens_usage.db).
+    # All three DBs share the same underlying SQLite file (tokens_usage.db).
     batcher_db_path = resolve_write_batcher_db_path(tokens_usage_db)
     write_batcher = WriteBatcher(batcher_db_path)
     await write_batcher.start()
-    for _db in (tokens_usage_db, fallback_events_db):
+    for _db in (tokens_usage_db, fallback_events_db, rejections_db):
         if hasattr(_db, "set_batcher"):
             _db.set_batcher(write_batcher)
 
     app.state.tokens_usage_db = tokens_usage_db
     app.state.fallback_events_db = fallback_events_db
+    app.state.rejections_db = rejections_db
     app.state.write_batcher = write_batcher
     _chat_logging_module.set_tokens_usage_db(tokens_usage_db)
 
@@ -271,7 +332,7 @@ async def lifespan(app: FastAPI):
     model_rotation_db = ModelRotationDB()
     app.state.model_rotation_db = model_rotation_db
     _chat_router_module.set_model_rotation_db(model_rotation_db)
-    logger.info("TokensUsageDB, FallbackEventsDB, ModelRotationDB, ApiKeysDB, RateLimiter and WriteBatcher initialized.")
+    logger.info("TokensUsageDB, FallbackEventsDB, RejectionsDB, ModelRotationDB, ApiKeysDB, RateLimiter and WriteBatcher initialized.")
 
     http_client = create_shared_http_client()
     app.state.http_client = http_client
@@ -319,8 +380,9 @@ async def lifespan(app: FastAPI):
         http_client=http_client,
     )
 
-    usage_stats_cleanup_task = start_usage_stats_cleanup_task(tokens_usage_db, fallback_events_db)
+    usage_stats_cleanup_task = start_usage_stats_cleanup_task(tokens_usage_db, fallback_events_db, rejections_db)
     deep_research_images_cleanup_task = start_deep_research_images_cleanup_task(OUTPUTS_IMAGES_DIR)
+    budget_reset_task = start_budget_reset_task(api_keys_db, usd_budget_ledger)
 
     try:
         yield
@@ -339,6 +401,10 @@ async def lifespan(app: FastAPI):
             deep_research_images_cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await deep_research_images_cleanup_task
+        if budget_reset_task is not None:
+            budget_reset_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await budget_reset_task
         openrouter_free_models_service = getattr(app.state, "openrouter_free_models_service", None)
         if openrouter_free_models_service is not None:
             await openrouter_free_models_service.stop()

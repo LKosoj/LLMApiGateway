@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import os
 import math
+import sqlite3
 import tempfile
+import threading
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +16,7 @@ from llm_gateway_core.db import api_keys_db as api_keys_db_module
 from llm_gateway_core.db.api_keys_db import (
     API_KEY_PREFIX,
     ApiKeysDB,
+    compute_next_budget_reset,
     generate_api_key,
 )
 
@@ -184,6 +188,210 @@ class BudgetEnforcementTests(_ApiKeysDBTestBase):
     def test_large_metadata_is_rejected(self):
         with self.assertRaises(ValueError):
             self.db.create(name="k1", metadata={"blob": "x" * (1024 * 1024)})
+
+
+class ComputeNextBudgetResetTests(unittest.TestCase):
+    def test_none_period_returns_none(self):
+        self.assertIsNone(compute_next_budget_reset("none"))
+        self.assertIsNone(compute_next_budget_reset("whatever"))
+
+    def test_daily_returns_next_midnight_utc(self):
+        now = datetime(2026, 5, 29, 12, 34, 56, tzinfo=timezone.utc)
+        self.assertEqual(
+            compute_next_budget_reset("daily", now=now),
+            "2026-05-30T00:00:00+00:00",
+        )
+
+    def test_monthly_returns_first_of_next_month_utc(self):
+        now = datetime(2026, 5, 29, 12, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(
+            compute_next_budget_reset("monthly", now=now),
+            "2026-06-01T00:00:00+00:00",
+        )
+
+    def test_monthly_handles_december_rollover(self):
+        now = datetime(2026, 12, 15, 8, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(
+            compute_next_budget_reset("monthly", now=now),
+            "2027-01-01T00:00:00+00:00",
+        )
+
+
+class BudgetPeriodCrudTests(_ApiKeysDBTestBase):
+    def test_create_without_period_is_cumulative(self):
+        record = self.db.create(name="k1", budget_usd=10.0)
+        self.assertEqual(record.budget_period, "none")
+        self.assertIsNone(record.budget_reset_at)
+
+    def test_create_with_daily_period_sets_reset_boundary(self):
+        record = self.db.create(name="k1", budget_usd=10.0, budget_period="daily")
+        self.assertEqual(record.budget_period, "daily")
+        self.assertIsNotNone(record.budget_reset_at)
+        self.assertTrue(record.budget_reset_at.endswith("T00:00:00+00:00"))
+
+    def test_create_rejects_invalid_period(self):
+        with self.assertRaises(ValueError):
+            self.db.create(name="k1", budget_period="weekly")
+
+    def test_update_period_recomputes_reset_boundary(self):
+        record = self.db.create(name="k1", budget_usd=10.0)
+        updated = self.db.update(record.id, budget_period="monthly")
+        self.assertEqual(updated.budget_period, "monthly")
+        self.assertIsNotNone(updated.budget_reset_at)
+        self.assertTrue(updated.budget_reset_at.startswith("20"))
+
+    def test_update_period_to_none_clears_reset_boundary(self):
+        record = self.db.create(name="k1", budget_usd=10.0, budget_period="daily")
+        updated = self.db.update(record.id, budget_period="none")
+        self.assertEqual(updated.budget_period, "none")
+        self.assertIsNone(updated.budget_reset_at)
+
+    def test_update_rejects_invalid_period(self):
+        record = self.db.create(name="k1")
+        with self.assertRaises(ValueError):
+            self.db.update(record.id, budget_period="yearly")
+
+
+class ResetDueBudgetsTests(_ApiKeysDBTestBase):
+    def _force_reset_at(self, key_id: int, value: str | None) -> None:
+        with sqlite3.connect(self.db.db_path) as conn:
+            conn.execute(
+                "UPDATE api_keys SET budget_reset_at = ? WHERE id = ?",
+                (value, key_id),
+            )
+            conn.commit()
+
+    def test_resets_only_due_periodic_keys(self):
+        due = self.db.create(name="due", budget_usd=10.0, budget_period="daily")
+        self.db.record_spent(due.id, 7.5)
+        self._force_reset_at(due.id, "2000-01-01T00:00:00+00:00")
+
+        future = self.db.create(name="future", budget_usd=10.0, budget_period="daily")
+        self.db.record_spent(future.id, 3.0)  # reset_at stays in the future
+
+        cumulative = self.db.create(name="cumulative", budget_usd=10.0)
+        self.db.record_spent(cumulative.id, 4.0)
+
+        now = datetime(2026, 5, 29, 12, 0, 0, tzinfo=timezone.utc)
+        reset = self.db.reset_due_budgets(now=now)
+
+        self.assertEqual([r.id for r in reset], [due.id])
+        self.assertEqual(reset[0].spent_usd, 0.0)
+        self.assertEqual(reset[0].budget_reset_at, "2026-05-30T00:00:00+00:00")
+
+        self.assertEqual(self.db.get_by_id(due.id).spent_usd, 0.0)
+        self.assertAlmostEqual(self.db.get_by_id(future.id).spent_usd, 3.0, places=6)
+        self.assertAlmostEqual(self.db.get_by_id(cumulative.id).spent_usd, 4.0, places=6)
+
+    def test_no_due_keys_returns_empty(self):
+        self.db.create(name="cumulative", budget_usd=10.0)
+        self.assertEqual(self.db.reset_due_budgets(), [])
+
+    def test_reset_serializes_against_concurrent_writer(self):
+        """The reset must take a write lock, not race a concurrent spend.
+
+        While another connection holds an open write transaction, the reset
+        cannot proceed; once that writer commits, the reset completes and
+        zeroes the (now-accumulated) counter. This guards the IMMEDIATE
+        transaction that makes the SELECT + zeroing UPDATE atomic w.r.t.
+        ``record_spent`` running on a separate connection.
+        """
+        due = self.db.create(name="due", budget_usd=10.0, budget_period="daily")
+        self.db.record_spent(due.id, 8.0)
+        self._force_reset_at(due.id, "2000-01-01T00:00:00+00:00")
+
+        blocker = sqlite3.connect(self.db.db_path, timeout=30.0)
+        self.addCleanup(blocker.close)
+        blocker.execute("PRAGMA busy_timeout=30000")
+        blocker.execute("BEGIN IMMEDIATE")
+        blocker.execute(
+            "UPDATE api_keys SET spent_usd = spent_usd + 1.0 WHERE id = ?", (due.id,)
+        )  # lock held, not yet committed
+
+        done = threading.Event()
+        result: dict = {}
+
+        def worker() -> None:
+            try:
+                result["records"] = self.db.reset_due_budgets()
+            except Exception as exc:  # pragma: no cover - surfaced via assertion
+                result["error"] = exc
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        try:
+            # Reset is blocked on the held write lock — it must not finish yet.
+            self.assertFalse(done.wait(timeout=0.5))
+            blocker.commit()  # release the lock; the +1.0 spend is now persisted
+            self.assertTrue(done.wait(timeout=10))
+        finally:
+            thread.join(timeout=10)
+
+        self.assertNotIn("error", result)
+        self.assertEqual([r.id for r in result["records"]], [due.id])
+        self.assertEqual(result["records"][0].spent_usd, 0.0)
+        self.assertEqual(self.db.get_by_id(due.id).spent_usd, 0.0)
+        self.assertNotEqual(
+            self.db.get_by_id(due.id).budget_reset_at, "2000-01-01T00:00:00+00:00"
+        )
+
+
+class BudgetPeriodMigrationTests(unittest.TestCase):
+    def test_legacy_database_gets_period_columns(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        db_dir = root / "db"
+        os.makedirs(db_dir, exist_ok=True)
+        legacy_path = db_dir / "legacy_api_keys.db"
+
+        # Build an old-style table that predates the periodic-budget columns.
+        with sqlite3.connect(legacy_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE api_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL UNIQUE,
+                    budget_usd REAL,
+                    spent_usd REAL NOT NULL DEFAULT 0.0,
+                    rpm INTEGER,
+                    tpm INTEGER,
+                    allowed_models TEXT,
+                    disabled INTEGER NOT NULL DEFAULT 0,
+                    metadata TEXT,
+                    created_at DATETIME NOT NULL,
+                    last_used_at DATETIME
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO api_keys (name, api_key, spent_usd, disabled, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("legacy", "lgk_legacy", 1.0, 0, "2026-01-01T00:00:00"),
+            )
+            conn.commit()
+
+        path_patch = patch.object(
+            api_keys_db_module,
+            "__file__",
+            str(root / "llm_gateway_core" / "db" / "api_keys_db.py"),
+        )
+        path_patch.start()
+        self.addCleanup(path_patch.stop)
+
+        db = ApiKeysDB(db_filename="legacy_api_keys.db")
+        with sqlite3.connect(db.db_path) as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(api_keys)")}
+        self.assertIn("budget_period", columns)
+        self.assertIn("budget_reset_at", columns)
+
+        legacy = db.get_by_key("lgk_legacy")
+        self.assertIsNotNone(legacy)
+        self.assertEqual(legacy.budget_period, "none")
+        self.assertIsNone(legacy.budget_reset_at)
 
 
 class AllowedModelsTests(_ApiKeysDBTestBase):

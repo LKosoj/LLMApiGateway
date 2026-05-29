@@ -156,6 +156,37 @@ class AdminApiKeysHttpTests(unittest.TestCase):
         self.assertIsNone(body["tpm"])
         self.assertEqual(body["metadata"], {})
 
+    def test_create_with_budget_period_is_serialized(self):
+        resp = self.client.post(
+            "/v1/admin/api-keys",
+            json={"name": "team-period", "budget_usd": 10.0, "budget_period": "daily"},
+            headers=self._master_headers(),
+        )
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body["budget_period"], "daily")
+        self.assertIsNotNone(body["budget_reset_at"])
+
+    def test_create_rejects_invalid_budget_period(self):
+        resp = self.client.post(
+            "/v1/admin/api-keys",
+            json={"name": "team-bad-period", "budget_period": "weekly"},
+            headers=self._master_headers(),
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_update_budget_period_recomputes_reset(self):
+        record = self.db.create(name="team-up", budget_usd=10.0)
+        resp = self.client.patch(
+            f"/v1/admin/api-keys/{record.id}",
+            json={"budget_period": "monthly"},
+            headers=self._master_headers(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["budget_period"], "monthly")
+        self.assertIsNotNone(body["budget_reset_at"])
+
     def test_reset_spent_refreshes_usd_budget_ledger(self):
         record = self.db.create(name="team-e", budget_usd=10.0)
         ledger = self.app.state.usd_budget_ledger

@@ -34,6 +34,7 @@ class ApiKeyCreatePayload(BaseModel):
     tpm: int | None = None
     allowed_models: list[str] | None = None
     metadata: dict[str, Any] | None = None
+    budget_period: str | None = None
 
 
 class ApiKeyUpdatePayload(BaseModel):
@@ -44,6 +45,7 @@ class ApiKeyUpdatePayload(BaseModel):
     allowed_models: list[str] | None = None
     disabled: bool | None = None
     metadata: dict[str, Any] | None = None
+    budget_period: str | None = None
     reset_spent: bool = False
 
 
@@ -92,6 +94,8 @@ def _serialize_record(record: ApiKeyRecord) -> dict[str, Any]:
         "metadata": dict(record.metadata),
         "created_at": record.created_at,
         "last_used_at": record.last_used_at,
+        "budget_period": record.budget_period,
+        "budget_reset_at": record.budget_reset_at,
     }
 
 
@@ -126,6 +130,7 @@ async def create_api_key(request: Request, payload: ApiKeyCreatePayload) -> dict
             tpm=payload.tpm,
             allowed_models=payload.allowed_models,
             metadata=payload.metadata,
+            budget_period=payload.budget_period,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -161,6 +166,7 @@ async def update_api_key(
                 "allowed_models",
                 "disabled",
                 "metadata",
+                "budget_period",
             )
             if field_name in payload.model_fields_set
         }

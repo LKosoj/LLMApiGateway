@@ -1,0 +1,1036 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - link "Docs" [ref=e4] [cursor=pointer]:
+      - /url: /v1/ui/docs
+      - img [ref=e5]
+      - text: Docs
+    - link "Usage Statistics" [ref=e8] [cursor=pointer]:
+      - /url: /v1/ui/usage-stats
+      - img [ref=e9]
+      - text: Usage Statistics
+    - link "Quota" [ref=e11] [cursor=pointer]:
+      - /url: /v1/ui/quota
+      - img [ref=e12]
+      - text: Quota
+    - link "Rules Editor" [ref=e15] [cursor=pointer]:
+      - /url: /v1/ui/rules-editor
+      - img [ref=e16]
+      - text: Rules Editor
+    - link "Playground" [ref=e18] [cursor=pointer]:
+      - /url: /v1/ui/playground
+      - img [ref=e19]
+      - text: Playground
+    - link "API Keys" [ref=e22] [cursor=pointer]:
+      - /url: /v1/ui/api-keys
+      - img [ref=e23]
+      - text: API Keys
+    - link "Translator Debug" [ref=e28] [cursor=pointer]:
+      - /url: /v1/ui/translator-debug
+      - img [ref=e29]
+      - text: Translator Debug
+    - link "Pricing" [ref=e32] [cursor=pointer]:
+      - /url: /v1/ui/pricing
+      - img [ref=e33]
+      - text: Pricing
+    - button "Switch to light mode" [ref=e35] [cursor=pointer]: S
+  - generic [ref=e36]:
+    - heading "LLM Gateway - API Keys" [level=1] [ref=e37]
+    - paragraph [ref=e38]: Manage virtual API keys. Each key may define its own budget (USD), RPM/TPM rate limits, and an optional list of allowed gateway models.
+    - generic [ref=e39]:
+      - button "Refresh" [ref=e40] [cursor=pointer]
+      - button "+ Create API Key" [ref=e41] [cursor=pointer]
+    - table [ref=e703]:
+      - rowgroup [ref=e704]:
+        - row "Name Key Status Spent / Budget, $ Reset RPM / TPM Allowed Models Last used" [ref=e705]:
+          - columnheader "Name" [ref=e706]
+          - columnheader "Key" [ref=e707]
+          - columnheader "Status" [ref=e708]
+          - columnheader "Spent / Budget, $" [ref=e709]
+          - columnheader "Reset" [ref=e710]
+          - columnheader "RPM / TPM" [ref=e711]
+          - columnheader "Allowed Models" [ref=e712]
+          - columnheader "Last used" [ref=e713]
+          - columnheader [ref=e714]
+      - rowgroup [ref=e715]:
+        - row "ui-smoke-daily id 1 lgk_HYAjEXElp30MKUdXVAILCC4aDpHGznCkJ92EFUGNDyk active 0.0000 / 10.0000 daily — / — all — Edit Usage Delete" [ref=e716]:
+          - cell "ui-smoke-daily id 1" [ref=e717]:
+            - strong [ref=e718]: ui-smoke-daily
+            - text: id 1
+          - cell "lgk_HYAjEXElp30MKUdXVAILCC4aDpHGznCkJ92EFUGNDyk" [ref=e719]:
+            - code [ref=e720]: lgk_HYAjEXElp30MKUdXVAILCC4aDpHGznCkJ92EFUGNDyk
+          - cell "active" [ref=e721]
+          - cell "0.0000 / 10.0000" [ref=e722]
+          - cell "daily" [ref=e723]
+          - cell "— / —" [ref=e724]
+          - cell "all" [ref=e725]
+          - cell "—" [ref=e726]
+          - cell "Edit Usage Delete" [ref=e727]:
+            - button "Edit" [ref=e728] [cursor=pointer]
+            - button "Usage" [ref=e729] [cursor=pointer]
+            - button "Delete" [ref=e730] [cursor=pointer]
+        - row "ui-monthly id 2 lgk_Ssna1MOHWAHmhAXwUfIaEW7WTXXzWw8gelf1Z9yBaq8 active 0.0000 / 25.0000 monthly — / — all — Edit Usage Delete" [ref=e731]:
+          - cell "ui-monthly id 2" [ref=e732]:
+            - strong [ref=e733]: ui-monthly
+            - text: id 2
+          - cell "lgk_Ssna1MOHWAHmhAXwUfIaEW7WTXXzWw8gelf1Z9yBaq8" [ref=e734]:
+            - code [ref=e735]: lgk_Ssna1MOHWAHmhAXwUfIaEW7WTXXzWw8gelf1Z9yBaq8
+          - cell "active" [ref=e736]
+          - cell "0.0000 / 25.0000" [ref=e737]
+          - cell "monthly" [ref=e738]
+          - cell "— / —" [ref=e739]
+          - cell "all" [ref=e740]
+          - cell "—" [ref=e741]
+          - cell "Edit Usage Delete" [ref=e742]:
+            - button "Edit" [ref=e743] [cursor=pointer]
+            - button "Usage" [ref=e744] [cursor=pointer]
+            - button "Delete" [ref=e745] [cursor=pointer]
+  - generic [ref=e74]:
+    - 'heading "Edit: ui-monthly" [level=2] [ref=e746]'
+    - generic [ref=e747]:
+      - strong [ref=e748]: API key value
+      - text: — master admins can view the full value here and in the keys table.
+      - code [ref=e750]: lgk_Ssna1MOHWAHmhAXwUfIaEW7WTXXzWw8gelf1Z9yBaq8
+    - generic [ref=e76]:
+      - generic [ref=e77]: Name
+      - textbox "Name" [ref=e78]:
+        - /placeholder: e.g. team-backend
+        - text: ui-monthly
+    - generic [ref=e79]:
+      - generic [ref=e80]: Budget, USD (leave empty for no limit)
+      - spinbutton "Budget, USD (leave empty for no limit)" [ref=e81]: "25"
+    - generic [ref=e82]:
+      - generic [ref=e83]: Budget reset period (periodic reset of spent_usd at UTC boundary)
+      - combobox "Budget reset period (periodic reset of spent_usd at UTC boundary)" [ref=e84] [cursor=pointer]:
+        - option "No reset (cumulative)"
+        - option "Daily (resets at 00:00 UTC)"
+        - option "Monthly (resets on the 1st, 00:00 UTC)" [selected]
+    - generic [ref=e85]:
+      - generic [ref=e86]:
+        - text: RPM
+        - spinbutton "RPM" [ref=e87]
+      - generic [ref=e88]:
+        - text: TPM
+        - spinbutton "TPM" [ref=e89]
+    - generic [ref=e90]:
+      - generic [ref=e91]: Allowed Models (leave all unchecked to allow any)
+      - generic [ref=e92]:
+        - generic [ref=e93]:
+          - checkbox "ag.gemini-2.5-flash" [ref=e94]
+          - text: ag.gemini-2.5-flash
+        - generic [ref=e95]:
+          - checkbox "ag.gemini-2.5-flash-lite" [ref=e96]
+          - text: ag.gemini-2.5-flash-lite
+        - generic [ref=e97]:
+          - checkbox "ag.gemini-2.5-flash-thinking" [ref=e98]
+          - text: ag.gemini-2.5-flash-thinking
+        - generic [ref=e99]:
+          - checkbox "ag.gemini-3-flash" [ref=e100]
+          - text: ag.gemini-3-flash
+        - generic [ref=e101]:
+          - checkbox "ag.gemini-3-flash-agent" [ref=e102]
+          - text: ag.gemini-3-flash-agent
+        - generic [ref=e103]:
+          - checkbox "ag.gemini-3.1-flash-image" [ref=e104]
+          - text: ag.gemini-3.1-flash-image
+        - generic [ref=e105]:
+          - checkbox "ag.gemini-3.1-pro-high" [ref=e106]
+          - text: ag.gemini-3.1-pro-high
+        - generic [ref=e107]:
+          - checkbox "ag.gemini-3.1-pro-low" [ref=e108]
+          - text: ag.gemini-3.1-pro-low
+        - generic [ref=e109]:
+          - checkbox "ag.gemini-3.5-flash-high" [ref=e110]
+          - text: ag.gemini-3.5-flash-high
+        - generic [ref=e111]:
+          - checkbox "ag.gemini-3.5-flash-low" [ref=e112]
+          - text: ag.gemini-3.5-flash-low
+        - generic [ref=e113]:
+          - checkbox "ag.gemini-claude-opus-4-6-thinking" [ref=e114]
+          - text: ag.gemini-claude-opus-4-6-thinking
+        - generic [ref=e115]:
+          - checkbox "ag.gemini-claude-sonnet-4-6" [ref=e116]
+          - text: ag.gemini-claude-sonnet-4-6
+        - generic [ref=e117]:
+          - checkbox "arena-model" [ref=e118]
+          - text: arena-model
+        - generic [ref=e119]:
+          - checkbox "clr.MiniMaxAI/MiniMax-M2.5" [ref=e120]
+          - text: clr.MiniMaxAI/MiniMax-M2.5
+        - generic [ref=e121]:
+          - checkbox "clr.Qwen/Qwen3-Coder-Next" [ref=e122]
+          - text: clr.Qwen/Qwen3-Coder-Next
+        - generic [ref=e123]:
+          - checkbox "clr.Qwen/Qwen3-VL-Embedding-2B" [ref=e124]
+          - text: clr.Qwen/Qwen3-VL-Embedding-2B
+        - generic [ref=e125]:
+          - checkbox "clr.Qwen/Qwen3-VL-Embedding-8B" [ref=e126]
+          - text: clr.Qwen/Qwen3-VL-Embedding-8B
+        - generic [ref=e127]:
+          - checkbox "clr.Qwen/Qwen3-VL-Reranker-2B" [ref=e128]
+          - text: clr.Qwen/Qwen3-VL-Reranker-2B
+        - generic [ref=e129]:
+          - checkbox "clr.Qwen/Qwen3-VL-Reranker-8B" [ref=e130]
+          - text: clr.Qwen/Qwen3-VL-Reranker-8B
+        - generic [ref=e131]:
+          - checkbox "clr.Qwen/Qwen3.5-397B-A17B" [ref=e132]
+          - text: clr.Qwen/Qwen3.5-397B-A17B
+        - generic [ref=e133]:
+          - checkbox "clr.Qwen/Qwen3.6-35B-A3B" [ref=e134]
+          - text: clr.Qwen/Qwen3.6-35B-A3B
+        - generic [ref=e135]:
+          - checkbox "clr.anthropic/claude-haiku-4.5" [ref=e136]
+          - text: clr.anthropic/claude-haiku-4.5
+        - generic [ref=e137]:
+          - checkbox "clr.anthropic/claude-opus-4.1" [ref=e138]
+          - text: clr.anthropic/claude-opus-4.1
+        - generic [ref=e139]:
+          - checkbox "clr.anthropic/claude-opus-4.5" [ref=e140]
+          - text: clr.anthropic/claude-opus-4.5
+        - generic [ref=e141]:
+          - checkbox "clr.anthropic/claude-opus-4.6" [ref=e142]
+          - text: clr.anthropic/claude-opus-4.6
+        - generic [ref=e143]:
+          - checkbox "clr.anthropic/claude-sonnet-4" [ref=e144]
+          - text: clr.anthropic/claude-sonnet-4
+        - generic [ref=e145]:
+          - checkbox "clr.anthropic/claude-sonnet-4.5" [ref=e146]
+          - text: clr.anthropic/claude-sonnet-4.5
+        - generic [ref=e147]:
+          - checkbox "clr.anthropic/claude-sonnet-4.6" [ref=e148]
+          - text: clr.anthropic/claude-sonnet-4.6
+        - generic [ref=e149]:
+          - checkbox "clr.google/gemini-2.5-flash" [ref=e150]
+          - text: clr.google/gemini-2.5-flash
+        - generic [ref=e151]:
+          - checkbox "clr.google/gemini-2.5-flash-image" [ref=e152]
+          - text: clr.google/gemini-2.5-flash-image
+        - generic [ref=e153]:
+          - checkbox "clr.google/gemini-2.5-pro" [ref=e154]
+          - text: clr.google/gemini-2.5-pro
+        - generic [ref=e155]:
+          - checkbox "clr.google/gemini-3-flash-preview" [ref=e156]
+          - text: clr.google/gemini-3-flash-preview
+        - generic [ref=e157]:
+          - checkbox "clr.google/gemini-3-pro-image-preview" [ref=e158]
+          - text: clr.google/gemini-3-pro-image-preview
+        - generic [ref=e159]:
+          - checkbox "clr.google/gemini-3.1-flash-image-preview" [ref=e160]
+          - text: clr.google/gemini-3.1-flash-image-preview
+        - generic [ref=e161]:
+          - checkbox "clr.google/gemini-3.1-flash-lite-preview" [ref=e162]
+          - text: clr.google/gemini-3.1-flash-lite-preview
+        - generic [ref=e163]:
+          - checkbox "clr.google/gemini-3.1-pro-preview" [ref=e164]
+          - text: clr.google/gemini-3.1-pro-preview
+        - generic [ref=e165]:
+          - checkbox "clr.hivetrace/HiveTracePro" [ref=e166]
+          - text: clr.hivetrace/HiveTracePro
+        - generic [ref=e167]:
+          - checkbox "clr.openai/chatgpt-4o-latest" [ref=e168]
+          - text: clr.openai/chatgpt-4o-latest
+        - generic [ref=e169]:
+          - checkbox "clr.openai/gpt-4.1" [ref=e170]
+          - text: clr.openai/gpt-4.1
+        - generic [ref=e171]:
+          - checkbox "clr.openai/gpt-4.1-mini" [ref=e172]
+          - text: clr.openai/gpt-4.1-mini
+        - generic [ref=e173]:
+          - checkbox "clr.openai/gpt-4.1-nano" [ref=e174]
+          - text: clr.openai/gpt-4.1-nano
+        - generic [ref=e175]:
+          - checkbox "clr.openai/gpt-4o-mini" [ref=e176]
+          - text: clr.openai/gpt-4o-mini
+        - generic [ref=e177]:
+          - checkbox "clr.openai/gpt-5" [ref=e178]
+          - text: clr.openai/gpt-5
+        - generic [ref=e179]:
+          - checkbox "clr.openai/gpt-5-chat" [ref=e180]
+          - text: clr.openai/gpt-5-chat
+        - generic [ref=e181]:
+          - checkbox "clr.openai/gpt-5-mini" [ref=e182]
+          - text: clr.openai/gpt-5-mini
+        - generic [ref=e183]:
+          - checkbox "clr.openai/gpt-5-nano" [ref=e184]
+          - text: clr.openai/gpt-5-nano
+        - generic [ref=e185]:
+          - checkbox "clr.openai/gpt-5.1" [ref=e186]
+          - text: clr.openai/gpt-5.1
+        - generic [ref=e187]:
+          - checkbox "clr.openai/gpt-5.1-chat" [ref=e188]
+          - text: clr.openai/gpt-5.1-chat
+        - generic [ref=e189]:
+          - checkbox "clr.openai/gpt-5.2" [ref=e190]
+          - text: clr.openai/gpt-5.2
+        - generic [ref=e191]:
+          - checkbox "clr.openai/gpt-5.2-chat" [ref=e192]
+          - text: clr.openai/gpt-5.2-chat
+        - generic [ref=e193]:
+          - checkbox "clr.openai/gpt-5.2-codex" [ref=e194]
+          - text: clr.openai/gpt-5.2-codex
+        - generic [ref=e195]:
+          - checkbox "clr.openai/gpt-5.3-chat" [ref=e196]
+          - text: clr.openai/gpt-5.3-chat
+        - generic [ref=e197]:
+          - checkbox "clr.openai/gpt-5.3-codex" [ref=e198]
+          - text: clr.openai/gpt-5.3-codex
+        - generic [ref=e199]:
+          - checkbox "clr.openai/gpt-5.4" [ref=e200]
+          - text: clr.openai/gpt-5.4
+        - generic [ref=e201]:
+          - checkbox "clr.openai/gpt-5.4-mini" [ref=e202]
+          - text: clr.openai/gpt-5.4-mini
+        - generic [ref=e203]:
+          - checkbox "clr.openai/gpt-5.4-nano" [ref=e204]
+          - text: clr.openai/gpt-5.4-nano
+        - generic [ref=e205]:
+          - checkbox "clr.openai/gpt-5.4-pro" [ref=e206]
+          - text: clr.openai/gpt-5.4-pro
+        - generic [ref=e207]:
+          - checkbox "clr.openai/gpt-oss-20b" [ref=e208]
+          - text: clr.openai/gpt-oss-20b
+        - generic [ref=e209]:
+          - checkbox "clr.openai/text-embedding-3-large" [ref=e210]
+          - text: clr.openai/text-embedding-3-large
+        - generic [ref=e211]:
+          - checkbox "clr.openai/text-embedding-3-small" [ref=e212]
+          - text: clr.openai/text-embedding-3-small
+        - generic [ref=e213]:
+          - checkbox "gem.gemini-2.5-flash" [ref=e214]
+          - text: gem.gemini-2.5-flash
+        - generic [ref=e215]:
+          - checkbox "gem.gemini-2.5-flash-lite" [ref=e216]
+          - text: gem.gemini-2.5-flash-lite
+        - generic [ref=e217]:
+          - checkbox "gem.gemini-2.5-pro" [ref=e218]
+          - text: gem.gemini-2.5-pro
+        - generic [ref=e219]:
+          - checkbox "gem.gemini-3-flash-preview" [ref=e220]
+          - text: gem.gemini-3-flash-preview
+        - generic [ref=e221]:
+          - checkbox "gem.gemini-3-pro-preview" [ref=e222]
+          - text: gem.gemini-3-pro-preview
+        - generic [ref=e223]:
+          - checkbox "gem.gemini-3.1-flash-lite-preview" [ref=e224]
+          - text: gem.gemini-3.1-flash-lite-preview
+        - generic [ref=e225]:
+          - checkbox "gem.gemini-3.1-pro-preview" [ref=e226]
+          - text: gem.gemini-3.1-pro-preview
+        - generic [ref=e227]:
+          - checkbox "gem.gemini-3.5-flash" [ref=e228]
+          - text: gem.gemini-3.5-flash
+        - generic [ref=e229]:
+          - checkbox "google.models/antigravity-preview-05-2026" [ref=e230]
+          - text: google.models/antigravity-preview-05-2026
+        - generic [ref=e231]:
+          - checkbox "google.models/aqa" [ref=e232]
+          - text: google.models/aqa
+        - generic [ref=e233]:
+          - checkbox "google.models/deep-research-max-preview-04-2026" [ref=e234]
+          - text: google.models/deep-research-max-preview-04-2026
+        - generic [ref=e235]:
+          - checkbox "google.models/deep-research-preview-04-2026" [ref=e236]
+          - text: google.models/deep-research-preview-04-2026
+        - generic [ref=e237]:
+          - checkbox "google.models/deep-research-pro-preview-12-2025" [ref=e238]
+          - text: google.models/deep-research-pro-preview-12-2025
+        - generic [ref=e239]:
+          - checkbox "google.models/gemini-2.0-flash" [ref=e240]
+          - text: google.models/gemini-2.0-flash
+        - generic [ref=e241]:
+          - checkbox "google.models/gemini-2.0-flash-001" [ref=e242]
+          - text: google.models/gemini-2.0-flash-001
+        - generic [ref=e243]:
+          - checkbox "google.models/gemini-2.0-flash-lite" [ref=e244]
+          - text: google.models/gemini-2.0-flash-lite
+        - generic [ref=e245]:
+          - checkbox "google.models/gemini-2.0-flash-lite-001" [ref=e246]
+          - text: google.models/gemini-2.0-flash-lite-001
+        - generic [ref=e247]:
+          - checkbox "google.models/gemini-2.5-computer-use-preview-10-2025" [ref=e248]
+          - text: google.models/gemini-2.5-computer-use-preview-10-2025
+        - generic [ref=e249]:
+          - checkbox "google.models/gemini-2.5-flash" [ref=e250]
+          - text: google.models/gemini-2.5-flash
+        - generic [ref=e251]:
+          - checkbox "google.models/gemini-2.5-flash-image" [ref=e252]
+          - text: google.models/gemini-2.5-flash-image
+        - generic [ref=e253]:
+          - checkbox "google.models/gemini-2.5-flash-lite" [ref=e254]
+          - text: google.models/gemini-2.5-flash-lite
+        - generic [ref=e255]:
+          - checkbox "google.models/gemini-2.5-flash-native-audio-latest" [ref=e256]
+          - text: google.models/gemini-2.5-flash-native-audio-latest
+        - generic [ref=e257]:
+          - checkbox "google.models/gemini-2.5-flash-native-audio-preview-09-2025" [ref=e258]
+          - text: google.models/gemini-2.5-flash-native-audio-preview-09-2025
+        - generic [ref=e259]:
+          - checkbox "google.models/gemini-2.5-flash-native-audio-preview-12-2025" [ref=e260]
+          - text: google.models/gemini-2.5-flash-native-audio-preview-12-2025
+        - generic [ref=e261]:
+          - checkbox "google.models/gemini-2.5-flash-preview-tts" [ref=e262]
+          - text: google.models/gemini-2.5-flash-preview-tts
+        - generic [ref=e263]:
+          - checkbox "google.models/gemini-2.5-pro" [ref=e264]
+          - text: google.models/gemini-2.5-pro
+        - generic [ref=e265]:
+          - checkbox "google.models/gemini-2.5-pro-preview-tts" [ref=e266]
+          - text: google.models/gemini-2.5-pro-preview-tts
+        - generic [ref=e267]:
+          - checkbox "google.models/gemini-3-flash-preview" [ref=e268]
+          - text: google.models/gemini-3-flash-preview
+        - generic [ref=e269]:
+          - checkbox "google.models/gemini-3-pro-image" [ref=e270]
+          - text: google.models/gemini-3-pro-image
+        - generic [ref=e271]:
+          - checkbox "google.models/gemini-3-pro-image-preview" [ref=e272]
+          - text: google.models/gemini-3-pro-image-preview
+        - generic [ref=e273]:
+          - checkbox "google.models/gemini-3-pro-preview" [ref=e274]
+          - text: google.models/gemini-3-pro-preview
+        - generic [ref=e275]:
+          - checkbox "google.models/gemini-3.1-flash-image" [ref=e276]
+          - text: google.models/gemini-3.1-flash-image
+        - generic [ref=e277]:
+          - checkbox "google.models/gemini-3.1-flash-image-preview" [ref=e278]
+          - text: google.models/gemini-3.1-flash-image-preview
+        - generic [ref=e279]:
+          - checkbox "google.models/gemini-3.1-flash-lite" [ref=e280]
+          - text: google.models/gemini-3.1-flash-lite
+        - generic [ref=e281]:
+          - checkbox "google.models/gemini-3.1-flash-lite-preview" [ref=e282]
+          - text: google.models/gemini-3.1-flash-lite-preview
+        - generic [ref=e283]:
+          - checkbox "google.models/gemini-3.1-flash-live-preview" [ref=e284]
+          - text: google.models/gemini-3.1-flash-live-preview
+        - generic [ref=e285]:
+          - checkbox "google.models/gemini-3.1-flash-tts-preview" [ref=e286]
+          - text: google.models/gemini-3.1-flash-tts-preview
+        - generic [ref=e287]:
+          - checkbox "google.models/gemini-3.1-pro-preview" [ref=e288]
+          - text: google.models/gemini-3.1-pro-preview
+        - generic [ref=e289]:
+          - checkbox "google.models/gemini-3.1-pro-preview-customtools" [ref=e290]
+          - text: google.models/gemini-3.1-pro-preview-customtools
+        - generic [ref=e291]:
+          - checkbox "google.models/gemini-3.5-flash" [ref=e292]
+          - text: google.models/gemini-3.5-flash
+        - generic [ref=e293]:
+          - checkbox "google.models/gemini-embedding-001" [ref=e294]
+          - text: google.models/gemini-embedding-001
+        - generic [ref=e295]:
+          - checkbox "google.models/gemini-embedding-2" [ref=e296]
+          - text: google.models/gemini-embedding-2
+        - generic [ref=e297]:
+          - checkbox "google.models/gemini-embedding-2-preview" [ref=e298]
+          - text: google.models/gemini-embedding-2-preview
+        - generic [ref=e299]:
+          - checkbox "google.models/gemini-flash-latest" [ref=e300]
+          - text: google.models/gemini-flash-latest
+        - generic [ref=e301]:
+          - checkbox "google.models/gemini-flash-lite-latest" [ref=e302]
+          - text: google.models/gemini-flash-lite-latest
+        - generic [ref=e303]:
+          - checkbox "google.models/gemini-pro-latest" [ref=e304]
+          - text: google.models/gemini-pro-latest
+        - generic [ref=e305]:
+          - checkbox "google.models/gemini-robotics-er-1.5-preview" [ref=e306]
+          - text: google.models/gemini-robotics-er-1.5-preview
+        - generic [ref=e307]:
+          - checkbox "google.models/gemini-robotics-er-1.6-preview" [ref=e308]
+          - text: google.models/gemini-robotics-er-1.6-preview
+        - generic [ref=e309]:
+          - checkbox "google.models/gemma-4-26b-a4b-it" [ref=e310]
+          - text: google.models/gemma-4-26b-a4b-it
+        - generic [ref=e311]:
+          - checkbox "google.models/gemma-4-31b-it" [ref=e312]
+          - text: google.models/gemma-4-31b-it
+        - generic [ref=e313]:
+          - checkbox "google.models/imagen-4.0-fast-generate-001" [ref=e314]
+          - text: google.models/imagen-4.0-fast-generate-001
+        - generic [ref=e315]:
+          - checkbox "google.models/imagen-4.0-generate-001" [ref=e316]
+          - text: google.models/imagen-4.0-generate-001
+        - generic [ref=e317]:
+          - checkbox "google.models/imagen-4.0-ultra-generate-001" [ref=e318]
+          - text: google.models/imagen-4.0-ultra-generate-001
+        - generic [ref=e319]:
+          - checkbox "google.models/lyria-3-clip-preview" [ref=e320]
+          - text: google.models/lyria-3-clip-preview
+        - generic [ref=e321]:
+          - checkbox "google.models/lyria-3-pro-preview" [ref=e322]
+          - text: google.models/lyria-3-pro-preview
+        - generic [ref=e323]:
+          - checkbox "google.models/lyria-realtime-exp" [ref=e324]
+          - text: google.models/lyria-realtime-exp
+        - generic [ref=e325]:
+          - checkbox "google.models/nano-banana-pro-preview" [ref=e326]
+          - text: google.models/nano-banana-pro-preview
+        - generic [ref=e327]:
+          - checkbox "google.models/veo-2.0-generate-001" [ref=e328]
+          - text: google.models/veo-2.0-generate-001
+        - generic [ref=e329]:
+          - checkbox "google.models/veo-3.0-fast-generate-001" [ref=e330]
+          - text: google.models/veo-3.0-fast-generate-001
+        - generic [ref=e331]:
+          - checkbox "google.models/veo-3.0-generate-001" [ref=e332]
+          - text: google.models/veo-3.0-generate-001
+        - generic [ref=e333]:
+          - checkbox "google.models/veo-3.1-fast-generate-preview" [ref=e334]
+          - text: google.models/veo-3.1-fast-generate-preview
+        - generic [ref=e335]:
+          - checkbox "google.models/veo-3.1-generate-preview" [ref=e336]
+          - text: google.models/veo-3.1-generate-preview
+        - generic [ref=e337]:
+          - checkbox "google.models/veo-3.1-lite-generate-preview" [ref=e338]
+          - text: google.models/veo-3.1-lite-generate-preview
+        - generic [ref=e339]:
+          - checkbox "groq.openai/gpt-oss-120b" [ref=e340]
+          - text: groq.openai/gpt-oss-120b
+        - generic [ref=e341]:
+          - checkbox "groq.openai/gpt-oss-safeguard-20b" [ref=e342]
+          - text: groq.openai/gpt-oss-safeguard-20b
+        - generic [ref=e343]:
+          - checkbox "groq.whisper-large-v3-turbo" [ref=e344]
+          - text: groq.whisper-large-v3-turbo
+        - generic [ref=e345]:
+          - checkbox "llmgateway/ai-klein-edit" [ref=e346]
+          - text: llmgateway/ai-klein-edit
+        - generic [ref=e347]:
+          - checkbox "llmgateway/ai-klein-generation" [ref=e348]
+          - text: llmgateway/ai-klein-generation
+        - generic [ref=e349]:
+          - checkbox "llmgateway/ai-qwen-image" [ref=e350]
+          - text: llmgateway/ai-qwen-image
+        - generic [ref=e351]:
+          - checkbox "llmgateway/banana" [ref=e352]
+          - text: llmgateway/banana
+        - generic [ref=e353]:
+          - checkbox "llmgateway/big_context" [ref=e354]
+          - text: llmgateway/big_context
+        - generic [ref=e355]:
+          - checkbox "llmgateway/cosyvoice-tts" [ref=e356]
+          - text: llmgateway/cosyvoice-tts
+        - generic [ref=e357]:
+          - checkbox "llmgateway/embedding" [ref=e358]
+          - text: llmgateway/embedding
+        - generic [ref=e359]:
+          - checkbox "llmgateway/embedding_nv" [ref=e360]
+          - text: llmgateway/embedding_nv
+        - generic [ref=e361]:
+          - checkbox "llmgateway/fast" [ref=e362]
+          - text: llmgateway/fast
+        - generic [ref=e363]:
+          - checkbox "llmgateway/flux.2-klein-4b-generation" [ref=e364]
+          - text: llmgateway/flux.2-klein-4b-generation
+        - generic [ref=e365]:
+          - checkbox "llmgateway/flux.image-edit" [ref=e366]
+          - text: llmgateway/flux.image-edit
+        - generic [ref=e367]:
+          - checkbox "llmgateway/flux.image-generation" [ref=e368]
+          - text: llmgateway/flux.image-generation
+        - generic [ref=e369]:
+          - checkbox "llmgateway/free" [ref=e370]
+          - text: llmgateway/free
+        - generic [ref=e371]:
+          - checkbox "llmgateway/free_gd" [ref=e372]
+          - text: llmgateway/free_gd
+        - generic [ref=e373]:
+          - checkbox "llmgateway/glm-5" [ref=e374]
+          - text: llmgateway/glm-5
+        - generic [ref=e375]:
+          - checkbox "llmgateway/gpt-image-2" [ref=e376]
+          - text: llmgateway/gpt-image-2
+        - generic [ref=e377]:
+          - checkbox "llmgateway/high" [ref=e378]
+          - text: llmgateway/high
+        - generic [ref=e379]:
+          - checkbox "llmgateway/light_model" [ref=e380]
+          - text: llmgateway/light_model
+        - generic [ref=e381]:
+          - checkbox "llmgateway/ocr" [ref=e382]
+          - text: llmgateway/ocr
+        - generic [ref=e383]:
+          - checkbox "llmgateway/pdf-converter" [ref=e384]
+          - text: llmgateway/pdf-converter
+        - generic [ref=e385]:
+          - checkbox "llmgateway/qwen" [ref=e386]
+          - text: llmgateway/qwen
+        - generic [ref=e387]:
+          - checkbox "llmgateway/qwen3.5" [ref=e388]
+          - text: llmgateway/qwen3.5
+        - generic [ref=e389]:
+          - checkbox "llmgateway/rerank" [ref=e390]
+          - text: llmgateway/rerank
+        - generic [ref=e391]:
+          - checkbox "llmgateway/silero-en-tts" [ref=e392]
+          - text: llmgateway/silero-en-tts
+        - generic [ref=e393]:
+          - checkbox "llmgateway/silero-tts" [ref=e394]
+          - text: llmgateway/silero-tts
+        - generic [ref=e395]:
+          - checkbox "llmgateway/text" [ref=e396]
+          - text: llmgateway/text
+        - generic [ref=e397]:
+          - checkbox "llmgateway/web-deep-research" [ref=e398]
+          - text: llmgateway/web-deep-research
+        - generic [ref=e399]:
+          - checkbox "llmgateway/web-read" [ref=e400]
+          - text: llmgateway/web-read
+        - generic [ref=e401]:
+          - checkbox "llmgateway/web-research" [ref=e402]
+          - text: llmgateway/web-research
+        - generic [ref=e403]:
+          - checkbox "llmgateway/web-search" [ref=e404]
+          - text: llmgateway/web-search
+        - generic [ref=e405]:
+          - checkbox "llmgateway/whisper-large-v3" [ref=e406]
+          - text: llmgateway/whisper-large-v3
+        - generic [ref=e407]:
+          - checkbox "mistral.codestral-latest" [ref=e408]
+          - text: mistral.codestral-latest
+        - generic [ref=e409]:
+          - checkbox "mm.MiniMax-M2.7" [ref=e410]
+          - text: mm.MiniMax-M2.7
+        - generic [ref=e411]:
+          - checkbox "nvd.deepseek-ai/deepseek-v4-flash" [ref=e412]
+          - text: nvd.deepseek-ai/deepseek-v4-flash
+        - generic [ref=e413]:
+          - checkbox "nvd.deepseek-ai/deepseek-v4-pro" [ref=e414]
+          - text: nvd.deepseek-ai/deepseek-v4-pro
+        - generic [ref=e415]:
+          - checkbox "nvd.google/gemma-4-31b-it" [ref=e416]
+          - text: nvd.google/gemma-4-31b-it
+        - generic [ref=e417]:
+          - checkbox "nvd.minimaxai/minimax-m2.7" [ref=e418]
+          - text: nvd.minimaxai/minimax-m2.7
+        - generic [ref=e419]:
+          - checkbox "nvd.mistralai/mistral-medium-3.5-128b" [ref=e420]
+          - text: nvd.mistralai/mistral-medium-3.5-128b
+        - generic [ref=e421]:
+          - checkbox "nvd.moonshotai/kimi-k2.6" [ref=e422]
+          - text: nvd.moonshotai/kimi-k2.6
+        - generic [ref=e423]:
+          - checkbox "nvd.nvidia/ai-synthetic-video-detector" [ref=e424]
+          - text: nvd.nvidia/ai-synthetic-video-detector
+        - generic [ref=e425]:
+          - checkbox "nvd.nvidia/gliner-pii" [ref=e426]
+          - text: nvd.nvidia/gliner-pii
+        - generic [ref=e427]:
+          - checkbox "nvd.nvidia/ising-calibration-1-35b-a3b" [ref=e428]
+          - text: nvd.nvidia/ising-calibration-1-35b-a3b
+        - generic [ref=e429]:
+          - checkbox "nvd.nvidia/nemotron-3-content-safety" [ref=e430]
+          - text: nvd.nvidia/nemotron-3-content-safety
+        - generic [ref=e431]:
+          - checkbox "nvd.nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" [ref=e432]
+          - text: nvd.nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+        - generic [ref=e433]:
+          - checkbox "nvd.openai/gpt-oss-120b" [ref=e434]
+          - text: nvd.openai/gpt-oss-120b
+        - generic [ref=e435]:
+          - checkbox "nvd.qwen/qwen3-next-80b-a3b-instruct" [ref=e436]
+          - text: nvd.qwen/qwen3-next-80b-a3b-instruct
+        - generic [ref=e437]:
+          - checkbox "nvd.qwen/qwen3.5-122b-a10b" [ref=e438]
+          - text: nvd.qwen/qwen3.5-122b-a10b
+        - generic [ref=e439]:
+          - checkbox "nvd.qwen/qwen3.5-397b-a17b" [ref=e440]
+          - text: nvd.qwen/qwen3.5-397b-a17b
+        - generic [ref=e441]:
+          - checkbox "nvd.stepfun-ai/step-3.7-flash" [ref=e442]
+          - text: nvd.stepfun-ai/step-3.7-flash
+        - generic [ref=e443]:
+          - checkbox "nvd.z-ai/glm-5.1" [ref=e444]
+          - text: nvd.z-ai/glm-5.1
+        - generic [ref=e445]:
+          - checkbox "openai.gpt-5.3-codex" [ref=e446]
+          - text: openai.gpt-5.3-codex
+        - generic [ref=e447]:
+          - checkbox "openai.gpt-5.3-codex-fast" [ref=e448]
+          - text: openai.gpt-5.3-codex-fast
+        - generic [ref=e449]:
+          - checkbox "openai.gpt-5.3-codex-spark" [ref=e450]
+          - text: openai.gpt-5.3-codex-spark
+        - generic [ref=e451]:
+          - checkbox "openai.gpt-5.3-codex-spark-fast" [ref=e452]
+          - text: openai.gpt-5.3-codex-spark-fast
+        - generic [ref=e453]:
+          - checkbox "openai.gpt-5.4" [ref=e454]
+          - text: openai.gpt-5.4
+        - generic [ref=e455]:
+          - checkbox "openai.gpt-5.4-fast" [ref=e456]
+          - text: openai.gpt-5.4-fast
+        - generic [ref=e457]:
+          - checkbox "openai.gpt-5.4-mini" [ref=e458]
+          - text: openai.gpt-5.4-mini
+        - generic [ref=e459]:
+          - checkbox "openai.gpt-5.4-mini-fast" [ref=e460]
+          - text: openai.gpt-5.4-mini-fast
+        - generic [ref=e461]:
+          - checkbox "openai.gpt-5.5" [ref=e462]
+          - text: openai.gpt-5.5
+        - generic [ref=e463]:
+          - checkbox "openai.gpt-5.5-fast" [ref=e464]
+          - text: openai.gpt-5.5-fast
+        - generic [ref=e465]:
+          - checkbox "openai.gpt-image-2" [ref=e466]
+          - text: openai.gpt-image-2
+        - generic [ref=e467]:
+          - checkbox "openai.gpt-image-2-fast" [ref=e468]
+          - text: openai.gpt-image-2-fast
+        - generic [ref=e469]:
+          - checkbox "opnrt.google/gemini-2.0-flash-exp:free" [ref=e470]
+          - text: opnrt.google/gemini-2.0-flash-exp:free
+        - generic [ref=e471]:
+          - checkbox "opnrt.moonshotai/kimi-k2:free" [ref=e472]
+          - text: opnrt.moonshotai/kimi-k2:free
+        - generic [ref=e473]:
+          - checkbox "opnrt.qwen/qwen3-235b-a22b-07-25:free" [ref=e474]
+          - text: opnrt.qwen/qwen3-235b-a22b-07-25:free
+        - generic [ref=e475]:
+          - checkbox "opnrt.qwen/qwen3-coder:free" [ref=e476]
+          - text: opnrt.qwen/qwen3-coder:free
+        - generic [ref=e477]:
+          - checkbox "poly.openai-fast" [ref=e478]
+          - text: poly.openai-fast
+        - generic [ref=e479]:
+          - checkbox "vse.anthropic/claude-opus-4.6" [ref=e480]
+          - text: vse.anthropic/claude-opus-4.6
+        - generic [ref=e481]:
+          - checkbox "vse.anthropic/claude-opus-4.7" [ref=e482]
+          - text: vse.anthropic/claude-opus-4.7
+        - generic [ref=e483]:
+          - checkbox "vse.anthropic/claude-opus-4.7-thinking" [ref=e484]
+          - text: vse.anthropic/claude-opus-4.7-thinking
+        - generic [ref=e485]:
+          - checkbox "vse.anthropic/claude-opus-4.8" [ref=e486]
+          - text: vse.anthropic/claude-opus-4.8
+        - generic [ref=e487]:
+          - checkbox "vse.anthropic/claude-opus-4.8-thinking" [ref=e488]
+          - text: vse.anthropic/claude-opus-4.8-thinking
+        - generic [ref=e489]:
+          - checkbox "vse.anthropic/claude-sonnet-4.5" [ref=e490]
+          - text: vse.anthropic/claude-sonnet-4.5
+        - generic [ref=e491]:
+          - checkbox "vse.anthropic/claude-sonnet-4.6" [ref=e492]
+          - text: vse.anthropic/claude-sonnet-4.6
+        - generic [ref=e493]:
+          - checkbox "vse.anthropic/claude-sonnet-4.6-deep-research-1.0" [ref=e494]
+          - text: vse.anthropic/claude-sonnet-4.6-deep-research-1.0
+        - generic [ref=e495]:
+          - checkbox "vse.anthropic/claude-sonnet-4.6-online-hq" [ref=e496]
+          - text: vse.anthropic/claude-sonnet-4.6-online-hq
+        - generic [ref=e497]:
+          - checkbox "vse.deepseek/deepseek-v4-flash" [ref=e498]
+          - text: vse.deepseek/deepseek-v4-flash
+        - generic [ref=e499]:
+          - checkbox "vse.deepseek/deepseek-v4-flash-alt" [ref=e500]
+          - text: vse.deepseek/deepseek-v4-flash-alt
+        - generic [ref=e501]:
+          - checkbox "vse.deepseek/deepseek-v4-flash-alt-thinking" [ref=e502]
+          - text: vse.deepseek/deepseek-v4-flash-alt-thinking
+        - generic [ref=e503]:
+          - checkbox "vse.deepseek/deepseek-v4-flash-thinking" [ref=e504]
+          - text: vse.deepseek/deepseek-v4-flash-thinking
+        - generic [ref=e505]:
+          - checkbox "vse.deepseek/deepseek-v4-pro" [ref=e506]
+          - text: vse.deepseek/deepseek-v4-pro
+        - generic [ref=e507]:
+          - checkbox "vse.deepseek/deepseek-v4-pro-thinking" [ref=e508]
+          - text: vse.deepseek/deepseek-v4-pro-thinking
+        - generic [ref=e509]:
+          - checkbox "vse.google/gemini-2.0-flash-lite-001" [ref=e510]
+          - text: vse.google/gemini-2.0-flash-lite-001
+        - generic [ref=e511]:
+          - checkbox "vse.google/gemini-2.5-flash" [ref=e512]
+          - text: vse.google/gemini-2.5-flash
+        - generic [ref=e513]:
+          - checkbox "vse.google/gemini-2.5-flash-lite-pre-0925" [ref=e514]
+          - text: vse.google/gemini-2.5-flash-lite-pre-0925
+        - generic [ref=e515]:
+          - checkbox "vse.google/gemini-2.5-pro" [ref=e516]
+          - text: vse.google/gemini-2.5-pro
+        - generic [ref=e517]:
+          - checkbox "vse.google/gemini-2.5-pro-preview" [ref=e518]
+          - text: vse.google/gemini-2.5-pro-preview
+        - generic [ref=e519]:
+          - checkbox "vse.google/gemini-2.5-pro-preview-03-25" [ref=e520]
+          - text: vse.google/gemini-2.5-pro-preview-03-25
+        - generic [ref=e521]:
+          - checkbox "vse.google/gemini-3-flash-pre" [ref=e522]
+          - text: vse.google/gemini-3-flash-pre
+        - generic [ref=e523]:
+          - checkbox "vse.google/gemini-3.1-flash-lite" [ref=e524]
+          - text: vse.google/gemini-3.1-flash-lite
+        - generic [ref=e525]:
+          - checkbox "vse.google/gemini-3.1-flash-lite-pre" [ref=e526]
+          - text: vse.google/gemini-3.1-flash-lite-pre
+        - generic [ref=e527]:
+          - checkbox "vse.google/gemini-3.1-flash-lite-pre-thinking" [ref=e528]
+          - text: vse.google/gemini-3.1-flash-lite-pre-thinking
+        - generic [ref=e529]:
+          - checkbox "vse.google/gemini-3.1-flash-lite-thinking" [ref=e530]
+          - text: vse.google/gemini-3.1-flash-lite-thinking
+        - generic [ref=e531]:
+          - checkbox "vse.google/gemini-3.1-flash-lite-thinking-high" [ref=e532]
+          - text: vse.google/gemini-3.1-flash-lite-thinking-high
+        - generic [ref=e533]:
+          - checkbox "vse.google/gemini-3.1-pro-preview" [ref=e534]
+          - text: vse.google/gemini-3.1-pro-preview
+        - generic [ref=e535]:
+          - checkbox "vse.google/gemini-3.1-pro-preview-1m" [ref=e536]
+          - text: vse.google/gemini-3.1-pro-preview-1m
+        - generic [ref=e537]:
+          - checkbox "vse.google/gemini-3.5-flash" [ref=e538]
+          - text: vse.google/gemini-3.5-flash
+        - generic [ref=e539]:
+          - checkbox "vse.google/gemini-3.5-flash-high" [ref=e540]
+          - text: vse.google/gemini-3.5-flash-high
+        - generic [ref=e541]:
+          - checkbox "vse.google/gemini-3.5-flash-minimal" [ref=e542]
+          - text: vse.google/gemini-3.5-flash-minimal
+        - generic [ref=e543]:
+          - checkbox "vse.google/gemma-4-26b-a4b-it" [ref=e544]
+          - text: vse.google/gemma-4-26b-a4b-it
+        - generic [ref=e545]:
+          - checkbox "vse.google/gemma-4-26b-a4b-it-thinking" [ref=e546]
+          - text: vse.google/gemma-4-26b-a4b-it-thinking
+        - generic [ref=e547]:
+          - checkbox "vse.google/gemma-4-31b-it" [ref=e548]
+          - text: vse.google/gemma-4-31b-it
+        - generic [ref=e549]:
+          - checkbox "vse.google/gemma-4-31b-it-thinking" [ref=e550]
+          - text: vse.google/gemma-4-31b-it-thinking
+        - generic [ref=e551]:
+          - checkbox "vse.img-bytedance/seedream-v4.5" [ref=e552]
+          - text: vse.img-bytedance/seedream-v4.5
+        - generic [ref=e553]:
+          - checkbox "vse.img-flux/flux-2" [ref=e554]
+          - text: vse.img-flux/flux-2
+        - generic [ref=e555]:
+          - checkbox "vse.img-flux/flux-2-flex" [ref=e556]
+          - text: vse.img-flux/flux-2-flex
+        - generic [ref=e557]:
+          - checkbox "vse.img-flux/flux-2-klein-4b" [ref=e558]
+          - text: vse.img-flux/flux-2-klein-4b
+        - generic [ref=e559]:
+          - checkbox "vse.img-flux/flux-2-klein-9b" [ref=e560]
+          - text: vse.img-flux/flux-2-klein-9b
+        - generic [ref=e561]:
+          - checkbox "vse.img-flux/flux-2-pro" [ref=e562]
+          - text: vse.img-flux/flux-2-pro
+        - generic [ref=e563]:
+          - checkbox "vse.img-google/nano-banana-2" [ref=e564]
+          - text: vse.img-google/nano-banana-2
+        - generic [ref=e565]:
+          - checkbox "vse.img-google/nano-banana-pro" [ref=e566]
+          - text: vse.img-google/nano-banana-pro
+        - generic [ref=e567]:
+          - checkbox "vse.img-openai/gpt-image-2" [ref=e568]
+          - text: vse.img-openai/gpt-image-2
+        - generic [ref=e569]:
+          - checkbox "vse.img2img-bytedance/seedream-v4.5-edit-multi" [ref=e570]
+          - text: vse.img2img-bytedance/seedream-v4.5-edit-multi
+        - generic [ref=e571]:
+          - checkbox "vse.img2img-flux/flux-2-flex-multi-edit" [ref=e572]
+          - text: vse.img2img-flux/flux-2-flex-multi-edit
+        - generic [ref=e573]:
+          - checkbox "vse.img2img-flux/flux-2-klein-4b" [ref=e574]
+          - text: vse.img2img-flux/flux-2-klein-4b
+        - generic [ref=e575]:
+          - checkbox "vse.img2img-google/nano-banana-2-edit-multi" [ref=e576]
+          - text: vse.img2img-google/nano-banana-2-edit-multi
+        - generic [ref=e577]:
+          - checkbox "vse.img2img-google/nano-banana-pro-edit-multi" [ref=e578]
+          - text: vse.img2img-google/nano-banana-pro-edit-multi
+        - generic [ref=e579]:
+          - checkbox "vse.img2img-openai/gpt-image-2-edit-multi" [ref=e580]
+          - text: vse.img2img-openai/gpt-image-2-edit-multi
+        - generic [ref=e581]:
+          - checkbox "vse.img2vid-kling/o3-pro-xsec" [ref=e582]
+          - text: vse.img2vid-kling/o3-pro-xsec
+        - generic [ref=e583]:
+          - checkbox "vse.img2vid-kling/o3-pro-xsec-with-audio" [ref=e584]
+          - text: vse.img2vid-kling/o3-pro-xsec-with-audio
+        - generic [ref=e585]:
+          - checkbox "vse.img2vid-kling/o3-standart-xsec" [ref=e586]
+          - text: vse.img2vid-kling/o3-standart-xsec
+        - generic [ref=e587]:
+          - checkbox "vse.img2vid-kling/o3-standart-xsec-with-audio" [ref=e588]
+          - text: vse.img2vid-kling/o3-standart-xsec-with-audio
+        - generic [ref=e589]:
+          - checkbox "vse.img2vid-ltx/pro-2.3-xsec-with-audio" [ref=e590]
+          - text: vse.img2vid-ltx/pro-2.3-xsec-with-audio
+        - generic [ref=e591]:
+          - checkbox "vse.minimax/minimax-m2.5" [ref=e592]
+          - text: vse.minimax/minimax-m2.5
+        - generic [ref=e593]:
+          - checkbox "vse.minimax/minimax-m2.7" [ref=e594]
+          - text: vse.minimax/minimax-m2.7
+        - generic [ref=e595]:
+          - checkbox "vse.moonshotai/kimi-k2.5" [ref=e596]
+          - text: vse.moonshotai/kimi-k2.5
+        - generic [ref=e597]:
+          - checkbox "vse.moonshotai/kimi-k2.6" [ref=e598]
+          - text: vse.moonshotai/kimi-k2.6
+        - generic [ref=e599]:
+          - checkbox "vse.moonshotai/kimi-k2.6-thinking" [ref=e600]
+          - text: vse.moonshotai/kimi-k2.6-thinking
+        - generic [ref=e601]:
+          - checkbox "vse.openai/gpt-4.1-mini" [ref=e602]
+          - text: vse.openai/gpt-4.1-mini
+        - generic [ref=e603]:
+          - checkbox "vse.openai/gpt-5.3-codex" [ref=e604]
+          - text: vse.openai/gpt-5.3-codex
+        - generic [ref=e605]:
+          - checkbox "vse.openai/gpt-5.4" [ref=e606]
+          - text: vse.openai/gpt-5.4
+        - generic [ref=e607]:
+          - checkbox "vse.openai/gpt-5.4-1m" [ref=e608]
+          - text: vse.openai/gpt-5.4-1m
+        - generic [ref=e609]:
+          - checkbox "vse.openai/gpt-5.4-mini" [ref=e610]
+          - text: vse.openai/gpt-5.4-mini
+        - generic [ref=e611]:
+          - checkbox "vse.openai/gpt-5.4-nano" [ref=e612]
+          - text: vse.openai/gpt-5.4-nano
+        - generic [ref=e613]:
+          - checkbox "vse.openai/gpt-5.5" [ref=e614]
+          - text: vse.openai/gpt-5.5
+        - generic [ref=e615]:
+          - checkbox "vse.openai/gpt-5.5-pro" [ref=e616]
+          - text: vse.openai/gpt-5.5-pro
+        - generic [ref=e617]:
+          - checkbox "vse.perplexity/latest-large-online" [ref=e618]
+          - text: vse.perplexity/latest-large-online
+        - generic [ref=e619]:
+          - checkbox "vse.perplexity/latest-small-online" [ref=e620]
+          - text: vse.perplexity/latest-small-online
+        - generic [ref=e621]:
+          - checkbox "vse.qwen/qwen3-coder-next" [ref=e622]
+          - text: vse.qwen/qwen3-coder-next
+        - generic [ref=e623]:
+          - checkbox "vse.qwen/qwen3-coder-tools" [ref=e624]
+          - text: vse.qwen/qwen3-coder-tools
+        - generic [ref=e625]:
+          - checkbox "vse.qwen/qwen3-next-80b-a3b" [ref=e626]
+          - text: vse.qwen/qwen3-next-80b-a3b
+        - generic [ref=e627]:
+          - checkbox "vse.qwen/qwen3-vl-235b-a22b-instruct" [ref=e628]
+          - text: vse.qwen/qwen3-vl-235b-a22b-instruct
+        - generic [ref=e629]:
+          - checkbox "vse.qwen/qwen3.5-397b-a17b" [ref=e630]
+          - text: vse.qwen/qwen3.5-397b-a17b
+        - generic [ref=e631]:
+          - checkbox "vse.qwen/qwen3.5-397b-a17b-thinking" [ref=e632]
+          - text: vse.qwen/qwen3.5-397b-a17b-thinking
+        - generic [ref=e633]:
+          - checkbox "vse.qwen/qwen3.5-plus-2026-02-15" [ref=e634]
+          - text: vse.qwen/qwen3.5-plus-2026-02-15
+        - generic [ref=e635]:
+          - checkbox "vse.qwen/qwen3.5-plus-2026-02-15-1m" [ref=e636]
+          - text: vse.qwen/qwen3.5-plus-2026-02-15-1m
+        - generic [ref=e637]:
+          - checkbox "vse.qwen/qwen3.6-35b-a3b" [ref=e638]
+          - text: vse.qwen/qwen3.6-35b-a3b
+        - generic [ref=e639]:
+          - checkbox "vse.qwen/qwen3.6-35b-a3b-thinking" [ref=e640]
+          - text: vse.qwen/qwen3.6-35b-a3b-thinking
+        - generic [ref=e641]:
+          - checkbox "vse.stt-deepgram/nova-3" [ref=e642]
+          - text: vse.stt-deepgram/nova-3
+        - generic [ref=e643]:
+          - checkbox "vse.stt-openai/gpt-4o-mini-transcribe" [ref=e644]
+          - text: vse.stt-openai/gpt-4o-mini-transcribe
+        - generic [ref=e645]:
+          - checkbox "vse.stt-openai/gpt-4o-transcribe" [ref=e646]
+          - text: vse.stt-openai/gpt-4o-transcribe
+        - generic [ref=e647]:
+          - checkbox "vse.tts-openai/gpt-4o-mini-tts" [ref=e648]
+          - text: vse.tts-openai/gpt-4o-mini-tts
+        - generic [ref=e649]:
+          - checkbox "vse.tts-openai/gpt-4o-mini-tts-stream" [ref=e650]
+          - text: vse.tts-openai/gpt-4o-mini-tts-stream
+        - generic [ref=e651]:
+          - checkbox "vse.txt2vid-kling/o3-standart-xsec" [ref=e652]
+          - text: vse.txt2vid-kling/o3-standart-xsec
+        - generic [ref=e653]:
+          - checkbox "vse.txt2vid-kling/o3-standart-xsec-with-audio" [ref=e654]
+          - text: vse.txt2vid-kling/o3-standart-xsec-with-audio
+        - generic [ref=e655]:
+          - checkbox "vse.txt2vid-ltx/fast-2.3-xsec-with-audio" [ref=e656]
+          - text: vse.txt2vid-ltx/fast-2.3-xsec-with-audio
+        - generic [ref=e657]:
+          - checkbox "vse.txt2vid-ltx/pro-2.3-xsec-with-audio" [ref=e658]
+          - text: vse.txt2vid-ltx/pro-2.3-xsec-with-audio
+        - generic [ref=e659]:
+          - checkbox "vse.vis-google/gemini-3-flash-pre" [ref=e660]
+          - text: vse.vis-google/gemini-3-flash-pre
+        - generic [ref=e661]:
+          - checkbox "vse.vis-google/gemini-3-flash-pre-thinking" [ref=e662]
+          - text: vse.vis-google/gemini-3-flash-pre-thinking
+        - generic [ref=e663]:
+          - checkbox "vse.vis-qwen/qwen-vl-max" [ref=e664]
+          - text: vse.vis-qwen/qwen-vl-max
+        - generic [ref=e665]:
+          - checkbox "vse.vis-qwen/qwen-vl-plus" [ref=e666]
+          - text: vse.vis-qwen/qwen-vl-plus
+        - generic [ref=e667]:
+          - checkbox "vse.x-ai/grok-4.20-beta" [ref=e668]
+          - text: vse.x-ai/grok-4.20-beta
+        - generic [ref=e669]:
+          - checkbox "vse.x-ai/grok-4.20-beta-thinking" [ref=e670]
+          - text: vse.x-ai/grok-4.20-beta-thinking
+        - generic [ref=e671]:
+          - checkbox "vse.x-ai/grok-4.3" [ref=e672]
+          - text: vse.x-ai/grok-4.3
+        - generic [ref=e673]:
+          - checkbox "vse.x-ai/grok-4.3-thinking" [ref=e674]
+          - text: vse.x-ai/grok-4.3-thinking
+        - generic [ref=e675]:
+          - checkbox "vse.xiaomi/mimo-v2-omni" [ref=e676]
+          - text: vse.xiaomi/mimo-v2-omni
+        - generic [ref=e677]:
+          - checkbox "vse.xiaomi/mimo-v2-omni-thinking" [ref=e678]
+          - text: vse.xiaomi/mimo-v2-omni-thinking
+        - generic [ref=e679]:
+          - checkbox "vse.xiaomi/mimo-v2-pro" [ref=e680]
+          - text: vse.xiaomi/mimo-v2-pro
+        - generic [ref=e681]:
+          - checkbox "vse.xiaomi/mimo-v2-pro-thinking" [ref=e682]
+          - text: vse.xiaomi/mimo-v2-pro-thinking
+        - generic [ref=e683]:
+          - checkbox "vse.z-ai/glm-5.1" [ref=e684]
+          - text: vse.z-ai/glm-5.1
+        - generic [ref=e685]:
+          - checkbox "vse.z-ai/glm-5.1-thinking" [ref=e686]
+          - text: vse.z-ai/glm-5.1-thinking
+        - generic [ref=e687]:
+          - checkbox "zai.glm-4.5-air" [ref=e688]
+          - text: zai.glm-4.5-air
+        - generic [ref=e689]:
+          - checkbox "zai.glm-4.7" [ref=e690]
+          - text: zai.glm-4.7
+        - generic [ref=e691]:
+          - checkbox "zai.glm-5" [ref=e692]
+          - text: zai.glm-5
+        - generic [ref=e693]:
+          - checkbox "zai.glm-5-turbo" [ref=e694]
+          - text: zai.glm-5-turbo
+        - generic [ref=e695]:
+          - checkbox "zai.glm-5.1" [ref=e696]
+          - text: zai.glm-5.1
+    - generic [ref=e697]:
+      - generic [ref=e698]: Metadata (JSON object, optional)
+      - textbox "Metadata (JSON object, optional)" [ref=e699]:
+        - /placeholder: "{\"owner\": \"team-a\"}"
+    - generic [ref=e751]:
+      - generic [ref=e752]:
+        - checkbox "Disabled" [ref=e753]
+        - text: Disabled
+      - generic [ref=e754]:
+        - checkbox "Reset spent_usd to 0" [ref=e755]
+        - text: Reset spent_usd to 0
+    - generic [ref=e700]:
+      - button "Close" [ref=e701] [cursor=pointer]
+      - button "Save" [active] [ref=e702] [cursor=pointer]

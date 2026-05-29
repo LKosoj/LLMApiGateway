@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request
 
+from ..db.rejections_db import record_rejection
+
 
 DEFAULT_USD_BUDGET_RESERVATION_ESTIMATE = 5.0
 _USD_EPSILON = 1e-9
@@ -134,22 +136,28 @@ def enforce_virtual_key_access(request: Request, requested_model: str | None) ->
     if record is None:
         return
 
+    def _reject(status_code: int, reason: str, category: str) -> None:
+        record_rejection(request, status_code=status_code, reason=reason, category=category)
+        raise HTTPException(status_code=status_code, detail=reason)
+
     if record.disabled:
-        raise HTTPException(status_code=403, detail="API key is disabled")
+        _reject(403, "API key is disabled", "key_disabled")
 
     if not record.model_allowed(requested_model):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Model '{requested_model}' is not allowed for this API key",
+        _reject(
+            403,
+            f"Model '{requested_model}' is not allowed for this API key",
+            "model_not_allowed",
         )
 
     if record.budget_exhausted():
-        raise HTTPException(
-            status_code=429,
-            detail=(
+        _reject(
+            429,
+            (
                 f"API key budget of ${record.budget_usd:.4f} exhausted "
                 f"(spent ${record.spent_usd:.4f})"
             ),
+            "budget_exhausted",
         )
 
     rate_limiter = getattr(request.app.state, "rate_limiter", None)
@@ -158,4 +166,4 @@ def enforce_virtual_key_access(request: Request, requested_model: str | None) ->
             record.id, rpm_limit=record.rpm, tpm_limit=record.tpm
         )
         if error is not None:
-            raise HTTPException(status_code=429, detail=error)
+            _reject(429, error, "rate_limited")

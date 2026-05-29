@@ -24,7 +24,7 @@ import os
 import secrets
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
@@ -39,6 +39,11 @@ API_KEY_PREFIX = "lgk_"
 API_KEY_TOKEN_NBYTES = 32
 MAX_METADATA_BYTES = 16 * 1024
 _UNSET = object()
+
+# Budget reset periods. ``none`` keeps the historical cumulative behaviour
+# (``spent_usd`` only ever grows); ``daily``/``monthly`` schedule a periodic
+# reset of ``spent_usd`` back to 0 at the next UTC boundary.
+VALID_BUDGET_PERIODS = ("none", "daily", "monthly")
 
 
 def generate_api_key() -> str:
@@ -60,6 +65,8 @@ class ApiKeyRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = ""
     last_used_at: str | None = None
+    budget_period: str = "none"
+    budget_reset_at: str | None = None
 
     def budget_enforced(self) -> bool:
         """True when ``budget_usd`` caps spending (non-negative, not NULL)."""
@@ -120,6 +127,55 @@ def _validate_budget_usd(budget_usd: float | None) -> float | None:
     return value
 
 
+def _validate_budget_period(period: str | None) -> str:
+    """Normalize and validate a budget reset period.
+
+    ``None`` / empty string map to the cumulative ``none`` period.
+    """
+    if period is None:
+        return "none"
+    normalized = str(period).strip().lower()
+    if not normalized:
+        return "none"
+    if normalized not in VALID_BUDGET_PERIODS:
+        raise ValueError(
+            "budget_period must be one of: " + ", ".join(VALID_BUDGET_PERIODS)
+        )
+    return normalized
+
+
+def compute_next_budget_reset(period: str, *, now: datetime | None = None) -> str | None:
+    """Return the next UTC reset boundary (ISO, second precision) for *period*.
+
+    ``daily`` → next midnight UTC; ``monthly`` → first day of next month at
+    00:00 UTC. Returns ``None`` for the cumulative ``none`` period. The stored
+    value is always second-precision UTC so lexicographic comparison against a
+    second-precision UTC ``now`` matches chronological order.
+    """
+    if period not in ("daily", "monthly"):
+        return None
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    if period == "daily":
+        nxt = (moment + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    else:  # monthly
+        year = moment.year + (1 if moment.month == 12 else 0)
+        month = 1 if moment.month == 12 else moment.month + 1
+        nxt = moment.replace(
+            year=year,
+            month=month,
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    return nxt.isoformat()
+
+
 def _deserialize_metadata(raw: str | None) -> dict[str, Any]:
     if not raw:
         return {}
@@ -144,6 +200,13 @@ def _row_to_record(row: sqlite3.Row | aiosqlite.Row | dict) -> ApiKeyRecord:
         metadata=_deserialize_metadata(row["metadata"]),
         created_at=row["created_at"] or "",
         last_used_at=row["last_used_at"],
+        budget_period=(
+            row["budget_period"] if "budget_period" in row.keys() else None
+        )
+        or "none",
+        budget_reset_at=(
+            row["budget_reset_at"] if "budget_reset_at" in row.keys() else None
+        ),
     )
 
 
@@ -187,10 +250,13 @@ class ApiKeysDB:
                     disabled INTEGER NOT NULL DEFAULT 0,
                     metadata TEXT,
                     created_at DATETIME NOT NULL,
-                    last_used_at DATETIME
+                    last_used_at DATETIME,
+                    budget_period TEXT NOT NULL DEFAULT 'none',
+                    budget_reset_at DATETIME
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys (api_key)")
+            self._ensure_budget_period_columns(conn)
             conn.commit()
             logger.info("API keys database initialized at %s", self.db_path)
         except Exception:
@@ -201,6 +267,17 @@ class ApiKeysDB:
         finally:
             if conn:
                 conn.close()
+
+    @staticmethod
+    def _ensure_budget_period_columns(conn: sqlite3.Connection) -> None:
+        """Idempotently add the periodic-budget columns to legacy databases."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(api_keys)")}
+        if "budget_period" not in existing:
+            conn.execute(
+                "ALTER TABLE api_keys ADD COLUMN budget_period TEXT NOT NULL DEFAULT 'none'"
+            )
+        if "budget_reset_at" not in existing:
+            conn.execute("ALTER TABLE api_keys ADD COLUMN budget_reset_at DATETIME")
 
     # ------------------------------------------------------------------
     # CRUD (sync — used from admin endpoints via asyncio.to_thread)
@@ -215,11 +292,14 @@ class ApiKeysDB:
         allowed_models: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         api_key: str | None = None,
+        budget_period: str | None = None,
     ) -> ApiKeyRecord:
         name = (name or "").strip()
         if not name:
             raise ValueError("API key name must not be empty")
         budget_value = _validate_budget_usd(budget_usd)
+        period_value = _validate_budget_period(budget_period)
+        reset_at_value = compute_next_budget_reset(period_value)
         validate_metadata_size(metadata)
 
         key_value = api_key or generate_api_key()
@@ -241,6 +321,8 @@ class ApiKeysDB:
             0,
             _serialize_metadata(metadata),
             created_at,
+            period_value,
+            reset_at_value,
         )
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
@@ -249,8 +331,8 @@ class ApiKeysDB:
                     """
                     INSERT INTO api_keys
                     (name, api_key, budget_usd, spent_usd, rpm, tpm, allowed_models,
-                     disabled, metadata, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     disabled, metadata, created_at, budget_period, budget_reset_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     params,
                 )
@@ -295,6 +377,7 @@ class ApiKeysDB:
         allowed_models: list[str] | None | object = _UNSET,
         disabled: bool | None | object = _UNSET,
         metadata: dict[str, Any] | None | object = _UNSET,
+        budget_period: str | None | object = _UNSET,
         reset_spent: bool = False,
     ) -> ApiKeyRecord | None:
         fields: list[str] = []
@@ -328,6 +411,16 @@ class ApiKeysDB:
             else:
                 validate_metadata_size(metadata)
                 params.append(_serialize_metadata(metadata))
+        if budget_period is not _UNSET:
+            # Recomputing the reset boundary on every explicit write is
+            # idempotent within the current period window (daily → same next
+            # midnight, monthly → same first-of-next-month), so an unrelated
+            # edit that re-sends the period never drifts the schedule.
+            period_value = _validate_budget_period(budget_period)
+            fields.append("budget_period = ?")
+            params.append(period_value)
+            fields.append("budget_reset_at = ?")
+            params.append(compute_next_budget_reset(period_value))
         if reset_spent:
             fields.append("spent_usd = 0.0")
 
@@ -396,6 +489,50 @@ class ApiKeysDB:
                     conn.commit()
             except Exception:
                 logger.exception("Failed to refresh last_used_at for key %s", key_id)
+
+    def reset_due_budgets(self, *, now: datetime | None = None) -> list[ApiKeyRecord]:
+        """Reset ``spent_usd`` for periodic keys whose reset boundary has passed.
+
+        Only ``daily``/``monthly`` keys with a non-NULL ``budget_reset_at`` in
+        the past are touched, so cumulative (``none``) keys keep their historical
+        behaviour. Returns the post-reset records so the caller can refresh any
+        in-memory budget ledger.
+        """
+        moment = now or datetime.now(timezone.utc)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        now_iso = moment.replace(microsecond=0).isoformat()
+
+        reset_records: list[ApiKeyRecord] = []
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=30000")
+            # Serialize the read-modify-write against concurrent record_spent()
+            # writers (which run on separate connections): an IMMEDIATE
+            # transaction takes the write lock up front, so a spend committed
+            # between the SELECT and the zeroing UPDATE can no longer be
+            # silently wiped — a competing writer waits and then accumulates
+            # from the freshly reset 0.0 (i.e. against the new period).
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT * FROM api_keys "
+                "WHERE budget_period IN ('daily', 'monthly') "
+                "AND budget_reset_at IS NOT NULL "
+                "AND budget_reset_at <= ?",
+                (now_iso,),
+            ).fetchall()
+            for row in rows:
+                next_reset = compute_next_budget_reset(row["budget_period"], now=moment)
+                conn.execute(
+                    "UPDATE api_keys SET spent_usd = 0.0, budget_reset_at = ? WHERE id = ?",
+                    (next_reset, row["id"]),
+                )
+                record = _row_to_record(row)
+                record.spent_usd = 0.0
+                record.budget_reset_at = next_reset
+                reset_records.append(record)
+            conn.commit()
+        return reset_records
 
     # ------------------------------------------------------------------
     # Async read helpers (for endpoints that already run in an event loop)
