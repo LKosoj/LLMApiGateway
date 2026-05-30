@@ -31,7 +31,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": true,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/light_model",
@@ -74,7 +75,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": true,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/qwen",
@@ -107,7 +109,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/qwen3.5",
@@ -155,7 +158,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/big_context",
@@ -184,7 +188,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/high",
@@ -194,6 +199,17 @@
         "model": "qwen3.7-max",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "freemodel",
+        "model": "gpt-5.5",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {
+          "settings": {
+            "thinkingLevel": "high"
+          }
+        },
         "custom_headers": {}
       },
       {
@@ -235,7 +251,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": false,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/fast",
@@ -278,7 +295,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/text",
@@ -331,7 +349,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/ocr",
@@ -353,7 +372,8 @@
     ],
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/free",
@@ -401,7 +421,8 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/free_gd",
@@ -439,6 +460,7 @@
     },
     "rotate_models": false,
     "dynamic_penalty": false,
-    "strip_think_tags": true
+    "strip_think_tags": true,
+    "compress_tool_results": false
   }
 ]

@@ -688,6 +688,397 @@ class ChatFallbackTests(unittest.TestCase):
         self.assertEqual("".join(streamed_content), "Visible answer")
         self.assertIn("data: [DONE]", response_text)
 
+    def _anthropic_provider_config_loader(self, *, strip_think_tags: bool) -> Mock:
+        fake_config_loader = Mock()
+        fake_config_loader.providers_config = {
+            "anthropic-provider": SimpleNamespace(
+                baseUrl="https://anthropic.example",
+                apikey="DIRECT-KEY",
+                type="anthropic",
+            )
+        }
+        fake_config_loader.fallback_rules = {
+            "gateway-model": {
+                "fallback_models": [
+                    {
+                        "provider": "anthropic-provider",
+                        "model": "provider-model",
+                        "use_provider_order_as_fallback": False,
+                    }
+                ],
+                "rotate_models": False,
+                "strip_think_tags": strip_think_tags,
+            }
+        }
+        fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
+        fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        return fake_config_loader
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_anthropic_raw_response_preserves_think_tags_when_flag_disabled(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = self._anthropic_provider_config_loader(
+            strip_think_tags=False
+        )
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+        make_llm_request_mock.return_value = (
+            {
+                "id": "msg_raw",
+                "type": "message",
+                "role": "assistant",
+                "model": "provider-model",
+                "content": [
+                    {"type": "text", "text": "<think>hidden reasoning</think>Visible answer"}
+                ],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 5, "output_tokens": 7},
+            },
+            None,
+        )
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/messages",
+                    json={
+                        "model": "gateway-model",
+                        "max_tokens": 100,
+                        "messages": [{"role": "user", "content": "hello"}],
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["content"][0]["text"],
+            "<think>hidden reasoning</think>Visible answer",
+        )
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_anthropic_raw_response_strips_think_tags_when_flag_enabled(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = self._anthropic_provider_config_loader(
+            strip_think_tags=True
+        )
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+        make_llm_request_mock.return_value = (
+            {
+                "id": "msg_raw",
+                "type": "message",
+                "role": "assistant",
+                "model": "provider-model",
+                "content": [
+                    {"type": "text", "text": "<think>hidden reasoning</think>Visible answer"}
+                ],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 5, "output_tokens": 7},
+            },
+            None,
+        )
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/messages",
+                    json={
+                        "model": "gateway-model",
+                        "max_tokens": 100,
+                        "messages": [{"role": "user", "content": "hello"}],
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["content"][0]["text"], "Visible answer")
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_anthropic_raw_streaming_strips_think_tags_when_flag_enabled(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = self._anthropic_provider_config_loader(
+            strip_think_tags=True
+        )
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        async def stream_body():
+            yield (
+                b'event: message_start\n'
+                b'data: {"type":"message_start","message":{"id":"msg_s","type":"message",'
+                b'"role":"assistant","model":"provider-model","content":[],'
+                b'"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}\n\n'
+            )
+            yield (
+                b'event: content_block_start\n'
+                b'data: {"type":"content_block_start","index":0,'
+                b'"content_block":{"type":"text","text":""}}\n\n'
+            )
+            # <think> tag deliberately split across two text deltas.
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":0,'
+                b'"delta":{"type":"text_delta","text":"<thi"}}\n\n'
+            )
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":0,'
+                b'"delta":{"type":"text_delta","text":"nk>hidden reasoning</think>Visible"}}\n\n'
+            )
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":0,'
+                b'"delta":{"type":"text_delta","text":" answer"}}\n\n'
+            )
+            yield (
+                b'event: content_block_stop\n'
+                b'data: {"type":"content_block_stop","index":0}\n\n'
+            )
+            yield (
+                b'event: message_delta\n'
+                b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+                b'"usage":{"output_tokens":7}}\n\n'
+            )
+            yield b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        make_llm_request_mock.return_value = (
+            StreamingResponse(stream_body(), media_type="text/event-stream"),
+            None,
+        )
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with client.stream(
+                    "POST",
+                    "/v1/messages",
+                    json={
+                        "model": "gateway-model",
+                        "max_tokens": 100,
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                ) as response:
+                    response_text = response.read().decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        streamed_text = []
+        for line in response_text.splitlines():
+            if not line.startswith("data: {"):
+                continue
+            payload = json.loads(line[len("data: "):])
+            if payload.get("type") != "content_block_delta":
+                continue
+            delta = payload.get("delta", {})
+            if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+                streamed_text.append(delta["text"])
+
+        self.assertNotIn("<think>", response_text)
+        self.assertNotIn("hidden reasoning", response_text)
+        self.assertEqual("".join(streamed_text), "Visible answer")
+        # The native Anthropic lifecycle must remain intact.
+        self.assertIn("event: content_block_stop", response_text)
+        self.assertIn("event: message_stop", response_text)
+
+    @staticmethod
+    def _collect_anthropic_text_deltas(response_text: str) -> dict[int, str]:
+        per_index: dict[int, list[str]] = {}
+        for line in response_text.splitlines():
+            if not line.startswith("data: {"):
+                continue
+            payload = json.loads(line[len("data: "):])
+            if payload.get("type") != "content_block_delta":
+                continue
+            delta = payload.get("delta", {})
+            if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+                per_index.setdefault(payload.get("index", 0), []).append(delta["text"])
+        return {index: "".join(parts) for index, parts in per_index.items()}
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_anthropic_raw_streaming_drops_unclosed_think_block(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = self._anthropic_provider_config_loader(
+            strip_think_tags=True
+        )
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        async def stream_body():
+            yield (
+                b'event: content_block_start\n'
+                b'data: {"type":"content_block_start","index":0,'
+                b'"content_block":{"type":"text","text":""}}\n\n'
+            )
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":0,'
+                b'"delta":{"type":"text_delta","text":"visible "}}\n\n'
+            )
+            # A <think> that never receives its closing tag before the block ends.
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":0,'
+                b'"delta":{"type":"text_delta","text":"<think>secret reasoning"}}\n\n'
+            )
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":0,'
+                b'"delta":{"type":"text_delta","text":" still secret"}}\n\n'
+            )
+            yield (
+                b'event: content_block_stop\n'
+                b'data: {"type":"content_block_stop","index":0}\n\n'
+            )
+            yield b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        make_llm_request_mock.return_value = (
+            StreamingResponse(stream_body(), media_type="text/event-stream"),
+            None,
+        )
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with client.stream(
+                    "POST",
+                    "/v1/messages",
+                    json={
+                        "model": "gateway-model",
+                        "max_tokens": 100,
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                ) as response:
+                    response_text = response.read().decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        per_index = self._collect_anthropic_text_deltas(response_text)
+        self.assertEqual(per_index.get(0), "visible ")
+        self.assertNotIn("secret", response_text)
+        self.assertNotIn("<think>", response_text)
+        self.assertIn("event: content_block_stop", response_text)
+        self.assertIn("event: message_stop", response_text)
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_anthropic_raw_streaming_strips_think_per_block_index(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = self._anthropic_provider_config_loader(
+            strip_think_tags=True
+        )
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        async def stream_body():
+            # Two independent text blocks (index 0 and index 1), each with its own
+            # think block — proves per-content-block-index state isolation.
+            yield (
+                b'event: content_block_start\n'
+                b'data: {"type":"content_block_start","index":0,'
+                b'"content_block":{"type":"text","text":""}}\n\n'
+            )
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":0,'
+                b'"delta":{"type":"text_delta","text":"<think>secret0</think>Alpha"}}\n\n'
+            )
+            yield (
+                b'event: content_block_stop\n'
+                b'data: {"type":"content_block_stop","index":0}\n\n'
+            )
+            yield (
+                b'event: content_block_start\n'
+                b'data: {"type":"content_block_start","index":1,'
+                b'"content_block":{"type":"text","text":""}}\n\n'
+            )
+            yield (
+                b'event: content_block_delta\n'
+                b'data: {"type":"content_block_delta","index":1,'
+                b'"delta":{"type":"text_delta","text":"Beta<think>secret1</think>"}}\n\n'
+            )
+            yield (
+                b'event: content_block_stop\n'
+                b'data: {"type":"content_block_stop","index":1}\n\n'
+            )
+            yield b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        make_llm_request_mock.return_value = (
+            StreamingResponse(stream_body(), media_type="text/event-stream"),
+            None,
+        )
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with client.stream(
+                    "POST",
+                    "/v1/messages",
+                    json={
+                        "model": "gateway-model",
+                        "max_tokens": 100,
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                ) as response:
+                    response_text = response.read().decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        per_index = self._collect_anthropic_text_deltas(response_text)
+        self.assertEqual(per_index.get(0), "Alpha")
+        self.assertEqual(per_index.get(1), "Beta")
+        self.assertNotIn("secret0", response_text)
+        self.assertNotIn("secret1", response_text)
+        self.assertNotIn("<think>", response_text)
+
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
     @patch("main.httpx.AsyncClient")

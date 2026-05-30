@@ -638,6 +638,143 @@ def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_mo
     )
 
 
+def _sanitize_anthropic_response_content_think_tags(response_data: dict, requested_model: str) -> None:
+    """Strip literal ``<think>...</think>`` blocks from a native Anthropic reply.
+
+    Native Anthropic responses carry text in ``content`` blocks (``{"type": "text",
+    "text": ...}``), not in the OpenAI ``choices[].message.content`` shape, so the
+    OpenAI sanitizer above does not reach them.
+    """
+    content = response_data.get("content")
+    if not isinstance(content, list):
+        return
+
+    stripped_any = False
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if not isinstance(text, str):
+            continue
+        sanitized_text = _strip_think_blocks(text)
+        if sanitized_text != text:
+            block["text"] = sanitized_text
+            stripped_any = True
+
+    if stripped_any:
+        logging.info(
+            "Stripped <think> tags from non-stream Anthropic response content for model '%s'.",
+            requested_model,
+        )
+
+
+def _extract_sse_data_payload(event: str) -> str | None:
+    data_lines = [
+        line[len("data:"):].lstrip()
+        for line in event.split("\n")
+        if line.startswith("data:")
+    ]
+    if not data_lines:
+        return None
+    return "\n".join(data_lines)
+
+
+def _sanitize_anthropic_stream_think_tags(response: StreamingResponse, requested_model: str) -> StreamingResponse:
+    """Strip ``<think>`` blocks from a native Anthropic SSE stream.
+
+    Text arrives via ``content_block_delta`` events (``delta.type == "text_delta"``).
+    State is kept per content-block index so tags split across deltas are handled,
+    and any buffered partial is flushed right before that block's
+    ``content_block_stop``. All other events pass through verbatim.
+    """
+    async def sanitized_stream_generator():
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        buffer = ""
+        block_states: dict[int, dict] = {}
+
+        def get_state(block_index: int) -> dict:
+            state = block_states.get(block_index)
+            if state is None:
+                state = _new_stream_think_state()
+                block_states[block_index] = state
+            return state
+
+        async for chunk in response.body_iterator:
+            text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
+            buffer += text_chunk
+            events = buffer.split("\n\n")
+            buffer = events.pop() if not buffer.endswith("\n\n") else ""
+
+            for event in events:
+                if not event.strip():
+                    continue
+
+                data_payload = _extract_sse_data_payload(event)
+                if data_payload is None:
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                try:
+                    payload = json.loads(data_payload)
+                except Exception:
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                if not isinstance(payload, dict):
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                event_type = payload.get("type")
+
+                if event_type == "content_block_delta":
+                    delta = payload.get("delta")
+                    if (
+                        isinstance(delta, dict)
+                        and delta.get("type") == "text_delta"
+                        and isinstance(delta.get("text"), str)
+                    ):
+                        block_index = payload.get("index", 0)
+                        state = get_state(block_index)
+                        sanitized_text = _strip_stream_think_blocks(delta["text"], state)
+                        if not sanitized_text:
+                            continue
+                        delta["text"] = sanitized_text
+                        yield _format_anthropic_sse_event("content_block_delta", payload)
+                        continue
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                if event_type == "content_block_stop":
+                    block_index = payload.get("index", 0)
+                    state = block_states.get(block_index)
+                    if state is not None:
+                        pending_text = _flush_stream_think_buffer(state)
+                        if pending_text:
+                            yield _format_anthropic_sse_event(
+                                "content_block_delta",
+                                {
+                                    "type": "content_block_delta",
+                                    "index": block_index,
+                                    "delta": {"type": "text_delta", "text": pending_text},
+                                },
+                            )
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                yield f"{event}\n\n".encode("utf-8")
+
+        if buffer.strip():
+            yield buffer.encode("utf-8")
+
+    logging.info("Enabled streaming <think> tag stripping for Anthropic model '%s'.", requested_model)
+    return StreamingResponse(
+        sanitized_stream_generator(),
+        status_code=response.status_code,
+        media_type=response.media_type,
+        headers=dict(response.headers),
+    )
+
+
 def _sanitize_openai_json_object_stream(response: StreamingResponse, requested_model: str) -> StreamingResponse:
     async def sanitized_stream_generator():
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -785,7 +922,19 @@ def _finalize_chat_success_response(
     request_body_json: dict,
     *,
     strip_think_tags: bool = False,
+    is_anthropic_raw: bool = False,
 ) -> object:
+    # Native Anthropic replies bypass the OpenAI round-trip and therefore the
+    # OpenAI-shaped sanitizers below. Handle the flag in their own shape; the
+    # JSON-object sanitization stays OpenAI-only and is intentionally untouched.
+    if is_anthropic_raw:
+        if strip_think_tags:
+            if isinstance(response_data, dict):
+                _sanitize_anthropic_response_content_think_tags(response_data, requested_model)
+            elif isinstance(response_data, StreamingResponse):
+                return _sanitize_anthropic_stream_think_tags(response_data, requested_model)
+        return response_data
+
     expects_json_object_response = _expects_json_object_response(request_body_json)
 
     if isinstance(response_data, dict):
@@ -3513,6 +3662,9 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
                 requested_model,
                 request_body_json,
                 strip_think_tags=strip_think_tags,
+                is_anthropic_raw=bool(
+                    getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
+                ),
             )
 
         last_error_detail = error_detail or last_error_detail
@@ -3547,6 +3699,9 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
                     requested_model,
                     request_body_json,
                     strip_think_tags=strip_think_tags,
+                    is_anthropic_raw=bool(
+                        getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
+                    ),
                 )
 
             if context_error_detail:

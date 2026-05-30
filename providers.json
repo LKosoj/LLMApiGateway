@@ -90,5 +90,18 @@
       "baseUrl": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
       "apikey": "${APIKEY_ALIBABA}"
     }
+  },
+  {
+    "freemodel": {
+      "baseUrl": "https://api.freemodel.dev/v1",
+      "apikey": "${APIKEY_FREEMODEL}"
+    }
+  },
+  {
+    "freemodel_ant": {
+      "baseUrl": "https://cc.freemodel.dev",
+      "apikey": "${APIKEY_FREEMODEL}",
+      "type": "anthropic"
+    }
   }
 ]
