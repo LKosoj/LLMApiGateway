@@ -28,6 +28,75 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
+def _utc_isoformat(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat()
+
+
+def _period_date_format(period: str) -> str:
+    if period == "hour":
+        return "%Y-%m-%d %H:00:00"
+    if period == "day":
+        return "%Y-%m-%d"
+    if period == "week":
+        return "%Y-W%W"
+    if period == "month":
+        return "%Y-%m"
+    raise ValueError(f"Invalid period: {period}. Must be 'hour', 'day', 'week', or 'month'.")
+
+
+def _validate_iso_datetime(value: str, name: str) -> None:
+    try:
+        datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a valid ISO 8601 datetime string") from exc
+
+
+def _build_rejections_where(
+    *,
+    api_key_id: int | None = None,
+    api_key_unattributed: bool = False,
+    category: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    status_code: int | None = None,
+    path: str | None = None,
+    method: str | None = None,
+) -> tuple[str, list]:
+    where_parts: list[str] = []
+    params: list = []
+    if api_key_unattributed:
+        where_parts.append("api_key_id IS NULL")
+    elif api_key_id is not None:
+        where_parts.append("api_key_id = ?")
+        params.append(api_key_id)
+    if category is not None:
+        where_parts.append("category = ?")
+        params.append(category)
+    if since is not None:
+        _validate_iso_datetime(since, "since")
+        where_parts.append("timestamp >= ?")
+        params.append(since)
+    if until is not None:
+        _validate_iso_datetime(until, "until")
+        where_parts.append("timestamp <= ?")
+        params.append(until)
+    if status_code is not None:
+        where_parts.append("status_code = ?")
+        params.append(status_code)
+    if path:
+        where_parts.append("path = ?")
+        params.append(path)
+    if method:
+        where_parts.append("method = ?")
+        params.append(method.upper())
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    return where_clause, params
+
+
 class RejectionsDB:
     def __init__(
         self,
@@ -88,6 +157,16 @@ class RejectionsDB:
             cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_rejection_events_category
             ON rejection_events (category)
+            """)
+
+            cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rejection_events_api_key_timestamp
+            ON rejection_events (api_key_id, timestamp DESC)
+            """)
+
+            cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rejection_events_api_key_category_timestamp
+            ON rejection_events (api_key_id, category, timestamp DESC)
             """)
 
             conn.commit()
@@ -160,8 +239,13 @@ class RejectionsDB:
         self,
         *,
         api_key_id: int | None = None,
+        api_key_unattributed: bool = False,
         category: str | None = None,
         since: str | None = None,
+        until: str | None = None,
+        status_code: int | None = None,
+        path: str | None = None,
+        method: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict], int]:
@@ -169,31 +253,16 @@ class RejectionsDB:
             raise ValueError("limit must be between 0 and 200")
         if offset < 0:
             raise ValueError("offset must be a non-negative integer")
-        if since is not None:
-            # Reject unparseable values explicitly: ``timestamp >= ?`` is a
-            # lexicographic string comparison in SQLite, so a malformed ``since``
-            # would silently return a wrong slice instead of an error.
-            try:
-                datetime.fromisoformat(since)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "since must be a valid ISO 8601 datetime string"
-                ) from exc
-
-        where_parts: list[str] = []
-        params: list = []
-
-        if api_key_id is not None:
-            where_parts.append("api_key_id = ?")
-            params.append(api_key_id)
-        if category is not None:
-            where_parts.append("category = ?")
-            params.append(category)
-        if since is not None:
-            where_parts.append("timestamp >= ?")
-            params.append(since)
-
-        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        where_clause, params = _build_rejections_where(
+            api_key_id=api_key_id,
+            api_key_unattributed=api_key_unattributed,
+            category=category,
+            since=since,
+            until=until,
+            status_code=status_code,
+            path=path,
+            method=method,
+        )
 
         try:
             async with aiosqlite.connect(self.db_path) as db:
@@ -224,6 +293,119 @@ class RejectionsDB:
         except Exception as e:
             logger.error("Error retrieving rejection events: %s", e)
             return [], 0
+
+    async def get_dashboard_rejections(
+        self,
+        period: str,
+        start_date: datetime,
+        end_date: datetime,
+        *,
+        api_key_id: int | None = None,
+        api_key_unattributed: bool = False,
+        category: str | None = None,
+        status_code: int | None = None,
+        path: str | None = None,
+        method: str | None = None,
+    ) -> dict:
+        date_format = _period_date_format(period)
+        where_clause, params = _build_rejections_where(
+            api_key_id=api_key_id,
+            api_key_unattributed=api_key_unattributed,
+            category=category,
+            since=_utc_isoformat(start_date),
+            until=_utc_isoformat(end_date),
+            status_code=status_code,
+            path=path,
+            method=method,
+        )
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                for pragma in RUNTIME_PRAGMAS:
+                    await db.execute(pragma)
+                db.row_factory = aiosqlite.Row
+
+                cursor = await db.execute(
+                    f"""
+                    SELECT COUNT(*) as rejections
+                    FROM rejection_events
+                    {where_clause}
+                    """,
+                    params,
+                )
+                row = await cursor.fetchone()
+                summary = {"rejections": int(row["rejections"] or 0) if row else 0}
+
+                cursor = await db.execute(
+                    f"""
+                    SELECT
+                        strftime('{date_format}', timestamp) as time_period,
+                        COUNT(*) as rejections
+                    FROM rejection_events
+                    {where_clause}
+                    GROUP BY time_period
+                    ORDER BY time_period ASC
+                    """,
+                    params,
+                )
+                series = [dict(row) for row in await cursor.fetchall()]
+
+                cursor = await db.execute(
+                    f"""
+                    SELECT category as label, COUNT(*) as rejections
+                    FROM rejection_events
+                    {where_clause}
+                    GROUP BY category
+                    ORDER BY rejections DESC, label ASC
+                    LIMIT 20
+                    """,
+                    params,
+                )
+                categories = [dict(row) for row in await cursor.fetchall()]
+
+                cursor = await db.execute(
+                    f"""
+                    SELECT CAST(status_code AS TEXT) as label, status_code, COUNT(*) as rejections
+                    FROM rejection_events
+                    {where_clause}
+                    GROUP BY status_code
+                    ORDER BY rejections DESC, status_code ASC
+                    LIMIT 20
+                    """,
+                    params,
+                )
+                status_codes = [dict(row) for row in await cursor.fetchall()]
+
+                cursor = await db.execute(
+                    f"""
+                    SELECT id, timestamp, request_id, api_key_id, path, method,
+                           status_code, category, reason, auth_source
+                    FROM rejection_events
+                    {where_clause}
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                    """,
+                    params,
+                )
+                recent = [dict(row) for row in await cursor.fetchall()]
+
+                return {
+                    "summary": summary,
+                    "series": series,
+                    "categories": categories,
+                    "status_codes": status_codes,
+                    "recent": recent,
+                }
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error("Error retrieving analytics rejection dashboard data: %s", e)
+            return {
+                "summary": {"rejections": 0},
+                "series": [],
+                "categories": [],
+                "status_codes": [],
+                "recent": [],
+            }
 
     # ------------------------------------------------------------------
     # Cleanup

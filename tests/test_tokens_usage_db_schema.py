@@ -336,6 +336,64 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
         finally:
             db_path.unlink(missing_ok=True)
 
+    def test_dashboard_usage_keeps_incomplete_rows_and_filters_by_key(self):
+        db_path = Path("db/test_dashboard_usage.sqlite")
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            db = TokensUsageDB(db_filename=db_path.name)
+            db.insert_usage(
+                {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                    "cost": 0.03,
+                    "cost_saved": 0.01,
+                    "gateway_model": "gateway-fast",
+                    "operation": "chat",
+                    "provider": "openrouter",
+                    "model": "qwen",
+                    "api_key_id": 5,
+                    "is_estimated": True,
+                    "duration_ms": 120,
+                }
+            )
+            db.insert_usage(
+                {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 2,
+                    "total_tokens": 3,
+                    "cost": 0.0,
+                    "operation": "chat",
+                }
+            )
+            start = datetime.now(timezone.utc).replace(year=2000)
+            end = datetime.now(timezone.utc).replace(year=2100)
+
+            all_data = run_async(db.get_dashboard_usage("day", start, end))
+            key_data = run_async(
+                db.get_dashboard_usage(
+                    "day",
+                    start,
+                    end,
+                    api_key_id=5,
+                    operation="chat",
+                    provider="openrouter",
+                    model="qwen",
+                )
+            )
+
+            self.assertEqual(all_data["summary"]["requests"], 2)
+            self.assertEqual(key_data["summary"]["requests"], 1)
+            self.assertEqual(key_data["summary"]["estimated_count"], 1)
+            gateway_labels = {row["label"] for row in all_data["breakdowns"]["gateway_models"]}
+            api_key_labels = {row["label"] for row in all_data["breakdowns"]["api_keys"]}
+            self.assertIn("unknown", gateway_labels)
+            self.assertIn("unattributed", api_key_labels)
+            self.assertIn("5", api_key_labels)
+        finally:
+            db_path.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()

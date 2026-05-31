@@ -17,6 +17,7 @@ class _FakeTokensUsageDB:
         self.calls: list[tuple[int, int, object]] = []
         self.count_calls: list[object] = []
         self.aggregated_calls: list[tuple[str, object, object, object]] = []
+        self.dashboard_calls: list[dict] = []
         self.records = [
             {"id": 1, "model": "m1", "operation": "chat"},
             {"id": 2, "model": "m2", "operation": "embeddings"},
@@ -47,6 +48,53 @@ class _FakeTokensUsageDB:
         self.aggregated_calls.append((period, start_date, end_date, api_key_id))
         return self.aggregated
 
+    async def get_dashboard_usage(self, period: str, start_date, end_date, **kwargs):
+        self.dashboard_calls.append(
+            {"period": period, "start_date": start_date, "end_date": end_date, **kwargs}
+        )
+        return {
+            "summary": {
+                "requests": 2,
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+                "total_tokens": 30,
+                "reasoning_tokens": 3,
+                "cached_tokens": 4,
+                "cost": 0.06,
+                "cost_saved": 0.01,
+                "estimated_count": 1,
+                "avg_duration_ms": 150,
+                "max_duration_ms": 250,
+            },
+            "series": [{"time_period": "2026-05-31", "requests": 2, "total_tokens": 30, "cost": 0.06}],
+            "breakdowns": {
+                "operations": [{"label": "chat", "requests": 2, "total_tokens": 30, "cost": 0.06}],
+                "gateway_models": [{"label": "gateway-model", "requests": 2, "total_tokens": 30, "cost": 0.06}],
+                "providers": [{"label": "openrouter", "requests": 2, "total_tokens": 30, "cost": 0.06}],
+                "resolved_targets": [{"label": "openrouter / qwen", "provider": "openrouter", "model": "qwen", "requests": 2}],
+                "api_keys": [{"label": str(kwargs.get("api_key_id") or "unattributed"), "requests": 2}],
+                "upstream_keys": [{"label": "fp-1", "requests": 2}],
+            },
+            "recent_records": [
+                {
+                    "id": 42,
+                    "timestamp": "2026-05-31T00:00:00+00:00",
+                    "model": "qwen",
+                    "upstream_key_fingerprint": "fp-1",
+                }
+            ],
+        }
+
+    async def get_dashboard_filter_options(self, start_date, end_date, **kwargs):
+        return {
+            "operations": ["chat"],
+            "gateway_models": ["gateway-model"],
+            "providers": ["openrouter"],
+            "models": ["qwen"],
+            "upstream_keys": ["fp-1"],
+            "usage_sources": ["provider"],
+        }
+
     def cleanup_old_records(self, retention_days: int = 180):
         return None
 
@@ -54,6 +102,7 @@ class _FakeTokensUsageDB:
 class _FakeFallbackEventsDB:
     def __init__(self):
         self.upstream_calls: list[tuple[str, object, object, object]] = []
+        self.dashboard_calls: list[dict] = []
         self.upstream_rows = [
             {
                 "time_period": "2026-05-20",
@@ -75,6 +124,24 @@ class _FakeFallbackEventsDB:
         self.upstream_calls.append((period, start_date, end_date, api_key_id))
         return self.upstream_rows
 
+    async def get_dashboard_fallback(self, period: str, start_date, end_date, **kwargs):
+        self.dashboard_calls.append(
+            {"period": period, "start_date": start_date, "end_date": end_date, **kwargs}
+        )
+        return {
+            "summary": {
+                "attempts": 3,
+                "successes": 2,
+                "errors": 1,
+                "success_rate": 66.67,
+                "avg_duration_ms": 120,
+                "max_duration_ms": 300,
+            },
+            "series": [{"time_period": "2026-05-31", "attempts": 3, "successes": 2, "errors": 1}],
+            "error_types": [{"label": "http_429", "errors": 1}],
+            "upstream": [{"label": "openrouter / qwen", "provider": "openrouter", "model": "qwen", "upstream_key_fingerprint": "fp-1", "attempts": 3}],
+        }
+
     def cleanup_old_records(self, retention_days: int = 180):
         return None
 
@@ -85,7 +152,39 @@ class _FakeApiKeysDB:
 
     def get_by_id(self, key_id: int):
         if key_id == self.valid_key_id:
-            return SimpleNamespace(id=key_id, disabled=False)
+            return SimpleNamespace(
+                id=key_id,
+                name=f"key-{key_id}",
+                disabled=False,
+                budget_usd=None,
+                spent_usd=0.0,
+                budget_period="none",
+                last_used_at=None,
+            )
+        return None
+
+    def list_all(self):
+        record = self.get_by_id(self.valid_key_id)
+        return [record] if record is not None else []
+
+
+class _FakeRejectionsDB:
+    def __init__(self):
+        self.dashboard_calls: list[dict] = []
+
+    async def get_dashboard_rejections(self, period: str, start_date, end_date, **kwargs):
+        self.dashboard_calls.append(
+            {"period": period, "start_date": start_date, "end_date": end_date, **kwargs}
+        )
+        return {
+            "summary": {"rejections": 1},
+            "series": [{"time_period": "2026-05-31", "rejections": 1}],
+            "categories": [{"label": "rate_limited", "rejections": 1}],
+            "status_codes": [{"label": "429", "status_code": 429, "rejections": 1}],
+            "recent": [],
+        }
+
+    def cleanup_old_records(self, retention_days: int = 180):
         return None
 
 
@@ -101,6 +200,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         fake_tokens_usage_db: _FakeTokensUsageDB,
         fake_api_keys_db: _FakeApiKeysDB | None = None,
         fake_fallback_events_db: _FakeFallbackEventsDB | None = None,
+        fake_rejections_db: _FakeRejectionsDB | None = None,
     ):
         fake_http_client = Mock()
         fake_http_client.aclose = AsyncMock()
@@ -114,6 +214,7 @@ class StatsApiPaginationTests(unittest.TestCase):
             stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
             stack.enter_context(patch("main.TokensUsageDB", return_value=fake_tokens_usage_db))
             stack.enter_context(patch("main.FallbackEventsDB", return_value=fallback_events_db))
+            stack.enter_context(patch("main.RejectionsDB", return_value=fake_rejections_db or _FakeRejectionsDB()))
             if fake_api_keys_db is not None:
                 stack.enter_context(patch("main.ApiKeysDB", return_value=fake_api_keys_db))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
@@ -396,6 +497,114 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(rows[0]["provider"], "openrouter")
         self.assertEqual(rows[0]["upstream_key_fingerprint"], "abc123")
         self.assertEqual(rows[0]["health_status"], "healthy")
+
+    def test_master_usage_dashboard_applies_filters_without_raw_keys(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+        fake_fallback_events_db = _FakeFallbackEventsDB()
+        fake_rejections_db = _FakeRejectionsDB()
+
+        with self._client(
+            fake_tokens_usage_db,
+            _FakeApiKeysDB(valid_key_id=7),
+            fake_fallback_events_db=fake_fallback_events_db,
+            fake_rejections_db=fake_rejections_db,
+        ) as client:
+            active_requests = ActiveRequestsRegistry()
+            active_requests.start(
+                request_id="req-running",
+                path="/v1/chat/completions",
+                api_key_id=7,
+                gateway_model="gateway-model",
+                operation="chat",
+            )
+            active_requests.update("req-running", provider="openrouter", model="qwen")
+            client.app.state.active_requests_registry = active_requests
+            response = client.get(
+                "/v1/api/analytics-dashboard"
+                "?range=7d&bucket=day&api_key_id=7&operation=chat"
+                "&gateway_model=gateway-model&provider=openrouter&model=qwen"
+                "&upstream_key_fingerprint=fp-1&usage_source=provider&estimated=true",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["scope"]["role"], "master")
+        self.assertTrue(payload["scope"]["can_filter_keys"])
+        self.assertEqual(payload["filters"]["api_key_id"], 7)
+        self.assertEqual(payload["filters"]["operation"], "chat")
+        self.assertEqual(payload["totals"]["requests"], 2)
+        self.assertEqual(payload["totals"]["active_requests"], 0)
+        self.assertEqual(payload["totals"]["fallback_attempts"], 3)
+        self.assertEqual(payload["totals"]["rejections"], 0)
+        self.assertEqual(len(payload["warnings"]), 1)
+        self.assertEqual(payload["breakdowns"]["api_keys"][0]["api_key_name"], "key-7")
+        self.assertEqual(payload["filter_options"]["api_keys"][0]["name"], "key-7")
+        self.assertNotIn("api_key", payload["filter_options"]["api_keys"][0])
+        self.assertNotIn("raw_api_key", str(payload))
+
+        usage_call = fake_tokens_usage_db.dashboard_calls[0]
+        self.assertEqual(usage_call["period"], "day")
+        self.assertEqual(usage_call["api_key_id"], 7)
+        self.assertEqual(usage_call["operation"], "chat")
+        self.assertEqual(usage_call["upstream_key_fingerprint"], "fp-1")
+        self.assertEqual(usage_call["usage_source"], "provider")
+        self.assertTrue(usage_call["is_estimated"])
+        self.assertEqual(fake_fallback_events_db.dashboard_calls[0]["api_key_id"], 7)
+        self.assertEqual(fake_rejections_db.dashboard_calls, [])
+
+    def test_virtual_key_usage_dashboard_forces_own_scope(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+        fake_fallback_events_db = _FakeFallbackEventsDB()
+
+        with self._client(
+            fake_tokens_usage_db,
+            _FakeApiKeysDB(valid_key_id=11),
+            fake_fallback_events_db=fake_fallback_events_db,
+        ) as client:
+            client.cookies.set(
+                SESSION_COOKIE_NAME,
+                create_authenticated_session(role=ROLE_USER, key_id=11),
+            )
+            response = client.get("/v1/api/analytics-dashboard?api_key_id=999&range=24h")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["scope"]["role"], "user")
+        self.assertEqual(payload["scope"]["api_key_id"], 11)
+        self.assertFalse(payload["scope"]["can_filter_keys"])
+        self.assertEqual(payload["filters"]["bucket"], "hour")
+        self.assertEqual(payload["breakdowns"]["api_keys"], [])
+        self.assertEqual(payload["breakdowns"]["upstream_keys"], [])
+        self.assertEqual(payload["filter_options"]["api_keys"], [])
+        self.assertEqual(payload["filter_options"]["upstream_keys"], [])
+        self.assertEqual(payload["reliability"]["fallback"]["error_types"], [])
+        self.assertEqual(payload["reliability"]["fallback"]["upstream"], [])
+        self.assertNotIn("upstream_key_fingerprint", payload["recent_records"][0])
+        self.assertEqual(fake_tokens_usage_db.dashboard_calls[0]["api_key_id"], 11)
+        self.assertEqual(fake_fallback_events_db.dashboard_calls[0]["api_key_id"], 11)
+
+    def test_usage_dashboard_rejects_invalid_scope_and_filters(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+
+        with self._client(fake_tokens_usage_db, _FakeApiKeysDB(valid_key_id=7)) as client:
+            invalid_scope = client.get(
+                "/v1/api/analytics-dashboard?api_key_scope=unknown",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            mixed_scope = client.get(
+                "/v1/api/analytics-dashboard?api_key_scope=unattributed&api_key_id=7",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            invalid_bucket = client.get(
+                "/v1/api/analytics-dashboard?bucket=minute",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(invalid_scope.status_code, 400)
+        self.assertEqual(mixed_scope.status_code, 400)
+        self.assertEqual(invalid_bucket.status_code, 400)
+        self.assertEqual(fake_tokens_usage_db.dashboard_calls, [])
 
 
 if __name__ == "__main__":

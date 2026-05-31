@@ -136,3 +136,75 @@ def test_usage_stats_topology_uses_local_vendor_bundle():
     assert "esm.sh" not in js
     assert "import('react')" not in js
     assert "import('@xyflow/react')" not in js
+
+
+def test_usage_stats_html_contains_analytics_dashboard_tab():
+    html = Path("static/usage-stats.html").read_text(encoding="utf-8")
+
+    assert "/static/usage-analytics.css" in html
+    assert "/static/usage-analytics.js" in html
+    assert 'data-tab="analytics"' in html
+    assert 'id="analyticsTabContent"' in html
+    assert 'id="analyticsRange"' in html
+    assert 'id="analyticsBucket"' in html
+    assert 'id="analyticsKeyScope"' in html
+    assert 'id="analyticsApiKeyId"' in html
+    assert 'id="analyticsUpstreamKey"' in html
+    assert 'id="analyticsOperation"' in html
+    assert 'id="analyticsGateway"' in html
+    assert 'id="analyticsProvider"' in html
+    assert 'id="analyticsModel"' in html
+    assert 'id="analyticsEstimated"' in html
+    assert 'id="analyticsKpis"' in html
+    assert 'id="analyticsLineChart"' in html
+    assert 'id="analyticsBarChart"' in html
+    assert 'id="analyticsBreakdownTable"' in html
+    assert 'id="analyticsReliabilityTable"' in html
+    assert 'id="analyticsKeyTable"' in html
+    assert 'id="analyticsRecentTable"' in html
+    assert '<label data-master-only>' in html
+    assert '<section class="analytics-panel" data-master-only' in html
+
+
+def test_usage_stats_js_bridges_analytics_tab_without_touching_existing_tabs():
+    js = Path("static/usage-stats.js").read_text(encoding="utf-8")
+
+    assert "} else if (tab === 'analytics') {" in js
+    assert "window.usageAnalyticsDashboard.activate();" in js
+    assert "} else if (tab === 'fallback') {" in js
+    assert "} else if (activeTab && activeTab.dataset.tab === 'analytics') {" in js
+
+
+def test_usage_analytics_uses_existing_endpoints_and_no_cdn_or_build_imports():
+    js = Path("static/usage-analytics.js").read_text(encoding="utf-8")
+    css = Path("static/usage-analytics.css").read_text(encoding="utf-8")
+
+    assert 'const DASHBOARD_ENDPOINT = "/v1/api/analytics-dashboard";' in js
+    assert "/v1/api/usage-stats/" not in js
+    assert "/v1/api/upstream-stats/" not in js
+    assert "document.createElementNS(SVG_NS" in js
+    assert "http://www.w3.org/2000/svg" in js
+    assert "import(" not in js
+    assert "esm.sh" not in js
+    assert "unpkg" not in js
+    assert "@xyflow" not in js
+    assert "url(" not in css
+
+
+def test_usage_analytics_reads_fallback_summary_from_api_shape():
+    js = Path("static/usage-analytics.js").read_text(encoding="utf-8")
+
+    assert "const fallbackSummary = fallback.summary || {};" in js
+    assert "formatNumber(fallbackSummary.attempts)" in js
+    assert "formatNumber(fallbackSummary.errors)" in js
+    assert "formatRate(fallbackSummary.success_rate)" in js
+
+
+def test_usage_analytics_does_not_send_api_key_id_for_non_master_identity():
+    js = Path("static/usage-analytics.js").read_text(encoding="utf-8")
+
+    assert "function isMaster()" in js
+    assert 'if (isMaster()) {' in js
+    assert 'url.searchParams.set("api_key_id", state.els.apiKeyId.value);' in js
+    assert 'url.searchParams.set("upstream_key_fingerprint", state.els.upstreamKey.value);' in js
+    assert "fetchIdentity" in js

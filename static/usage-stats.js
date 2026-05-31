@@ -210,6 +210,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tab === 'records') {
                 currentPage = 1;
                 fetchAndRenderRecords();
+            } else if (tab === 'analytics') {
+                window.usageAnalyticsDashboard.activate();
             } else if (tab === 'fallback') {
                 loadActiveFallbackSubTab();
             } else if (tab === 'topology') {
@@ -893,6 +895,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const activeTab = document.querySelector('.tab-button.active');
     if (activeTab && activeTab.dataset.tab === 'records') {
         fetchAndRenderRecords();
+    } else if (activeTab && activeTab.dataset.tab === 'analytics') {
+        window.usageAnalyticsDashboard.activate();
     } else if (activeTab && activeTab.dataset.tab === 'fallback') {
         loadActiveFallbackSubTab();
     } else if (activeTab && activeTab.dataset.tab === 'topology') {

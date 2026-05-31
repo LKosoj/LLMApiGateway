@@ -93,7 +93,7 @@
   },
   {
     "freemodel": {
-      "baseUrl": "https://api.freemodel.dev/v1",
+      "baseUrl": "https://vip-sg.freemodel.dev/v1",
       "apikey": "${APIKEY_FREEMODEL}"
     }
   },

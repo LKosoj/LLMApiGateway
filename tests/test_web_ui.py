@@ -101,6 +101,23 @@ def add_session(page: Page, server: str) -> None:
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
 
+def route_empty_analytics_dashboard(page: Page, server: str) -> None:
+    page.route(
+        f"{server}/v1/api/analytics-dashboard*",
+        lambda route: route.fulfill(
+            json={
+                "filters": {"bucket": "day"},
+                "totals": {"requests": 0},
+                "series": {"usage": []},
+                "breakdowns": {"providers": [], "resolved_targets": [], "api_keys": []},
+                "reliability": {"fallback": {}, "rejections": {}},
+                "recent_records": [],
+                "filter_options": {},
+            }
+        ),
+    )
+
+
 def expand_first_card(page: Page, container_selector: str) -> None:
     card = page.locator(f"{container_selector} .rule-card").first
     card_classes = card.get_attribute("class") or ""
@@ -256,6 +273,7 @@ def test_web_playground_does_not_render_unsafe_result_urls_as_links(page: Page, 
 
 def test_admin_navigation_is_consistent_across_ui_pages(page: Page, server):
     add_session(page, server)
+    route_empty_analytics_dashboard(page, server)
 
     expected_labels = ["Docs", "Usage Statistics", "Quota", "Rules Editor", "Playground", "API Keys", "Rejections", "Translator Debug", "Pricing"]
     pages = [

@@ -279,6 +279,70 @@ class FallbackEventsDBTests(unittest.TestCase):
         self.assertEqual(stats[0]["errors"], 1)
         self.assertEqual(stats[0]["success_rate"], 50.0)
 
+    def test_dashboard_fallback_filters_by_virtual_key_and_upstream_key(self):
+        self.db.insert_event(
+            request_id="req-dashboard-1",
+            gateway_model="gateway-fast",
+            attempt_number=1,
+            provider="openrouter",
+            model="qwen",
+            success=False,
+            error_type="http_429",
+            error_message="Rate limited",
+            duration_ms=1000,
+            operation="chat",
+            api_key_id=7,
+            upstream_key_fingerprint="fp-1",
+        )
+        self.db.insert_event(
+            request_id="req-dashboard-1",
+            gateway_model="gateway-fast",
+            attempt_number=2,
+            provider="openrouter",
+            model="qwen",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=500,
+            operation="chat",
+            api_key_id=7,
+            upstream_key_fingerprint="fp-1",
+        )
+        self.db.insert_event(
+            request_id="req-dashboard-2",
+            gateway_model="gateway-fast",
+            attempt_number=1,
+            provider="openrouter",
+            model="qwen",
+            success=False,
+            error_type="http_500",
+            error_message="Failed",
+            duration_ms=700,
+            operation="chat",
+            api_key_id=8,
+            upstream_key_fingerprint="fp-2",
+        )
+
+        data = run_async(
+            self.db.get_dashboard_fallback(
+                "day",
+                datetime.now(timezone.utc) - timedelta(minutes=1),
+                datetime.now(timezone.utc) + timedelta(minutes=1),
+                api_key_id=7,
+                operation="chat",
+                provider="openrouter",
+                model="qwen",
+                upstream_key_fingerprint="fp-1",
+            )
+        )
+
+        self.assertEqual(data["summary"]["attempts"], 2)
+        self.assertEqual(data["summary"]["successes"], 1)
+        self.assertEqual(data["summary"]["errors"], 1)
+        self.assertEqual(data["summary"]["success_rate"], 50.0)
+        self.assertEqual(data["error_types"], [{"label": "http_429", "errors": 1, "avg_duration_ms": 1000}])
+        self.assertEqual(data["upstream"][0]["upstream_key_fingerprint"], "fp-1")
+
     def test_insert_event_timestamp_matches_utc_stats_window(self):
         self.db.insert_event(
             request_id="req-utc",

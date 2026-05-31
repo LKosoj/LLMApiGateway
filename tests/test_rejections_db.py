@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -106,6 +107,26 @@ class RejectionsDBInsertGetTests(_RejectionsDBTestBase):
         items_none, total_none = run_async(self.db.get_rejections(since=future))
         self.assertEqual(total_none, 0)
         self.assertEqual(len(items_none), 0)
+
+    def test_dashboard_rejections_aggregates_scoped_rows(self):
+        self._insert_one(api_key_id=5, category="rate_limited", status_code=429)
+        self._insert_one(api_key_id=6, category="auth_invalid", status_code=401)
+
+        data = run_async(
+            self.db.get_dashboard_rejections(
+                "day",
+                datetime.fromisoformat("2000-01-01T00:00:00+00:00"),
+                datetime.fromisoformat("2100-01-01T00:00:00+00:00"),
+                api_key_id=5,
+                category="rate_limited",
+                status_code=429,
+            )
+        )
+
+        self.assertEqual(data["summary"]["rejections"], 1)
+        self.assertEqual(data["categories"], [{"label": "rate_limited", "rejections": 1}])
+        self.assertEqual(data["status_codes"], [{"label": "429", "status_code": 429, "rejections": 1}])
+        self.assertEqual(data["recent"][0]["api_key_id"], 5)
 
 
 class RejectionsDBPaginationTests(_RejectionsDBTestBase):

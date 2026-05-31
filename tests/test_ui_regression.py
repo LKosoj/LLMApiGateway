@@ -27,6 +27,26 @@ def create_authenticated_session(gateway_api_key: str) -> str:
     signature = build_session_signature(issued_at, expires_at, nonce, gateway_api_key)
     return f"{issued_at}.{expires_at}.{nonce}.master..{signature}"
 
+
+def _empty_analytics_dashboard():
+    return {
+        "filters": {"bucket": "day"},
+        "totals": {"requests": 0},
+        "series": {"usage": []},
+        "breakdowns": {"providers": [], "resolved_targets": [], "api_keys": []},
+        "reliability": {"fallback": {}, "rejections": {}},
+        "recent_records": [],
+        "filter_options": {},
+    }
+
+
+def _route_empty_analytics_dashboard(page: Page, server: str):
+    page.route(
+        f"{server}/v1/api/analytics-dashboard*",
+        lambda route: route.fulfill(json=_empty_analytics_dashboard()),
+    )
+
+
 class MockProviderHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/models":
@@ -353,16 +373,18 @@ def test_fallback_rules_loads_with_unavailable_models_highlighted(page: Page, se
 def test_usage_stats_page_loads(page: Page, server):
     session = create_authenticated_session("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    _route_empty_analytics_dashboard(page, server)
     
     page.goto(f"{server}/v1/ui/usage-stats")
     
-    # Check for stats table or something identifying the page
     expect(page.locator("h1")).to_contain_text("Usage Statistics")
-    expect(page.locator("#statsArea")).to_be_visible()
+    expect(page.locator("#analyticsTabContent")).to_be_visible()
+    expect(page.locator("#analyticsDashboard")).to_be_visible()
 
 def test_usage_stats_page_renders_operation_column(page: Page, server):
     session = create_authenticated_session("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    _route_empty_analytics_dashboard(page, server)
     page.route(
         f"{server}/v1/api/usage-stats/*",
         lambda route: route.fulfill(
@@ -390,14 +412,16 @@ def test_usage_stats_page_renders_operation_column(page: Page, server):
     )
 
     page.goto(f"{server}/v1/ui/usage-stats")
+    page.get_by_role("button", name="Usage Statistics").click()
 
-    expect(page.locator("thead")).to_contain_text("Operation")
-    expect(page.locator("tbody")).to_contain_text("embeddings")
+    expect(page.locator("#statsArea thead")).to_contain_text("Operation")
+    expect(page.locator("#statsArea tbody")).to_contain_text("embeddings")
 
 
 def test_usage_records_show_time_like_fallback_chains(page: Page, server):
     session = create_authenticated_session("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    _route_empty_analytics_dashboard(page, server)
     page.route(
         f"{server}/v1/api/usage-records*",
         lambda route: route.fulfill(
@@ -441,6 +465,7 @@ def test_usage_records_show_time_like_fallback_chains(page: Page, server):
 def test_usage_records_highlight_running_requests(page: Page, server):
     session = create_authenticated_session("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    _route_empty_analytics_dashboard(page, server)
     page.route(
         f"{server}/v1/api/usage-records*",
         lambda route: route.fulfill(
@@ -613,6 +638,7 @@ def test_api_keys_page_renders_usage_for_selected_key(page: Page, server):
 def test_fallback_chains_show_detailed_error_message(page: Page, server):
     session = create_authenticated_session("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    _route_empty_analytics_dashboard(page, server)
     page.route(
         f"{server}/v1/api/fallback-stats/*",
         lambda route: route.fulfill(
@@ -689,6 +715,8 @@ def test_fallback_chains_show_detailed_error_message(page: Page, server):
     )
 
 def test_auth_login_flow(page: Page, server):
+    _route_empty_analytics_dashboard(page, server)
+
     # Go to root, should redirect to login with next=/v1/ui/usage-stats
     page.goto(server)
     # The actual redirect is to /auth/login?next=/v1/ui/usage-stats because of root_redirect

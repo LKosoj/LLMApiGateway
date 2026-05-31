@@ -2,14 +2,16 @@ import asyncio
 import logging
 import httpx
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # Import the TokensUsageDB
 from llm_gateway_core.config.loader import ANTHROPIC_API_VERSION, resolve_provider_api_keys
 from llm_gateway_core.config.paths import STATIC_DIR
+from llm_gateway_core.db.api_keys_db import ApiKeyRecord, ApiKeysDB
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB, validate_usage_records_pagination
 from llm_gateway_core.db.fallback_events_db import FallbackEventsDB, validate_fallback_records_pagination
+from llm_gateway_core.db.rejections_db import RejectionsDB, VALID_CATEGORIES
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.active_requests import get_active_requests_registry
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState, fingerprint_api_key
@@ -30,6 +32,18 @@ _usage_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
 _fallback_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
 _upstream_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
 
+ANALYTICS_RANGES = {
+    "24h": timedelta(hours=24),
+    "7d": timedelta(days=7),
+    "14d": timedelta(days=14),
+    "30d": timedelta(days=30),
+    "90d": timedelta(days=90),
+    "180d": timedelta(days=180),
+    "365d": timedelta(days=365),
+    "12m": timedelta(days=365),
+}
+ANALYTICS_BUCKETS = {"hour", "day", "week", "month"}
+
 
 def _effective_api_key_filter(request: Request, requested_api_key_id: int | None = None) -> int | None:
     """Return the ``api_key_id`` filter to apply for the current caller.
@@ -48,6 +62,113 @@ def _effective_api_key_filter(request: Request, requested_api_key_id: int | None
 
 def _is_master_caller(request: Request) -> bool:
     return getattr(request.state, "api_key_role", ROLE_MASTER) == ROLE_MASTER
+
+
+def _optional_query_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _parse_bool_query(value: str | None) -> bool | None:
+    cleaned = _optional_query_value(value)
+    if cleaned is None:
+        return None
+    normalized = cleaned.lower()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    raise HTTPException(status_code=400, detail="estimated must be true or false.")
+
+
+def _resolve_analytics_window(range_name: str, bucket: str | None) -> tuple[datetime, datetime, str]:
+    if range_name not in ANALYTICS_RANGES:
+        raise HTTPException(
+            status_code=400,
+            detail="range must be one of: " + ", ".join(ANALYTICS_RANGES),
+        )
+    resolved_bucket = bucket or ("hour" if range_name == "24h" else "month" if range_name == "12m" else "day")
+    if resolved_bucket not in ANALYTICS_BUCKETS:
+        raise HTTPException(
+            status_code=400,
+            detail="bucket must be one of: " + ", ".join(sorted(ANALYTICS_BUCKETS)),
+        )
+    end_date = datetime.now(timezone.utc)
+    return end_date - ANALYTICS_RANGES[range_name], end_date, resolved_bucket
+
+
+def _resolve_analytics_scope(
+    request: Request,
+    requested_api_key_id: int | None,
+    api_key_scope: str | None,
+) -> tuple[str, int | None, bool, str]:
+    role = getattr(request.state, "api_key_role", ROLE_MASTER)
+    if role == ROLE_USER:
+        api_key_id = getattr(request.state, "api_key_id", None)
+        if api_key_id is None:
+            raise HTTPException(status_code=401, detail="Virtual key session is missing api_key_id.")
+        return role, api_key_id, False, "own"
+
+    if role != ROLE_MASTER:
+        raise HTTPException(status_code=401, detail="Authenticated API key role is not recognized.")
+    if requested_api_key_id is not None and requested_api_key_id <= 0:
+        raise HTTPException(status_code=400, detail="api_key_id must be a positive integer.")
+
+    scope = _optional_query_value(api_key_scope) or "all"
+    if scope not in {"all", "unattributed"}:
+        raise HTTPException(status_code=400, detail="api_key_scope must be 'all' or 'unattributed'.")
+    if scope == "unattributed":
+        if requested_api_key_id is not None:
+            raise HTTPException(status_code=400, detail="api_key_id cannot be combined with api_key_scope=unattributed.")
+        return role, None, True, "unattributed"
+    if requested_api_key_id is not None:
+        return role, requested_api_key_id, False, "api_key"
+    return role, None, False, "all"
+
+
+def _serialize_api_key_option(record: ApiKeyRecord) -> dict:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "disabled": record.disabled,
+        "budget_usd": record.budget_usd,
+        "spent_usd": record.spent_usd,
+        "budget_period": record.budget_period,
+        "last_used_at": record.last_used_at,
+    }
+
+
+def _attach_api_key_names(rows: list[dict], key_names: dict[int, str]) -> list[dict]:
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        label = str(item.get("label") or "")
+        if label == "unattributed":
+            item["api_key_id"] = None
+            item["api_key_name"] = "Unattributed"
+        else:
+            try:
+                key_id = int(label)
+            except ValueError:
+                item["api_key_id"] = None
+                item["api_key_name"] = label or "Unknown"
+            else:
+                item["api_key_id"] = key_id
+                item["api_key_name"] = key_names.get(key_id, f"Virtual key #{key_id}")
+        enriched.append(item)
+    return enriched
+
+
+def _empty_rejection_dashboard() -> dict:
+    return {
+        "summary": {"rejections": 0},
+        "series": [],
+        "categories": [],
+        "status_codes": [],
+        "recent": [],
+    }
 
 
 def _filter_complete_usage_rows(rows: list[dict]) -> list[dict]:
@@ -82,6 +203,32 @@ async def get_usage_stats_page(request: Request):
     except Exception as e:
         logging.error(f"Error reading usage stats HTML file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not load usage statistics page.")
+
+
+@stats_router.get("/api/usage-stats/dashboard", response_class=JSONResponse, tags=["Usage Stats API"])
+async def get_usage_stats_dashboard(
+    request: Request,
+    range_name: str = Query("30d", alias="range"),
+    bucket: str | None = None,
+    api_key_id: int | None = None,
+    api_key_scope: str | None = None,
+    operation: str | None = None,
+    gateway_model: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+):
+    return await get_analytics_dashboard(
+        request,
+        range_name=range_name,
+        bucket=bucket,
+        api_key_id=api_key_id,
+        api_key_scope=api_key_scope,
+        operation=operation,
+        gateway_model=gateway_model,
+        provider=provider,
+        model=model,
+    )
+
 
 @stats_router.get("/api/usage-stats/{period}", response_class=JSONResponse, tags=["Usage Stats API"])
 async def get_aggregated_stats(request: Request, period: str, api_key_id: int | None = None):
@@ -180,6 +327,247 @@ async def get_usage_records(
     except Exception as e:
         logging.error(f"Error fetching usage records: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Could not retrieve usage records: {e}")
+
+
+@stats_router.get("/api/analytics-dashboard", response_class=JSONResponse, tags=["Analytics Dashboard API"])
+async def get_analytics_dashboard(
+    request: Request,
+    range_name: str = Query("30d", alias="range"),
+    bucket: str | None = None,
+    api_key_id: int | None = None,
+    api_key_scope: str | None = None,
+    operation: str | None = None,
+    gateway_model: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    upstream_key_fingerprint: str | None = None,
+    usage_source: str | None = None,
+    estimated: str | None = None,
+    rejection_category: str | None = None,
+    rejection_status_code: int | None = None,
+):
+    """Return a full scoped analytics payload for the usage statistics UI."""
+    tokens_usage_db: TokensUsageDB | None = getattr(request.app.state, "tokens_usage_db", None)
+    fallback_events_db: FallbackEventsDB | None = getattr(request.app.state, "fallback_events_db", None)
+    rejections_db: RejectionsDB | None = getattr(request.app.state, "rejections_db", None)
+    api_keys_db: ApiKeysDB | None = getattr(request.app.state, "api_keys_db", None)
+    if tokens_usage_db is None:
+        raise HTTPException(status_code=500, detail="Internal server error: TokensUsageDB not available.")
+    if fallback_events_db is None:
+        raise HTTPException(status_code=500, detail="Internal server error: FallbackEventsDB not available.")
+    if rejections_db is None:
+        raise HTTPException(status_code=500, detail="Internal server error: RejectionsDB not available.")
+    if api_keys_db is None:
+        raise HTTPException(status_code=500, detail="Internal server error: ApiKeysDB not available.")
+
+    start_date, end_date, resolved_bucket = _resolve_analytics_window(range_name, bucket)
+    role, api_key_id_filter, api_key_unattributed, scope_name = _resolve_analytics_scope(
+        request,
+        api_key_id,
+        api_key_scope,
+    )
+    is_master = role == ROLE_MASTER
+    operation_filter = _optional_query_value(operation)
+    gateway_model_filter = _optional_query_value(gateway_model)
+    provider_filter = _optional_query_value(provider)
+    model_filter = _optional_query_value(model)
+    usage_source_filter = _optional_query_value(usage_source)
+    if upstream_key_fingerprint and not is_master:
+        raise HTTPException(status_code=403, detail="upstream_key_fingerprint filter is available only to the master API key.")
+    upstream_key_filter = _optional_query_value(upstream_key_fingerprint) if is_master else None
+    estimated_filter = _parse_bool_query(estimated)
+    rejection_category_filter = _optional_query_value(rejection_category)
+    if rejection_category_filter is not None and rejection_category_filter not in VALID_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail="rejection_category must be one of: " + ", ".join(sorted(VALID_CATEGORIES)),
+        )
+    if rejection_status_code is not None and rejection_status_code <= 0:
+        raise HTTPException(status_code=400, detail="rejection_status_code must be a positive integer.")
+
+    warnings: list[str] = []
+    routing_filters_active = any(
+        [
+            operation_filter,
+            gateway_model_filter,
+            provider_filter,
+            model_filter,
+            upstream_key_filter,
+            usage_source_filter,
+            estimated_filter is not None,
+        ]
+    )
+    include_rejections = not routing_filters_active
+    if routing_filters_active:
+        warnings.append(
+            "Rejection analytics are hidden while routing filters are active because rejection events are not stored with provider/model routing fields."
+        )
+
+    if is_master:
+        api_key_records = await asyncio.to_thread(api_keys_db.list_all)
+    else:
+        own_record = await asyncio.to_thread(api_keys_db.get_by_id, api_key_id_filter)
+        api_key_records = [own_record] if own_record is not None else []
+    key_names = {record.id: record.name for record in api_key_records}
+
+    usage_task = tokens_usage_db.get_dashboard_usage(
+        resolved_bucket,
+        start_date,
+        end_date,
+        api_key_id=api_key_id_filter,
+        api_key_unattributed=api_key_unattributed,
+        operation=operation_filter,
+        gateway_model=gateway_model_filter,
+        provider=provider_filter,
+        model=model_filter,
+        upstream_key_fingerprint=upstream_key_filter,
+        usage_source=usage_source_filter,
+        is_estimated=estimated_filter,
+        recent_limit=10,
+    )
+    options_task = tokens_usage_db.get_dashboard_filter_options(
+        start_date,
+        end_date,
+        api_key_id=api_key_id_filter,
+        api_key_unattributed=api_key_unattributed,
+    )
+    fallback_task = fallback_events_db.get_dashboard_fallback(
+        resolved_bucket,
+        start_date,
+        end_date,
+        api_key_id=api_key_id_filter,
+        api_key_unattributed=api_key_unattributed,
+        operation=operation_filter,
+        gateway_model=gateway_model_filter,
+        provider=provider_filter,
+        model=model_filter,
+        upstream_key_fingerprint=upstream_key_filter,
+    )
+    gather_tasks = [usage_task, options_task, fallback_task]
+    if include_rejections:
+        gather_tasks.append(
+            rejections_db.get_dashboard_rejections(
+                resolved_bucket,
+                start_date,
+                end_date,
+                api_key_id=api_key_id_filter,
+                api_key_unattributed=api_key_unattributed,
+                category=rejection_category_filter,
+                status_code=rejection_status_code,
+            )
+        )
+    results = await asyncio.gather(*gather_tasks)
+    usage_data, filter_options, fallback_data = results[:3]
+    rejection_data = results[3] if include_rejections else _empty_rejection_dashboard()
+
+    active_records = get_active_requests_registry(request.app).list_records(
+        api_key_id=api_key_id_filter if not api_key_unattributed else None
+    )
+    if api_key_unattributed:
+        active_records = [row for row in active_records if row.get("api_key_id") is None]
+    if operation_filter:
+        active_records = [row for row in active_records if row.get("operation") == operation_filter]
+    if gateway_model_filter:
+        active_records = [row for row in active_records if row.get("gateway_model") == gateway_model_filter]
+    if provider_filter:
+        active_records = [row for row in active_records if row.get("provider") == provider_filter]
+    if model_filter:
+        active_records = [row for row in active_records if row.get("model") == model_filter]
+    if upstream_key_filter:
+        active_records = [
+            row for row in active_records
+            if row.get("upstream_key_fingerprint") == upstream_key_filter
+        ]
+    if usage_source_filter:
+        active_records = [row for row in active_records if row.get("usage_source") == usage_source_filter]
+    if estimated_filter is not None:
+        active_records = [
+            row for row in active_records
+            if bool(row.get("is_estimated")) == estimated_filter
+        ]
+
+    usage_summary = usage_data["summary"]
+    total_tokens = int(usage_summary.get("total_tokens") or 0)
+    total_cost = float(usage_summary.get("cost") or 0.0)
+    cost_per_million_tokens = (total_cost / total_tokens * 1_000_000) if total_tokens else 0.0
+
+    breakdowns = dict(usage_data["breakdowns"])
+    breakdowns["api_keys"] = _attach_api_key_names(breakdowns.get("api_keys", []), key_names)
+    if not is_master:
+        breakdowns["api_keys"] = []
+        breakdowns["upstream_keys"] = []
+
+    if is_master:
+        fallback_payload = fallback_data
+    else:
+        fallback_payload = {
+            "summary": fallback_data["summary"],
+            "series": fallback_data["series"],
+            "error_types": [],
+            "upstream": [],
+        }
+
+    reliability = {
+        "fallback": fallback_payload,
+        "rejections": rejection_data,
+    }
+
+    filter_options["api_keys"] = [_serialize_api_key_option(record) for record in api_key_records] if is_master else []
+    if not is_master:
+        filter_options["upstream_keys"] = []
+
+    recent_records = active_records[:5] + _mark_completed_usage_rows(usage_data.get("recent_records", []))
+    if not is_master:
+        recent_records = [
+            {key: value for key, value in row.items() if key != "upstream_key_fingerprint"}
+            for row in recent_records
+        ]
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "scope": {
+            "role": role,
+            "api_key_id": api_key_id_filter,
+            "api_key_scope": scope_name,
+            "can_filter_keys": is_master,
+            "can_filter_upstream_keys": is_master,
+        },
+        "filters": {
+            "range": range_name,
+            "bucket": resolved_bucket,
+            "api_key_id": api_key_id_filter if scope_name == "api_key" else None,
+            "api_key_scope": scope_name,
+            "operation": operation_filter,
+            "gateway_model": gateway_model_filter,
+            "provider": provider_filter,
+            "model": model_filter,
+            "upstream_key_fingerprint": upstream_key_filter,
+            "usage_source": usage_source_filter,
+            "estimated": estimated_filter,
+            "rejection_category": rejection_category_filter,
+            "rejection_status_code": rejection_status_code,
+        },
+        "totals": {
+            **usage_summary,
+            "active_requests": len(active_records),
+            "fallback_attempts": fallback_payload["summary"]["attempts"],
+            "fallback_errors": fallback_payload["summary"]["errors"],
+            "fallback_success_rate": fallback_payload["summary"]["success_rate"],
+            "rejections": reliability["rejections"]["summary"]["rejections"],
+            "cost_per_million_tokens": cost_per_million_tokens,
+        },
+        "series": {
+            "usage": usage_data["series"],
+            "fallback": fallback_payload["series"],
+            "rejections": rejection_data["series"],
+        },
+        "breakdowns": breakdowns,
+        "reliability": reliability,
+        "recent_records": recent_records,
+        "filter_options": filter_options,
+        "warnings": warnings,
+    }
+    return JSONResponse(content=payload)
 
 
 def _get_period_start_date(period: str) -> datetime | None:
