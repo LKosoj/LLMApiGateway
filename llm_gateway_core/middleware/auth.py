@@ -401,6 +401,9 @@ def _start_active_request_if_needed(request: Request, path: str) -> str | None:
     if not isinstance(request_id, str) or not request_id:
         request_id = str(uuid4())
     request.state.llmgateway_active_request_id = request_id
+    x_title = request.headers.get("x-title")
+    if isinstance(x_title, str):
+        x_title = x_title.strip() or None
 
     get_active_requests_registry(request.app).start(
         request_id=request_id,
@@ -408,6 +411,7 @@ def _start_active_request_if_needed(request: Request, path: str) -> str | None:
         api_key_id=getattr(request.state, "api_key_id", None),
         gateway_model=getattr(request.state, "llmgateway_gateway_model", None),
         operation=getattr(request.state, "llmgateway_operation", None),
+        x_title=x_title,
     )
     return request_id
 

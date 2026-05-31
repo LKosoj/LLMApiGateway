@@ -156,6 +156,12 @@
                         </select>
                     </label>
                     <label>
+                        <span>X-Title</span>
+                        <select id="analyticsXTitle">
+                            <option value="">All titles</option>
+                        </select>
+                    </label>
+                    <label>
                         <span>Estimated</span>
                         <select id="analyticsEstimated">
                             <option value="">All usage</option>
@@ -194,6 +200,13 @@
                                 <h3 id="analyticsBreakdownTitle">Filtered Breakdown</h3>
                             </div>
                             <div id="analyticsBreakdownTable" class="analytics-table-wrap"></div>
+                        </section>
+
+                        <section class="analytics-panel" aria-labelledby="analyticsXTitleTitle">
+                            <div class="analytics-panel-head">
+                                <h3 id="analyticsXTitleTitle">X-Title Breakdown</h3>
+                            </div>
+                            <div id="analyticsXTitleTable" class="analytics-table-wrap"></div>
                         </section>
 
                         <section class="analytics-panel" aria-labelledby="analyticsReliabilityTitle">

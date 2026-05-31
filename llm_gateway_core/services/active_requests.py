@@ -51,6 +51,7 @@ class ActiveRequestsRegistry:
         api_key_id: int | None,
         gateway_model: str | None = None,
         operation: str | None = None,
+        x_title: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc)
         with self._lock:
@@ -72,6 +73,7 @@ class ActiveRequestsRegistry:
                 "usage_source": None,
                 "cost_saved": 0.0,
                 "api_key_id": api_key_id,
+                "x_title": x_title,
                 "status": "running",
                 "_started_monotonic": time.monotonic(),
             }

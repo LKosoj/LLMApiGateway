@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 INSERT_USAGE_SQL = """
 INSERT INTO tokens_usage
 (timestamp, duration_ms, prompt_tokens, completion_tokens, total_tokens,
- reasoning_tokens, cached_tokens, cost, gateway_model, operation, model, provider, request_id, is_estimated, usage_source, cost_saved, api_key_id, upstream_key_fingerprint)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ reasoning_tokens, cached_tokens, cost, gateway_model, operation, model, provider, request_id, is_estimated, usage_source, cost_saved, api_key_id, upstream_key_fingerprint, x_title)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -58,6 +58,7 @@ def _build_usage_where(
     upstream_key_fingerprint: str | None = None,
     usage_source: str | None = None,
     is_estimated: bool | None = None,
+    x_title: str | None = None,
 ) -> tuple[str, list]:
     where_parts: list[str] = []
     params: list = []
@@ -78,6 +79,7 @@ def _build_usage_where(
     _append_optional_filter(where_parts, params, "model", model)
     _append_optional_filter(where_parts, params, "upstream_key_fingerprint", upstream_key_fingerprint)
     _append_optional_filter(where_parts, params, "usage_source", usage_source)
+    _append_optional_filter(where_parts, params, "x_title", x_title)
     if is_estimated is not None:
         where_parts.append("is_estimated = ?")
         params.append(1 if is_estimated else 0)
@@ -170,7 +172,8 @@ class TokensUsageDB:
                 usage_source TEXT,
                 cost_saved REAL NOT NULL DEFAULT 0.0,
                 api_key_id INTEGER,
-                upstream_key_fingerprint TEXT
+                upstream_key_fingerprint TEXT,
+                x_title TEXT
             )
             ''')
 
@@ -196,6 +199,8 @@ class TokensUsageDB:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN api_key_id INTEGER")
             if "upstream_key_fingerprint" not in existing_columns:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN upstream_key_fingerprint TEXT")
+            if "x_title" not in existing_columns:
+                cursor.execute("ALTER TABLE tokens_usage ADD COLUMN x_title TEXT")
 
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_tokens_usage_timestamp
@@ -228,6 +233,11 @@ class TokensUsageDB:
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_tokens_usage_upstream_key_timestamp
             ON tokens_usage (upstream_key_fingerprint, timestamp DESC)
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_tokens_usage_x_title_timestamp
+            ON tokens_usage (x_title, timestamp DESC)
             ''')
 
             conn.commit()
@@ -271,6 +281,7 @@ class TokensUsageDB:
             float(tokens_usage.get("cost_saved") or 0.0),
             tokens_usage.get("api_key_id"),
             tokens_usage.get("upstream_key_fingerprint"),
+            tokens_usage.get("x_title"),
         )
         if self._batcher is not None:
             self._batcher.enqueue(INSERT_USAGE_SQL, params)
@@ -320,7 +331,8 @@ class TokensUsageDB:
                     id, timestamp, duration_ms, prompt_tokens, completion_tokens,
                     total_tokens, reasoning_tokens, cached_tokens, cost,
                     gateway_model, operation, model, provider, request_id,
-                    is_estimated, usage_source, cost_saved, api_key_id, upstream_key_fingerprint
+                    is_estimated, usage_source, cost_saved, api_key_id,
+                    upstream_key_fingerprint, x_title
                 FROM tokens_usage
                 {where}
                 ORDER BY timestamp DESC
@@ -432,6 +444,7 @@ class TokensUsageDB:
         upstream_key_fingerprint: str | None = None,
         usage_source: str | None = None,
         is_estimated: bool | None = None,
+        x_title: str | None = None,
         recent_limit: int = 10,
     ) -> dict:
         """Return usage aggregates for the analytics dashboard.
@@ -453,6 +466,7 @@ class TokensUsageDB:
             upstream_key_fingerprint=upstream_key_fingerprint,
             usage_source=usage_source,
             is_estimated=is_estimated,
+            x_title=x_title,
         )
 
         try:
@@ -532,6 +546,7 @@ class TokensUsageDB:
                     ),
                     "api_keys": await grouped("COALESCE(CAST(api_key_id AS TEXT), 'unattributed')"),
                     "upstream_keys": await grouped("COALESCE(upstream_key_fingerprint, 'unknown')"),
+                    "x_titles": await grouped("COALESCE(x_title, 'unknown')"),
                 }
 
                 cursor = await db.execute(
@@ -541,7 +556,7 @@ class TokensUsageDB:
                         total_tokens, reasoning_tokens, cached_tokens, cost,
                         gateway_model, operation, model, provider, request_id,
                         is_estimated, usage_source, cost_saved, api_key_id,
-                        upstream_key_fingerprint
+                        upstream_key_fingerprint, x_title
                     FROM tokens_usage
                     {where_clause}
                     ORDER BY timestamp DESC
@@ -571,6 +586,7 @@ class TokensUsageDB:
                     "resolved_targets": [],
                     "api_keys": [],
                     "upstream_keys": [],
+                    "x_titles": [],
                 },
                 "recent_records": [],
             }
@@ -622,6 +638,7 @@ class TokensUsageDB:
                     "models": await distinct_values("model"),
                     "upstream_keys": await distinct_values("upstream_key_fingerprint"),
                     "usage_sources": await distinct_values("usage_source"),
+                    "x_titles": await distinct_values("x_title"),
                 }
         except Exception as e:
             logger.error("Error retrieving analytics filter options: %s", e)
@@ -632,6 +649,7 @@ class TokensUsageDB:
                 "models": [],
                 "upstream_keys": [],
                 "usage_sources": [],
+                "x_titles": [],
             }
 
     def cleanup_old_records(self, retention_days: int = 180):

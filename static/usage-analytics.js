@@ -109,6 +109,7 @@
         replaceOptions(state.els.gateway, options.gateway_models || [], "All gateways");
         replaceOptions(state.els.provider, options.providers || [], "All providers");
         replaceOptions(state.els.model, options.models || [], "All models");
+        replaceOptions(state.els.xTitle, options.x_titles || [], "All titles");
         replaceOptions(state.els.upstreamKey, options.upstream_keys || [], "All provider keys");
         replaceOptions(state.els.apiKeyId, options.api_keys || [], "Select key", "id", "name");
         updateKeyScopeState();
@@ -132,6 +133,7 @@
             gateway_model: state.els.gateway.value,
             provider: state.els.provider.value,
             model: state.els.model.value,
+            x_title: state.els.xTitle.value,
             estimated: state.els.estimated.value,
         };
         Object.entries(params).forEach(([key, value]) => {
@@ -330,6 +332,23 @@
         ], rows));
     }
 
+    function renderXTitleTable(payload) {
+        const rows = ((payload.breakdowns && payload.breakdowns.x_titles) || []).slice(0, 20);
+        if (rows.length === 0) {
+            renderEmpty(state.els.xTitleTable, "No X-Title rows for selected filters.");
+            return;
+        }
+        state.els.xTitleTable.replaceChildren(createTable([
+            {key: "label", label: "X-Title"},
+            {key: "requests", label: "Requests", format: formatNumber},
+            {key: "total_tokens", label: "Tokens", format: formatNumber},
+            {key: "cost", label: "Cost", format: formatMoney},
+            {key: "cost_saved", label: "Saved", format: formatMoney},
+            {key: "estimated_count", label: "Estimated", format: formatNumber},
+            {key: "avg_duration_ms", label: "Avg Duration", format: formatDuration},
+        ], rows));
+    }
+
     function renderReliabilityTable(payload) {
         const fallback = payload.reliability && payload.reliability.fallback ? payload.reliability.fallback : {};
         const fallbackSummary = fallback.summary || {};
@@ -385,6 +404,7 @@
             {key: "status", label: "Status", format: value => value || "completed"},
             {key: "gateway_model", label: "Gateway", format: value => value || "N/A"},
             {key: "operation", label: "Operation", format: value => value || "N/A"},
+            {key: "x_title", label: "X-Title", format: value => value || "N/A"},
             {key: "provider", label: "Provider", format: value => value || "N/A"},
             {key: "model", label: "Model", format: value => value || "N/A"},
             {key: "total_tokens", label: "Tokens", format: formatNumber},
@@ -398,6 +418,7 @@
         renderLineChart(payload);
         renderBarChart(payload);
         renderBreakdownTable(payload);
+        renderXTitleTable(payload);
         renderReliabilityTable(payload);
         renderKeyTable(payload);
         renderRecentTable(payload);
@@ -452,6 +473,7 @@
             state.els.gateway,
             state.els.provider,
             state.els.model,
+            state.els.xTitle,
             state.els.estimated,
         ].forEach(el => {
             el.addEventListener("change", loadAnalytics);
@@ -475,6 +497,7 @@
             gateway: document.getElementById("analyticsGateway"),
             provider: document.getElementById("analyticsProvider"),
             model: document.getElementById("analyticsModel"),
+            xTitle: document.getElementById("analyticsXTitle"),
             estimated: document.getElementById("analyticsEstimated"),
             refresh: document.getElementById("analyticsRefreshButton"),
             status: document.getElementById("analyticsStatus"),
@@ -485,6 +508,7 @@
             trendMeta: document.getElementById("analyticsTrendMeta"),
             costMeta: document.getElementById("analyticsCostMeta"),
             breakdownTable: document.getElementById("analyticsBreakdownTable"),
+            xTitleTable: document.getElementById("analyticsXTitleTable"),
             reliabilityTable: document.getElementById("analyticsReliabilityTable"),
             keyTable: document.getElementById("analyticsKeyTable"),
             recentTable: document.getElementById("analyticsRecentTable"),

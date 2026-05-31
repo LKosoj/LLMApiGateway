@@ -242,7 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Define preferred order for records table headers
         const preferredHeaders = [
-            'timestamp', 'duration_ms', 'gateway_model', 'operation', 'model', 'prompt_tokens', 'completion_tokens',
+            'timestamp', 'duration_ms', 'gateway_model', 'operation', 'model', 'x_title', 'prompt_tokens', 'completion_tokens',
             'reasoning_tokens', 'total_tokens', 'cached_tokens', 'cost', 'cost_saved', 'is_estimated'
         ];
 
@@ -269,6 +269,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (header === 'model') {
                 displayMetric = 'Resolved Model';
+            }
+            if (header === 'x_title') {
+                displayMetric = 'X-Title';
             }
             if (header === 'operation') {
                 displayMetric = 'Operation';

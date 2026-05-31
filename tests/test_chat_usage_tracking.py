@@ -18,6 +18,41 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
     def tearDown(self):
         chat_logging.set_tokens_usage_db(self._original_db)
+
+    def test_usage_stats_record_incoming_x_title_header(self):
+        app = FastAPI()
+        app.middleware("http")(chat_logging.log_chat_completions)
+
+        @app.post("/v1/chat/completions")
+        async def completions(request: Request):
+            request.state.llmgateway_provider = "provider-name"
+            request.state.llmgateway_provider_model = "provider-model"
+            return JSONResponse(
+                content={
+                    "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 4,
+                        "total_tokens": 7,
+                    },
+                    "model": "provider-model",
+                }
+            )
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/v1/chat/completions",
+                        json={"model": "demo-model"},
+                        headers={"X-Title": " tgBot "},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        insert_usage_mock.assert_called_once()
+        call_args = dict(insert_usage_mock.call_args[0][0])
+        self.assertEqual(call_args["x_title"], "tgBot")
+
     def test_usage_stats_are_recorded_even_when_file_logging_is_disabled(self):
         app = FastAPI()
         app.middleware("http")(chat_logging.log_chat_completions)

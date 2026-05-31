@@ -16,6 +16,12 @@ VALID_PROVIDERS_TEXT = """
     }
   },
   {
+    "openai_codex": {
+      "baseUrl": "https://openai-codex.example",
+      "apikey": "DIRECT-KEY"
+    }
+  },
+  {
     "cohere": {
       "baseUrl": "https://cohere.example",
       "apikey": "DIRECT-KEY"

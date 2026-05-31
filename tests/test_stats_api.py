@@ -72,6 +72,7 @@ class _FakeTokensUsageDB:
                 "gateway_models": [{"label": "gateway-model", "requests": 2, "total_tokens": 30, "cost": 0.06}],
                 "providers": [{"label": "openrouter", "requests": 2, "total_tokens": 30, "cost": 0.06}],
                 "resolved_targets": [{"label": "openrouter / qwen", "provider": "openrouter", "model": "qwen", "requests": 2}],
+                "x_titles": [{"label": "tgBot", "requests": 2, "total_tokens": 30, "cost": 0.06}],
                 "api_keys": [{"label": str(kwargs.get("api_key_id") or "unattributed"), "requests": 2}],
                 "upstream_keys": [{"label": "fp-1", "requests": 2}],
             },
@@ -80,6 +81,7 @@ class _FakeTokensUsageDB:
                     "id": 42,
                     "timestamp": "2026-05-31T00:00:00+00:00",
                     "model": "qwen",
+                    "x_title": "tgBot",
                     "upstream_key_fingerprint": "fp-1",
                 }
             ],
@@ -93,6 +95,7 @@ class _FakeTokensUsageDB:
             "models": ["qwen"],
             "upstream_keys": ["fp-1"],
             "usage_sources": ["provider"],
+            "x_titles": ["tgBot"],
         }
 
     def cleanup_old_records(self, retention_days: int = 180):
@@ -516,6 +519,7 @@ class StatsApiPaginationTests(unittest.TestCase):
                 api_key_id=7,
                 gateway_model="gateway-model",
                 operation="chat",
+                x_title="tgBot",
             )
             active_requests.update("req-running", provider="openrouter", model="qwen")
             client.app.state.active_requests_registry = active_requests
@@ -523,7 +527,7 @@ class StatsApiPaginationTests(unittest.TestCase):
                 "/v1/api/analytics-dashboard"
                 "?range=7d&bucket=day&api_key_id=7&operation=chat"
                 "&gateway_model=gateway-model&provider=openrouter&model=qwen"
-                "&upstream_key_fingerprint=fp-1&usage_source=provider&estimated=true",
+                "&upstream_key_fingerprint=fp-1&usage_source=provider&x_title=tgBot&estimated=true",
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 
@@ -533,13 +537,17 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertTrue(payload["scope"]["can_filter_keys"])
         self.assertEqual(payload["filters"]["api_key_id"], 7)
         self.assertEqual(payload["filters"]["operation"], "chat")
+        self.assertEqual(payload["filters"]["x_title"], "tgBot")
         self.assertEqual(payload["totals"]["requests"], 2)
         self.assertEqual(payload["totals"]["active_requests"], 0)
         self.assertEqual(payload["totals"]["fallback_attempts"], 3)
         self.assertEqual(payload["totals"]["rejections"], 0)
         self.assertEqual(len(payload["warnings"]), 1)
         self.assertEqual(payload["breakdowns"]["api_keys"][0]["api_key_name"], "key-7")
+        self.assertEqual(payload["breakdowns"]["x_titles"][0]["label"], "tgBot")
+        self.assertEqual(payload["recent_records"][0]["x_title"], "tgBot")
         self.assertEqual(payload["filter_options"]["api_keys"][0]["name"], "key-7")
+        self.assertEqual(payload["filter_options"]["x_titles"], ["tgBot"])
         self.assertNotIn("api_key", payload["filter_options"]["api_keys"][0])
         self.assertNotIn("raw_api_key", str(payload))
 
@@ -549,6 +557,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(usage_call["operation"], "chat")
         self.assertEqual(usage_call["upstream_key_fingerprint"], "fp-1")
         self.assertEqual(usage_call["usage_source"], "provider")
+        self.assertEqual(usage_call["x_title"], "tgBot")
         self.assertTrue(usage_call["is_estimated"])
         self.assertEqual(fake_fallback_events_db.dashboard_calls[0]["api_key_id"], 7)
         self.assertEqual(fake_rejections_db.dashboard_calls, [])

@@ -196,6 +196,15 @@
       "gateway_model_name": "llmgateway/gpt-image-2",
       "routes": [
         {
+          "provider": "openai_codex",
+          "model": "gpt-image-2",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {
+            "quality": "medium"
+          }
+        },
+        {
           "provider": "aitunnel",
           "model": "gpt-image-2",
           "target_path": "/images/generations",
@@ -302,6 +311,15 @@
       "routes": [
         {
           "provider": "aitunnel",
+          "model": "gpt-image-2",
+          "target_path": "/images/edits",
+          "custom_headers": {},
+          "custom_body_params": {
+            "quality": "medium"
+          }
+        },
+        {
+          "provider": "openai_codex",
           "model": "gpt-image-2",
           "target_path": "/images/edits",
           "custom_headers": {},

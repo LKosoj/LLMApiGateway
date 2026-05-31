@@ -81,6 +81,8 @@ def test_usage_stats_js_hides_provider_column_in_latest_records():
         content = f.read()
 
     assert "'timestamp', 'duration_ms', 'gateway_model', 'operation', 'model'" in content
+    assert "'model', 'x_title', 'prompt_tokens'" in content
+    assert "displayMetric = 'X-Title';" in content
     assert "'reasoning_tokens', 'total_tokens', 'cached_tokens', 'cost'" in content
     assert "'provider'" not in content.split("const preferredHeaders = [", 1)[1].split("];", 1)[0]
     assert "'status'" not in content.split("const preferredHeaders = [", 1)[1].split("];", 1)[0]
@@ -154,11 +156,13 @@ def test_usage_stats_html_contains_analytics_dashboard_tab():
     assert 'id="analyticsGateway"' in html
     assert 'id="analyticsProvider"' in html
     assert 'id="analyticsModel"' in html
+    assert 'id="analyticsXTitle"' in html
     assert 'id="analyticsEstimated"' in html
     assert 'id="analyticsKpis"' in html
     assert 'id="analyticsLineChart"' in html
     assert 'id="analyticsBarChart"' in html
     assert 'id="analyticsBreakdownTable"' in html
+    assert 'id="analyticsXTitleTable"' in html
     assert 'id="analyticsReliabilityTable"' in html
     assert 'id="analyticsKeyTable"' in html
     assert 'id="analyticsRecentTable"' in html
@@ -208,3 +212,17 @@ def test_usage_analytics_does_not_send_api_key_id_for_non_master_identity():
     assert 'url.searchParams.set("api_key_id", state.els.apiKeyId.value);' in js
     assert 'url.searchParams.set("upstream_key_fingerprint", state.els.upstreamKey.value);' in js
     assert "fetchIdentity" in js
+
+
+def test_usage_analytics_exposes_x_title_filter_and_breakdown():
+    js = Path("static/usage-analytics.js").read_text(encoding="utf-8")
+    html = Path("static/usage-stats.html").read_text(encoding="utf-8")
+
+    assert 'id="analyticsXTitle"' in html
+    assert 'id="analyticsXTitleTable"' in html
+    assert "replaceOptions(state.els.xTitle, options.x_titles || [], \"All titles\");" in js
+    assert "x_title: state.els.xTitle.value" in js
+    assert "function renderXTitleTable(payload)" in js
+    assert "payload.breakdowns && payload.breakdowns.x_titles" in js
+    assert "{key: \"x_title\", label: \"X-Title\"" in js
+    assert "renderXTitleTable(payload);" in js

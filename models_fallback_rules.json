@@ -39,7 +39,7 @@
     "fallback_models": [
       {
         "provider": "freemodel",
-        "model": "gpt-5.4-mini",
+        "model": "gpt-5.5",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -83,7 +83,7 @@
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/qwen",
@@ -209,17 +209,6 @@
         "custom_headers": {}
       },
       {
-        "provider": "freemodel",
-        "model": "gpt-5.5",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {
-          "settings": {
-            "thinkingLevel": "high"
-          }
-        },
-        "custom_headers": {}
-      },
-      {
         "provider": "kimicode",
         "model": "kimi-for-coding",
         "use_provider_order_as_fallback": false,
@@ -247,11 +236,22 @@
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
+      },
+      {
+        "provider": "freemodel",
+        "model": "gpt-5.5",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {
+          "settings": {
+            "thinkingLevel": "high"
+          }
+        },
+        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {
       "provider": "aitunnel",
-      "model": "deepseek-v4-flash",
+      "model": "deepseek-v4-pro",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}
@@ -259,7 +259,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/fast",
@@ -429,7 +429,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": false
   },
   {
     "gateway_model_name": "llmgateway/free_gd",
@@ -468,6 +468,6 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": false
   }
 ]

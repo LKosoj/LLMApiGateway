@@ -25,6 +25,7 @@ from ..utils.log_redaction import redact_headers_for_log, redact_request_body_te
 from ..utils.usage_tracking import (
     backfill_zero_token_counts,
     enrich_tokens_usage as enrich_usage_metadata,
+    extract_request_x_title,
     extract_tokens_usage,
     initialize_tokens_usage,
 )
@@ -447,6 +448,9 @@ class ChunkProcessor:
         if self._log_written:
             return
 
+        x_title = extract_request_x_title(self.request)
+        if x_title:
+            self.tokens_usage["x_title"] = x_title
         _merge_request_usage_tracker(self.tokens_usage, self.request)
         _record_upstream_tokens_for_request(self.request, self.tokens_usage)
         _log_rtk_compression_stats(self.request)

@@ -216,6 +216,7 @@ async def get_usage_stats_dashboard(
     gateway_model: str | None = None,
     provider: str | None = None,
     model: str | None = None,
+    x_title: str | None = None,
 ):
     return await get_analytics_dashboard(
         request,
@@ -227,6 +228,7 @@ async def get_usage_stats_dashboard(
         gateway_model=gateway_model,
         provider=provider,
         model=model,
+        x_title=x_title,
     )
 
 
@@ -342,6 +344,7 @@ async def get_analytics_dashboard(
     model: str | None = None,
     upstream_key_fingerprint: str | None = None,
     usage_source: str | None = None,
+    x_title: str | None = None,
     estimated: str | None = None,
     rejection_category: str | None = None,
     rejection_status_code: int | None = None,
@@ -372,6 +375,7 @@ async def get_analytics_dashboard(
     provider_filter = _optional_query_value(provider)
     model_filter = _optional_query_value(model)
     usage_source_filter = _optional_query_value(usage_source)
+    x_title_filter = _optional_query_value(x_title)
     if upstream_key_fingerprint and not is_master:
         raise HTTPException(status_code=403, detail="upstream_key_fingerprint filter is available only to the master API key.")
     upstream_key_filter = _optional_query_value(upstream_key_fingerprint) if is_master else None
@@ -394,13 +398,14 @@ async def get_analytics_dashboard(
             model_filter,
             upstream_key_filter,
             usage_source_filter,
+            x_title_filter,
             estimated_filter is not None,
         ]
     )
     include_rejections = not routing_filters_active
     if routing_filters_active:
         warnings.append(
-            "Rejection analytics are hidden while routing filters are active because rejection events are not stored with provider/model routing fields."
+            "Rejection analytics are hidden while usage routing filters are active because rejection events are not stored with those fields."
         )
 
     if is_master:
@@ -422,6 +427,7 @@ async def get_analytics_dashboard(
         model=model_filter,
         upstream_key_fingerprint=upstream_key_filter,
         usage_source=usage_source_filter,
+        x_title=x_title_filter,
         is_estimated=estimated_filter,
         recent_limit=10,
     )
@@ -480,6 +486,8 @@ async def get_analytics_dashboard(
         ]
     if usage_source_filter:
         active_records = [row for row in active_records if row.get("usage_source") == usage_source_filter]
+    if x_title_filter:
+        active_records = [row for row in active_records if row.get("x_title") == x_title_filter]
     if estimated_filter is not None:
         active_records = [
             row for row in active_records
@@ -543,6 +551,7 @@ async def get_analytics_dashboard(
             "model": model_filter,
             "upstream_key_fingerprint": upstream_key_filter,
             "usage_source": usage_source_filter,
+            "x_title": x_title_filter,
             "estimated": estimated_filter,
             "rejection_category": rejection_category_filter,
             "rejection_status_code": rejection_status_code,

@@ -44,6 +44,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             self.assertIn("gateway_model", column_names)
             self.assertIn("operation", column_names)
             self.assertIn("duration_ms", column_names)
+            self.assertIn("x_title", column_names)
         finally:
             db_path.unlink(missing_ok=True)
 
@@ -65,6 +66,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
                     "provider": "provider-name",
                     "request_id": "req-456",
                     "duration_ms": 3210,
+                    "x_title": "tgBot",
                 }
             )
 
@@ -76,6 +78,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             self.assertEqual(latest_record["operation"], "embeddings")
             self.assertEqual(latest_record["provider"], "provider-name")
             self.assertEqual(latest_record["duration_ms"], 3210)
+            self.assertEqual(latest_record["x_title"], "tgBot")
             self.assertIs(created_at.tzinfo, timezone.utc)
         finally:
             db_path.unlink(missing_ok=True)
@@ -354,6 +357,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
                     "provider": "openrouter",
                     "model": "qwen",
                     "api_key_id": 5,
+                    "x_title": "tgBot",
                     "is_estimated": True,
                     "duration_ms": 120,
                 }
@@ -380,6 +384,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
                     operation="chat",
                     provider="openrouter",
                     model="qwen",
+                    x_title="tgBot",
                 )
             )
 
@@ -388,9 +393,13 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             self.assertEqual(key_data["summary"]["estimated_count"], 1)
             gateway_labels = {row["label"] for row in all_data["breakdowns"]["gateway_models"]}
             api_key_labels = {row["label"] for row in all_data["breakdowns"]["api_keys"]}
+            x_title_labels = {row["label"] for row in all_data["breakdowns"]["x_titles"]}
             self.assertIn("unknown", gateway_labels)
             self.assertIn("unattributed", api_key_labels)
             self.assertIn("5", api_key_labels)
+            self.assertIn("tgBot", x_title_labels)
+            self.assertIn("unknown", x_title_labels)
+            self.assertEqual(key_data["recent_records"][0]["x_title"], "tgBot")
         finally:
             db_path.unlink(missing_ok=True)
 

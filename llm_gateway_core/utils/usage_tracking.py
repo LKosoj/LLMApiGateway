@@ -26,6 +26,7 @@ DEFAULT_TOKENS_USAGE = {
 
 TOKEN_RATE_SCALE = 1_000_000
 FALLBACK_USAGE_SOURCE = "estimate_fallback"
+REQUEST_TITLE_HEADER = "x-title"
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,22 @@ class ModelCostRates:
 
 def initialize_tokens_usage() -> dict[str, Any]:
     return dict(DEFAULT_TOKENS_USAGE)
+
+
+def extract_request_x_title(request: Request | None) -> str | None:
+    if request is None:
+        return None
+
+    try:
+        value = request.headers.get(REQUEST_TITLE_HEADER)
+    except Exception:
+        return None
+
+    if not isinstance(value, str):
+        return None
+
+    cleaned_value = value.strip()
+    return cleaned_value or None
 
 
 def _as_non_negative_finite_float(value: Any) -> float | None:
@@ -402,6 +419,7 @@ def enrich_tokens_usage(
     request_id = getattr(request.state, "llmgateway_request_id", None)
     api_key_id = getattr(request.state, "api_key_id", None)
     upstream_key_fingerprint = getattr(request.state, "llmgateway_upstream_key_fingerprint", None)
+    x_title = extract_request_x_title(request)
 
     if provider_name:
         enriched_tokens_usage["provider"] = provider_name
@@ -417,6 +435,8 @@ def enrich_tokens_usage(
         enriched_tokens_usage["api_key_id"] = api_key_id
     if upstream_key_fingerprint:
         enriched_tokens_usage["upstream_key_fingerprint"] = upstream_key_fingerprint
+    if x_title:
+        enriched_tokens_usage["x_title"] = x_title
 
     _apply_rate_based_cost_saved(
         enriched_tokens_usage,
