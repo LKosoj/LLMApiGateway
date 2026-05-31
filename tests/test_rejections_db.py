@@ -54,8 +54,41 @@ class RejectionsDBSchemaTests(_RejectionsDBTestBase):
             "category",
             "reason",
             "auth_source",
+            "x_title",
         }
         self.assertEqual(columns, expected)
+
+    def test_init_db_adds_x_title_column_for_existing_table(self):
+        db_path = self._root / "db" / "legacy_rejections.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE rejection_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                request_id TEXT,
+                api_key_id INTEGER,
+                path TEXT NOT NULL,
+                method TEXT NOT NULL,
+                client_ip TEXT,
+                status_code INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                reason TEXT,
+                auth_source TEXT
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        RejectionsDB(db_filename="legacy_rejections.db")
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(rejection_events)")
+        columns = {row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        self.assertIn("x_title", columns)
 
 
 class RejectionsDBInsertGetTests(_RejectionsDBTestBase):
@@ -70,6 +103,7 @@ class RejectionsDBInsertGetTests(_RejectionsDBTestBase):
             category="key_disabled",
             reason="API key is disabled",
             auth_source="bearer-virtual",
+            x_title="tgBot",
         )
         defaults.update(kwargs)
         self.db.insert_rejection(**defaults)
@@ -82,6 +116,7 @@ class RejectionsDBInsertGetTests(_RejectionsDBTestBase):
         self.assertEqual(items[0]["category"], "key_disabled")
         self.assertEqual(items[0]["status_code"], 403)
         self.assertEqual(items[0]["path"], "/v1/chat/completions")
+        self.assertEqual(items[0]["x_title"], "tgBot")
 
     def test_filter_by_category(self):
         self._insert_one(category="key_disabled")
@@ -242,6 +277,7 @@ class RecordRejectionNoopTests(unittest.TestCase):
         request.client = SimpleNamespace(host="10.0.0.1")
         request.url = SimpleNamespace(path="/v1/chat/completions")
         request.method = "POST"
+        request.headers = {"x-title": " tgBot "}
 
         record_rejection(request, status_code=429, reason="rate limit", category="rate_limited")
 
@@ -250,6 +286,7 @@ class RecordRejectionNoopTests(unittest.TestCase):
         self.assertEqual(call_kwargs["category"], "rate_limited")
         self.assertEqual(call_kwargs["status_code"], 429)
         self.assertEqual(call_kwargs["api_key_id"], 3)
+        self.assertEqual(call_kwargs["x_title"], "tgBot")
 
     def test_record_rejection_swallows_insert_exception(self):
         mock_db = MagicMock(spec=RejectionsDB)

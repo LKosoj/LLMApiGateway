@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import aiosqlite
 
 from ..config.paths import resolve_db_dir
+from ..utils.usage_tracking import extract_request_x_title
 from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,8 @@ VALID_CATEGORIES = {
 INSERT_REJECTION_SQL = """
 INSERT INTO rejection_events
 (timestamp, request_id, api_key_id, path, method, client_ip,
- status_code, category, reason, auth_source)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ status_code, category, reason, auth_source, x_title)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -140,9 +141,15 @@ class RejectionsDB:
                 status_code INTEGER NOT NULL,
                 category TEXT NOT NULL,
                 reason TEXT,
-                auth_source TEXT
+                auth_source TEXT,
+                x_title TEXT
             )
             """)
+
+            cursor.execute("PRAGMA table_info(rejection_events)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            if "x_title" not in existing_columns:
+                cursor.execute("ALTER TABLE rejection_events ADD COLUMN x_title TEXT")
 
             cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_rejection_events_timestamp
@@ -196,6 +203,7 @@ class RejectionsDB:
         category: str,
         reason: str | None,
         auth_source: str | None,
+        x_title: str | None = None,
     ) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
         params = (
@@ -209,6 +217,7 @@ class RejectionsDB:
             category,
             reason[:500] if reason else None,
             auth_source,
+            x_title,
         )
         if self._batcher is not None:
             self._batcher.enqueue(INSERT_REJECTION_SQL, params)
@@ -280,7 +289,8 @@ class RejectionsDB:
                 cursor = await db.execute(
                     f"""
                     SELECT id, timestamp, request_id, api_key_id, path, method,
-                           client_ip, status_code, category, reason, auth_source
+                           client_ip, status_code, category, reason, auth_source,
+                           x_title
                     FROM rejection_events
                     {where_clause}
                     ORDER BY timestamp DESC
@@ -478,6 +488,7 @@ def record_rejection(
         )
         api_key_id = getattr(request.state, "api_key_id", None)
         auth_source = getattr(request.state, "gateway_auth_source", None)
+        x_title = extract_request_x_title(request)
         client_ip = (
             request.client.host
             if getattr(request, "client", None) is not None
@@ -493,6 +504,7 @@ def record_rejection(
             category=category,
             reason=reason,
             auth_source=auth_source,
+            x_title=x_title,
         )
     except Exception:
         logger.exception(

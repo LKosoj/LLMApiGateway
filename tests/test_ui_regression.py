@@ -664,6 +664,7 @@ def test_fallback_chains_show_detailed_error_message(page: Page, server):
                             "success": True,
                             "final_provider": "devbox",
                             "final_model": "mm.MiniMax-M2.7",
+                            "x_title": "tgBot",
                             "attempts": [
                                 {
                                     "attempt_number": 1,
@@ -701,6 +702,7 @@ def test_fallback_chains_show_detailed_error_message(page: Page, server):
     page.click('button[data-subtab="chains"]')
 
     expect(page.locator("#fallbackChainsArea .chain-card")).to_be_visible()
+    expect(page.locator("#fallbackChainsArea .chain-card")).to_contain_text("X-Title: tgBot")
     page.click("#fallbackChainsArea .chain-header")
 
     expect(page.locator("#fallbackChainsArea .error-badge")).to_contain_text("400 Bad Request")

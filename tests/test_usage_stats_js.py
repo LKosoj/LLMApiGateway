@@ -89,6 +89,13 @@ def test_usage_stats_js_hides_provider_column_in_latest_records():
     assert "key !== 'id' && key !== 'request_id' && key !== 'provider' && key !== 'status'" in content
 
 
+def test_fallback_chains_render_x_title():
+    content = Path("static/usage-stats.js").read_text(encoding="utf-8")
+
+    assert "titleSpan.className = 'chain-title';" in content
+    assert "titleSpan.textContent = `X-Title: ${record.x_title || 'N/A'}`;" in content
+
+
 def test_usage_stats_html_contains_upstream_analytics_subtab():
     content = Path("static/usage-stats.html").read_text(encoding="utf-8")
 

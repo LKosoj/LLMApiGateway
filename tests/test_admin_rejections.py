@@ -84,6 +84,7 @@ class AdminRejectionsHttpTests(unittest.TestCase):
             category="key_disabled",
             reason="API key is disabled",
             auth_source="bearer-virtual",
+            x_title="tgBot",
         )
 
         resp = self.client.get("/v1/admin/rejections", headers=self._master_headers())
@@ -93,6 +94,7 @@ class AdminRejectionsHttpTests(unittest.TestCase):
         self.assertEqual(body["total"], 1)
         self.assertEqual(len(body["items"]), 1)
         self.assertEqual(body["items"][0]["category"], "key_disabled")
+        self.assertEqual(body["items"][0]["x_title"], "tgBot")
 
     def test_unknown_category_returns_400(self):
         resp = self.client.get(
@@ -230,6 +232,7 @@ class RejectionsUiMasterOnlyTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/html", resp.headers["content-type"])
         self.assertIn("Rejections Audit", resp.text)
+        self.assertIn("X-Title", resp.text)
 
     def test_non_master_session_is_redirected_from_rejections_ui(self):
         self.client.cookies.set(

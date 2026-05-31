@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
@@ -133,6 +134,7 @@ class FallbackEventsDBTests(unittest.TestCase):
             error_type="http_429",
             error_message="Rate limited",
             duration_ms=1200,
+            x_title="tgBot",
         )
         self.db.insert_event(
             request_id="req-1",
@@ -153,7 +155,46 @@ class FallbackEventsDBTests(unittest.TestCase):
         self.assertEqual(records[0]["total_attempts"], 2)
         self.assertTrue(records[0]["success"])
         self.assertEqual(records[0]["final_provider"], "nvidia")
+        self.assertEqual(records[0]["x_title"], "tgBot")
         self.assertEqual(len(records[0]["attempts"]), 2)
+
+    def test_init_db_adds_x_title_column_for_existing_table(self):
+        db = FallbackEventsDB.__new__(FallbackEventsDB)
+        db.db_path = os.path.join(self.temp_dir, "legacy.db")
+        db._batcher = None
+
+        conn = sqlite3.connect(db.db_path)
+        conn.execute(
+            """
+            CREATE TABLE fallback_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                request_id TEXT NOT NULL,
+                gateway_model TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                success INTEGER NOT NULL DEFAULT 0,
+                error_type TEXT,
+                error_message TEXT,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                operation TEXT,
+                api_key_id INTEGER,
+                upstream_key_fingerprint TEXT
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        db._init_db()
+
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.execute("PRAGMA table_info(fallback_events)")
+        columns = {row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        self.assertIn("x_title", columns)
 
     def test_single_attempt_not_returned(self):
         """Requests with only 1 attempt should not appear in fallback records."""
@@ -456,6 +497,7 @@ class _FakeFallbackEventsDB:
                 "success": True,
                 "final_provider": "nvidia",
                 "final_model": "gpt-oss-120b",
+                "x_title": "tgBot",
                 "attempts": [
                     {"attempt_number": 1, "provider": "devbox", "model": "glm-5-turbo", "success": False, "error_type": "http_429", "error_message": "Rate limited", "duration_ms": 1200},
                     {"attempt_number": 2, "provider": "nvidia", "model": "qwen", "success": False, "error_type": "read_timeout", "error_message": "ReadTimeout", "duration_ms": 100000},
@@ -538,6 +580,7 @@ class FallbackStatsApiTests(unittest.TestCase):
         self.assertEqual(data["total_records"], 1)
         self.assertEqual(len(data["records"]), 1)
         self.assertEqual(data["records"][0]["total_attempts"], 3)
+        self.assertEqual(data["records"][0]["x_title"], "tgBot")
 
     def test_fallback_records_rejects_invalid_pagination(self):
         with self._client() as client:
@@ -600,7 +643,7 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
                     response = client.post(
                         "/v1/chat/completions",
                         json={"model": "gateway-model", "messages": [{"role": "user", "content": "hi"}]},
-                        headers={"Authorization": "Bearer test-key"},
+                        headers={"Authorization": "Bearer test-key", "X-Title": " tgBot "},
                     )
 
         self.assertEqual(response.status_code, 200)
@@ -611,6 +654,7 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
         self.assertEqual(call_kwargs.kwargs["provider"], "test-provider")
         self.assertEqual(call_kwargs.kwargs["model"], "provider-model")
         self.assertEqual(call_kwargs.kwargs["attempt_number"], 1)
+        self.assertEqual(call_kwargs.kwargs["x_title"], "tgBot")
         # request_id should be a UUID string
         self.assertIsNotNone(call_kwargs.kwargs["request_id"])
         self.assertGreater(len(call_kwargs.kwargs["request_id"]), 0)

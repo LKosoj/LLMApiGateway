@@ -624,6 +624,11 @@ document.addEventListener('DOMContentLoaded', () => {
             modelSpan.textContent = record.gateway_model || 'N/A';
             summary.appendChild(modelSpan);
 
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'chain-title';
+            titleSpan.textContent = `X-Title: ${record.x_title || 'N/A'}`;
+            summary.appendChild(titleSpan);
+
             const attSpan = document.createElement('span');
             attSpan.className = 'chain-attempts';
             attSpan.textContent = `${record.total_attempts} attempts`;

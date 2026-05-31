@@ -723,6 +723,15 @@ body.dark-mode .chain-model {
     color: var(--text);
 }
 
+.chain-title {
+    color: #475569;
+    font-size: 12px;
+}
+
+body.dark-mode .chain-title {
+    color: #cbd5e1;
+}
+
 .chain-attempts {
     color: #64748b;
     font-size: 12px;

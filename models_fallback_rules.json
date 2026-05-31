@@ -39,7 +39,7 @@
     "fallback_models": [
       {
         "provider": "freemodel",
-        "model": "gpt-5.5",
+        "model": "gpt-5.4-mini",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}

@@ -70,7 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderRows(items) {
         if (!items.length) {
-            els.tbody.innerHTML = '<tr><td colspan="8" class="rej-empty">No rejections match the current filters.</td></tr>';
+            els.tbody.innerHTML = '<tr><td colspan="9" class="rej-empty">No rejections match the current filters.</td></tr>';
             return;
         }
         els.tbody.innerHTML = items.map((it) => {
@@ -82,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${escapeHtml(it.method || '—')}</td>
                 <td><code>${escapeHtml(it.path || '—')}</code></td>
                 <td>${it.api_key_id != null ? '#' + escapeHtml(String(it.api_key_id)) : '—'}</td>
+                <td class="rej-title">${escapeHtml(it.x_title || '—')}</td>
                 <td>${escapeHtml(it.client_ip || '—')}</td>
                 <td class="rej-reason"${reqIdTitle}>${escapeHtml(it.reason || '—')}</td>
             </tr>`;

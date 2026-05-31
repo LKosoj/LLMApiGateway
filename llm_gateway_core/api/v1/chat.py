@@ -41,7 +41,7 @@ from ...services.upstream_routing_state import (
 )
 from ...utils.log_redaction import redact_payload_for_log
 from ...utils.text_sanitize import sanitize_payload
-from ...utils.usage_tracking import extract_tokens_usage
+from ...utils.usage_tracking import extract_request_x_title, extract_tokens_usage
 
 # Bound by the FastAPI lifespan via ``set_model_rotation_db``. Defined at
 # module import only as a declaration — no ``ModelRotationDB()`` is created
@@ -3060,6 +3060,7 @@ async def _attempt_model_fallback_rule(
     )
 
     attempt_number = attempt_number_start
+    x_title = extract_request_x_title(request)
 
     def _record_event(
         success: bool,
@@ -3088,6 +3089,7 @@ async def _attempt_model_fallback_rule(
                     operation=getattr(request.state, "llmgateway_operation", "chat"),
                     api_key_id=getattr(request.state, "api_key_id", None),
                     upstream_key_fingerprint=upstream_key_fingerprint,
+                    x_title=x_title,
                 )
             except Exception as exc:
                 logging.debug("Failed to record fallback event: %s", exc)

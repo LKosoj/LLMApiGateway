@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 INSERT_EVENT_SQL = """
 INSERT INTO fallback_events
 (timestamp, request_id, gateway_model, attempt_number, provider, model,
- success, error_type, error_message, duration_ms, operation, api_key_id, upstream_key_fingerprint)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ success, error_type, error_message, duration_ms, operation, api_key_id,
+ upstream_key_fingerprint, x_title)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -135,7 +136,8 @@ class FallbackEventsDB:
                 duration_ms INTEGER NOT NULL DEFAULT 0,
                 operation TEXT,
                 api_key_id INTEGER,
-                upstream_key_fingerprint TEXT
+                upstream_key_fingerprint TEXT,
+                x_title TEXT
             )
             ''')
 
@@ -147,6 +149,8 @@ class FallbackEventsDB:
                 cursor.execute("ALTER TABLE fallback_events ADD COLUMN api_key_id INTEGER")
             if "upstream_key_fingerprint" not in existing_columns:
                 cursor.execute("ALTER TABLE fallback_events ADD COLUMN upstream_key_fingerprint TEXT")
+            if "x_title" not in existing_columns:
+                cursor.execute("ALTER TABLE fallback_events ADD COLUMN x_title TEXT")
 
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_fallback_events_timestamp
@@ -212,6 +216,7 @@ class FallbackEventsDB:
         operation: str | None = None,
         api_key_id: int | None = None,
         upstream_key_fingerprint: str | None = None,
+        x_title: str | None = None,
     ) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
         params = (
@@ -228,6 +233,7 @@ class FallbackEventsDB:
             operation,
             api_key_id,
             upstream_key_fingerprint,
+            x_title,
         )
         if self._batcher is not None:
             self._batcher.enqueue(INSERT_EVENT_SQL, params)
@@ -377,7 +383,7 @@ class FallbackEventsDB:
                 SELECT
                     request_id, timestamp, gateway_model, attempt_number,
                     provider, model, success, error_type, error_message, duration_ms,
-                    operation, api_key_id, upstream_key_fingerprint
+                    operation, api_key_id, upstream_key_fingerprint, x_title
                 FROM fallback_events
                 WHERE {" AND ".join(request_where)}
                 ORDER BY request_id, attempt_number
@@ -405,11 +411,13 @@ class FallbackEventsDB:
                     last = attempts[-1]
                     total_duration_ms = sum(a["duration_ms"] for a in attempts)
                     any_success = any(a["success"] for a in attempts)
+                    x_title = next((a["x_title"] for a in attempts if a.get("x_title")), None)
 
                     records.append({
                         "request_id": rid,
                         "timestamp": first["timestamp"],
                         "gateway_model": first["gateway_model"],
+                        "x_title": x_title,
                         "total_attempts": len(attempts),
                         "total_duration_ms": total_duration_ms,
                         "success": any_success,
