@@ -438,7 +438,7 @@
       "smart_model": "llmgateway/high",
       "strategic_model": "llmgateway/high",
       "embedding_model": "llmgateway/embedding",
-      "image_generation_model": "llmgateway/flux.2-klein-4b-generation",
+      "image_generation_model": "llmgateway/gpt-image-2",
       "image_generation_size": "1024x1024",
       "routes": []
     }

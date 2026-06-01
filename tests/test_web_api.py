@@ -657,7 +657,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["raw_content"], "Downloaded article content")
         self.assertEqual(payload["results"][0]["images"], [])
         self.assertIsInstance(payload["results"][0]["score"], float)
-        search_adapter.assert_awaited_once_with(fake_http_client, "topic", 3)
+        search_adapter.assert_awaited_once_with(fake_http_client, "topic", 3, include_images=True)
         read_adapter.assert_awaited_once_with(fake_http_client, "https://example.com/article")
         fake_http_client.post.assert_not_awaited()
 
@@ -712,7 +712,7 @@ class WebApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(fake_http_client.post.await_count, 2)
-        search_adapter.assert_awaited_once_with(ANY, "fallback optimized query", 3)
+        search_adapter.assert_awaited_once_with(ANY, "fallback optimized query", 3, include_images=False)
 
     def test_web_search_reports_internal_query_model_error_when_fallbacks_return_empty_text(self):
         self.generated_query_text = ""
@@ -825,7 +825,8 @@ class WebApiTests(unittest.TestCase):
             generate_calls.append((query_model, query, language, num_queries))
             return [f"{language}-query-{index}" for index in range(num_queries)]
 
-        async def fake_search(_client, query: str, max_results: int):
+        async def fake_search(_client, query: str, max_results: int, *, include_images: bool = False):
+            self.assertFalse(include_images)
             language = query.split("-", 1)[0]
             return [
                 {
@@ -1034,7 +1035,8 @@ class WebApiTests(unittest.TestCase):
             generate_calls.append((query_model, query, language, num_queries))
             return [f"{language}-query-{index}" for index in range(num_queries)]
 
-        async def fake_search(_client, query: str, max_results: int):
+        async def fake_search(_client, query: str, max_results: int, *, include_images: bool = False):
+            self.assertFalse(include_images)
             language = query.split("-", 1)[0]
             return [
                 {
@@ -2623,6 +2625,228 @@ class WebApiTests(unittest.TestCase):
                 "content": "hello world",
             },
         )
+
+    def test_direct_fetch_routes_medium_through_freedium(self):
+        class _FakeResponse:
+            status_code = 200
+            headers = {"Content-Type": "text/html; charset=utf-8"}
+            text = "<html><head><title>Medium title</title></head><body>body</body></html>"
+            content = text.encode("utf-8")
+
+            def raise_for_status(self):
+                return None
+
+        class _FakeClient:
+            def __init__(self):
+                self.requested_urls = []
+
+            async def get(self, url, **_kwargs):
+                self.requested_urls.append(url)
+                return _FakeResponse()
+
+        fake_trafilatura = Mock()
+        fake_trafilatura.extract = Mock(return_value="Freedium article content")
+        fake_client = _FakeClient()
+
+        with (
+            patch.object(web_api, "_validate_public_fetch_host", return_value=None),
+            patch.dict("sys.modules", {"trafilatura": fake_trafilatura}),
+        ):
+            result = run_async(web_api._direct_http_fetch("https://medium.com/@user/post", fake_client))
+
+        self.assertEqual(
+            fake_client.requested_urls,
+            ["https://freedium-mirror.cfd/https://medium.com/@user/post"],
+        )
+        self.assertEqual(result["url"], "https://medium.com/@user/post")
+        self.assertEqual(result["title"], "Medium title")
+        self.assertEqual(result["content"], "Freedium article content")
+
+    def test_direct_fetch_falls_back_to_medium_when_freedium_fails(self):
+        class _FakeResponse:
+            headers = {"Content-Type": "text/html; charset=utf-8"}
+            text = "<html><head><title>Direct title</title></head><body>body</body></html>"
+            content = text.encode("utf-8")
+
+            def __init__(self, *, ok: bool):
+                self.status_code = 200 if ok else 503
+                self.ok = ok
+
+            def raise_for_status(self):
+                if not self.ok:
+                    raise web_api.httpx.HTTPError("freedium failed")
+
+        class _FakeClient:
+            def __init__(self):
+                self.requested_urls = []
+
+            async def get(self, url, **_kwargs):
+                self.requested_urls.append(url)
+                return _FakeResponse(ok=len(self.requested_urls) > 1)
+
+        fake_trafilatura = Mock()
+        fake_trafilatura.extract = Mock(return_value="Direct Medium content")
+        fake_client = _FakeClient()
+
+        with (
+            patch.object(web_api, "_validate_public_fetch_host", return_value=None),
+            patch.dict("sys.modules", {"trafilatura": fake_trafilatura}),
+        ):
+            result = run_async(web_api._direct_http_fetch("https://medium.com/@user/post", fake_client))
+
+        self.assertEqual(
+            fake_client.requested_urls,
+            [
+                "https://freedium-mirror.cfd/https://medium.com/@user/post",
+                "https://medium.com/@user/post",
+            ],
+        )
+        self.assertEqual(result["url"], "https://medium.com/@user/post")
+        self.assertEqual(result["title"], "Direct title")
+        self.assertEqual(result["content"], "Direct Medium content")
+
+    def test_direct_fetch_returns_best_effort_images_without_retrying(self):
+        html = """
+        <html>
+          <head>
+            <title>Article title</title>
+            <meta property="og:image" content="/og.jpg" />
+          </head>
+          <body>
+            <article>
+              <p>Body</p>
+              <img src="/hero.jpg" alt="Hero" />
+              <img srcset="/small.jpg 320w, /large.jpg 1280w" alt="Large" />
+              <img src="/img/avatars/user.png" alt="avatar" />
+            </article>
+          </body>
+        </html>
+        """
+
+        class _FakeResponse:
+            status_code = 200
+            headers = {"Content-Type": "text/html; charset=utf-8"}
+            text = html
+            content = html.encode("utf-8")
+
+            def raise_for_status(self):
+                return None
+
+        class _FakeClient:
+            def __init__(self):
+                self.requested_urls = []
+
+            async def get(self, url, **_kwargs):
+                self.requested_urls.append(url)
+                return _FakeResponse()
+
+        fake_trafilatura = Mock()
+        fake_trafilatura.extract = Mock(return_value="Article body")
+        fake_client = _FakeClient()
+
+        with (
+            patch.object(web_api, "_validate_public_fetch_host", return_value=None),
+            patch.dict("sys.modules", {"trafilatura": fake_trafilatura}),
+        ):
+            result = run_async(web_api._direct_http_fetch("https://example.com/post", fake_client))
+
+        self.assertEqual(fake_client.requested_urls, ["https://example.com/post"])
+        fake_trafilatura.extract.assert_called_once()
+        self.assertTrue(fake_trafilatura.extract.call_args.kwargs["include_links"])
+        self.assertTrue(fake_trafilatura.extract.call_args.kwargs["include_images"])
+        self.assertEqual(fake_trafilatura.extract.call_args.kwargs["url"], "https://example.com/post")
+        self.assertEqual(result["content"], "Article body")
+        self.assertNotIn("https://example.com/hero.jpg", result["content"])
+        self.assertNotIn("https://example.com/large.jpg", result["content"])
+        self.assertNotIn("https://example.com/og.jpg", result["content"])
+        self.assertNotIn("avatars", result["content"])
+        self.assertEqual(
+            result["images"],
+            [
+                {"url": "https://example.com/hero.jpg", "description": "Hero"},
+                {"url": "https://example.com/large.jpg", "description": "Large"},
+                {"url": "https://example.com/og.jpg", "description": ""},
+            ],
+        )
+
+    def test_read_tavily_requests_and_returns_images(self):
+        calls = []
+
+        class _FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "results": [
+                        {
+                            "title": "Tavily title",
+                            "raw_content": "Tavily body",
+                            "images": ["https://example.com/tavily.jpg"],
+                        }
+                    ]
+                }
+
+        class _FakeClient:
+            async def post(self, url, *, json=None, **_kwargs):
+                calls.append({"url": url, "json": json})
+                return _FakeResponse()
+
+        with patch.object(web_api.settings, "tavily_api_key", "tavily-key"):
+            result = run_async(web_api._read_tavily(_FakeClient(), "https://example.com/article"))
+
+        self.assertEqual(calls[0]["json"]["include_images"], True)
+        self.assertEqual(calls[0]["json"]["format"], "markdown")
+        self.assertEqual(result["content"], "Tavily body")
+        self.assertEqual(result["images"], [{"url": "https://example.com/tavily.jpg", "description": ""}])
+
+    def test_read_jina_extracts_images_from_markdown(self):
+        calls = []
+
+        class _FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "data": {
+                        "title": "Jina title",
+                        "content": "Jina body\n\n![Chart](https://example.com/chart.png)",
+                    }
+                }
+
+        class _FakeClient:
+            async def get(self, url, *, headers=None, **_kwargs):
+                calls.append({"url": url, "headers": headers or {}})
+                return _FakeResponse()
+
+        with patch.object(web_api.settings, "jina_api_key", "jina-key"):
+            result = run_async(web_api._read_jina(_FakeClient(), "https://example.com/article"))
+
+        self.assertEqual(calls[0]["headers"]["X-Retain-Images"], "all")
+        self.assertEqual(calls[0]["headers"]["X-With-Images-Summary"], "true")
+        self.assertEqual(calls[0]["headers"]["X-With-Generated-Alt"], "true")
+        self.assertEqual(result["images"], [{"url": "https://example.com/chart.png", "description": "Chart"}])
+
+    def test_read_zai_requests_image_retention(self):
+        fake_call = AsyncMock(
+            return_value={
+                "title": "Z.AI title",
+                "content": "Z.AI body\n\n![Diagram](https://example.com/diagram.png)",
+            }
+        )
+
+        with (
+            patch.object(web_api.settings, "zai_api_key", "zai-key"),
+            patch.object(web_api, "zai_mcp_tool_call", fake_call),
+        ):
+            result = run_async(web_api._read_zai(Mock(), "https://example.com/article"))
+
+        arguments = fake_call.call_args.kwargs["arguments"]
+        self.assertEqual(arguments["retain_images"], True)
+        self.assertEqual(arguments["with_images_summary"], True)
+        self.assertEqual(arguments["keep_img_data_url"], False)
+        self.assertEqual(result["images"], [{"url": "https://example.com/diagram.png", "description": "Diagram"}])
 
     def test_cloakbrowser_extract_prefers_playwright_title_over_extractor_heuristic(self):
         class FakeResult:

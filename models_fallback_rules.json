@@ -202,6 +202,22 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
+        "provider": "devbox",
+        "model": "mm.MiniMax-M3",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "freemodel",
+        "model": "gpt-5.5",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {
+          "reasoning_effort": "high"
+        },
+        "custom_headers": {}
+      },
+      {
         "provider": "alibaba",
         "model": "qwen3.7-max",
         "use_provider_order_as_fallback": false,
@@ -229,24 +245,6 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
-      },
-      {
-        "provider": "devbox",
-        "model": "mm.MiniMax-M2.7",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "freemodel",
-        "model": "gpt-5.5",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {
-          "settings": {
-            "thinkingLevel": "high"
-          }
-        },
-        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {

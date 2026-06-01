@@ -342,7 +342,7 @@ class OperationRulesLoadingTests(unittest.TestCase):
         )
         self.assertEqual(
             operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["image_generation_model"],
-            "llmgateway/flux.2-klein-4b-generation",
+            "llmgateway/gpt-image-2",
         )
         self.assertEqual(
             operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["image_generation_size"],

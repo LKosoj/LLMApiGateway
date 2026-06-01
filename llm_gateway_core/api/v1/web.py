@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import functools
 import ipaddress
+import json
 import logging
 import re
 import socket
@@ -13,7 +14,7 @@ import urllib.parse
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -501,12 +502,287 @@ _DIRECT_FETCH_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
+FREEDIUM_MIRROR_PREFIX = "https://freedium-mirror.cfd/"
+NON_ARTICLE_IMAGE_PATTERNS = (
+    "/img/avatars/",
+    "avatar",
+    "gravatar",
+    "profile-picture",
+    "favicon",
+)
+SMALL_IMAGE_DIMENSIONS_REGEX = re.compile(
+    r"w_(?:16|24|32|36|40|48|64),h_(?:16|24|32|36|40|48|64)"
+)
+MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+ARTICLE_IMAGE_SELECTORS = (
+    "article img",
+    "main img",
+    ".body.markup img",
+    ".available-content img",
+    ".captioned-image-container img",
+)
+
 
 def _clean_read_url(url: str) -> str:
     return url.strip().strip("()").strip('"').strip("'").strip()
 
 
-async def _direct_http_fetch(url: str, http_client: httpx.AsyncClient | None = None) -> dict[str, str] | None:
+def _clean_image_description(value: Any) -> str:
+    return " ".join(str(value or "").split())[:300]
+
+
+def _is_non_article_image(url: str, description: str = "") -> bool:
+    lower_url = (url or "").lower()
+    lower_description = (description or "").lower()
+    if not lower_url:
+        return True
+    if any(pattern in lower_url for pattern in NON_ARTICLE_IMAGE_PATTERNS):
+        return True
+    if "avatar" in lower_description:
+        return True
+    if SMALL_IMAGE_DIMENSIONS_REGEX.search(lower_url):
+        return True
+    return False
+
+
+def _normalize_image_url(value: Any, base_url: str = "") -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().strip('"').strip("'")
+    if not candidate:
+        return None
+    if candidate.startswith(("data:", "blob:", "javascript:")):
+        return None
+    resolved = urljoin(base_url, candidate)
+    parsed = urlsplit(resolved)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return resolved
+
+
+def _add_image_item(
+    images: list[dict[str, str]],
+    seen: set[str],
+    value: Any,
+    *,
+    base_url: str = "",
+    description: Any = "",
+    filter_non_article: bool = True,
+) -> None:
+    image_url = _normalize_image_url(value, base_url)
+    if image_url is None or image_url in seen:
+        return
+    clean_description = _clean_image_description(description)
+    if filter_non_article and _is_non_article_image(image_url, clean_description):
+        return
+    seen.add(image_url)
+    images.append({"url": image_url, "description": clean_description})
+
+
+def _best_srcset_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    best_url: str | None = None
+    best_width = -1
+    for candidate in value.split(","):
+        parts = candidate.strip().split()
+        if not parts:
+            continue
+        width = 0
+        if len(parts) > 1 and parts[1].endswith("w"):
+            try:
+                width = int(parts[1][:-1])
+            except ValueError:
+                width = 0
+        if best_url is None or width > best_width:
+            best_url = parts[0]
+            best_width = width
+    return best_url
+
+
+def _extract_jsonld_images(raw_html: Any, base_url: str) -> list[dict[str, str]]:
+    images: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add_candidate(candidate: Any, description: Any = "") -> None:
+        if isinstance(candidate, str):
+            _add_image_item(images, seen, candidate, base_url=base_url, description=description)
+        elif isinstance(candidate, dict):
+            add_candidate(
+                candidate.get("url")
+                or candidate.get("contentUrl")
+                or candidate.get("thumbnailUrl"),
+                candidate.get("caption") or candidate.get("name") or description,
+            )
+        elif isinstance(candidate, list):
+            for item in candidate:
+                add_candidate(item, description)
+
+    try:
+        from bs4 import BeautifulSoup
+
+        html_text = raw_html.decode("utf-8", errors="ignore") if isinstance(raw_html, bytes) else str(raw_html or "")
+        if not html_text.strip():
+            return images
+
+        soup = BeautifulSoup(html_text, "lxml")
+        for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+            payload = (script.string or script.text or "").strip()
+            if not payload:
+                continue
+            try:
+                data = json.loads(payload)
+            except Exception:
+                continue
+
+            stack: list[Any] = [data]
+            while stack:
+                current = stack.pop()
+                if isinstance(current, dict):
+                    current_type = current.get("@type")
+                    types = (
+                        [current_type]
+                        if isinstance(current_type, str)
+                        else current_type
+                        if isinstance(current_type, list)
+                        else []
+                    )
+                    normalized_types = {str(item).lower() for item in types}
+                    if normalized_types & {"article", "newsarticle", "blogposting"}:
+                        description = current.get("headline") or current.get("name") or ""
+                        add_candidate(current.get("image"), description)
+                        add_candidate(current.get("thumbnailUrl"), description)
+                        add_candidate(current.get("primaryImageOfPage"), description)
+                    stack.extend(current.values())
+                elif isinstance(current, list):
+                    stack.extend(current)
+    except Exception as exc:
+        logger.debug("Failed to extract images from JSON-LD: %s", exc)
+    return images
+
+
+def _extract_article_images_from_html(raw_html: Any, base_url: str) -> list[dict[str, str]]:
+    images: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add_candidate(value: Any, description: Any = "") -> None:
+        _add_image_item(images, seen, value, base_url=base_url, description=description)
+
+    def add_img_tag(img_tag: Any) -> None:
+        description = img_tag.get("alt") or img_tag.get("title") or ""
+        add_candidate(
+            img_tag.get("src")
+            or img_tag.get("data-src")
+            or img_tag.get("data-original")
+            or img_tag.get("data-lazy-src")
+            or _best_srcset_url(img_tag.get("srcset") or img_tag.get("data-srcset")),
+            description,
+        )
+
+    try:
+        from bs4 import BeautifulSoup
+
+        html_text = raw_html.decode("utf-8", errors="ignore") if isinstance(raw_html, bytes) else str(raw_html or "")
+        if not html_text.strip():
+            return images
+
+        soup = BeautifulSoup(html_text, "lxml")
+        for selector in ARTICLE_IMAGE_SELECTORS:
+            for img_tag in soup.select(selector):
+                add_img_tag(img_tag)
+
+        if not images:
+            for img_tag in soup.find_all("img"):
+                add_img_tag(img_tag)
+
+        for meta_name in ("og:image", "og:image:url", "twitter:image", "twitter:image:src"):
+            for meta in soup.find_all("meta", attrs={"property": meta_name}):
+                add_candidate(meta.get("content"))
+            for meta in soup.find_all("meta", attrs={"name": meta_name}):
+                add_candidate(meta.get("content"))
+        for link in soup.find_all("link", rel=lambda value: value and "image_src" in value):
+            add_candidate(link.get("href"))
+    except Exception as exc:
+        logger.debug("Failed to extract article images from HTML: %s", exc)
+
+    for item in _extract_jsonld_images(raw_html, base_url):
+        _add_image_item(images, seen, item.get("url"), base_url=base_url, description=item.get("description"))
+    return images
+
+
+def _extract_images_from_markdown(content: Any, base_url: str = "") -> list[dict[str, str]]:
+    images: list[dict[str, str]] = []
+    seen: set[str] = set()
+    text = str(content or "")
+    for description, image_url in MARKDOWN_IMAGE_RE.findall(text):
+        _add_image_item(
+            images,
+            seen,
+            image_url,
+            base_url=base_url,
+            description=description,
+            filter_non_article=False,
+        )
+    return images
+
+
+def _merge_image_items(*groups: Any, base_url: str = "") -> list[dict[str, str]]:
+    images: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add_group(group: Any) -> None:
+        if group is None:
+            return
+        if isinstance(group, str):
+            _add_image_item(images, seen, group, base_url=base_url, filter_non_article=False)
+            return
+        if isinstance(group, dict):
+            _add_image_item(
+                images,
+                seen,
+                group.get("url") or group.get("src") or group.get("image_url") or group.get("contentUrl"),
+                base_url=base_url,
+                description=group.get("description") or group.get("alt") or group.get("caption") or group.get("title"),
+                filter_non_article=False,
+            )
+            return
+        if isinstance(group, list):
+            for item in group:
+                add_group(item)
+
+    for group in groups:
+        add_group(group)
+    return images
+
+
+def _content_with_images(content: Any, images: Any, base_url: str = "") -> tuple[str, list[dict[str, str]]]:
+    content_text = str(content or "").strip()
+    merged_images = _merge_image_items(
+        images,
+        _extract_images_from_markdown(content_text, base_url),
+        base_url=base_url,
+    )
+    return content_text, merged_images
+
+
+def _is_medium_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").lower()
+    return hostname == "medium.com" or hostname.endswith(".medium.com")
+
+
+def _is_freedium_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    return (parsed.hostname or "").lower() == "freedium-mirror.cfd"
+
+
+def _direct_fetch_url_candidates(url: str) -> list[tuple[str, str | None]]:
+    if _is_medium_url(url) and not _is_freedium_url(url):
+        return [(f"{FREEDIUM_MIRROR_PREFIX}{url}", url), (url, None)]
+    return [(url, None)]
+
+
+async def _direct_http_fetch(url: str, http_client: httpx.AsyncClient | None = None) -> dict[str, Any] | None:
     from ...agents.web_research import (
         _HTMLTextExtractor,
         _extract_youtube_video_id,
@@ -548,87 +824,102 @@ async def _direct_http_fetch(url: str, http_client: httpx.AsyncClient | None = N
         except Exception as exc:
             logger.warning("YouTube transcript failed for %s: %s", cleaned, exc)
 
-    try:
-        # Per-request client: _direct_http_fetch hits arbitrary user-supplied URLs,
-        # so we keep cookies / HTTP/2 connection state isolated from the shared pool.
-        # An injected http_client is used only when the caller explicitly opts in.
-        _client_ctx = (
-            contextlib.nullcontext(http_client)
-            if http_client is not None
-            else httpx.AsyncClient()
-        )
-        async with _client_ctx as client:
-            response, final_url = await _get_with_public_redirects(client, cleaned)
-            response.raise_for_status()
-            content_type = response.headers.get("Content-Type", "").lower()
-            if cleaned.lower().endswith(".pdf") or "application/pdf" in content_type:
+    for fetch_url, response_url_override in _direct_fetch_url_candidates(cleaned):
+        if fetch_url != cleaned:
+            logger.info("Routing Medium URL through Freedium mirror: %s", cleaned)
+        try:
+            # Per-request client: _direct_http_fetch hits arbitrary user-supplied URLs,
+            # so we keep cookies / HTTP/2 connection state isolated from the shared pool.
+            # An injected http_client is used only when the caller explicitly opts in.
+            _client_ctx = (
+                contextlib.nullcontext(http_client)
+                if http_client is not None
+                else httpx.AsyncClient()
+            )
+            async with _client_ctx as client:
+                response, final_url = await _get_with_public_redirects(client, fetch_url)
+                response.raise_for_status()
+                result_url = response_url_override or final_url
+                image_base_url = final_url
+                content_type = response.headers.get("Content-Type", "").lower()
+                if fetch_url.lower().endswith(".pdf") or "application/pdf" in content_type:
+                    try:
+                        from io import BytesIO
+
+                        from pdfminer.high_level import extract_text
+
+                        pdf_text = await asyncio.to_thread(extract_text, BytesIO(response.content))
+                        if pdf_text and pdf_text.strip():
+                            return {
+                                "url": result_url,
+                                "title": cleaned.rsplit("/", 1)[-1] or "PDF",
+                                "content": pdf_text.strip(),
+                            }
+                    except ImportError:
+                        logger.debug("pdfminer not installed; skipping direct PDF extraction for %s", fetch_url)
+                    except Exception as exc:
+                        logger.warning("Direct PDF extraction failed for %s: %s", fetch_url, exc)
+                    return None
+
+                html_text = response.text
+                html_images = _extract_article_images_from_html(html_text, image_base_url)
+                title = ""
+                title_match = _HTML_TITLE_RE.search(html_text) or _HTML_H1_RE.search(html_text)
+                if title_match:
+                    title = unescape(_HTML_TAG_RE.sub("", title_match.group(1))).strip()
+
                 try:
-                    from io import BytesIO
+                    import trafilatura
 
-                    from pdfminer.high_level import extract_text
-
-                    pdf_text = await asyncio.to_thread(extract_text, BytesIO(response.content))
-                    if pdf_text and pdf_text.strip():
-                        return {
-                            "url": final_url,
-                            "title": cleaned.rsplit("/", 1)[-1] or "PDF",
-                            "content": pdf_text.strip(),
-                        }
+                    extracted = trafilatura.extract(
+                        html_text,
+                        url=image_base_url,
+                        include_formatting=True,
+                        include_links=True,
+                        include_tables=True,
+                        include_images=True,
+                        include_comments=False,
+                        output_format="markdown",
+                    )
+                    if extracted and extracted.strip():
+                        content, images = _content_with_images(extracted, html_images, image_base_url)
+                        return {"url": result_url, "title": title, "content": content, "images": images}
                 except ImportError:
-                    logger.debug("pdfminer not installed; skipping direct PDF extraction for %s", cleaned)
+                    logger.debug("trafilatura not installed; falling back to html.parser for %s", fetch_url)
                 except Exception as exc:
-                    logger.warning("Direct PDF extraction failed for %s: %s", cleaned, exc)
-                return None
+                    logger.warning("trafilatura extraction failed for %s: %s", fetch_url, exc)
 
-            html_text = response.text
-            title = ""
-            title_match = _HTML_TITLE_RE.search(html_text) or _HTML_H1_RE.search(html_text)
-            if title_match:
-                title = unescape(_HTML_TAG_RE.sub("", title_match.group(1))).strip()
+                selectolax_text = await asyncio.to_thread(_extract_text_with_selectolax, html_text)
+                if selectolax_text:
+                    content, images = _content_with_images(selectolax_text, html_images, image_base_url)
+                    return {"url": result_url, "title": title, "content": content, "images": images}
 
-            try:
-                import trafilatura
+                def _parse_html_to_text(raw_html: str) -> str:
+                    parser = _HTMLTextExtractor()
+                    parser.feed(raw_html)
+                    return "\n".join(
+                        line.strip() for line in "\n".join(parser.parts).splitlines() if line.strip()
+                    )
 
-                extracted = trafilatura.extract(
-                    html_text,
-                    include_formatting=True,
-                    include_tables=True,
-                    include_comments=False,
-                    output_format="markdown",
-                )
-                if extracted and extracted.strip():
-                    return {"url": final_url, "title": title, "content": extracted.strip()}
-            except ImportError:
-                logger.debug("trafilatura not installed; falling back to html.parser for %s", cleaned)
-            except Exception as exc:
-                logger.warning("trafilatura extraction failed for %s: %s", cleaned, exc)
-
-            selectolax_text = await asyncio.to_thread(_extract_text_with_selectolax, html_text)
-            if selectolax_text:
-                return {"url": final_url, "title": title, "content": selectolax_text}
-
-            def _parse_html_to_text(raw_html: str) -> str:
-                parser = _HTMLTextExtractor()
-                parser.feed(raw_html)
-                return "\n".join(
-                    line.strip() for line in "\n".join(parser.parts).splitlines() if line.strip()
-                )
-
-            text = await asyncio.to_thread(_parse_html_to_text, html_text)
-            if text:
-                return {"url": final_url, "title": title, "content": text}
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        logger.warning("Direct HTTP fetch timed out for %s", cleaned)
-    except httpx.HTTPError as exc:
-        logger.warning("Direct HTTP fetch HTTP error for %s: %s", cleaned, exc)
-    except Exception as exc:
-        logger.warning("Direct HTTP fetch unexpected error for %s: %s", cleaned, exc)
+                text = await asyncio.to_thread(_parse_html_to_text, html_text)
+                if text:
+                    content, images = _content_with_images(text, html_images, image_base_url)
+                    return {"url": result_url, "title": title, "content": content, "images": images}
+                if html_images:
+                    content, images = _content_with_images("", html_images, image_base_url)
+                    return {"url": result_url, "title": title, "content": content, "images": images}
+        except HTTPException:
+            raise
+        except httpx.TimeoutException:
+            logger.warning("Direct HTTP fetch timed out for %s", fetch_url)
+        except httpx.HTTPError as exc:
+            logger.warning("Direct HTTP fetch HTTP error for %s: %s", fetch_url, exc)
+        except Exception as exc:
+            logger.warning("Direct HTTP fetch unexpected error for %s: %s", fetch_url, exc)
     return None
 
 
-def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: str) -> dict[str, str] | None:
+def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: str) -> dict[str, Any] | None:
     try:
         import rs_trafilatura
     except ImportError:
@@ -641,6 +932,7 @@ def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: s
             url=final_url,
             output_markdown=True,
             include_links=True,
+            include_images=True,
             include_tables=True,
             include_comments=False,
             favor_recall=True,
@@ -657,7 +949,8 @@ def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: s
     # sentence instead of the real <title> (e.g. en.wikipedia.org/wiki/Type_system).
     extractor_title = (getattr(result, "title", None) or "").strip()
     title = (page_title or "").strip() or extractor_title
-    return {"url": final_url, "title": title, "content": markdown}
+    content, images = _content_with_images(markdown, _extract_article_images_from_html(html_text, final_url), final_url)
+    return {"url": final_url, "title": title, "content": content, "images": images}
 
 
 def _abort_blocked_cloakbrowser_request(route: Any) -> None:
@@ -696,7 +989,7 @@ def _cloakbrowser_render_sync(url: str) -> tuple[str, str, str]:
             browser.close()
 
 
-async def _cloakbrowser_fetch(url: str) -> dict[str, str] | None:
+async def _cloakbrowser_fetch(url: str) -> dict[str, Any] | None:
     cleaned = _clean_read_url(url)
     if not cleaned.startswith(("http://", "https://")):
         return None
@@ -997,17 +1290,33 @@ _BUILTIN_SEARCH_ADAPTERS: tuple[str, ...] = ("proxy", "tavily", "jina", "zai")
 _BUILTIN_READ_ADAPTERS: tuple[str, ...] = ("proxy", "tavily", "jina", "zai")
 
 
-def _normalize_search_item(url: Any, title: Any = "", snippet: Any = "") -> dict[str, str] | None:
+def _normalize_search_item(
+    url: Any,
+    title: Any = "",
+    snippet: Any = "",
+    *,
+    images: Any = None,
+) -> dict[str, Any] | None:
     if not isinstance(url, str) or not url.strip():
         return None
-    return {
+    item: dict[str, Any] = {
         "url": url.strip(),
         "title": str(title or ""),
         "snippet": str(snippet or ""),
     }
+    normalized_images = _merge_image_items(images, _extract_images_from_markdown(item["snippet"], item["url"]))
+    if normalized_images:
+        item["images"] = normalized_images
+    return item
 
 
-async def _search_proxy(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_proxy(
+    client: httpx.AsyncClient,
+    query: str,
+    max_results: int,
+    *,
+    include_images: bool = False,
+) -> list[dict[str, Any]]:
     proxy_url = (settings.proxy_url or "").strip()
     if not proxy_url:
         return []
@@ -1024,19 +1333,32 @@ async def _search_proxy(client: httpx.AsyncClient, query: str, max_results: int)
             item.get("url") or item.get("link"),
             item.get("title"),
             item.get("content") or item.get("snippet") or item.get("description"),
+            images=item.get("images") if include_images else None,
         )
         for item in items if isinstance(item, dict)
     ]
     return [item for item in normalized if item is not None]
 
 
-async def _search_tavily(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_tavily(
+    client: httpx.AsyncClient,
+    query: str,
+    max_results: int,
+    *,
+    include_images: bool = False,
+) -> list[dict[str, Any]]:
     tavily_api_key = select_next_api_key(settings.tavily_api_key)
     if not tavily_api_key:
         return []
     response = await client.post(
         "https://api.tavily.com/search",
-        json={"api_key": tavily_api_key, "query": query, "max_results": max_results},
+        json={
+            "api_key": tavily_api_key,
+            "query": query,
+            "max_results": max_results,
+            "include_images": include_images,
+            "include_image_descriptions": include_images,
+        },
         timeout=30.0,
     )
     response.raise_for_status()
@@ -1047,13 +1369,20 @@ async def _search_tavily(client: httpx.AsyncClient, query: str, max_results: int
             item.get("url") or item.get("link"),
             item.get("title"),
             item.get("content") or item.get("snippet"),
+            images=item.get("images") if include_images else None,
         )
         for item in items if isinstance(item, dict)
     ]
     return [item for item in normalized if item is not None]
 
 
-async def _search_jina(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_jina(
+    client: httpx.AsyncClient,
+    query: str,
+    max_results: int,
+    *,
+    include_images: bool = False,
+) -> list[dict[str, Any]]:
     jina_api_key = select_next_api_key(settings.jina_api_key)
     if not jina_api_key:
         return []
@@ -1061,8 +1390,13 @@ async def _search_jina(client: httpx.AsyncClient, query: str, max_results: int) 
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {jina_api_key}",
-        "X-Respond-With": "no-content",
     }
+    if include_images:
+        headers["X-Retain-Images"] = "all"
+        headers["X-With-Images-Summary"] = "true"
+        headers["X-With-Generated-Alt"] = "true"
+    else:
+        headers["X-Respond-With"] = "no-content"
     response = await client.get(url, headers=headers, timeout=30.0)
     response.raise_for_status()
     data = response.json() or {}
@@ -1074,13 +1408,22 @@ async def _search_jina(client: httpx.AsyncClient, query: str, max_results: int) 
             item.get("url"),
             item.get("title"),
             item.get("description") or item.get("content"),
+            images=(item.get("images") or _extract_images_from_markdown(item.get("content"), item.get("url") or ""))
+            if include_images
+            else None,
         )
         for item in items if isinstance(item, dict)
     ]
     return [item for item in normalized if item is not None]
 
 
-async def _search_zai(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
+async def _search_zai(
+    client: httpx.AsyncClient,
+    query: str,
+    max_results: int,
+    *,
+    include_images: bool = False,
+) -> list[dict[str, Any]]:
     zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return []
@@ -1101,6 +1444,7 @@ async def _search_zai(client: httpx.AsyncClient, query: str, max_results: int) -
             item.get("link") or item.get("url"),
             item.get("title"),
             item.get("content") or item.get("snippet"),
+            images=(item.get("images") or item.get("media")) if include_images else None,
         )
         for item in items[:max_results] if isinstance(item, dict)
     ]
@@ -1127,13 +1471,18 @@ def _search_adapter_enabled(name: str) -> bool:
     return False
 
 
-async def _read_proxy(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
+async def _read_proxy(client: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
     proxy_url = (settings.proxy_url or "").strip()
     if not proxy_url:
         return None
     response = await client.get(
         f"{proxy_url.rstrip('/')}/zai/read",
-        params={"url": url},
+        params={
+            "url": url,
+            "return_format": "markdown",
+            "retain_images": "true",
+            "with_images_summary": "true",
+        },
         timeout=30.0,
     )
     response.raise_for_status()
@@ -1141,16 +1490,22 @@ async def _read_proxy(client: httpx.AsyncClient, url: str) -> dict[str, str] | N
     content = (data.get("content") or "").strip()
     if not content:
         return None
-    return {"url": url, "title": str(data.get("title") or ""), "content": content}
+    content, images = _content_with_images(content, data.get("images"), url)
+    return {"url": url, "title": str(data.get("title") or ""), "content": content, "images": images}
 
 
-async def _read_tavily(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
+async def _read_tavily(client: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
     tavily_api_key = select_next_api_key(settings.tavily_api_key)
     if not tavily_api_key:
         return None
     response = await client.post(
         "https://api.tavily.com/extract",
-        json={"api_key": tavily_api_key, "urls": [url]},
+        json={
+            "api_key": tavily_api_key,
+            "urls": [url],
+            "include_images": True,
+            "format": "markdown",
+        },
         timeout=30.0,
     )
     response.raise_for_status()
@@ -1162,10 +1517,11 @@ async def _read_tavily(client: httpx.AsyncClient, url: str) -> dict[str, str] | 
     content = (item.get("raw_content") or item.get("content") or "").strip()
     if not content:
         return None
-    return {"url": url, "title": str(item.get("title") or ""), "content": content}
+    content, images = _content_with_images(content, item.get("images"), url)
+    return {"url": url, "title": str(item.get("title") or ""), "content": content, "images": images}
 
 
-async def _read_jina(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
+async def _read_jina(client: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
     jina_api_key = select_next_api_key(settings.jina_api_key)
     if not jina_api_key:
         return None
@@ -1174,6 +1530,9 @@ async def _read_jina(client: httpx.AsyncClient, url: str) -> dict[str, str] | No
         headers={
             "Accept": "application/json",
             "Authorization": f"Bearer {jina_api_key}",
+            "X-Retain-Images": "all",
+            "X-With-Images-Summary": "true",
+            "X-With-Generated-Alt": "true",
         },
         timeout=30.0,
     )
@@ -1183,10 +1542,11 @@ async def _read_jina(client: httpx.AsyncClient, url: str) -> dict[str, str] | No
     content = (data.get("content") or data.get("text") or "").strip()
     if not content:
         return None
-    return {"url": url, "title": str(data.get("title") or ""), "content": content}
+    content, images = _content_with_images(content, data.get("images"), url)
+    return {"url": url, "title": str(data.get("title") or ""), "content": content, "images": images}
 
 
-async def _read_zai(client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
+async def _read_zai(client: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
     zai_api_key = select_next_api_key(settings.zai_api_key)
     if not zai_api_key:
         return None
@@ -1198,7 +1558,9 @@ async def _read_zai(client: httpx.AsyncClient, url: str) -> dict[str, str] | Non
         arguments={
             "url": url,
             "return_format": "markdown",
-            "retain_images": False,
+            "retain_images": True,
+            "with_images_summary": True,
+            "keep_img_data_url": False,
             "timeout": 20,
         },
         timeout=60.0,
@@ -1207,7 +1569,8 @@ async def _read_zai(client: httpx.AsyncClient, url: str) -> dict[str, str] | Non
     content = (data.get("content") or "").strip()
     if not content:
         return None
-    return {"url": url, "title": str(data.get("title") or ""), "content": content}
+    content, images = _content_with_images(content, data.get("images"), url)
+    return {"url": url, "title": str(data.get("title") or ""), "content": content, "images": images}
 
 
 _READ_ADAPTERS = {
@@ -1234,7 +1597,8 @@ async def _search_with_model(
     expand_query: bool = True,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
-) -> list[dict[str, str]]:
+    include_images: bool = False,
+) -> list[dict[str, Any]]:
     _dispatcher, http_client, config_loader, _proxy_http_clients = _get_operation_runtime(request)
     search_config = _get_model_config(config_loader, WEB_SEARCH_SECTION, search_model)
     enabled_adapters = [name for name in _BUILTIN_SEARCH_ADAPTERS if _search_adapter_enabled(name)]
@@ -1265,17 +1629,17 @@ async def _search_with_model(
     else:
         queries = [query]
 
-    collected: list[dict[str, str]] = []
+    collected: list[dict[str, Any]] = []
     seen: set[str] = set()
     per_query_limit = max(1, min(max_results, max_results // max(len(queries), 1) + 1))
     include_domains = include_domains or []
     exclude_domains = exclude_domains or []
     for search_query in queries:
-        query_results: list[dict[str, str]] = []
+        query_results: list[dict[str, Any]] = []
         for adapter_name in enabled_adapters:
             adapter = _SEARCH_ADAPTERS[adapter_name]
             try:
-                query_results = await adapter(http_client, search_query, per_query_limit)
+                query_results = await adapter(http_client, search_query, per_query_limit, include_images=include_images)
             except Exception as exc:
                 logger.warning(
                     "Web search adapter '%s' failed for query '%s': %s",
@@ -1326,7 +1690,7 @@ async def _read_with_model(
     read_model: str,
     url: str,
     output_format: str,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     _dispatcher, http_client, config_loader, _proxy_http_clients = _get_operation_runtime(request)
     _get_model_config(config_loader, WEB_READ_SECTION, read_model)
     enabled_adapters = [name for name in _BUILTIN_READ_ADAPTERS if _read_adapter_enabled(name)]
@@ -1449,6 +1813,7 @@ async def _attach_raw_content_to_results(
     results: list[dict[str, Any]],
     read_model: str,
     output_format: str,
+    include_images: bool = False,
 ) -> list[dict[str, Any]]:
     async def _read_result(result: dict[str, Any]) -> dict[str, Any]:
         enriched = dict(result)
@@ -1464,6 +1829,8 @@ async def _attach_raw_content_to_results(
             enriched["raw_content"] = None
             return enriched
         enriched["raw_content"] = article.get("content") or None
+        if include_images:
+            enriched["images"] = _merge_image_items(enriched.get("images"), article.get("images"))
         return enriched
 
     gathered = await asyncio.gather(
@@ -1491,20 +1858,7 @@ def _tavily_rank_score(index: int) -> float:
 
 
 def _normalized_images(value: object) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        return []
-    images: list[dict[str, str]] = []
-    for item in value:
-        if isinstance(item, str) and item.strip():
-            images.append({"url": item.strip(), "description": ""})
-        elif isinstance(item, dict) and isinstance(item.get("url"), str) and item["url"].strip():
-            images.append(
-                {
-                    "url": item["url"].strip(),
-                    "description": str(item.get("description") or item.get("alt") or ""),
-                }
-            )
-    return images
+    return _merge_image_items(value)
 
 
 def _with_images_field(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1528,6 +1882,13 @@ def _tavily_search_result(result: dict[str, Any], index: int, *, include_images:
 
 def _tavily_response_time(started_at: float) -> float:
     return round(time.monotonic() - started_at, 2)
+
+
+def _collect_result_images(results: list[dict[str, Any]]) -> list[dict[str, str]]:
+    images: list[Any] = []
+    for result in results:
+        images.extend(_normalized_images(result.get("images")))
+    return _merge_image_items(images)
 
 
 def _extract_tavily_urls(payload: dict) -> list[str]:
@@ -1958,6 +2319,7 @@ async def web_search(request: Request):
         usage_accumulator=usage_accumulator,
         include_domains=include_domains,
         exclude_domains=exclude_domains,
+        include_images=include_images,
     )
     results = _filter_search_results(
         results,
@@ -1971,6 +2333,7 @@ async def web_search(request: Request):
             results=results,
             read_model=read_model,
             output_format=raw_content_format,
+            include_images=include_images,
         )
     if include_images:
         results = _with_images_field(results)
@@ -2020,6 +2383,8 @@ async def web_read(request: Request):
     }
     if include_images:
         response_payload["images"] = _normalized_images(article.get("images"))
+    else:
+        response_payload.pop("images", None)
     _set_web_service_usage_state(request, requested_model, "read")
     await record_operation_usage(
         request,
@@ -2079,6 +2444,7 @@ async def tavily_search(request: Request):
         expand_query=False,
         include_domains=include_domains,
         exclude_domains=exclude_domains,
+        include_images=include_images,
     )
     results = _filter_search_results(
         results,
@@ -2092,12 +2458,13 @@ async def tavily_search(request: Request):
             results=results,
             read_model=read_model,
             output_format=raw_content_format,
+            include_images=include_images,
         )
 
     response_payload = {
         "query": query,
         "answer": None,
-        "images": [],
+        "images": _collect_result_images(results) if include_images else [],
         "results": [
             _tavily_search_result(result, index, include_images=include_images)
             for index, result in enumerate(results)
