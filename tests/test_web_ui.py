@@ -273,6 +273,81 @@ def test_web_playground_does_not_render_unsafe_result_urls_as_links(page: Page, 
     expect(page.locator('[data-result-for="search"] .search-hit a')).to_have_count(0)
 
 
+def test_playground_simple_chat_preserves_limited_context_and_resets(page: Page, server):
+    add_session(page, server)
+    captured_messages = []
+
+    page.route(
+        f"{server}/v1/ui/playground/models",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=(
+                '{"chat":["llmgateway/light_model"],"web_search":[],"web_read":[],'
+                '"web_research":[],"web_deep_research":[],"audio_speech":[],"audio_transcriptions":[],'
+                '"images_generations":[],"images_edits":[],"pdf_conversions":[]}'
+            ),
+        ),
+    )
+
+    def handle_chat(route):
+        body = json.loads(route.request.post_data or "{}")
+        messages = body.get("messages") or []
+        captured_messages.append(messages)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "id": f"chatcmpl-{len(captured_messages)}",
+                    "object": "chat.completion",
+                    "model": body.get("model"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": f"reply {len(captured_messages)}",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                }
+            ),
+        )
+
+    page.route(f"{server}/v1/chat/completions", handle_chat)
+    page.goto(f"{server}/v1/ui/playground")
+    page.click("[data-playground-section-tab='chat']")
+
+    for index in range(1, 12):
+        page.fill("#simpleChatInput", f"message {index}")
+        page.click("#simpleChatForm .run-button")
+        expect(page.locator("#simpleChatTranscript")).to_contain_text(f"reply {index}")
+
+    assert captured_messages[0] == [{"role": "user", "content": "message 1"}]
+    assert captured_messages[1] == [
+        {"role": "user", "content": "message 1"},
+        {"role": "assistant", "content": "reply 1"},
+        {"role": "user", "content": "message 2"},
+    ]
+    assert all(len(messages) <= 20 for messages in captured_messages)
+    expect(page.locator("#simpleChatTranscript .chat-message")).to_have_count(20)
+    transcript_items = page.eval_on_selector_all(
+        "#simpleChatTranscript .chat-content",
+        "elements => elements.map(element => element.textContent.trim())",
+    )
+    assert "message 1" not in transcript_items
+    assert "message 2" in transcript_items
+    expect(page.locator('[data-status-for="chat"]')).to_contain_text("context 20/20")
+
+    page.click("#resetSimpleChatButton")
+    expect(page.locator("#simpleChatTranscript")).to_be_hidden()
+    expect(page.locator("#simpleChatTranscript .chat-message")).to_have_count(0)
+    expect(page.locator('[data-status-for="chat"]')).to_contain_text("Chat reset.")
+
+
 def test_admin_navigation_is_consistent_across_ui_pages(page: Page, server):
     add_session(page, server)
     route_empty_analytics_dashboard(page, server)
@@ -422,11 +497,22 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     page.goto(f"{server}/v1/ui/playground")
     expect(page.locator("h1")).to_contain_text("Playground")
 
-    # 6 верхнеуровневых разделов, Web активен по умолчанию.
-    expect(page.locator("[data-playground-section-tab]")).to_have_count(6)
+    # 7 верхнеуровневых разделов, Web активен по умолчанию.
+    expect(page.locator("[data-playground-section-tab]")).to_have_count(7)
     expect(page.locator("[data-playground-section-tab='web']")).to_have_class("tab-button active")
+    expect(page.locator("[data-playground-section-tab='chat']")).to_be_visible()
     expect(page.locator("[data-playground-section-panel='web']")).to_be_visible()
+    expect(page.locator("[data-playground-section-panel='chat']")).to_be_hidden()
     expect(page.locator("[data-playground-section-panel='audio-speech']")).to_be_hidden()
+
+    page.click("[data-playground-section-tab='chat']")
+    expect(page.locator("[data-playground-section-panel='chat']")).to_be_visible()
+    expect(page.locator("#chatModel option", has_text="llmgateway/light_model")).to_have_count(1)
+    expect(page.locator("#simpleChatInput")).to_be_visible()
+    expect(page.locator("#resetSimpleChatButton")).to_be_visible()
+
+    page.click("[data-playground-section-tab='web']")
+    expect(page.locator("[data-playground-section-panel='web']")).to_be_visible()
 
     # Внутри Web остаются прежние 6 web-операций.
     expect(page.locator("[data-web-tab]")).to_have_count(6)

@@ -715,11 +715,13 @@ async def get_free_tier_providers_doc():
 
 def _build_playground_models(config_loader) -> dict[str, list[str]]:
     rules = config_loader.operation_rules or {}
+    fallback_rules = config_loader.fallback_rules or {}
 
     def _names(section: str) -> list[str]:
         return sorted((rules.get(section) or {}).keys())
 
     return {
+        "chat": sorted(fallback_rules.keys()),
         "web_search": _names("web_search"),
         "web_read": _names("web_read"),
         "web_research": _names("web_research"),

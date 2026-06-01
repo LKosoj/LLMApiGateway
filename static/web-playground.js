@@ -4,6 +4,7 @@
     const WEB_TAB_BUTTONS = Array.from(document.querySelectorAll("[data-web-tab]"));
     const WEB_TAB_PANELS = Array.from(document.querySelectorAll("[data-web-panel]"));
     const MODEL_SELECTS = [
+        {id: "chatModel", section: "chat"},
         {id: "searchModel", section: "web_search"},
         {id: "searchReadModel", section: "web_read"},
         {id: "readModel", section: "web_read"},
@@ -19,6 +20,7 @@
         {id: "pdfConversionModel", section: "pdf_conversions"},
     ];
     const STATUS_KINDS = [
+        "chat",
         "search",
         "read",
         "tavily-search",
@@ -33,6 +35,8 @@
     ];
     const BLOB_URLS = new Map();
     const VOICE_CACHE = new Map();
+    const CHAT_CONTEXT_LIMIT = 20;
+    let simpleChatMessages = [];
     const { apiFetch } = window.gatewayAuth;
 
     function activateSection(name) {
@@ -297,6 +301,51 @@
         return `<details class="raw-details"><summary>Raw JSON response</summary><pre class="raw-json">${escapeHtml(
             JSON.stringify(payload, null, 2)
         )}</pre></details>`;
+    }
+
+    function trimSimpleChatMessages(messages) {
+        let trimmed = messages.slice(-CHAT_CONTEXT_LIMIT);
+        while (trimmed.length > 0 && trimmed[0].role === "assistant") {
+            trimmed = trimmed.slice(1);
+        }
+        return trimmed;
+    }
+
+    function renderSimpleChatTranscript() {
+        const transcript = document.getElementById("simpleChatTranscript");
+        if (!transcript) return;
+        transcript.hidden = simpleChatMessages.length === 0;
+        transcript.innerHTML = simpleChatMessages.map((message) => {
+            const role = message.role === "assistant" ? "assistant" : "user";
+            const content = role === "assistant"
+                ? renderMarkdown(message.content || "")
+                : `<p>${escapeHtml(message.content || "")}</p>`;
+            return `
+                <article class="chat-message ${role}">
+                    <div class="chat-role">${role === "assistant" ? "Assistant" : "User"}</div>
+                    <div class="chat-content">${content}</div>
+                </article>
+            `;
+        }).join("");
+        transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    function extractAssistantMessage(payload) {
+        const choice = payload && Array.isArray(payload.choices) ? payload.choices[0] : null;
+        const message = choice && choice.message && typeof choice.message === "object" ? choice.message : null;
+        const content = message ? message.content : "";
+        if (typeof content === "string") return content;
+        if (Array.isArray(content)) {
+            return content
+                .map((part) => {
+                    if (typeof part === "string") return part;
+                    if (part && typeof part === "object") return part.text || part.content || "";
+                    return "";
+                })
+                .filter(Boolean)
+                .join("\n");
+        }
+        return message ? JSON.stringify(message, null, 2) : JSON.stringify(payload || {}, null, 2);
     }
 
     function renderImagesSummary(images) {
@@ -705,6 +754,66 @@
         }
     }
 
+    async function submitSimpleChatRequest(form) {
+        const model = selectedFormValue(form, "model");
+        const input = form.elements.message;
+        const content = input ? String(input.value || "").trim() : "";
+        if (!model) {
+            setStatus("chat", "Select a model first.", true);
+            return;
+        }
+        if (!content) {
+            setStatus("chat", "Enter a message.", true);
+            return;
+        }
+
+        const requestMessages = trimSimpleChatMessages([
+            ...simpleChatMessages,
+            {role: "user", content},
+        ]);
+        const button = form.querySelector(".run-button");
+        button.disabled = true;
+        setStatus("chat", "Running…", false);
+        const startedAt = performance.now();
+        try {
+            const response = await apiFetch("/v1/chat/completions", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    model,
+                    messages: requestMessages,
+                    stream: false,
+                }),
+            });
+            const text = await response.text();
+            let payload;
+            try {
+                payload = text ? JSON.parse(text) : {};
+            } catch (parseErr) {
+                payload = {detail: text || parseErr.message};
+            }
+            if (!response.ok) {
+                const detail = typeof payload === "object" && payload ? (payload.detail || JSON.stringify(payload)) : String(payload);
+                setStatus("chat", `Error ${response.status}: ${detail}`, true);
+                return;
+            }
+
+            const assistantContent = extractAssistantMessage(payload);
+            simpleChatMessages = trimSimpleChatMessages([
+                ...requestMessages,
+                {role: "assistant", content: assistantContent},
+            ]);
+            if (input) input.value = "";
+            renderSimpleChatTranscript();
+            const durationMs = Math.round(performance.now() - startedAt);
+            setStatus("chat", `Done in ${(durationMs / 1000).toFixed(2)}s · context ${simpleChatMessages.length}/${CHAT_CONTEXT_LIMIT}`, false);
+        } catch (err) {
+            setStatus("chat", `Request failed: ${err.message || err}`, true);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
     async function submitMultipartRequest(kind, url, form, renderer) {
         const button = form.querySelector(".run-button");
         let body;
@@ -886,6 +995,25 @@
         });
     }
 
+    function wireSimpleChatForm() {
+        const form = document.getElementById("simpleChatForm");
+        if (!form) return;
+        const resetButton = document.getElementById("resetSimpleChatButton");
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            submitSimpleChatRequest(form);
+        });
+        if (resetButton) {
+            resetButton.addEventListener("click", () => {
+                simpleChatMessages = [];
+                const input = form.elements.message;
+                if (input) input.value = "";
+                renderSimpleChatTranscript();
+                setStatus("chat", "Chat reset.", false);
+            });
+        }
+    }
+
     function wireMultipartForm(kind, formId, endpoint, renderer) {
         const form = document.getElementById(formId);
         if (!form) return;
@@ -914,6 +1042,7 @@
     }
 
     async function bootstrap() {
+        wireSimpleChatForm();
         wireForm("search", "searchForm", "/v1/web/search", renderSearchResult);
         wireForm("read", "readForm", "/v1/web/read", renderReadResult);
         wireForm("tavily-search", "tavilySearchForm", "/v1/tavily/search", renderTavilySearchResult);

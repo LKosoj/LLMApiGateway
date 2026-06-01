@@ -62,12 +62,34 @@
 
         <div class="tabs playground-section-tabs">
             <button type="button" class="tab-button active" data-playground-section-tab="web">Web</button>
+            <button type="button" class="tab-button" data-playground-section-tab="chat">Chat</button>
             <button type="button" class="tab-button" data-playground-section-tab="audio-transcription">Speech to Text</button>
             <button type="button" class="tab-button" data-playground-section-tab="audio-speech">Text to Speech</button>
             <button type="button" class="tab-button" data-playground-section-tab="image-generation">Image Generation</button>
             <button type="button" class="tab-button" data-playground-section-tab="image-edit">Image Editing</button>
             <button type="button" class="tab-button" data-playground-section-tab="pdf-conversion">PDF Conversion</button>
         </div>
+
+        <section class="playground-section" data-playground-section-panel="chat" hidden>
+            <section class="playground-panel">
+                <form class="playground-form" id="simpleChatForm" autocomplete="off">
+                    <div class="field-group">
+                        <label for="chatModel">Gateway model</label>
+                        <select id="chatModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="simpleChatInput">Message</label>
+                        <textarea id="simpleChatInput" name="message" rows="4" required></textarea>
+                    </div>
+                    <div class="playground-actions">
+                        <button type="submit" class="secondary-button run-button">Send message</button>
+                        <button type="button" class="secondary-button reset-button" id="resetSimpleChatButton">Reset chat</button>
+                        <span class="playground-status" data-status-for="chat"></span>
+                    </div>
+                </form>
+                <div class="chat-transcript" id="simpleChatTranscript" aria-live="polite" hidden></div>
+            </section>
+        </section>
 
         <section class="playground-section" data-playground-section-panel="web">
             <div class="tabs web-operation-tabs">
