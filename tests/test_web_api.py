@@ -2112,6 +2112,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(_FakeDeepResearchManager.calls[0]["smart_model"], "llmgateway/light_model")
         self.assertEqual(_FakeDeepResearchManager.calls[0]["strategic_model"], "llmgateway/light_model")
         self.assertEqual(_FakeDeepResearchManager.calls[0]["embedding_model"], "llmgateway/embedding")
+        self.assertEqual(_FakeDeepResearchManager.calls[0]["concurrency"], 6)
         self.assertEqual(_FakeDeepResearchManager.calls[0]["language"], "Chinese")
         self.assertIs(_FakeDeepResearchManager.calls[0]["image_generation_enabled"], False)
         self.assertEqual(api_keys_db.spent_calls, [(9, 0.03)])

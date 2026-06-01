@@ -483,7 +483,7 @@
                             <tr><th><code>max_words</code><span class="param-label">опционально</span></th><td>Ограничивает длину итогового отчёта. Диапазон: 200-8000, по умолчанию 2500.</td></tr>
                             <tr><th><code>breadth</code><span class="param-label">опционально</span></th><td>Ширина исследования: сколько направлений искать на каждом шаге. Диапазон: 1-10, по умолчанию 4.</td></tr>
                             <tr><th><code>depth</code><span class="param-label">опционально</span></th><td>Глубина исследования: сколько итераций поиска и анализа выполнить. Диапазон: 1-5, по умолчанию 2.</td></tr>
-                            <tr><th><code>concurrency</code><span class="param-label">опционально</span></th><td>Сколько операций выполнять параллельно. Диапазон: 1-10, по умолчанию 4.</td></tr>
+                            <tr><th><code>concurrency</code><span class="param-label">опционально</span></th><td>Сколько операций выполнять параллельно. Диапазон: 1-10, по умолчанию 6.</td></tr>
                             <tr><th><code>language</code><span class="param-label">опционально</span></th><td>Язык итогового отчёта. По умолчанию <code>ru</code>.</td></tr>
                             <tr><th><code>format</code><span class="param-label">опционально</span></th><td>Формат итогового отчёта. По умолчанию <code>markdown</code>.</td></tr>
                             <tr><th><code>image_generation</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, deep research дополнительно запрашивает изображения и возвращает их в <code>images[]</code>. По умолчанию <code>false</code>.</td></tr>
@@ -574,7 +574,7 @@
     "max_words": 2500,
     "breadth": 4,
     "depth": 2,
-    "concurrency": 4,
+    "concurrency": 6,
     "language": "ru",
     "format": "markdown",
     "image_generation": true

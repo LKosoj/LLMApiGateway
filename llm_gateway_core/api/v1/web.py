@@ -2834,7 +2834,7 @@ async def web_deep_research(request: Request):
     max_words = _clamp_int(payload.get("max_words"), DEFAULT_DEEP_RESEARCH_WORDS, 200, MAX_DEEP_RESEARCH_WORDS)
     breadth = _clamp_int(payload.get("breadth"), 4, 1, MAX_DEEP_RESEARCH_BREADTH)
     depth = _clamp_int(payload.get("depth"), 2, 1, MAX_DEEP_RESEARCH_DEPTH)
-    concurrency = _clamp_int(payload.get("concurrency"), 4, 1, MAX_DEEP_RESEARCH_CONCURRENCY)
+    concurrency = _clamp_int(payload.get("concurrency"), 6, 1, MAX_DEEP_RESEARCH_CONCURRENCY)
     image_generation_enabled = _bool_option(payload, "image_generation", False)
     report_language = _deep_research_report_language(payload.get("language"))
     output_format = _normalize_output_format(payload.get("format"))

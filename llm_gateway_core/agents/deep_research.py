@@ -475,7 +475,7 @@ class DeepResearchManager:
         max_words: int = 2500,
         breadth: int = 4,
         depth: int = 2,
-        concurrency: int = 4,
+        concurrency: int = 6,
         language: str = "English",
         verbose: bool = False,
         image_generation_enabled: bool = False,

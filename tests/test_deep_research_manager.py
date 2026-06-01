@@ -67,6 +67,7 @@ class _FakeResearcher:
                 "SMART_LLM",
                 "STRATEGIC_LLM",
                 "EMBEDDING",
+                "DEEP_RESEARCH_CONCURRENCY",
                 "LANGUAGE",
                 "IMAGE_GENERATION_ENABLED",
                 "IMAGE_GENERATION_MODEL",
@@ -172,6 +173,7 @@ class DeepResearchManagerTests(unittest.TestCase):
         self.assertEqual(result["report"], "report")
         self.assertEqual(_FakeResearcher.env_snapshot["FAST_LLM"], "openai:llmgateway/light_model")
         self.assertEqual(_FakeResearcher.env_snapshot["EMBEDDING"], "custom:llmgateway/embedding")
+        self.assertEqual(_FakeResearcher.env_snapshot["DEEP_RESEARCH_CONCURRENCY"], "6")
         self.assertEqual(_FakeResearcher.env_snapshot["LANGUAGE"], "Russian")
         self.assertEqual(_FakeResearcher.env_snapshot["IMAGE_GENERATION_ENABLED"], "true")
         self.assertEqual(

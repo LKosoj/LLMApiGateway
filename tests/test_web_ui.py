@@ -182,6 +182,8 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator("#web")).to_contain_text("Сколько поисковых результатов вернуть")
     expect(page.locator("#web")).to_contain_text("Сколько найденных материалов читать и использовать в отчёте")
     expect(page.locator("#web")).to_contain_text("Ограничивает длину итогового отчёта")
+    expect(page.locator("#web")).to_contain_text("Сколько операций выполнять параллельно. Диапазон: 1-10, по умолчанию 6.")
+    expect(page.locator("#web")).to_contain_text('"concurrency": 6')
     expect(page.locator("#playground")).to_contain_text("output=both|docx|md")
     expect(page.locator("#playground")).to_contain_text("target_language")
     expect(page.locator("#playground")).to_contain_text("ocr_preprocess_save")
@@ -479,6 +481,7 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     page.click("[data-web-tab='deep-research']")
     expect(page.locator("[data-web-panel='deep-research']")).to_be_visible()
     expect(page.locator("[data-web-panel='search']")).to_be_hidden()
+    expect(page.locator("#deepResearchConcurrency")).to_have_value("6")
     expect(page.locator("#deepResearchImageGeneration")).to_be_visible()
 
     page.click("[data-playground-section-tab='audio-speech']")
