@@ -103,5 +103,11 @@
       "apikey": "${APIKEY_FREEMODEL}",
       "type": "anthropic"
     }
+  },
+  {
+    "gem": {
+      "baseUrl": "http://localhost:8081/v1",
+      "apikey": "${APIKEY_GEM}"
+    }
   }
 ]

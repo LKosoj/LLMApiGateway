@@ -45,6 +45,13 @@
         "custom_headers": {}
       },
       {
+        "provider": "gem",
+        "model": "gemini-3.5-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "openrouter",
         "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
@@ -173,14 +180,14 @@
     "fallback_models": [
       {
         "provider": "aitunnel",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-v4-pro",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
       },
       {
-        "provider": "devbox",
-        "model": "google.models/gemini-2.5-flash",
+        "provider": "aitunnel",
+        "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -188,7 +195,7 @@
     ],
     "context_overflow_fallback": {
       "provider": "gemini_cli",
-      "model": "gemini-2.5-pro",
+      "model": "gemini-3.5-flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}
@@ -427,7 +434,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/free_gd",
