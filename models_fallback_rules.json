@@ -32,7 +32,7 @@
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/light_model",
@@ -90,7 +90,7 @@
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/qwen",
@@ -203,7 +203,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/high",
@@ -264,7 +264,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/fast",
@@ -473,6 +473,6 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   }
 ]

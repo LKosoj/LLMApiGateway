@@ -436,6 +436,49 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.assertTrue(self.config_loader.fallback_rules["gateway-model"]["strip_think_tags"])
         self.assertIn('"strip_think_tags": true', self.rules_path.read_text(encoding="utf-8"))
 
+    def test_structured_save_persists_compress_tool_results(self):
+        fake_http_client = Mock()
+        fake_http_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"id": "provider-model"}]},
+                request=httpx.Request("GET", "https://devbox.example/models"),
+            )
+        )
+
+        with self._client(fake_http_client) as (client, _):
+            response = client.post(
+                "/v1/config/models-rules/structured",
+                json={
+                    "rules": [
+                        {
+                            "gateway_model_name": "gateway-model",
+                            "fallback_models": [
+                                {
+                                    "provider": "devbox",
+                                    "model": "provider-model",
+                                }
+                            ],
+                            "rotate_models": False,
+                            "compress_tool_results": True,
+                        }
+                    ]
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+            get_response = client.get(
+                "/v1/config/models-rules/structured",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["rules"][0]["compress_tool_results"])
+        self.assertEqual(get_response.status_code, 200)
+        self.assertTrue(get_response.json()["rules"][0]["compress_tool_results"])
+        self.assertTrue(self.config_loader.fallback_rules["gateway-model"]["compress_tool_results"])
+        self.assertIn('"compress_tool_results": true', self.rules_path.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
