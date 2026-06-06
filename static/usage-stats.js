@@ -913,17 +913,25 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchAndRenderStats();
     }
 
-    // ── Topology tab ──────────────────────────────────────────────────────────
+    // ── Topology tab: routing map + live monitor ───────────────────────────────
     const topologyContainer = document.getElementById('topology-container');
     const topologyRefreshButton = document.getElementById('topologyRefreshButton');
+    const topologyAutoRefreshInput = document.getElementById('topologyAutoRefresh');
 
     const HEALTH_BORDER_COLOR = {
         ok: '#22c55e',
         error: '#ef4444',
         invalid: '#94a3b8',
     };
+    const EDGE_COLOR = { alias: '#94a3b8', fallback: '#6366f1', context_overflow: '#f59e0b' };
+    const TOPOLOGY_REFRESH_MS = 5000;
 
     let _topologyRootInstance = null;
+    let _topologyMounted = false;
+    // Published by the mounted React app so the external toolbar (Refresh button,
+    // Auto-refresh checkbox) can drive it without remounting (which would reset
+    // the pan/zoom viewport and any selected chain).
+    let _topologyApi = null;
 
     // React Flow ships its layout-critical CSS as a sibling file alongside the
     // JS bundle. Without it nodes render with `position: static` and stack
@@ -937,187 +945,366 @@ document.addEventListener('DOMContentLoaded', () => {
         document.head.appendChild(link);
     }
 
-    async function loadTopology() {
-        topologyContainer.textContent = 'Loading topology...';
-        topologyRefreshButton.disabled = true;
-        topologyRefreshButton.classList.add('loading');
-        ensureTopologyStylesLoaded();
+    function showTopologyFatalError(message, onRetry) {
+        topologyContainer.replaceChildren();
+        const errDiv = document.createElement('div');
+        errDiv.className = 'topology-error';
+        errDiv.textContent = message;
+        const retryBtn = document.createElement('button');
+        retryBtn.textContent = 'Retry';
+        retryBtn.addEventListener('click', onRetry);
+        errDiv.appendChild(retryBtn);
+        topologyContainer.appendChild(errDiv);
+    }
 
-        let React, createRoot, ReactFlow, Background, Controls;
+    // Layered left→right layout in container-pixel space: gateway | models |
+    // providers. Computed at zoom=1 so it reads correctly without fitView
+    // (which races with the display:none → visible tab transition).
+    function topologyLayout(graph, size) {
+        const nodes = graph.nodes || [];
+        const central = nodes.filter(n => n.type === 'central');
+        const models = nodes.filter(n => n.type === 'model');
+        const providers = nodes.filter(n => n.type === 'provider');
+        const NODE_W = 170;
+        const W = size.w || 1000;
+        const H = size.h || 520;
+        const gatewayX = 24;
+        const modelX = Math.max(210, Math.round(W * 0.40));
+        const providerX = Math.max(modelX + 220, W - NODE_W - 30);
+        const pos = new Map();
+        const place = (list, x) => {
+            const gap = 92;
+            const totalH = Math.max(0, (list.length - 1) * gap);
+            const startY = Math.max(16, (H - totalH) / 2 - 24);
+            list.forEach((n, i) => pos.set(n.id, { x, y: Math.round(startY + i * gap) }));
+        };
+        place(central, gatewayX);
+        place(models, modelX);
+        place(providers, providerX);
+        return pos;
+    }
+
+    // Which nodes/edges belong to the selected gateway-model's chain.
+    function topologyChainSets(graph, selectedModel) {
+        if (!selectedModel) return null;
+        const edgeIds = new Set();
+        const nodeIds = new Set([selectedModel, 'gateway']);
+        (graph.edges || []).forEach(e => {
+            if (e.source === selectedModel) { edgeIds.add(e.id); nodeIds.add(e.target); }
+            if (e.target === selectedModel && e.source === 'gateway') edgeIds.add(e.id);
+        });
+        return { edgeIds, nodeIds };
+    }
+
+    function topologyStyledNode(React, node, position, dimmed, selected) {
+        const h = React.createElement;
+        const isCentral = node.type === 'central';
+        const isModel = node.type === 'model';
+        const d = node.data || {};
+        const health = d.health || 'ok';
+        const active = d.active_requests || 0;
+        const hasActive = active > 0;
+
+        const borderColor = isCentral ? 'var(--accent-hover)'
+            : isModel ? (hasActive ? 'var(--accent)' : '#6366f1')
+            : (HEALTH_BORDER_COLOR[health] || '#94a3b8');
+
+        const lines = [];
+        if (isModel) {
+            const steps = (d.chain || []).length;
+            lines.push(`${steps} step${steps === 1 ? '' : 's'}`);
+            if (hasActive) lines.push(`▶ ${active} active`);
+        } else if (!isCentral) {
+            lines.push(`Health: ${health}${d.configured === false ? ' (not configured)' : ''}`);
+            if (hasActive) lines.push(`▶ ${active} active`);
+            lines.push(`Penalty: ${typeof d.penalty === 'number' ? d.penalty.toFixed(2) : 0}`);
+        }
+
+        const label = h('div', null,
+            h('div', { className: 'topology-node-title' }, node.label || node.id),
+            lines.length
+                ? h('div', { className: 'topology-node-metrics' },
+                    lines.map((line, idx) => h('div', { key: idx }, line)))
+                : null
+        );
+
+        return {
+            id: node.id,
+            type: isCentral ? 'input' : (isModel ? 'default' : 'output'),
+            position: position || node.position || { x: 0, y: 0 },
+            sourcePosition: 'right',
+            targetPosition: 'left',
+            connectable: false,
+            data: { label },
+            style: {
+                background: isCentral ? 'var(--accent)' : (isModel ? 'rgba(99,102,241,0.08)' : undefined),
+                borderColor,
+                borderWidth: 2,
+                borderStyle: 'solid',
+                borderRadius: 8,
+                padding: '8px 14px',
+                width: 170,
+                textAlign: 'center',
+                color: isCentral ? '#fff' : undefined,
+                fontWeight: isCentral ? 700 : 600,
+                fontSize: 13,
+                cursor: isCentral ? 'default' : 'pointer',
+                opacity: dimmed ? 0.25 : 1,
+                transition: 'opacity 0.2s, box-shadow 0.2s',
+                boxShadow: selected ? '0 0 0 3px rgba(99,102,241,0.45)' : undefined,
+                animation: (hasActive && !isCentral) ? 'topology-pulse 1.8s ease-out infinite' : undefined,
+            },
+        };
+    }
+
+    function topologyStyledEdge(edge, chain) {
+        const d = edge.data || {};
+        const kind = edge.type;
+        const inChain = chain ? chain.edgeIds.has(edge.id) : true;
+        const dimmed = chain && !inChain;
+        const isCtx = kind === 'context_overflow';
+        const isAlias = kind === 'alias';
+        const stroke = EDGE_COLOR[kind] || EDGE_COLOR.fallback;
+
+        let label;
+        if (kind === 'fallback') {
+            label = (d.steps && d.steps.length) ? d.steps.join(',') : String(d.priority || '');
+        } else if (isCtx) {
+            label = 'ctx';
+        }
+
+        const emphasised = (chain && inChain) || edge.animated;
+        const baseWidth = isAlias ? 1.5 : 2;
+
+        return {
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            type: 'default',
+            animated: !!edge.animated,
+            label,
+            labelStyle: { fontSize: 11, fontWeight: 700, fill: stroke },
+            labelBgStyle: { fill: '#ffffff', fillOpacity: 0.85 },
+            labelBgPadding: [4, 2],
+            labelBgBorderRadius: 4,
+            markerEnd: { type: 'arrowclosed', color: stroke },
+            style: {
+                stroke,
+                strokeWidth: emphasised ? baseWidth + 1.5 : baseWidth,
+                strokeDasharray: isCtx ? '6 4' : undefined,
+                opacity: dimmed ? 0.15 : 1,
+                transition: 'opacity 0.2s',
+            },
+        };
+    }
+
+    function topologyBuildGraph(React, graph, selectedModel, size) {
+        if (!graph) return { nodes: [], edges: [] };
+        const pos = topologyLayout(graph, size);
+        const chain = topologyChainSets(graph, selectedModel);
+        const nodes = (graph.nodes || []).map(node =>
+            topologyStyledNode(React, node, pos.get(node.id),
+                chain && !chain.nodeIds.has(node.id), node.id === selectedModel));
+        const edges = (graph.edges || []).map(edge => topologyStyledEdge(edge, chain));
+        return { nodes, edges };
+    }
+
+    function topologyDetailPanel(React, detail, onClose) {
+        const h = React.createElement;
+        const node = detail.node;
+        const d = node.data || {};
+        const kv = (k, v) => h('div', { className: 'topology-detail-row', key: k },
+            h('span', { className: 'topology-detail-key' }, k),
+            h('span', { className: 'topology-detail-val' }, v));
+
+        let body;
+        if (detail.kind === 'provider') {
+            body = [
+                kv('Health', d.health),
+                kv('Configured', d.configured === false ? 'no' : 'yes'),
+                kv('Active requests', String(d.active_requests || 0)),
+                kv('Penalty', typeof d.penalty === 'number' ? d.penalty.toFixed(2) : '0'),
+                (d.models && d.models.length) ? kv('Models', d.models.join(', ')) : null,
+            ];
+        } else {
+            const flags = d.flags || {};
+            const flagList = Object.keys(flags).filter(k => flags[k]);
+            const chainItems = (d.chain || []).map((step, i) =>
+                h('li', { key: i, className: 'topology-chain-step' },
+                    h('span', { className: 'topology-chain-prio' }, `#${step.priority}`),
+                    h('span', { className: 'topology-chain-target' }, `${step.provider || '?'} / ${step.model || '?'}`),
+                    (step.retry_count != null || step.retry_delay != null)
+                        ? h('span', { className: 'topology-chain-retry' },
+                            `retry: ${step.retry_count != null ? step.retry_count : '-'}${step.retry_delay != null ? ` (${step.retry_delay}ms)` : ''}`)
+                        : null
+                )
+            );
+            body = [
+                kv('Active requests', String(d.active_requests || 0)),
+                (d.max_total_attempts != null) ? kv('Max total attempts', String(d.max_total_attempts)) : null,
+                flagList.length ? kv('Flags', flagList.join(', ')) : null,
+                d.context_overflow ? kv('Context overflow', `${d.context_overflow.provider} / ${d.context_overflow.model || '?'}`) : null,
+                h('div', { className: 'topology-detail-subhead', key: 'chainhead' }, 'Fallback chain'),
+                h('ol', { className: 'topology-chain-list', key: 'chain' },
+                    chainItems.length ? chainItems : h('li', { key: 'empty' }, '— нет целей —')),
+            ];
+        }
+
+        return h('div', { className: 'topology-detail' },
+            h('div', { className: 'topology-detail-header' },
+                h('span', { className: 'topology-detail-title' }, node.label || node.id),
+                h('button', { className: 'topology-detail-close', onClick: onClose, title: 'Close' }, '×')
+            ),
+            h('div', { className: 'topology-detail-body' }, body.filter(Boolean))
+        );
+    }
+
+    function TopologyApp(props) {
+        const { React, ReactFlow, Background, Controls } = props;
+        const { useState, useEffect, useCallback, useMemo, createElement: h } = React;
+
+        const [graph, setGraph] = useState(null);
+        const [error, setError] = useState(null);
+        const [selectedModel, setSelectedModel] = useState(null);
+        const [detail, setDetail] = useState(null);
+        const [auto, setAuto] = useState(topologyAutoRefreshInput ? topologyAutoRefreshInput.checked : true);
+        const [size, setSize] = useState({
+            w: topologyContainer.clientWidth || 1000,
+            h: topologyContainer.clientHeight || 520,
+        });
+
+        const fetchGraph = useCallback(async () => {
+            try {
+                const resp = await apiFetch('/v1/topology');
+                if (!resp.ok) {
+                    const errBody = await resp.json().catch(() => ({}));
+                    setError(`Ошибка загрузки топологии: ${errBody.detail || resp.status}`);
+                    return;
+                }
+                setGraph(await resp.json());
+                setError(null);
+            } catch (e) {
+                console.error('Failed to fetch topology:', e);
+                setError(`Ошибка загрузки топологии: ${e.message}`);
+            }
+        }, []);
+
+        useEffect(() => { fetchGraph(); }, [fetchGraph]);
+
+        useEffect(() => {
+            if (!auto) return undefined;
+            const id = setInterval(() => {
+                // Skip polling while the tab is hidden (display:none → offsetParent null).
+                if (topologyContainer.offsetParent === null) return;
+                fetchGraph();
+            }, TOPOLOGY_REFRESH_MS);
+            return () => clearInterval(id);
+        }, [auto, fetchGraph]);
+
+        useEffect(() => {
+            const measure = () => setSize({
+                w: topologyContainer.clientWidth || 1000,
+                h: topologyContainer.clientHeight || 520,
+            });
+            measure();
+            window.addEventListener('resize', measure);
+            return () => window.removeEventListener('resize', measure);
+        }, []);
+
+        // Expose refresh / auto-toggle to the external toolbar controls.
+        useEffect(() => {
+            _topologyApi = { refresh: fetchGraph, setAuto };
+            return () => { _topologyApi = null; };
+        }, [fetchGraph]);
+
+        const onNodeClick = useCallback((_evt, node) => {
+            const raw = ((graph && graph.nodes) || []).find(n => n.id === node.id);
+            if (!raw) return;
+            if (raw.type === 'model') {
+                setSelectedModel(raw.id);
+                setDetail({ kind: 'model', node: raw });
+            } else if (raw.type === 'provider') {
+                setSelectedModel(null);
+                setDetail({ kind: 'provider', node: raw });
+            } else {
+                setSelectedModel(null);
+                setDetail(null);
+            }
+        }, [graph]);
+
+        const onPaneClick = useCallback(() => {
+            setSelectedModel(null);
+            setDetail(null);
+        }, []);
+
+        const styled = useMemo(
+            () => topologyBuildGraph(React, graph, selectedModel, size),
+            [React, graph, selectedModel, size]
+        );
+
+        if (error) {
+            return h('div', { className: 'topology-error' },
+                error, h('button', { onClick: fetchGraph }, 'Retry'));
+        }
+
+        return h('div', { className: 'topology-body' },
+            h('div', { className: 'topology-flow' },
+                graph
+                    ? h(ReactFlow, {
+                        nodes: styled.nodes,
+                        edges: styled.edges,
+                        nodesDraggable: false,
+                        minZoom: 0.2,
+                        onNodeClick,
+                        onPaneClick,
+                        attributionPosition: 'bottom-right',
+                    }, h(Background, null), h(Controls, null))
+                    : h('div', { className: 'topology-loading' }, 'Loading topology...')
+            ),
+            detail ? topologyDetailPanel(React, detail, () => { setDetail(null); setSelectedModel(null); }) : null
+        );
+    }
+
+    async function loadTopology() {
+        ensureTopologyStylesLoaded();
+        // Mount once; subsequent activations just trigger a refresh so the
+        // viewport and any selected chain survive tab switches.
+        if (_topologyMounted) {
+            if (_topologyApi) _topologyApi.refresh();
+            return;
+        }
+        topologyContainer.textContent = 'Loading topology...';
+
+        let bundle;
         try {
-            const bundle = await import('/static/vendor/topology.bundle.mjs');
-            React = bundle.React;
-            createRoot = bundle.createRoot;
-            ReactFlow = bundle.ReactFlow;
-            Background = bundle.Background;
-            Controls = bundle.Controls;
+            bundle = await import('/static/vendor/topology.bundle.mjs');
         } catch (bundleError) {
             console.error('Topology bundle load failed:', bundleError);
-            topologyContainer.replaceChildren();
-            const errDiv = document.createElement('div');
-            errDiv.className = 'topology-error';
-            errDiv.textContent = 'Не удалось загрузить визуализацию (bundle недоступен).';
-            const retryBtn = document.createElement('button');
-            retryBtn.textContent = 'Retry';
-            retryBtn.addEventListener('click', loadTopology);
-            errDiv.appendChild(retryBtn);
-            topologyContainer.appendChild(errDiv);
-            topologyRefreshButton.disabled = false;
-            topologyRefreshButton.classList.remove('loading');
+            showTopologyFatalError('Не удалось загрузить визуализацию (bundle недоступен).', loadTopology);
             return;
         }
 
-        let data;
-        try {
-            const response = await apiFetch('/v1/topology');
-            if (!response.ok) {
-                const body = await response.json().catch(() => ({}));
-                topologyContainer.replaceChildren();
-                const errDiv = document.createElement('div');
-                errDiv.className = 'topology-error';
-                errDiv.textContent = `Ошибка загрузки топологии: ${body.detail || response.status}`;
-                topologyContainer.appendChild(errDiv);
-                return;
-            }
-            data = await response.json();
-        } catch (fetchError) {
-            console.error('Failed to fetch topology:', fetchError);
-            topologyContainer.replaceChildren();
-            const errDiv = document.createElement('div');
-            errDiv.className = 'topology-error';
-            errDiv.textContent = `Ошибка загрузки топологии: ${fetchError.message}`;
-            topologyContainer.appendChild(errDiv);
-            return;
-        } finally {
-            topologyRefreshButton.disabled = false;
-            topologyRefreshButton.classList.remove('loading');
-        }
-
-        // Compute a circular layout in screen-pixel coordinates so the graph
-        // fits the 600px-tall container without relying on React Flow's fitView
-        // (which races with display:none → visible tab transitions).
-        const NODE_WIDTH = 180;
-        const NODE_HEIGHT_PROVIDER = 70;
-        const NODE_HEIGHT_CENTRAL = 40;
-        const containerWidth = topologyContainer.clientWidth || 1000;
-        const containerHeight = topologyContainer.clientHeight || 600;
-        const cx = containerWidth / 2;
-        const cy = containerHeight / 2;
-        // Elliptical layout — container is wider than tall, so spread providers
-        // horizontally to keep adjacent nodes from overlapping.
-        const radiusX = Math.max(220, containerWidth / 2 - NODE_WIDTH / 2 - 40);
-        const radiusY = Math.max(180, containerHeight / 2 - NODE_HEIGHT_PROVIDER / 2 - 30);
-        const providers = (data.nodes || []).filter(n => n.type !== 'central');
-        const positionById = new Map();
-        providers.forEach((node, idx) => {
-            const angle = (2 * Math.PI * idx) / providers.length - Math.PI / 2;
-            positionById.set(node.id, {
-                x: cx + radiusX * Math.cos(angle) - NODE_WIDTH / 2,
-                y: cy + radiusY * Math.sin(angle) - NODE_HEIGHT_PROVIDER / 2,
-            });
-        });
-        const centralNode = (data.nodes || []).find(n => n.type === 'central');
-        if (centralNode) {
-            positionById.set(centralNode.id, {
-                x: cx - NODE_WIDTH / 2,
-                y: cy - NODE_HEIGHT_CENTRAL / 2,
-            });
-        }
-
-        // Build styled nodes
-        const styledNodes = (data.nodes || []).map(node => {
-            const isCentral = node.type === 'central';
-            const health = node.data && node.data.health ? node.data.health : 'ok';
-            const hasActive = node.data && node.data.active_requests > 0;
-
-            let classes = 'topology-node';
-            if (isCentral) {
-                classes += ' node-central';
-            } else {
-                classes += ` health-${health}`;
-                if (hasActive) classes += ' pulse';
-            }
-
-            const tooltipLines = [];
-            if (!isCentral && node.data) {
-                tooltipLines.push(`Health: ${health}`);
-                tooltipLines.push(`Active requests: ${node.data.active_requests || 0}`);
-                tooltipLines.push(`Penalty: ${typeof node.data.penalty === 'number' ? node.data.penalty.toFixed(2) : 0}`);
-                if (node.data.models && node.data.models.length > 0) {
-                    tooltipLines.push(`Models: ${node.data.models.join(', ')}`);
-                }
-            }
-
-            return {
-                ...node,
-                // Backend emits type: "central" | "provider". React Flow treats those
-                // as custom node types and silently skips them unless a matching
-                // component is registered in `nodeTypes`. We style via `style` +
-                // `data.label`, so drop the custom type and let it fall back to the
-                // built-in default renderer.
-                type: isCentral ? 'input' : 'default',
-                position: positionById.get(node.id) || node.position,
-                style: {
-                    background: isCentral ? 'var(--accent)' : undefined,
-                    borderColor: isCentral ? 'var(--accent-hover)' : (HEALTH_BORDER_COLOR[health] || '#94a3b8'),
-                    borderWidth: 2,
-                    borderStyle: 'solid',
-                    borderRadius: 8,
-                    padding: '10px 16px',
-                    width: 180,
-                    textAlign: 'center',
-                    color: isCentral ? '#fff' : undefined,
-                    fontWeight: isCentral ? 700 : 500,
-                    fontSize: 13,
-                    cursor: 'default',
-                    animation: hasActive ? 'topology-pulse 1.8s ease-out infinite' : undefined,
-                },
-                data: {
-                    ...node.data,
-                    label: React.createElement('div', null,
-                        React.createElement('div', null, node.label || node.id),
-                        tooltipLines.length > 0
-                            ? React.createElement('div', { className: 'topology-node-metrics', title: tooltipLines.join('\n') },
-                                tooltipLines.slice(0, 3).map((line, idx) =>
-                                    React.createElement('div', { key: idx }, line)
-                                )
-                            )
-                            : null
-                    ),
-                },
-            };
-        });
-
-        // Unmount previous root if present
-        if (_topologyRootInstance) {
-            try { _topologyRootInstance.unmount(); } catch (_) { /* ignore */ }
-            _topologyRootInstance = null;
-        }
+        const { React, createRoot, ReactFlow, Background, Controls } = bundle;
         topologyContainer.replaceChildren();
-
         const mountEl = document.createElement('div');
         mountEl.style.width = '100%';
         mountEl.style.height = '100%';
         topologyContainer.appendChild(mountEl);
 
-        const flowEl = React.createElement(
-            ReactFlow,
-            {
-                nodes: styledNodes,
-                edges: data.edges || [],
-                nodesDraggable: false,
-                // Layout is pre-computed in container-pixel space, so the default
-                // viewport (zoom=1, no translation) already places nodes correctly.
-                attributionPosition: 'bottom-right',
-            },
-            React.createElement(Background, null),
-            React.createElement(Controls, null),
-        );
-
         _topologyRootInstance = createRoot(mountEl);
-        _topologyRootInstance.render(flowEl);
+        _topologyRootInstance.render(
+            React.createElement(TopologyApp, { React, ReactFlow, Background, Controls })
+        );
+        _topologyMounted = true;
     }
 
-    topologyRefreshButton.addEventListener('click', loadTopology);
+    topologyRefreshButton.addEventListener('click', () => {
+        if (_topologyApi) _topologyApi.refresh(); else loadTopology();
+    });
+    if (topologyAutoRefreshInput) {
+        topologyAutoRefreshInput.addEventListener('change', () => {
+            if (_topologyApi) _topologyApi.setAuto(topologyAutoRefreshInput.checked);
+        });
+    }
 
 });

@@ -39,6 +39,7 @@ def _make_provider_details(name: str):  # noqa: ARG001
 def _build_app(
     *,
     provider_names: list[str] | None = None,
+    fallback_rules: dict | None = None,
     upstream_state: UpstreamRoutingState | None = None,
     registry: ActiveRequestsRegistry | None = None,
 ) -> FastAPI:
@@ -50,6 +51,10 @@ def _build_app(
     config_loader = MagicMock()
     names = provider_names or ["openai", "anthropic"]
     config_loader.providers_config = {n: _make_provider_details(n) for n in names}
+    # Default to an empty real dict so the model tier is empty unless a test
+    # supplies rules (a bare MagicMock attribute would iterate as empty too, but
+    # an explicit dict keeps intent clear).
+    config_loader.fallback_rules = fallback_rules or {}
     app.state.config_loader = config_loader
 
     app.state.upstream_routing_state = upstream_state or UpstreamRoutingState()
@@ -160,18 +165,136 @@ class TopologyEndpointTests(unittest.TestCase):
         self.assertEqual(len(gateway_nodes), 1)
         self.assertEqual(gateway_nodes[0]["type"], "central")
 
-    def test_topology_edges_connect_gateway_to_each_provider(self):
-        """Every provider node has an edge from gateway."""
-        provider_names = ["openai", "anthropic"]
-        app = _build_app(provider_names=provider_names)
+    def test_topology_routes_gateway_model_through_fallback_chain(self):
+        """A fallback rule produces a model node and ordered model->provider edges."""
+        fallback_rules = {
+            "gpt-4o": {
+                "fallback_models": [
+                    {"provider": "openai", "model": "gpt-4o"},
+                    {"provider": "anthropic", "model": "claude-3-5-sonnet"},
+                ],
+            }
+        }
+        app = _build_app(
+            provider_names=["openai", "anthropic"], fallback_rules=fallback_rules
+        )
         with TestClient(app) as client:
             data = self._get_topology(client, self._master_headers())
 
-        edge_targets = {e["target"] for e in data["edges"]}
-        for name in provider_names:
-            self.assertIn(f"provider:{name}", edge_targets)
-        edge_sources = {e["source"] for e in data["edges"]}
-        self.assertEqual(edge_sources, {"gateway"})
+        # Model node exists.
+        model_nodes = {n["id"] for n in data["nodes"] if n.get("type") == "model"}
+        self.assertIn("model:gpt-4o", model_nodes)
+
+        edges_by_id = {e["id"]: e for e in data["edges"]}
+
+        # gateway -> model alias edge.
+        alias = edges_by_id["gateway->model:gpt-4o"]
+        self.assertEqual(alias["source"], "gateway")
+        self.assertEqual(alias["target"], "model:gpt-4o")
+        self.assertEqual(alias["type"], "alias")
+
+        # Ordered model -> provider fallback edges with 1-based priority.
+        first = edges_by_id["model:gpt-4o->provider:openai"]
+        second = edges_by_id["model:gpt-4o->provider:anthropic"]
+        self.assertEqual(first["type"], "fallback")
+        self.assertEqual(first["data"]["priority"], 1)
+        self.assertEqual(second["data"]["priority"], 2)
+        self.assertIn("gpt-4o", first["data"]["models"])
+
+    def test_topology_collapses_same_provider_targets(self):
+        """Two targets of one model on the same provider collapse to one edge."""
+        fallback_rules = {
+            "router": {
+                "fallback_models": [
+                    {"provider": "openai", "model": "gpt-4o"},
+                    {"provider": "openai", "model": "gpt-4o-mini"},
+                ],
+            }
+        }
+        app = _build_app(provider_names=["openai"], fallback_rules=fallback_rules)
+        with TestClient(app) as client:
+            data = self._get_topology(client, self._master_headers())
+
+        fallback_edges = [
+            e
+            for e in data["edges"]
+            if e["source"] == "model:router" and e.get("type") == "fallback"
+        ]
+        self.assertEqual(len(fallback_edges), 1)
+        edge = fallback_edges[0]
+        self.assertEqual(edge["data"]["priority"], 1)
+        self.assertEqual(sorted(edge["data"]["models"]), ["gpt-4o", "gpt-4o-mini"])
+        self.assertEqual(edge["data"]["steps"], [1, 2])
+
+    def test_topology_context_overflow_edge_is_marked(self):
+        """context_overflow_fallback yields a distinct context_overflow edge."""
+        fallback_rules = {
+            "gpt-4o": {
+                "fallback_models": [{"provider": "openai", "model": "gpt-4o"}],
+                "context_overflow_fallback": {
+                    "provider": "anthropic",
+                    "model": "claude-3-5-sonnet",
+                },
+            }
+        }
+        app = _build_app(
+            provider_names=["openai", "anthropic"], fallback_rules=fallback_rules
+        )
+        with TestClient(app) as client:
+            data = self._get_topology(client, self._master_headers())
+
+        ctx_edge = next(
+            (e for e in data["edges"] if e["id"] == "model:gpt-4o->provider:anthropic:ctx"),
+            None,
+        )
+        self.assertIsNotNone(ctx_edge)
+        self.assertEqual(ctx_edge["type"], "context_overflow")
+        self.assertEqual(ctx_edge["data"]["kind"], "context_overflow")
+
+    def test_topology_phantom_provider_is_surfaced(self):
+        """A provider referenced by a rule but missing from config is shown as invalid."""
+        fallback_rules = {
+            "gpt-4o": {
+                "fallback_models": [
+                    {"provider": "openai", "model": "gpt-4o"},
+                    {"provider": "ghost", "model": "phantom-1"},
+                ],
+            }
+        }
+        app = _build_app(provider_names=["openai"], fallback_rules=fallback_rules)
+        with TestClient(app) as client:
+            data = self._get_topology(client, self._master_headers())
+
+        ghost = next((n for n in data["nodes"] if n["id"] == "provider:ghost"), None)
+        self.assertIsNotNone(ghost)
+        self.assertFalse(ghost["data"]["configured"])
+        self.assertEqual(ghost["data"]["health"], "invalid")
+        self.assertEqual(data["health_by_provider"].get("ghost"), "invalid")
+
+    def test_topology_active_request_attributed_to_route_edge(self):
+        """An active request marks its exact model->provider edge active."""
+        reg = ActiveRequestsRegistry()
+        reg.start(
+            request_id="req-1", path="/v1/chat/completions", api_key_id=7
+        )
+        reg.update("req-1", gateway_model="gpt-4o", provider="openai", model="gpt-4o")
+
+        fallback_rules = {
+            "gpt-4o": {
+                "fallback_models": [{"provider": "openai", "model": "gpt-4o"}],
+            }
+        }
+        app = _build_app(
+            provider_names=["openai"], fallback_rules=fallback_rules, registry=reg
+        )
+        with TestClient(app) as client:
+            data = self._get_topology(client, self._master_headers())
+
+        edges_by_id = {e["id"]: e for e in data["edges"]}
+        route = edges_by_id["model:gpt-4o->provider:openai"]
+        self.assertEqual(route["data"]["active"], 1)
+        self.assertTrue(route["animated"])
+        self.assertTrue(edges_by_id["gateway->model:gpt-4o"]["animated"])
 
     def test_topology_health_reflects_routing_state(self):
         """If upstream_routing_state has error for a provider, topology reflects it."""

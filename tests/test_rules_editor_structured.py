@@ -479,6 +479,47 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.assertTrue(self.config_loader.fallback_rules["gateway-model"]["compress_tool_results"])
         self.assertIn('"compress_tool_results": true', self.rules_path.read_text(encoding="utf-8"))
 
+    def test_structured_save_persists_available_models_and_short_circuits_models_endpoint(self):
+        fake_http_client = Mock()
+        fake_http_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"id": "from-upstream"}]},
+                request=httpx.Request("GET", "https://proxy.example/models"),
+            )
+        )
+        payload = {
+            "providers": [
+                {"name": "openrouter", "baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY"},
+                {"name": "devbox", "baseUrl": "https://devbox.example", "apikey": "DIRECT-KEY"},
+                {
+                    "name": "pinned",
+                    "baseUrl": "https://proxy.example/v1",
+                    "apikey": "DIRECT-KEY",
+                    "available_models": ["alpha", "beta"],
+                },
+            ]
+        }
+
+        with self._client(fake_http_client) as (client, _):
+            save_response = client.post(
+                "/v1/config/providers/structured",
+                json=payload,
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            models_response = client.get(
+                "/v1/config/providers/pinned/models",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(save_response.status_code, 200)
+        persisted = self.providers_path.read_text(encoding="utf-8")
+        self.assertIn("available_models", persisted)
+        self.assertIn("alpha", persisted)
+        self.assertEqual(models_response.status_code, 200)
+        # The explicit list short-circuits the upstream /models call.
+        self.assertEqual(models_response.json()["models"], [{"id": "alpha"}, {"id": "beta"}])
+
 
 if __name__ == "__main__":
     unittest.main()

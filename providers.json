@@ -109,5 +109,11 @@
       "baseUrl": "http://localhost:8081/v1",
       "apikey": "${APIKEY_GEM}"
     }
+  },
+  {
+    "minimax": {
+      "baseUrl": "https://api.minimax.io/v1",
+      "apikey": "${APIKEY_MINIMAX}"
+    }
   }
 ]

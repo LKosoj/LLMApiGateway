@@ -299,6 +299,10 @@ class ProviderDetails(BaseModel):
     type: Literal["openai", "anthropic"] = "openai"
     proxy: str | None = None
     models: Any | None = None
+    # Optional explicit list of model ids this provider serves. When set, the
+    # gateway uses it instead of querying the upstream ``/models`` endpoint.
+    # ``models`` stays reserved for per-model metadata (``upstream_limits`` etc.).
+    available_models: list[str] | None = None
     subscription_quota: Optional[SubscriptionQuotaConfig] = None
 
     @field_validator("baseUrl", mode="before")

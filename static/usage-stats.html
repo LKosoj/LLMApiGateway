@@ -311,8 +311,15 @@
         <div id="topologyTabContent" class="tab-content">
             <div class="topology-toolbar">
                 <button id="topologyRefreshButton">Refresh</button>
+                <label class="topology-auto"><input type="checkbox" id="topologyAutoRefresh" checked> Auto-refresh (5s)</label>
+                <span class="topology-legend">
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-ok"></span>ok</span>
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-error"></span>error</span>
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-invalid"></span>not configured</span>
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-ctx"></span>context-overflow</span>
+                </span>
             </div>
-            <div id="topology-container" style="height: 520px;"></div>
+            <div id="topology-container" style="height: 520px; position: relative;"></div>
         </div>
 
         <div id="messageArea"></div>

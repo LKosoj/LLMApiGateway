@@ -3432,6 +3432,27 @@ document.addEventListener('DOMContentLoaded', function () {
         return JSON.stringify(value, null, 2);
     }
 
+    function parseAvailableModels(value) {
+        const items = String(value || '')
+            .split(/[\n,]/)
+            .map(item => item.trim())
+            .filter(Boolean);
+        const seen = new Set();
+        const result = [];
+        items.forEach(item => {
+            if (seen.has(item)) {
+                return;
+            }
+            seen.add(item);
+            result.push(item);
+        });
+        return result;
+    }
+
+    function normalizeAvailableModels(value) {
+        return Array.isArray(value) ? value.join('\n') : '';
+    }
+
     const PROVIDER_FIELD_TOOLTIPS = {
         name: 'Unique provider id used in fallback rules and the routes. Must be unique across providers.json (duplicates are rejected on save).',
         baseUrl: 'Upstream API root URL, must start with http:// or https://. Example: https://openrouter.ai/api/v1',
@@ -3439,6 +3460,7 @@ document.addEventListener('DOMContentLoaded', function () {
         type: 'API dialect. openai = OpenAI-compatible /chat/completions with Bearer auth. anthropic = native /v1/messages with x-api-key and anthropic-version headers.',
         proxy: 'Optional outbound proxy. Reference via ${PROXY_VAR} or a literal http(s):// URL. Leave empty to call the upstream directly.',
         modelsMetadata: 'Free-form per-model metadata stored under providers.json -> models. Use for pricing or other custom fields. upstream_limits is managed structurally above and merged in on save.',
+        availableModels: 'Optional explicit list of model ids this provider serves, one per line (commas also accepted). When set, the gateway uses this list instead of querying the provider /models endpoint — useful for proxies without a working /models. Leave empty to keep querying the provider.',
         upstreamLimits: 'Per-model upstream quota ledger (separate from client virtual-key limits). Gateway tracks per-key rpm/rpd/tpm/tpd and skips upstream keys that would breach these caps.',
         modelId: 'Upstream model id exactly as the provider expects it. Example: deepseek/deepseek-r1:free',
         rpm: 'Requests per minute allowed per upstream key. Leave empty to disable the per-minute request cap.',
@@ -3653,6 +3675,11 @@ document.addEventListener('DOMContentLoaded', function () {
         } else if (extraModels !== undefined) {
             providerPayload.models = extraModels;
         }
+        const availableModelsInput = providerCard.querySelector('.provider-available-models-input');
+        const availableModels = parseAvailableModels(availableModelsInput ? availableModelsInput.value : '');
+        if (availableModels.length > 0) {
+            providerPayload.available_models = availableModels;
+        }
         return providerPayload;
     }
 
@@ -3757,6 +3784,13 @@ document.addEventListener('DOMContentLoaded', function () {
         attachFieldTooltip(modelsField, PROVIDER_FIELD_TOOLTIPS.modelsMetadata);
         appendFieldHint(modelsField, 'Other provider-specific metadata. upstream_limits are managed structurally above and merged on save.');
         advancedGrid.appendChild(modelsField);
+
+        const availableModelsInput = createTextarea('provider-available-models-input', 'deepseek/deepseek-r1:free\nqwen/qwen3-max');
+        availableModelsInput.value = normalizeAvailableModels(initialData.available_models);
+        const availableModelsField = createFieldGroup('Available Models (optional)', availableModelsInput, 'textarea-group');
+        attachFieldTooltip(availableModelsField, PROVIDER_FIELD_TOOLTIPS.availableModels);
+        appendFieldHint(availableModelsField, 'One model id per line (commas also work). If set, the gateway uses this exact list instead of calling the provider /models endpoint.');
+        advancedGrid.appendChild(availableModelsField);
 
         advancedDetails.appendChild(advancedGrid);
 

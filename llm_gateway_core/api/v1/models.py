@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 # Relative imports from the new structure
 from ...config.loader import ANTHROPIC_API_VERSION, ConfigLoader, ProviderDetails, resolve_provider_api_key
 from ...config.settings import settings
+from ...services.provider_models import provider_explicit_models
 
 logger = logging.getLogger(__name__)
 
@@ -372,40 +373,56 @@ async def get_models(request: Request):
             if not fallback_provider_base_url:
                 logger.error(f"Configuration error: 'baseUrl' missing for fallback provider '{fallback_provider_name}'.")
             else:
-                target_url, headers = _build_provider_models_request(fallback_provider_config)
+                explicit_models = provider_explicit_models(fallback_provider_config)
+                if explicit_models is not None:
+                    # Provider pins its model list in config; skip the live /models call.
+                    for model_id in explicit_models:
+                        if model_id not in gateway_models:  # Don't override gateway rules
+                            gateway_models[model_id] = {
+                                "id": model_id,
+                                "object": "model",
+                                "owned_by": fallback_provider_name,
+                                "source_provider": fallback_provider_name,
+                            }
+                    logger.info(
+                        f"Using {len(explicit_models)} explicitly configured models "
+                        f"for fallback provider '{fallback_provider_name}'."
+                    )
+                else:
+                    target_url, headers = _build_provider_models_request(fallback_provider_config)
 
-                try:
-                    logger.info(f"Fetching models list from fallback provider '{fallback_provider_name}' at {target_url}")
-                    response_fallback = await http_client.get(target_url, headers=headers)
+                    try:
+                        logger.info(f"Fetching models list from fallback provider '{fallback_provider_name}' at {target_url}")
+                        response_fallback = await http_client.get(target_url, headers=headers)
 
-                    # Check for downstream errors
-                    if response_fallback.status_code >= 400:
-                        error_text = response_fallback.text
-                        logger.warning(f"Downstream error {response_fallback.status_code} fetching models from {target_url}: {error_text[:500]}...")
-                        # Don't raise immediately, allow gateway models to still be returned
-                    else:
-                        # Attempt to parse JSON and merge models
-                        try:
-                            fallback_models_data = response_fallback.json()
-                            if isinstance(fallback_models_data.get("data"), list):
-                                for model_info in fallback_models_data["data"]:
-                                    model_id = model_info.get("id")
-                                    if model_id and model_id not in gateway_models: # Add only if not already defined by gateway rules
-                                        # Add provider info for clarity
-                                        model_info["owned_by"] = model_info.get("owned_by", fallback_provider_name)
-                                        model_info["source_provider"] = fallback_provider_name
-                                        gateway_models[model_id] = model_info
-                                logger.info(f"Successfully merged models from fallback provider '{fallback_provider_name}'.")
-                            else:
-                                logger.warning(f"Unexpected format in response from {target_url}. 'data' field missing or not a list.")
+                        # Check for downstream errors
+                        if response_fallback.status_code >= 400:
+                            error_text = response_fallback.text
+                            logger.warning(f"Downstream error {response_fallback.status_code} fetching models from {target_url}: {error_text[:500]}...")
+                            # Don't raise immediately, allow gateway models to still be returned
+                        else:
+                            # Attempt to parse JSON and merge models
+                            try:
+                                fallback_models_data = response_fallback.json()
+                                if isinstance(fallback_models_data.get("data"), list):
+                                    for model_info in fallback_models_data["data"]:
+                                        model_id = model_info.get("id")
+                                        if model_id and model_id not in gateway_models: # Add only if not already defined by gateway rules
+                                            # Add provider info for clarity
+                                            model_info["owned_by"] = model_info.get("owned_by", fallback_provider_name)
+                                            model_info["source_provider"] = fallback_provider_name
+                                            gateway_models[model_id] = model_info
+                                    logger.info(f"Successfully merged models from fallback provider '{fallback_provider_name}'.")
+                                else:
+                                    logger.warning(f"Unexpected format in response from {target_url}. 'data' field missing or not a list.")
 
-                        except ValueError:
-                            logger.error(f"Invalid JSON response fetching models from {target_url}: {response_fallback.text[:500]}...", exc_info=True)
+                            except ValueError:
+                                logger.error(f"Invalid JSON response fetching models from {target_url}: {response_fallback.text[:500]}...", exc_info=True)
 
-                except httpx.RequestError as e:
-                    logger.error(f"RequestError fetching models from fallback provider {target_url}: {e}", exc_info=True)
-                except Exception as e:
-                     logger.error(f"Unexpected error fetching models from fallback provider {target_url}: {e}", exc_info=True)
+                    except httpx.RequestError as e:
+                        logger.error(f"RequestError fetching models from fallback provider {target_url}: {e}", exc_info=True)
+                    except Exception as e:
+                        logger.error(f"Unexpected error fetching models from fallback provider {target_url}: {e}", exc_info=True)
 
 
     # 3. Restrict to models allowed for the caller's virtual key, if any.
@@ -502,7 +519,24 @@ async def get_model(model_id: str, request: Request):
     fallback_provider_name = settings.fallback_provider
     if fallback_provider_name:
         fallback_provider_config = providers_config.get(fallback_provider_name)
-        if fallback_provider_config and fallback_provider_config.baseUrl:
+        explicit_models = (
+            provider_explicit_models(fallback_provider_config)
+            if fallback_provider_config
+            else None
+        )
+        if explicit_models is not None:
+            if model_id in explicit_models:
+                model_entry = {
+                    "id": model_id,
+                    "object": "model",
+                    "owned_by": fallback_provider_name,
+                    "source_provider": fallback_provider_name,
+                }
+                if is_anthropic:
+                    return _format_model_for_anthropic(model_entry)
+                return model_entry
+            # Pinned model list without this id → fall through to 404, no live lookup.
+        elif fallback_provider_config and fallback_provider_config.baseUrl:
             target_url, headers = _build_provider_models_request(
                 fallback_provider_config,
                 model_id=model_id,

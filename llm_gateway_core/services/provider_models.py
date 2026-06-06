@@ -18,6 +18,32 @@ class ProviderModelsCacheEntry:
     fetched_at: float
 
 
+def provider_explicit_models(provider_config: ProviderDetails) -> list[str] | None:
+    """Return the explicit, deduplicated model-id list declared on a provider.
+
+    A provider may declare ``available_models`` as a list of model ids to pin
+    the set of usable models instead of querying the upstream ``/models``
+    endpoint. When ``available_models`` is absent, not a list, or contains no
+    valid string ids, this returns ``None`` and callers fall back to querying
+    the provider as before. The separate ``models`` field stays reserved for
+    per-model metadata (``upstream_limits`` etc.) and is not consulted here.
+    """
+    raw = getattr(provider_config, "available_models", None)
+    if not isinstance(raw, list):
+        return None
+    model_ids: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        model_id = entry.strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        model_ids.append(model_id)
+    return model_ids or None
+
+
 class ProviderModelsService:
     def __init__(
         self,
@@ -38,6 +64,15 @@ class ProviderModelsService:
         provider_config: ProviderDetails,
         http_client: httpx.AsyncClient,
     ) -> list[str]:
+        explicit_models = provider_explicit_models(provider_config)
+        if explicit_models is not None:
+            logger.debug(
+                "Using %d explicitly configured models for provider '%s'.",
+                len(explicit_models),
+                provider_name,
+            )
+            return explicit_models
+
         now = self._time_func()
         cached_entry = self._cache.get(provider_name)
         if cached_entry and now - cached_entry.fetched_at < self.ttl_seconds:

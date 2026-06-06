@@ -82,6 +82,7 @@ class StructuredProviderItem(BaseModel):
     type: Literal["openai", "anthropic"] = "openai"
     proxy: str | None = None
     models: Any | None = None
+    available_models: list[str] | None = None
 
     @field_validator("name")
     @classmethod
@@ -253,6 +254,8 @@ def _serialize_structured_providers(providers: list[StructuredProviderItem]) -> 
             provider_payload["proxy"] = provider.proxy
         if provider.models is not None:
             provider_payload["models"] = provider.models
+        if provider.available_models is not None:
+            provider_payload["available_models"] = provider.available_models
         payload.append({provider.name: provider_payload})
 
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"

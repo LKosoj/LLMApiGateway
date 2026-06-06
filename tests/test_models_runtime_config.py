@@ -196,6 +196,100 @@ class ModelsRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(call.kwargs["headers"]["anthropic-version"], ANTHROPIC_API_VERSION)
         self.assertNotIn("Authorization", call.kwargs["headers"])
 
+    def test_models_endpoint_uses_explicit_provider_model_list(self):
+        self.providers_path.write_text(
+            """
+[
+  {"openrouter": {"baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY", "available_models": ["pinned-model-a", "pinned-model-b"]}},
+  {"devbox": {"baseUrl": "https://devbox.example", "apikey": "DIRECT-KEY"}}
+]
+""".strip(),
+            encoding="utf-8",
+        )
+        headers = {"Authorization": "Bearer test-gateway-key"}
+
+        with self._client() as (client, fake_http_client):
+            response = client.get("/v1/models", headers=headers)
+
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.json()["data"]}
+        self.assertIn("pinned-model-a", ids)
+        self.assertIn("pinned-model-b", ids)
+        # The pinned list must short-circuit the live /models lookup for the provider.
+        called_urls = [call.args[0] for call in fake_http_client.get.await_args_list if call.args]
+        self.assertNotIn("https://openrouter.example/models", called_urls)
+
+    def test_get_model_in_explicit_list_returns_entry_without_live_lookup(self):
+        self.providers_path.write_text(
+            """
+[
+  {"openrouter": {"baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY", "available_models": ["pinned-model-a", "pinned-model-b"]}},
+  {"devbox": {"baseUrl": "https://devbox.example", "apikey": "DIRECT-KEY"}}
+]
+""".strip(),
+            encoding="utf-8",
+        )
+        headers = {"Authorization": "Bearer test-gateway-key"}
+
+        with self._client() as (client, fake_http_client):
+            fake_http_client.get = AsyncMock()
+            response = client.get("/v1/models/pinned-model-a", headers=headers)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], "pinned-model-a")
+        self.assertEqual(body["object"], "model")
+        self.assertEqual(body["owned_by"], "openrouter")
+        self.assertEqual(body["source_provider"], "openrouter")
+        # A pinned model must short-circuit the per-model upstream lookup.
+        self.assertEqual(fake_http_client.get.await_count, 0)
+
+    def test_get_model_in_explicit_list_anthropic_format(self):
+        self.providers_path.write_text(
+            """
+[
+  {"openrouter": {"baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY", "available_models": ["pinned-model-a"]}},
+  {"devbox": {"baseUrl": "https://devbox.example", "apikey": "DIRECT-KEY"}}
+]
+""".strip(),
+            encoding="utf-8",
+        )
+        headers = {
+            "Authorization": "Bearer test-gateway-key",
+            "anthropic-version": ANTHROPIC_API_VERSION,
+        }
+
+        with self._client() as (client, fake_http_client):
+            fake_http_client.get = AsyncMock()
+            response = client.get("/v1/models/pinned-model-a", headers=headers)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], "pinned-model-a")
+        self.assertEqual(body["type"], "model")
+        self.assertEqual(body["display_name"], "pinned-model-a")
+        self.assertEqual(fake_http_client.get.await_count, 0)
+
+    def test_get_model_not_in_explicit_list_returns_404_without_live_lookup(self):
+        self.providers_path.write_text(
+            """
+[
+  {"openrouter": {"baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY", "available_models": ["pinned-model-a"]}},
+  {"devbox": {"baseUrl": "https://devbox.example", "apikey": "DIRECT-KEY"}}
+]
+""".strip(),
+            encoding="utf-8",
+        )
+        headers = {"Authorization": "Bearer test-gateway-key"}
+
+        with self._client() as (client, fake_http_client):
+            fake_http_client.get = AsyncMock()
+            response = client.get("/v1/models/not-pinned", headers=headers)
+
+        self.assertEqual(response.status_code, 404)
+        # An explicit list must not trigger a live per-model lookup for missing ids.
+        self.assertEqual(fake_http_client.get.await_count, 0)
+
     def test_models_list_filtered_by_virtual_key_allowed_models(self):
         virtual_record = ApiKeyRecord(
             id=42,

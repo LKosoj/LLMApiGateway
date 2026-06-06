@@ -137,8 +137,8 @@
         "custom_headers": {}
       },
       {
-        "provider": "devbox",
-        "model": "mm.MiniMax-M2.7",
+        "provider": "minimax",
+        "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -154,8 +154,8 @@
         }
       },
       {
-        "provider": "openai_codex",
-        "model": "gpt-5.3-codex",
+        "provider": "gem",
+        "model": "gemini-3.5-flash-thinking",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -194,8 +194,8 @@
       }
     ],
     "context_overflow_fallback": {
-      "provider": "gemini_cli",
-      "model": "gemini-3.5-flash",
+      "provider": "aitunnel",
+      "model": "deepseek-v4-flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}
@@ -209,8 +209,8 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
-        "provider": "devbox",
-        "model": "mm.MiniMax-M3",
+        "provider": "minimax",
+        "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -270,15 +270,8 @@
     "gateway_model_name": "llmgateway/fast",
     "fallback_models": [
       {
-        "provider": "openai_codex",
-        "model": "gpt-5.3-codex-spark-fast",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "devbox",
-        "model": "openai.gpt-5.3-codex-spark-fast",
+        "provider": "z.ai",
+        "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -286,13 +279,6 @@
       {
         "provider": "aitunnel",
         "model": "qwen3-235b-a22b-2507",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "z.ai",
-        "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -314,8 +300,8 @@
     "gateway_model_name": "llmgateway/text",
     "fallback_models": [
       {
-        "provider": "openai_codex",
-        "model": "gpt-5.5",
+        "provider": "minimax",
+        "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -328,8 +314,8 @@
         "custom_headers": {}
       },
       {
-        "provider": "devbox",
-        "model": "mm.MiniMax-M2.7",
+        "provider": "gem",
+        "model": "gemini-3.5-flash-thinking",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}

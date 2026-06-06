@@ -233,19 +233,29 @@ API endpoints (master-only):
 
 ### Provider Topology
 
-The statistics page includes a **Topology** tab with an interactive provider graph powered by [@xyflow/react](https://reactflow.dev/). The graph is built on demand each time the tab is opened and shows:
+The statistics page includes a **Topology** tab — an interactive **routing map** powered by [@xyflow/react](https://reactflow.dev/). It shows not just providers but how gateway models route through their fallback chains, with live metrics layered on top. The graph reads left to right in three tiers:
 
-- A central **LLM Gateway** node in the middle.
-- One node per configured provider, arranged in a circle.
-- Border colour: green — `ok`, red — `error`, grey — `invalid`.
-- Pulse animation when the provider has active requests.
-- Hover tooltip: health status, active request count, penalty score, model list.
+- A central **LLM Gateway** node on the left.
+- **Gateway models** — one node per rule in `models_fallback_rules.json`; the caption shows the chain length and active-request count.
+- **Providers** (right) — the union of configured providers and every provider referenced by a fallback target. Border colour: green — `ok`, red — `error`, grey — `invalid`. A provider referenced by a rule but missing from the config is marked "not configured" — a signal that the rule points nowhere.
 
-Virtual-key callers see only their own requests in the `active_requests` field. Data is cached in memory for 5 seconds.
+Edges reflect the routes:
+
+- `gateway → model` — aliases; animated when the model has active traffic.
+- `model → provider` — fallback steps labelled with the priority number (1, 2, 3…); animated and emphasised when active requests flow through the route.
+- A dashed orange edge labelled `ctx` — the `context_overflow_fallback` target.
+
+Interaction:
+
+- **Clicking a gateway model** highlights its chain and dims the rest; clicking the background or another node resets it.
+- **Detail panel** (click a node): for a provider — health / configured / active / penalty / models; for a gateway model — the full chain with `retry_count`/`retry_delay`, the active flags (`rotate_models`, `dynamic_penalty`, `strip_think_tags`, `compress_tool_results`), `max_total_attempts`, and the `context_overflow` target.
+- **Auto-refresh** (on by default) reloads every 5 seconds without resetting the graph's zoom/pan or the selected chain; a manual Refresh button sits next to it. Polling pauses while the tab is hidden.
+
+Active requests are attributed down to the exact `model → provider` edge (each active record carries both `gateway_model` and `provider`). Virtual-key callers see only their own requests in the `active_requests` field. Data is cached in memory for 5 seconds.
 
 API endpoint: `GET /v1/topology` (auth required; accessible to all keys).
 
-React and ReactFlow ship as a locally hosted ESM bundle at `static/vendor/topology.bundle.mjs` (~300 KB minified), accompanied by `static/vendor/topology.bundle.css` (~15 KB). The CSS is layout-critical — without it nodes fall back to `position: static` and stack vertically instead of being placed on the elliptical layout. The browser never reaches out to any external CDN, so the UI keeps working inside firewalled networks. If the bundle fails to load, an inline error with a Retry button is shown.
+React and ReactFlow ship as a locally hosted ESM bundle at `static/vendor/topology.bundle.mjs` (~300 KB minified), accompanied by `static/vendor/topology.bundle.css` (~15 KB). The CSS is layout-critical — without it nodes fall back to `position: static` and stack vertically instead of being placed on the layered left-to-right layout. The browser never reaches out to any external CDN, so the UI keeps working inside firewalled networks. If the bundle fails to load, an inline error with a Retry button is shown.
 
 Rebuild the bundle (only required when React or ReactFlow versions change):
 
@@ -397,6 +407,7 @@ Provider names must be unique in `providers.json`. Duplicate provider entries ar
 When saving `providers.json` through the UI, the gateway switches to strict `${VAR}` resolution: if the payload references an environment variable that is not present in the process or `.env`, the gateway responds with `400` and the message `env var X referenced but missing for provider 'Y' field 'Z'` and does not write the file. Saving also re-validates `provider` references from the already loaded `models_fallback_rules.json` and `models_operation_rules.json`: if renaming or removing a provider leaves dangling references in those rules, the gateway responds with `400` listing the broken routes instead of silently writing an inconsistent state.
 When `apikey` contains several comma-separated keys, chat fallback chooses the concrete upstream key with per-key cooldown and upstream-limit awareness. Limits are configured under `models.<model>.upstream_limits` as `rpm`, `rpd`, `tpm`, and `tpd`; this is a separate upstream-provider ledger and does not replace client virtual-key limits.
 The editor UI (`Providers` → `Advanced options` → `Upstream Limits per Model`) exposes these limits as explicit `Model`, `RPM`, `RPD`, `TPM`, `TPD` fields per model, with an `ⓘ` tooltip next to each variable explaining what it does. The `Models Metadata (JSON)` textarea stays available for any other free-form metadata (e.g. `pricing`); on save the gateway merges the structural limits back into that JSON, so the two representations never go out of sync.
+A separate `available_models` field declares an explicit list of the provider's model ids as a JSON array of strings (e.g. `"available_models": ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]`). When such a list is set, the gateway uses it verbatim and does not query the provider's `/models` endpoint — useful for proxies without a working `/models` endpoint. The list is applied everywhere a provider model catalog is needed: the model picker in the fallback-rules editor, rule validation on save, and the public `/v1/models` endpoint (when the provider is selected as `FALLBACK_PROVIDER`). When `available_models` is absent, behaviour is unchanged — the catalog is fetched from the provider API. This field is independent of `models`, so an explicit list can be combined with `models` metadata/`upstream_limits`. In the editor UI (`Providers` → `Advanced options`) the list is entered in the `Available Models` field — one id per line (commas are also accepted).
 The free-tier provider reference catalog lives in [`examples/free-tier-providers.md`](examples/free-tier-providers.md). It is not applied automatically: free-tier terms change often, so providers and limits must be enabled manually.
 
 ```json
@@ -423,6 +434,15 @@ The free-tier provider reference catalog lives in [`examples/free-tier-providers
         {
             "baseUrl" : "https://api.studio.nebius.ai/v1",            
             "apikey" : "${APIKEY_NEBIUS}" // explicit environment reference for the provider API key
+        }
+    },
+    {
+        "customproxy":
+        {
+            "baseUrl" : "https://proxy.example/v1",
+            "apikey" : "${APIKEY_CUSTOMPROXY}",
+            // explicit model list: the gateway will not query the provider's /models
+            "available_models" : ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]
         }
     },
     {
