@@ -62,7 +62,7 @@
       },
       {
         "provider": "aitunnel",
-        "model": "deepseek-v4-pro",
+        "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -130,13 +130,6 @@
     "gateway_model_name": "llmgateway/qwen3.5",
     "fallback_models": [
       {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "minimax",
         "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
@@ -156,6 +149,13 @@
       {
         "provider": "gem",
         "model": "gemini-3.5-flash-thinking",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -270,6 +270,13 @@
     "gateway_model_name": "llmgateway/fast",
     "fallback_models": [
       {
+        "provider": "openai_codex",
+        "model": "gpt-5.3-codex-spark",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "z.ai",
         "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
@@ -314,8 +321,8 @@
         "custom_headers": {}
       },
       {
-        "provider": "gem",
-        "model": "gemini-3.5-flash-thinking",
+        "provider": "gemini",
+        "model": "models/gemini-3.5-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -377,14 +384,18 @@
     "gateway_model_name": "llmgateway/free",
     "fallback_models": [
       {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
+        "provider": "z.ai",
+        "model": "glm-5.1",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {
-          "User-Agent": "Kimi Claw Plugin",
-          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
-        }
+        "custom_headers": {}
+      },
+      {
+        "provider": "nvidia",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
       },
       {
         "provider": "openrouter",
@@ -403,11 +414,14 @@
         "custom_headers": {}
       },
       {
-        "provider": "nvidia",
-        "model": "z-ai/glm-5.1",
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {
+          "User-Agent": "Kimi Claw Plugin",
+          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
+        }
       }
     ],
     "context_overflow_fallback": {

@@ -352,3 +352,32 @@ class TopologyEndpointTests(unittest.TestCase):
         self.assertTrue(html_path.exists(), f"HTML not found at {html_path}")
         content = html_path.read_text(encoding="utf-8")
         self.assertIn('data-tab="topology"', content)
+
+    def test_topology_container_fills_viewport_height(self):
+        """The routing map container scales with the viewport (no fixed 520px box).
+
+        Regression guard: the container used to be pinned at 520px, leaving a large
+        empty gap below it on tall screens while clipping bigger graphs. It must now
+        use a responsive height that fills the spare viewport space but never drops
+        below the previous 520px floor — without changing the graph layout itself.
+        """
+        from llm_gateway_core.config.paths import STATIC_DIR
+
+        html = (STATIC_DIR / "usage-stats.html").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "usage-stats.css").read_text(encoding="utf-8")
+
+        # The inline style on the container must not hard-code a fixed height.
+        container_line = next(
+            (ln for ln in html.splitlines() if 'id="topology-container"' in ln),
+            "",
+        )
+        self.assertTrue(container_line, "topology-container div not found in HTML")
+        self.assertNotIn("height:", container_line.replace(" ", ""))
+
+        # The CSS rule must drive height responsively (clamp + viewport units) and
+        # keep a 520px minimum so it is never worse than the old fixed box.
+        rule_start = css.index("#topology-container {")
+        rule = css[rule_start:css.index("}", rule_start)]
+        self.assertIn("clamp(", rule)
+        self.assertIn("100vh", rule)
+        self.assertIn("520px", rule)

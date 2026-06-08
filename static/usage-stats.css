@@ -970,6 +970,11 @@ body.dark-mode .topology-legend {
     background: var(--bg-light);
     overflow: hidden;
     position: relative;
+    /* Fill the available viewport height instead of a fixed 520px, so the
+       routing map gets the page's spare vertical space (the ~340px subtracted
+       is the chrome above: top-nav + title + tabs + toolbar). Never shrinks
+       below the previous 520px. */
+    height: clamp(520px, calc(100vh - 340px), 2000px);
 }
 
 body.dark-mode #topology-container {

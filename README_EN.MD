@@ -250,6 +250,7 @@ Interaction:
 - **Clicking a gateway model** highlights its chain and dims the rest; clicking the background or another node resets it.
 - **Detail panel** (click a node): for a provider — health / configured / active / penalty / models; for a gateway model — the full chain with `retry_count`/`retry_delay`, the active flags (`rotate_models`, `dynamic_penalty`, `strip_think_tags`, `compress_tool_results`), `max_total_attempts`, and the `context_overflow` target.
 - **Auto-refresh** (on by default) reloads every 5 seconds without resetting the graph's zoom/pan or the selected chain; a manual Refresh button sits next to it. Polling pauses while the tab is hidden.
+- **Adaptive height**: the map area fills the spare viewport height (never shrinking below the previous ~520px minimum), so taller screens reveal more of the graph without leaving empty space below it.
 
 Active requests are attributed down to the exact `model → provider` edge (each active record carries both `gateway_model` and `provider`). Virtual-key callers see only their own requests in the `active_requests` field. Data is cached in memory for 5 seconds.
 
