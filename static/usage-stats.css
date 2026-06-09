@@ -1,54 +1,57 @@
+/* Shared scaffold for the gateway UI pages (usage-stats, gateway-docs,
+ * api-keys, pricing, rejections). Built on the theme.css design tokens;
+ * dark mode is handled by the tokens themselves — page-specific
+ * body.dark-mode overrides are kept only where translucency or
+ * categorical colors have no token equivalent. */
+
+/* pricing.html links this file without theme.css — make tokens/fonts
+ * available everywhere this scaffold is used. Duplicate loads are free. */
+@import url('theme.css');
+
 :root {
-    /* Semantic aliases for container-level background */
+    /* Semantic aliases for container-level background (legacy) */
     --container-light: var(--bg-elevated, #ffffff);
     --container-dark: var(--bg-elevated, #1e2130);
 }
 
 /* Basic styles for the HTML page */
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     margin: 0;
     background-color: var(--bg);
     color: var(--text);
-    transition: background-color 0.3s, color 0.3s;
-}
-
-/* Dark mode styles for body */
-body.dark-mode {
-    background-color: var(--bg);
-    color: var(--text);
+    transition: background-color var(--transition-base), color var(--transition-base);
 }
 
 .container {
     max-width: 1350px;
-    margin: 0 auto;
-    background-color: var(--container-light);
+    margin: 0 auto 28px;
+    /* Surface choice: elevated background + soft shadow, no border. */
+    background-color: var(--bg-elevated);
     padding: 30px 40px;
-    border-radius: 16px;
-    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
     position: relative;
-    border: 1px solid rgba(255,255,255,0.5);
-    transition: background-color 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    transition: background-color var(--transition-base), box-shadow var(--transition-base);
     z-index: auto;
 }
 
-body.dark-mode .container {
-    background-color: var(--container-dark);
-    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
 h1 {
-    text-align: center;
-    color: #1e293b;
+    text-align: left;
+    color: var(--text-strong);
     margin-bottom: 25px;
     margin-top: 5px;
-    font-weight: 700;
+    font-weight: 800;
     letter-spacing: -0.02em;
 }
 
-body.dark-mode h1 {
-    color: #f8fafc;
+.page-version {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0;
+    vertical-align: middle;
 }
 
 /* Top Navigation Styles */
@@ -62,64 +65,50 @@ body.dark-mode h1 {
     margin: 0 auto;
     box-sizing: border-box;
     position: relative;
-    z-index: 1000;
+    z-index: var(--z-nav);
 }
 
 .top-nav-content {
     display: flex;
     align-items: center;
     gap: 15px;
-    background: rgba(255, 255, 255, 0.8);
+    /* Translucent elevated surface — works in both themes via color-mix. */
+    background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     padding: 8px 16px;
-    border-radius: 20px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-    border: 1px solid rgba(0, 0, 0, 0.05);
-    transition: all 0.3s ease;
-}
-
-body.dark-mode .top-nav-content {
-    background: rgba(30, 41, 59, 0.8);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+    transition: background var(--transition-base), border-color var(--transition-base);
 }
 
 .top-nav-content .nav-button {
     display: flex;
     align-items: center;
     background-color: transparent;
-    color: #4b5563;
+    color: var(--text-muted);
     padding: 6px 12px;
-    border-radius: 12px;
+    border-radius: var(--radius-md);
     text-decoration: none;
     font-weight: 600;
     font-size: 14px;
-    transition: all 0.2s ease;
+    transition: background-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
 .top-nav-content .nav-button:hover {
-    background-color: rgba(0, 0, 0, 0.05);
-    color: #111827;
+    background-color: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--text-strong);
+    transform: translateY(-1px);
+}
+
+.top-nav-content .nav-button:active {
+    transform: translateY(0);
 }
 
 .top-nav-content .nav-button.active {
-    background-color: rgba(99, 102, 241, 0.12);
-    color: #3730a3;
-}
-
-body.dark-mode .top-nav-content .nav-button {
-    color: #cbd5e1;
-}
-
-body.dark-mode .top-nav-content .nav-button:hover {
-    background-color: rgba(255, 255, 255, 0.1);
-    color: #f8fafc;
-}
-
-body.dark-mode .top-nav-content .nav-button.active {
-    background-color: rgba(129, 140, 248, 0.18);
-    color: #e0e7ff;
+    background-color: var(--accent-soft);
+    color: var(--accent-text);
 }
 
 #darkModeToggle {
@@ -129,13 +118,13 @@ body.dark-mode .top-nav-content .nav-button.active {
     justify-content: center;
     background: transparent;
     border: none;
-    color: #4b5563;
+    color: var(--text-muted);
     width: 32px;
     height: 32px;
     padding: 0;
     margin: 0;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background-color var(--transition-fast), transform var(--transition-fast);
 }
 
 #darkModeToggle .icon-placeholder {
@@ -156,18 +145,12 @@ body.dark-mode #darkModeToggle .icon-placeholder::before {
 }
 
 #darkModeToggle:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: color-mix(in srgb, var(--text) 8%, transparent);
+    transform: translateY(-1px);
 }
 
-/* Dark Mode Toggle Button in Dark Mode */
-body.dark-mode #darkModeToggle {
-    background: transparent;
-    border: none;
-    color: #e0e0e0; /* Icon color for dark mode */
-}
-
-body.dark-mode #darkModeToggle:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+#darkModeToggle:active {
+    transform: translateY(0) scale(0.96);
 }
 
 .controls {
@@ -184,51 +167,49 @@ body.dark-mode #darkModeToggle:hover {
     font-size: 14px;
 }
 
-body.dark-mode .controls label {
-    color: var(--text);
-}
-
 select, button {
     padding: 10px 16px;
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--border);
-    background-color: #f8fafc;
+    background-color: var(--bg-elevated);
     color: var(--text);
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
-    transition: all 0.2s ease;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
     outline: none;
     font-family: inherit;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.02) inset;
 }
 
 select {
     min-width: 150px;
 }
 
+select:hover {
+    border-color: var(--border-strong);
+}
+
 select:focus, button:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-    background-color: #fff;
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 button {
-    background-color: var(--container-light);
+    background-color: var(--bg-elevated);
     color: var(--text);
     border: 1px solid var(--border);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    box-shadow: var(--shadow-sm);
 }
 
 button:hover:not(:disabled) {
-    background-color: #ffffff;
-    border-color: #cbd5e1;
+    border-color: var(--border-strong);
     transform: translateY(-1px);
-    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    box-shadow: var(--shadow-md);
 }
 
 button:active:not(:disabled) {
     transform: translateY(0);
+    box-shadow: var(--shadow-sm);
 }
 
 button:disabled {
@@ -251,7 +232,7 @@ button.loading::after {
     top: 50%;
     left: 50%;
     margin: -8px 0 0 -8px;
-    border: 2px solid rgba(0,0,0,0.1);
+    border: 2px solid color-mix(in srgb, var(--text) 12%, transparent);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: button-spin 0.6s linear infinite;
@@ -261,47 +242,15 @@ button.loading::after {
     to { transform: rotate(360deg); }
 }
 
-body.dark-mode select {
-    background-color: #1e293b;
-    border-color: var(--border);
-    color: var(--text);
-}
-
-body.dark-mode select:focus {
-    border-color: #818cf8;
-    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.1);
-    background-color: #0f111a;
-}
-
-body.dark-mode button {
-    background-color: #1e293b;
-    border-color: var(--border);
-    color: var(--text);
-}
-
-body.dark-mode button:hover:not(:disabled) {
-    background-color: #334155;
-    border-color: #475569;
-}
-
-body.dark-mode button.loading::after {
-    border: 2px solid rgba(255,255,255,0.1);
-    border-top-color: #818cf8;
-}
-
 #statsArea h2 {
-    color: #1e293b;
+    color: var(--text-strong);
     margin-top: 30px;
     margin-bottom: 15px;
     border-bottom: 1px solid var(--border);
     padding-bottom: 10px;
-    text-align: center;
-    font-weight: 600;
-}
-
-body.dark-mode #statsArea h2 {
-    color: #f8fafc;
-    border-bottom: 1px solid var(--border);
+    text-align: left;
+    font-weight: 700;
+    letter-spacing: -0.01em;
 }
 
 table {
@@ -309,10 +258,11 @@ table {
     border-collapse: separate;
     border-spacing: 0;
     margin-top: 15px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     font-size: 8px; /* Required by tests */
+    font-variant-numeric: tabular-nums;
+    /* Surface choice: border only, no shadow. */
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-md);
     overflow: hidden;
 }
 
@@ -323,82 +273,63 @@ th, td {
     white-space: nowrap; /* Prevent text wrapping in table headers/cells */
 }
 
-body.dark-mode table {
-    border: 1px solid var(--border);
-}
-
-body.dark-mode th, body.dark-mode td {
-    border-bottom: 1px solid var(--border);
-}
-
 th {
-    background-color: #f8fafc; /* Light mode default */
-    font-weight: 600;
-    color: var(--text); /* Light mode default */
+    background-color: var(--bg-sunken);
+    font-weight: 700;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
 
-body.dark-mode th {
-    background-color: #1e293b; /* Dark mode color */
-    color: var(--text); /* Dark mode color */
-}
-
 tr:nth-child(even) {
-    background-color: #fcfcfd; /* Light mode default */
-}
-
-body.dark-mode tr:nth-child(even) {
-    background-color: #161b22; /* Dark mode color */
+    background-color: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
 }
 
 tr:hover {
-    background-color: #f1f5f9; /* Light mode default */
-}
-
-body.dark-mode tr:hover {
-    background-color: #334155; /* Dark mode color */
+    background-color: var(--accent-soft);
 }
 
 #messageArea {
     margin-top: 20px;
     padding: 12px 16px;
-    border-radius: 12px;
+    border-radius: var(--radius-md);
     min-height: 20px;
     text-align: center;
     font-size: 14px;
     font-weight: 500;
-    transition: all 0.3s ease;
+    transition: background-color var(--transition-base), color var(--transition-base);
 }
 
 .error {
-    background-color: #fef2f2;
-    color: #dc2626;
-    border: 1px solid #fecaca;
+    background-color: var(--error-soft);
+    color: var(--error);
 }
 
-body.dark-mode .error {
-    background-color: rgba(220, 38, 38, 0.1);
-    color: #f87171;
-    border: 1px solid rgba(248, 113, 113, 0.2);
+/* Shared empty state (no data / initial placeholder) */
+.empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 36px 20px;
+    margin: 16px 0;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
 }
 
 /* Tab styles */
 .tabs {
     display: flex;
-    background-color: #f1f5f9;
+    background-color: var(--bg-sunken);
     padding: 6px;
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     margin: 10px auto 25px auto;
     width: fit-content;
     flex-shrink: 0;
     gap: 4px;
-    border: 1px solid rgba(0,0,0,0.05);
-}
-
-body.dark-mode .tabs {
-    background-color: #0f111a;
-    border: 1px solid rgba(255,255,255,0.05);
 }
 
 .tab-button {
@@ -408,41 +339,26 @@ body.dark-mode .tabs {
     background-color: transparent;
     font-size: 14px;
     font-weight: 600;
-    color: #64748b;
-    border-radius: 8px;
-    transition: all 0.2s ease;
+    color: var(--text-muted);
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
     margin: 0;
-}
-
-body.dark-mode .tab-button {
-    color: #94a3b8;
-    background-color: transparent;
+    box-shadow: none;
 }
 
 .tab-button:hover {
-    color: #1e293b;
-    background-color: rgba(0,0,0,0.05);
-}
-
-body.dark-mode .tab-button:hover {
-    color: #f8fafc;
-    background-color: rgba(255,255,255,0.05);
+    color: var(--text-strong);
+    background-color: color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 .tab-button.active {
-    color: var(--accent);
-    background-color: var(--container-light);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    color: var(--accent-text);
+    background-color: var(--bg-elevated);
+    box-shadow: var(--shadow-sm);
 }
 
-body.dark-mode .tab-button.active {
-    color: #818cf8;
-    background-color: var(--container-dark);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-}
-
-body.dark-mode .tab-button.active:hover {
-    background-color: var(--container-dark);
+.tab-button.active:hover {
+    background-color: var(--bg-elevated);
 }
 
 .tab-content {
@@ -467,6 +383,9 @@ body.dark-mode .tab-button.active:hover {
     border-bottom: none;
     padding-bottom: 0;
     text-align: left;
+    color: var(--text-strong);
+    font-weight: 700;
+    letter-spacing: -0.01em;
 }
 
 .pagination-controls {
@@ -481,11 +400,8 @@ body.dark-mode .tab-button.active:hover {
 }
 
 #pageInfo {
-    font-weight: bold;
-    color: var(--text);
-}
-
-body.dark-mode #pageInfo {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
     color: var(--text);
 }
 
@@ -494,23 +410,15 @@ body.dark-mode #pageInfo {
 }
 
 #recordsArea tr.usage-record-running {
-    background-color: #fff7ed;
+    background-color: var(--warning-soft);
 }
 
 #recordsArea tr.usage-record-running td:first-child {
-    box-shadow: inset 3px 0 0 #f59e0b;
+    box-shadow: inset 3px 0 0 var(--warning);
 }
 
 #recordsArea tr.usage-record-running:hover {
-    background-color: #ffedd5;
-}
-
-body.dark-mode #recordsArea tr.usage-record-running {
-    background-color: rgba(245, 158, 11, 0.14);
-}
-
-body.dark-mode #recordsArea tr.usage-record-running:hover {
-    background-color: rgba(245, 158, 11, 0.2);
+    background-color: color-mix(in srgb, var(--warning) 20%, transparent);
 }
 
 /* --- Fallback Analytics Styles --- */
@@ -518,17 +426,11 @@ body.dark-mode #recordsArea tr.usage-record-running:hover {
 .fallback-sub-tabs {
     display: flex;
     gap: 4px;
-    background-color: #f1f5f9;
+    background-color: var(--bg-sunken);
     padding: 4px;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     width: fit-content;
     margin: 0 auto 20px auto;
-    border: 1px solid rgba(0,0,0,0.05);
-}
-
-body.dark-mode .fallback-sub-tabs {
-    background-color: #0f111a;
-    border: 1px solid rgba(255,255,255,0.05);
 }
 
 .fallback-sub-tab {
@@ -538,27 +440,22 @@ body.dark-mode .fallback-sub-tabs {
     background-color: transparent;
     font-size: 13px;
     font-weight: 600;
-    color: #64748b;
-    border-radius: 6px;
-    transition: all 0.2s ease;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
     margin: 0;
     box-shadow: none;
 }
 
-body.dark-mode .fallback-sub-tab {
-    color: #94a3b8;
+.fallback-sub-tab:hover {
+    color: var(--text-strong);
+    background-color: color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 .fallback-sub-tab.active {
-    color: var(--accent);
-    background-color: var(--container-light);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
-}
-
-body.dark-mode .fallback-sub-tab.active {
-    color: #818cf8;
-    background-color: var(--container-dark);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    color: var(--accent-text);
+    background-color: var(--bg-elevated);
+    box-shadow: var(--shadow-sm);
 }
 
 .fallback-sub-content {
@@ -570,25 +467,21 @@ body.dark-mode .fallback-sub-tab.active {
 }
 
 #fallbackStatsArea h2 {
-    color: #1e293b;
+    color: var(--text-strong);
     margin-top: 30px;
     margin-bottom: 15px;
     border-bottom: 1px solid var(--border);
     padding-bottom: 10px;
-    text-align: center;
-    font-weight: 600;
-}
-
-body.dark-mode #fallbackStatsArea h2 {
-    color: #f8fafc;
-    border-bottom: 1px solid var(--border);
+    text-align: left;
+    font-weight: 700;
+    letter-spacing: -0.01em;
 }
 
 /* Error type badges */
 .error-badge {
     display: inline-block;
     padding: 3px 10px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -596,25 +489,16 @@ body.dark-mode #fallbackStatsArea h2 {
 }
 
 .error-badge-rate-limit {
-    background-color: #fef3c7;
-    color: #92400e;
-}
-
-body.dark-mode .error-badge-rate-limit {
-    background-color: rgba(251, 191, 36, 0.15);
-    color: #fbbf24;
+    background-color: var(--warning-soft);
+    color: var(--warning);
 }
 
 .error-badge-timeout {
-    background-color: #fee2e2;
-    color: #991b1b;
+    background-color: var(--error-soft);
+    color: var(--error);
 }
 
-body.dark-mode .error-badge-timeout {
-    background-color: rgba(239, 68, 68, 0.15);
-    color: #f87171;
-}
-
+/* Categorical hues without token equivalents — kept intentionally. */
 .error-badge-connect {
     background-color: #fce7f3;
     color: #9d174d;
@@ -636,42 +520,26 @@ body.dark-mode .error-badge-overflow {
 }
 
 .error-badge-default {
-    background-color: #f1f5f9;
-    color: #475569;
-}
-
-body.dark-mode .error-badge-default {
-    background-color: rgba(100, 116, 139, 0.15);
-    color: #94a3b8;
+    background-color: var(--bg-sunken);
+    color: var(--text-muted);
 }
 
 /* Chain cards */
 .chain-card {
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-md);
     margin-bottom: 8px;
     overflow: hidden;
-    transition: box-shadow 0.2s ease;
-}
-
-body.dark-mode .chain-card {
-    border-color: var(--border);
+    transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
 }
 
 .chain-card:hover {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-}
-
-body.dark-mode .chain-card:hover {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    box-shadow: var(--shadow-sm);
 }
 
 .chain-card-open {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-}
-
-body.dark-mode .chain-card-open {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-strong);
 }
 
 .chain-header {
@@ -680,20 +548,12 @@ body.dark-mode .chain-card-open {
     justify-content: space-between;
     padding: 12px 16px;
     cursor: pointer;
-    background-color: #fcfcfd;
-    transition: background-color 0.15s ease;
-}
-
-body.dark-mode .chain-header {
-    background-color: #1a1d2e;
+    background-color: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
+    transition: background-color var(--transition-fast);
 }
 
 .chain-header:hover {
-    background-color: #f1f5f9;
-}
-
-body.dark-mode .chain-header:hover {
-    background-color: #252840;
+    background-color: var(--bg-sunken);
 }
 
 .chain-summary {
@@ -705,13 +565,9 @@ body.dark-mode .chain-header:hover {
 }
 
 .chain-timestamp {
-    color: #64748b;
-    font-family: monospace;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
     font-size: 12px;
-}
-
-body.dark-mode .chain-timestamp {
-    color: #94a3b8;
 }
 
 .chain-model {
@@ -719,69 +575,44 @@ body.dark-mode .chain-timestamp {
     color: var(--text);
 }
 
-body.dark-mode .chain-model {
-    color: var(--text);
-}
-
 .chain-title {
-    color: #475569;
+    color: var(--text-muted);
     font-size: 12px;
-}
-
-body.dark-mode .chain-title {
-    color: #cbd5e1;
 }
 
 .chain-attempts {
-    color: #64748b;
+    color: var(--text-muted);
     font-size: 12px;
-}
-
-body.dark-mode .chain-attempts {
-    color: #94a3b8;
+    font-variant-numeric: tabular-nums;
 }
 
 .chain-duration {
-    color: #64748b;
-    font-family: monospace;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
     font-size: 12px;
-}
-
-body.dark-mode .chain-duration {
-    color: #94a3b8;
 }
 
 .chain-result {
     font-weight: 600;
     font-size: 12px;
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .chain-success {
-    color: #166534;
-    background-color: #dcfce7;
-}
-
-body.dark-mode .chain-success {
-    color: #4ade80;
-    background-color: rgba(74, 222, 128, 0.12);
+    color: var(--success);
+    background-color: var(--success-soft);
 }
 
 .chain-failure {
-    color: #991b1b;
-    background-color: #fee2e2;
-}
-
-body.dark-mode .chain-failure {
-    color: #f87171;
-    background-color: rgba(248, 113, 113, 0.12);
+    color: var(--error);
+    background-color: var(--error-soft);
 }
 
 .chain-toggle {
-    color: #94a3b8;
+    color: var(--text-muted);
     font-size: 12px;
-    transition: transform 0.2s ease;
+    transition: transform var(--transition-fast);
 }
 
 /* Chain details (expanded) */
@@ -790,22 +621,14 @@ body.dark-mode .chain-failure {
     border-top: 1px solid var(--border);
 }
 
-body.dark-mode .chain-details {
-    border-top-color: var(--border);
-}
-
 .chain-attempt {
     display: grid;
     grid-template-columns: 30px minmax(0, 1fr) auto 120px 60px 30px;
     align-items: center;
     gap: 12px;
     padding: 8px 0;
-    border-bottom: 1px solid rgba(0,0,0,0.04);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
     font-size: 13px;
-}
-
-body.dark-mode .chain-attempt {
-    border-bottom-color: rgba(255,255,255,0.04);
 }
 
 .chain-attempt:last-child {
@@ -819,15 +642,11 @@ body.dark-mode .chain-attempt {
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background-color: #f1f5f9;
+    background-color: var(--bg-sunken);
     font-size: 11px;
     font-weight: 600;
-    color: #64748b;
-}
-
-body.dark-mode .attempt-number {
-    background-color: #1e293b;
-    color: #94a3b8;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
 }
 
 .attempt-target {
@@ -838,7 +657,7 @@ body.dark-mode .attempt-number {
 }
 
 .attempt-provider {
-    font-family: monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text);
     overflow: hidden;
@@ -846,19 +665,11 @@ body.dark-mode .attempt-number {
     white-space: nowrap;
 }
 
-body.dark-mode .attempt-provider {
-    color: var(--text);
-}
-
 .attempt-error-message {
     font-size: 11px;
     line-height: 1.4;
-    color: #64748b;
+    color: var(--text-muted);
     overflow-wrap: anywhere;
-}
-
-body.dark-mode .attempt-error-message {
-    color: #94a3b8;
 }
 
 .attempt-error {
@@ -868,39 +679,32 @@ body.dark-mode .attempt-error-message {
 
 .attempt-duration-bar {
     height: 6px;
-    background-color: #f1f5f9;
+    background-color: var(--bg-sunken);
     border-radius: 3px;
     overflow: hidden;
-}
-
-body.dark-mode .attempt-duration-bar {
-    background-color: #1e293b;
 }
 
 .duration-fill {
     display: block;
     height: 100%;
     border-radius: 3px;
-    transition: width 0.3s ease;
+    transition: width var(--transition-base);
 }
 
 .fill-success {
-    background-color: #22c55e;
+    background-color: var(--success);
 }
 
 .fill-failure {
-    background-color: #ef4444;
+    background-color: var(--error);
 }
 
 .attempt-duration-text {
-    font-family: monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
-    color: #64748b;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
     text-align: right;
-}
-
-body.dark-mode .attempt-duration-text {
-    color: #94a3b8;
 }
 
 .attempt-result {
@@ -909,11 +713,11 @@ body.dark-mode .attempt-duration-text {
 }
 
 .attempt-success .attempt-result {
-    color: #22c55e;
+    color: var(--success);
 }
 
 .attempt-failure .attempt-result {
-    color: #ef4444;
+    color: var(--error);
 }
 
 /* ── Topology tab ─────────────────────────────────────────── */
@@ -939,11 +743,7 @@ body.dark-mode .attempt-duration-text {
     gap: 14px;
     margin-left: auto;
     font-size: 12px;
-    color: var(--text-light);
-}
-
-body.dark-mode .topology-legend {
-    color: var(--text-dark);
+    color: var(--text-muted);
 }
 
 .topology-legend-item {
@@ -959,27 +759,22 @@ body.dark-mode .topology-legend {
     display: inline-block;
 }
 
-.topology-swatch.swatch-ok { background: #22c55e; }
-.topology-swatch.swatch-error { background: #ef4444; }
-.topology-swatch.swatch-invalid { background: #94a3b8; }
-.topology-swatch.swatch-ctx { background: #f59e0b; }
+.topology-swatch.swatch-ok { background: var(--success); }
+.topology-swatch.swatch-error { background: var(--error); }
+.topology-swatch.swatch-invalid { background: var(--border-strong); }
+.topology-swatch.swatch-ctx { background: var(--warning); }
 
 #topology-container {
-    border: 1px solid var(--border-light);
-    border-radius: 10px;
-    background: var(--bg-light);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-sunken);
     overflow: hidden;
     position: relative;
     /* Fill the available viewport height instead of a fixed 520px, so the
        routing map gets the page's spare vertical space (the ~340px subtracted
        is the chrome above: top-nav + title + tabs + toolbar). Never shrinks
        below the previous 520px. */
-    height: clamp(520px, calc(100vh - 340px), 2000px);
-}
-
-body.dark-mode #topology-container {
-    border-color: var(--border-dark);
-    background: var(--bg-dark);
+    height: clamp(520px, calc(100dvh - 340px), 2000px);
 }
 
 .topology-error {
@@ -989,49 +784,52 @@ body.dark-mode #topology-container {
     flex-direction: column;
     gap: 12px;
     height: 100%;
-    color: var(--text-light);
+    color: var(--text-muted);
     font-size: 14px;
 }
 
-body.dark-mode .topology-error {
-    color: var(--text-dark);
+/* ReactFlow default nodes ship a white background — pin it to tokens so
+   provider nodes stay readable in dark mode (inline styles still win). */
+#topology-container .react-flow__node {
+    background: var(--bg-elevated);
+    color: var(--text);
 }
 
 /* ReactFlow custom node styles */
 .topology-node {
     padding: 10px 16px;
-    border-radius: 8px;
-    border: 2px solid var(--border-light);
-    background: var(--container-light);
-    color: var(--text-light);
+    border-radius: var(--radius-sm);
+    border: 2px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
     font-size: 13px;
     font-weight: 500;
     min-width: 120px;
     text-align: center;
     cursor: default;
-    transition: box-shadow 0.2s;
+    transition: box-shadow var(--transition-fast);
 }
 
 .topology-node:hover {
-    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.25);
+    box-shadow: var(--shadow-md);
 }
 
 .topology-node.health-ok {
-    border-color: #22c55e;
+    border-color: var(--success);
 }
 
 .topology-node.health-error {
-    border-color: #ef4444;
+    border-color: var(--error);
 }
 
 .topology-node.health-invalid {
-    border-color: #94a3b8;
+    border-color: var(--border-strong);
     opacity: 0.7;
 }
 
 .topology-node.node-central {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-contrast);
     border-color: var(--accent-hover);
     font-weight: 700;
 }
@@ -1039,19 +837,15 @@ body.dark-mode .topology-error {
 .topology-node-metrics {
     font-size: 11px;
     margin-top: 6px;
-    color: #64748b;
+    color: var(--text-muted);
     line-height: 1.5;
-}
-
-body.dark-mode .topology-node-metrics {
-    color: #94a3b8;
 }
 
 /* Pulse animation for nodes with active requests */
 @keyframes topology-pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.5); }
-    70%  { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+    70%  { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); }
+    100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
 }
 
 .topology-node.pulse {
@@ -1081,28 +875,18 @@ body.dark-mode .topology-node-metrics {
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: var(--text-light);
+    color: var(--text-muted);
     font-size: 14px;
-}
-
-body.dark-mode .topology-loading {
-    color: var(--text-dark);
 }
 
 .topology-detail {
     flex: 0 0 300px;
-    border-left: 1px solid var(--border-light);
-    background: var(--container-light);
-    color: var(--text-light);
+    border-left: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
     padding: 14px 16px;
     overflow-y: auto;
     font-size: 13px;
-}
-
-body.dark-mode .topology-detail {
-    border-left-color: var(--border-dark);
-    background: var(--container-dark);
-    color: var(--text-dark);
 }
 
 .topology-detail-header {
@@ -1126,6 +910,11 @@ body.dark-mode .topology-detail {
     cursor: pointer;
     color: inherit;
     padding: 0 4px;
+    box-shadow: none;
+}
+
+.topology-detail-close:hover {
+    color: var(--accent-text);
 }
 
 .topology-detail-row {
@@ -1133,21 +922,18 @@ body.dark-mode .topology-detail {
     justify-content: space-between;
     gap: 10px;
     padding: 3px 0;
-    border-bottom: 1px dashed var(--border-light);
-}
-
-body.dark-mode .topology-detail-row {
-    border-bottom-color: var(--border-dark);
+    border-bottom: 1px dashed var(--border);
 }
 
 .topology-detail-key {
-    color: #64748b;
+    color: var(--text-muted);
     flex: 0 0 auto;
 }
 
 .topology-detail-val {
     text-align: right;
     word-break: break-word;
+    font-variant-numeric: tabular-nums;
 }
 
 .topology-detail-subhead {
@@ -1156,7 +942,7 @@ body.dark-mode .topology-detail-row {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #64748b;
+    color: var(--text-muted);
 }
 
 .topology-chain-list {
@@ -1171,16 +957,12 @@ body.dark-mode .topology-detail-row {
     align-items: baseline;
     gap: 6px;
     padding: 5px 0;
-    border-bottom: 1px solid var(--border-light);
-}
-
-body.dark-mode .topology-chain-step {
-    border-bottom-color: var(--border-dark);
+    border-bottom: 1px solid var(--border);
 }
 
 .topology-chain-prio {
     font-weight: 700;
-    color: #6366f1;
+    color: var(--accent-text);
 }
 
 .topology-chain-target {
@@ -1190,6 +972,6 @@ body.dark-mode .topology-chain-step {
 
 .topology-chain-retry {
     font-size: 11px;
-    color: #64748b;
+    color: var(--text-muted);
     width: 100%;
 }

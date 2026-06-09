@@ -50,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fragment = document.createDocumentFragment();
         if (!data || data.length === 0) {
             const p = document.createElement('p');
+            p.className = 'empty-state';
             p.textContent = 'No data available for the selected period.';
             fragment.appendChild(p);
             return fragment;
@@ -235,6 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fragment = document.createDocumentFragment();
         if (!data || data.length === 0) {
             const p = document.createElement('p');
+            p.className = 'empty-state';
             p.textContent = 'No usage records available.';
             fragment.appendChild(p);
             return fragment;
@@ -497,6 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fragment = document.createDocumentFragment();
         if (!data || data.length === 0) {
             const p = document.createElement('p');
+            p.className = 'empty-state';
             p.textContent = 'No fallback failures for the selected period.';
             fragment.appendChild(p);
             return fragment;
@@ -598,6 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fragment = document.createDocumentFragment();
         if (!records || records.length === 0) {
             const p = document.createElement('p');
+            p.className = 'empty-state';
             p.textContent = 'No fallback chains found.';
             fragment.appendChild(p);
             return fragment;
@@ -777,6 +781,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fragment = document.createDocumentFragment();
         if (!data || data.length === 0) {
             const p = document.createElement('p');
+            p.className = 'empty-state';
             p.textContent = 'No upstream analytics for the selected period.';
             fragment.appendChild(p);
             return fragment;
@@ -919,11 +924,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const topologyAutoRefreshInput = document.getElementById('topologyAutoRefresh');
 
     const HEALTH_BORDER_COLOR = {
-        ok: '#22c55e',
-        error: '#ef4444',
-        invalid: '#94a3b8',
+        ok: 'var(--success)',
+        error: 'var(--error)',
+        invalid: 'var(--border-strong)',
     };
-    const EDGE_COLOR = { alias: '#94a3b8', fallback: '#6366f1', context_overflow: '#f59e0b' };
+    // Edge colors must stay concrete hex: ReactFlow writes them into SVG
+    // marker attributes where CSS variables are not substituted.
+    const EDGE_COLOR = { alias: '#94a3b8', fallback: '#0d9488', context_overflow: '#d97706' };
     const TOPOLOGY_REFRESH_MS = 5000;
 
     let _topologyRootInstance = null;
@@ -1006,8 +1013,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const hasActive = active > 0;
 
         const borderColor = isCentral ? 'var(--accent-hover)'
-            : isModel ? (hasActive ? 'var(--accent)' : '#6366f1')
-            : (HEALTH_BORDER_COLOR[health] || '#94a3b8');
+            : isModel ? 'var(--accent)'
+            : (HEALTH_BORDER_COLOR[health] || 'var(--border-strong)');
 
         const lines = [];
         if (isModel) {
@@ -1037,7 +1044,7 @@ document.addEventListener('DOMContentLoaded', () => {
             connectable: false,
             data: { label },
             style: {
-                background: isCentral ? 'var(--accent)' : (isModel ? 'rgba(99,102,241,0.08)' : undefined),
+                background: isCentral ? 'var(--accent)' : (isModel ? 'var(--accent-soft)' : undefined),
                 borderColor,
                 borderWidth: 2,
                 borderStyle: 'solid',
@@ -1045,13 +1052,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 padding: '8px 14px',
                 width: 170,
                 textAlign: 'center',
-                color: isCentral ? '#fff' : undefined,
+                color: isCentral ? 'var(--accent-contrast)' : undefined,
                 fontWeight: isCentral ? 700 : 600,
                 fontSize: 13,
                 cursor: isCentral ? 'default' : 'pointer',
                 opacity: dimmed ? 0.25 : 1,
                 transition: 'opacity 0.2s, box-shadow 0.2s',
-                boxShadow: selected ? '0 0 0 3px rgba(99,102,241,0.45)' : undefined,
+                boxShadow: selected ? '0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent)' : undefined,
                 animation: (hasActive && !isCentral) ? 'topology-pulse 1.8s ease-out infinite' : undefined,
             },
         };
@@ -1084,7 +1091,7 @@ document.addEventListener('DOMContentLoaded', () => {
             animated: !!edge.animated,
             label,
             labelStyle: { fontSize: 11, fontWeight: 700, fill: stroke },
-            labelBgStyle: { fill: '#ffffff', fillOpacity: 0.85 },
+            labelBgStyle: { fill: 'var(--bg-elevated)', fillOpacity: 0.85 },
             labelBgPadding: [4, 2],
             labelBgBorderRadius: 4,
             markerEnd: { type: 'arrowclosed', color: stroke },

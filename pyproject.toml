@@ -22,6 +22,7 @@ dependencies = [
     "nvidia-riva-client>=2.25.1",
     "cloakbrowser>=0.3.25",
     "rs-trafilatura>=0.1.1",
+    "trafilatura>=2.1.0",
     "youtube-transcript-api>=1.2.4",
     "selectolax>=0.4.9",
 ]

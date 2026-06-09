@@ -1,3 +1,6 @@
+/* Analytics Dashboard tab — built on theme.css tokens.
+ * Dark mode is covered by the tokens; no page-specific overrides needed. */
+
 .analytics-shell {
     display: flex;
     flex-direction: column;
@@ -14,19 +17,17 @@
 
 .analytics-header h2 {
     margin: 0 0 6px;
-    color: var(--text);
-    font-size: 22px;
+    color: var(--text-strong);
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
     line-height: 1.2;
 }
 
 .analytics-header p {
     margin: 0;
-    color: #64748b;
+    color: var(--text-muted);
     font-size: 14px;
-}
-
-body.dark-mode .analytics-header p {
-    color: #94a3b8;
 }
 
 .analytics-filters {
@@ -34,13 +35,8 @@ body.dark-mode .analytics-header p {
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 12px;
     padding: 14px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: #f8fafc;
-}
-
-body.dark-mode .analytics-filters {
-    background: #101827;
+    border-radius: var(--radius-lg);
+    background: var(--bg-sunken);
 }
 
 .analytics-filters label {
@@ -51,14 +47,11 @@ body.dark-mode .analytics-filters {
 }
 
 .analytics-filters span {
-    color: #475569;
-    font-size: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
     font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-}
-
-body.dark-mode .analytics-filters span {
-    color: #cbd5e1;
 }
 
 .analytics-filters select,
@@ -68,36 +61,34 @@ body.dark-mode .analytics-filters span {
     box-sizing: border-box;
     padding: 9px 10px;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--container-light);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
     color: var(--text);
     font: inherit;
     font-size: 13px;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-body.dark-mode .analytics-filters select,
-body.dark-mode .analytics-filters input {
-    background: #1e293b;
-    color: var(--text);
+.analytics-filters select:hover,
+.analytics-filters input:hover {
+    border-color: var(--border-strong);
+}
+
+.analytics-filters select:focus,
+.analytics-filters input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .analytics-status {
     min-height: 22px;
-    color: #475569;
+    color: var(--text-muted);
     font-size: 14px;
     font-weight: 600;
 }
 
 .analytics-status.analytics-error {
-    color: #b91c1c;
-}
-
-body.dark-mode .analytics-status {
-    color: #cbd5e1;
-}
-
-body.dark-mode .analytics-status.analytics-error {
-    color: #fca5a5;
+    color: var(--error);
 }
 
 .analytics-dashboard {
@@ -112,35 +103,37 @@ body.dark-mode .analytics-status.analytics-error {
     gap: 12px;
 }
 
+/* Surface choice for cards/panels: border only, no shadow. */
 .analytics-kpi {
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     padding: 14px;
-    background: var(--container-light);
+    background: var(--bg-elevated);
+    transition: border-color var(--transition-fast);
 }
 
-body.dark-mode .analytics-kpi,
-body.dark-mode .analytics-panel {
-    background: #151e2d;
+.analytics-kpi:hover {
+    border-color: var(--border-strong);
 }
 
 .analytics-kpi span {
     display: block;
-    color: #64748b;
+    color: var(--text-muted);
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-}
-
-body.dark-mode .analytics-kpi span {
-    color: #94a3b8;
 }
 
 .analytics-kpi strong {
     display: block;
     margin-top: 8px;
-    color: var(--text);
-    font-size: 24px;
+    color: var(--text-strong);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
     line-height: 1.1;
 }
 
@@ -154,8 +147,8 @@ body.dark-mode .analytics-kpi span {
 .analytics-panel {
     min-width: 0;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--container-light);
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
     overflow: hidden;
 }
 
@@ -169,19 +162,18 @@ body.dark-mode .analytics-kpi span {
 
 .analytics-panel-head h3 {
     margin: 0;
-    color: var(--text);
+    color: var(--text-strong);
     font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
     line-height: 1.25;
 }
 
 .analytics-panel-head span {
-    color: #64748b;
-    font-size: 12px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
     white-space: nowrap;
-}
-
-body.dark-mode .analytics-panel-head span {
-    color: #94a3b8;
 }
 
 .analytics-chart {
@@ -195,48 +187,45 @@ body.dark-mode .analytics-panel-head span {
     display: block;
 }
 
-.analytics-axis,
-.analytics-grid-line {
-    stroke: #cbd5e1;
+.analytics-axis {
+    stroke: var(--border-strong);
     stroke-width: 1;
 }
 
-body.dark-mode .analytics-axis,
-body.dark-mode .analytics-grid-line {
-    stroke: #334155;
+.analytics-grid-line {
+    stroke: var(--border);
+    stroke-width: 1;
 }
 
+/* Chart palette: muted categorical series, teal-first. */
 .analytics-line {
     fill: none;
-    stroke: #0f766e;
-    stroke-width: 3;
+    stroke: var(--accent);
+    stroke-width: 2.5;
     stroke-linecap: round;
     stroke-linejoin: round;
 }
 
 .analytics-area {
-    fill: rgba(15, 118, 110, 0.1);
+    fill: var(--accent-soft);
 }
 
 .analytics-point {
-    fill: #0f766e;
+    fill: var(--accent);
 }
 
 .analytics-bar {
-    fill: #2563eb;
+    fill: var(--accent);
 }
 
 .analytics-bar:nth-of-type(even) {
-    fill: #0f766e;
+    fill: color-mix(in srgb, var(--accent) 45%, var(--text-muted));
 }
 
 .analytics-chart-label {
-    fill: #475569;
-    font-size: 11px;
-}
-
-body.dark-mode .analytics-chart-label {
-    fill: #cbd5e1;
+    fill: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
 }
 
 .analytics-table-wrap {
@@ -259,13 +248,14 @@ body.dark-mode .analytics-chart-label {
     align-items: center;
     justify-content: center;
     min-height: 160px;
-    color: #64748b;
-    font-weight: 700;
+    padding: 12px;
+    box-sizing: border-box;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
     text-align: center;
-}
-
-body.dark-mode .analytics-empty {
-    color: #94a3b8;
 }
 
 @media (max-width: 1100px) {

@@ -1,32 +1,9 @@
 "use strict";
 
-// ── Dark-mode toggle (mirrors pattern from quota.js) ─────────────────────────
-(function initDarkMode() {
-    const toggle = document.getElementById("darkModeToggle");
-    const iconEl = toggle ? toggle.querySelector(".icon-placeholder") : null;
-
-    function applyTheme(isDark) {
-        document.body.classList.toggle("dark-mode", isDark);
-        if (iconEl) {
-            iconEl.textContent = isDark ? "☀️" : "🌙";
-        }
-    }
-
-    const saved = localStorage.getItem("darkMode");
-    const prefersDark =
-        saved === null
-            ? window.matchMedia("(prefers-color-scheme: dark)").matches
-            : saved === "true";
-    applyTheme(prefersDark);
-
-    if (toggle) {
-        toggle.addEventListener("click", () => {
-            const isDark = !document.body.classList.contains("dark-mode");
-            localStorage.setItem("darkMode", isDark);
-            applyTheme(isDark);
-        });
-    }
-})();
+// ── Dark-mode toggle (unified Theme manager from theme.js, as in quota.js) ───
+document.addEventListener("DOMContentLoaded", () => {
+    Theme.attachToggle("darkModeToggle");
+});
 
 // ── Sample payloads ───────────────────────────────────────────────────────────
 function loadOpenAISample() {

@@ -54,7 +54,7 @@
         </div>
     </div>
     <div class="container">
-        <h1>LLM Gateway - Usage Statistics <span style="font-size:small">(v1.10)</span></h1>
+        <h1>LLM Gateway - Usage Statistics <span class="page-version">(v1.10)</span></h1>
 
         <div class="tabs">
             <button class="tab-button active" data-tab="analytics">Analytics Dashboard</button>
@@ -77,7 +77,7 @@
             </div>
             <div id="statsArea">
                 <!-- Statistics tables will be rendered here by JavaScript -->
-                <p>Select a period and click 'Refresh' to view statistics.</p>
+                <p class="empty-state">Select a period and click 'Refresh' to view statistics.</p>
             </div>
         </div>
 
@@ -248,7 +248,7 @@
             </div>
             <div id="recordsArea">
                 <!-- Usage records table will be rendered here by JavaScript -->
-                <p>Loading usage records...</p>
+                <p class="empty-state">Loading usage records...</p>
             </div>
         </div>
         <div id="fallbackTabContent" class="tab-content">
@@ -270,7 +270,7 @@
                     <button id="fallbackRefreshButton">Refresh</button>
                 </div>
                 <div id="fallbackStatsArea">
-                    <p>Select a period and click 'Refresh' to view fallback statistics.</p>
+                    <p class="empty-state">Select a period and click 'Refresh' to view fallback statistics.</p>
                 </div>
             </div>
 
@@ -287,7 +287,7 @@
                     </div>
                 </div>
                 <div id="fallbackChainsArea">
-                    <p>Loading fallback chains...</p>
+                    <p class="empty-state">Loading fallback chains...</p>
                 </div>
             </div>
 
@@ -303,7 +303,7 @@
                     <button id="upstreamRefreshButton">Refresh</button>
                 </div>
                 <div id="upstreamStatsArea">
-                    <p>Select a period and click 'Refresh' to view upstream analytics.</p>
+                    <p class="empty-state">Select a period and click 'Refresh' to view upstream analytics.</p>
                 </div>
             </div>
         </div>

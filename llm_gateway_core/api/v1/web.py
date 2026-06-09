@@ -765,6 +765,29 @@ def _content_with_images(content: Any, images: Any, base_url: str = "") -> tuple
     return content_text, merged_images
 
 
+def _append_images_to_markdown(content: str, images: list[dict[str, str]]) -> str:
+    """Append image links that are not already present in the markdown content.
+
+    Used for read adapters (e.g. Tavily) that return images as a separate list instead of
+    inlining them. Idempotent: an image whose URL is already referenced in the content is
+    skipped, so adapters that already inline images keep their original positions without
+    producing duplicates.
+    """
+    text = content or ""
+    additions: list[str] = []
+    for image in images:
+        url = str(image.get("url") or "").strip()
+        if not url or url in text:
+            continue
+        description = str(image.get("description") or "").strip()
+        additions.append(f"![{description}]({url})")
+    if not additions:
+        return text
+    block = "\n\n".join(additions)
+    prefix = text.rstrip()
+    return f"{prefix}\n\n{block}" if prefix else block
+
+
 def _is_medium_url(url: str) -> bool:
     parsed = urlsplit(url)
     hostname = (parsed.hostname or "").lower()
@@ -868,26 +891,10 @@ async def _direct_http_fetch(url: str, http_client: httpx.AsyncClient | None = N
                 if title_match:
                     title = unescape(_HTML_TAG_RE.sub("", title_match.group(1))).strip()
 
-                try:
-                    import trafilatura
-
-                    extracted = trafilatura.extract(
-                        html_text,
-                        url=image_base_url,
-                        include_formatting=True,
-                        include_links=True,
-                        include_tables=True,
-                        include_images=True,
-                        include_comments=False,
-                        output_format="markdown",
-                    )
-                    if extracted and extracted.strip():
-                        content, images = _content_with_images(extracted, html_images, image_base_url)
-                        return {"url": result_url, "title": title, "content": content, "images": images}
-                except ImportError:
-                    logger.debug("trafilatura not installed; falling back to html.parser for %s", fetch_url)
-                except Exception as exc:
-                    logger.warning("trafilatura extraction failed for %s: %s", fetch_url, exc)
+                extracted = _trafilatura_markdown(html_text, image_base_url)
+                if extracted:
+                    content, images = _content_with_images(extracted, html_images, image_base_url)
+                    return {"url": result_url, "title": title, "content": content, "images": images}
 
                 selectolax_text = await asyncio.to_thread(_extract_text_with_selectolax, html_text)
                 if selectolax_text:
@@ -919,36 +926,63 @@ async def _direct_http_fetch(url: str, http_client: httpx.AsyncClient | None = N
     return None
 
 
-def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: str) -> dict[str, Any] | None:
-    try:
-        import rs_trafilatura
-    except ImportError:
-        logger.warning("rs_trafilatura is not installed; skipping CloakBrowser extraction for %s", final_url)
-        return None
+def _trafilatura_markdown(html_text: str, base_url: str) -> str | None:
+    """Extract clean main-content Markdown with inline ``![](url)`` images via full trafilatura.
 
+    Only the full ``trafilatura`` package keeps image links inside the markdown body;
+    ``rs_trafilatura`` surfaces images as a separate list, so the read pipeline relies on this
+    engine to return images on their place in the text. Returns ``None`` when trafilatura is
+    unavailable or yields no main content.
+    """
     try:
-        result = rs_trafilatura.extract(
+        import trafilatura
+    except ImportError:
+        logger.debug("trafilatura not installed; cannot extract inline-image markdown for %s", base_url)
+        return None
+    try:
+        extracted = trafilatura.extract(
             html_text,
-            url=final_url,
-            output_markdown=True,
+            url=base_url,
+            include_formatting=True,
             include_links=True,
-            include_images=True,
             include_tables=True,
+            include_images=True,
             include_comments=False,
-            favor_recall=True,
+            output_format="markdown",
         )
     except Exception as exc:
-        logger.warning("CloakBrowser markdown extraction failed for %s: %s", final_url, exc)
+        logger.warning("trafilatura extraction failed for %s: %s", base_url, exc)
         return None
+    if extracted and extracted.strip():
+        return extracted
+    return None
 
-    markdown = (getattr(result, "content_markdown", None) or getattr(result, "main_content", None) or "").strip()
+
+def _title_from_html(html_text: str) -> str:
+    from html import unescape
+
+    from ...agents.web_research import _HTML_H1_RE, _HTML_TAG_RE, _HTML_TITLE_RE
+
+    match = _HTML_TITLE_RE.search(html_text) or _HTML_H1_RE.search(html_text)
+    if not match:
+        return ""
+    return unescape(_HTML_TAG_RE.sub("", match.group(1))).strip()
+
+
+def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: str) -> dict[str, Any] | None:
+    # Full trafilatura keeps image links inline in the markdown body; fall back to plain
+    # selectolax text (without inline images) only when trafilatura is unavailable or the
+    # rendered page is not article-like, so the rendered content is not dropped entirely.
+    markdown = _trafilatura_markdown(html_text, final_url)
+    if not markdown:
+        markdown = _extract_text_with_selectolax(html_text)
+    markdown = (markdown or "").strip()
     if not markdown:
         return None
-    # Prefer Playwright's page.title() (reads document.title) over rs_trafilatura's
-    # heuristic title extraction — the latter sometimes returns the article's lead
-    # sentence instead of the real <title> (e.g. en.wikipedia.org/wiki/Type_system).
-    extractor_title = (getattr(result, "title", None) or "").strip()
-    title = (page_title or "").strip() or extractor_title
+    # Prefer Playwright's page.title() (reads document.title) over the heuristic HTML <title>
+    # title — the latter sometimes returns the article's lead sentence instead of the real
+    # <title> (e.g. en.wikipedia.org/wiki/Type_system).
+    title = (page_title or "").strip() or _title_from_html(html_text)
     content, images = _content_with_images(markdown, _extract_article_images_from_html(html_text, final_url), final_url)
     return {"url": final_url, "title": title, "content": content, "images": images}
 
@@ -1518,6 +1552,9 @@ async def _read_tavily(client: httpx.AsyncClient, url: str) -> dict[str, Any] | 
     if not content:
         return None
     content, images = _content_with_images(content, item.get("images"), url)
+    # Tavily Extract returns page images as a separate list rather than inline; surface them
+    # in the markdown body so web read keeps image links in the text like the other adapters.
+    content = _append_images_to_markdown(content, images)
     return {"url": url, "title": str(item.get("title") or ""), "content": content, "images": images}
 
 

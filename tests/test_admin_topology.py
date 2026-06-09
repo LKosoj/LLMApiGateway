@@ -379,5 +379,5 @@ class TopologyEndpointTests(unittest.TestCase):
         rule_start = css.index("#topology-container {")
         rule = css[rule_start:css.index("}", rule_start)]
         self.assertIn("clamp(", rule)
-        self.assertIn("100vh", rule)
+        self.assertIn("100dvh", rule)
         self.assertIn("520px", rule)

@@ -2770,6 +2770,56 @@ class WebApiTests(unittest.TestCase):
             ],
         )
 
+    def test_direct_fetch_keeps_inline_image_links(self):
+        # Regression guard: web read must return image links inline in the content. This runs
+        # the REAL trafilatura extractor (no mock) — if the trafilatura dependency is missing,
+        # the direct pipeline silently degrades to text-only and this assertion fails.
+        html = """
+        <html><head><title>Article title</title></head>
+          <body><article>
+            <h1>Заголовок статьи</h1>
+            <p>Достаточно длинный первый абзац статьи, чтобы извлекатель уверенно
+               распознал основное тело статьи и сохранил вложенные иллюстрации.</p>
+            <figure>
+              <img src="https://example.com/hero.jpg" alt="Главное фото"/>
+              <figcaption>Подпись к фото</figcaption>
+            </figure>
+            <p>Второй абзац статьи после иллюстрации, продолжающий мысль автора.</p>
+          </article></body>
+        </html>
+        """
+
+        class _FakeResponse:
+            status_code = 200
+            headers = {"Content-Type": "text/html; charset=utf-8"}
+            text = html
+            content = html.encode("utf-8")
+
+            def raise_for_status(self):
+                return None
+
+        class _FakeClient:
+            async def get(self, url, **_kwargs):
+                return _FakeResponse()
+
+        with patch.object(web_api, "_validate_public_fetch_host", return_value=None):
+            result = run_async(web_api._direct_http_fetch("https://example.com/post", _FakeClient()))
+
+        self.assertIsNotNone(result)
+        self.assertIn("![", result["content"])
+        self.assertIn("https://example.com/hero.jpg", result["content"])
+
+    def test_append_images_to_markdown_is_idempotent_for_inlined_images(self):
+        content = "body\n\n![A](https://example.com/a.png)"
+        images = [
+            {"url": "https://example.com/a.png", "description": "A"},
+            {"url": "https://example.com/b.png", "description": "B"},
+        ]
+        out = web_api._append_images_to_markdown(content, images)
+        # An already-inlined image is not duplicated; a missing one is appended.
+        self.assertEqual(out.count("https://example.com/a.png"), 1)
+        self.assertIn("![B](https://example.com/b.png)", out)
+
     def test_read_tavily_requests_and_returns_images(self):
         calls = []
 
@@ -2798,7 +2848,8 @@ class WebApiTests(unittest.TestCase):
 
         self.assertEqual(calls[0]["json"]["include_images"], True)
         self.assertEqual(calls[0]["json"]["format"], "markdown")
-        self.assertEqual(result["content"], "Tavily body")
+        # Tavily returns images as a separate list; the adapter inlines them into the markdown.
+        self.assertEqual(result["content"], "Tavily body\n\n![](https://example.com/tavily.jpg)")
         self.assertEqual(result["images"], [{"url": "https://example.com/tavily.jpg", "description": ""}])
 
     def test_read_jina_extracts_images_from_markdown(self):
@@ -2827,6 +2878,8 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(calls[0]["headers"]["X-Retain-Images"], "all")
         self.assertEqual(calls[0]["headers"]["X-With-Images-Summary"], "true")
         self.assertEqual(calls[0]["headers"]["X-With-Generated-Alt"], "true")
+        # Jina keeps the image link inline in the markdown body; it must survive intact.
+        self.assertIn("![Chart](https://example.com/chart.png)", result["content"])
         self.assertEqual(result["images"], [{"url": "https://example.com/chart.png", "description": "Chart"}])
 
     def test_read_zai_requests_image_retention(self):
@@ -2849,14 +2902,10 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(arguments["keep_img_data_url"], False)
         self.assertEqual(result["images"], [{"url": "https://example.com/diagram.png", "description": "Diagram"}])
 
-    def test_cloakbrowser_extract_prefers_playwright_title_over_extractor_heuristic(self):
-        class FakeResult:
-            title = "set of rules that assign a property called type"
-            content_markdown = "# Type system\n\nbody content"
-
+    def test_cloakbrowser_extract_prefers_playwright_title_over_html_title(self):
         fake_module = Mock()
-        fake_module.extract = Mock(return_value=FakeResult())
-        with patch.dict("sys.modules", {"rs_trafilatura": fake_module}):
+        fake_module.extract = Mock(return_value="# Type system\n\nbody content")
+        with patch.dict("sys.modules", {"trafilatura": fake_module}):
             result = web_api._extract_cloakbrowser_markdown(
                 "<html><title>Type system - Wikipedia</title></html>",
                 "https://en.wikipedia.org/wiki/Type_system",
@@ -2865,18 +2914,30 @@ class WebApiTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["title"], "Type system - Wikipedia")
         self.assertEqual(result["content"], "# Type system\n\nbody content")
+        self.assertTrue(fake_module.extract.call_args.kwargs["include_images"])
+        self.assertEqual(fake_module.extract.call_args.kwargs["output_format"], "markdown")
 
-    def test_cloakbrowser_extract_falls_back_to_extractor_title_when_page_title_blank(self):
-        class FakeResult:
-            title = "Some Extracted Title"
-            content_markdown = "body"
-
+    def test_cloakbrowser_extract_keeps_inline_image_links(self):
         fake_module = Mock()
-        fake_module.extract = Mock(return_value=FakeResult())
-        with patch.dict("sys.modules", {"rs_trafilatura": fake_module}):
-            result = web_api._extract_cloakbrowser_markdown("<html></html>", "https://x", "   ")
+        fake_module.extract = Mock(return_value="text\n\n![Hero](https://example.com/hero.jpg)")
+        with patch.dict("sys.modules", {"trafilatura": fake_module}):
+            result = web_api._extract_cloakbrowser_markdown(
+                "<html><title>T</title></html>", "https://example.com/a", "T"
+            )
         self.assertIsNotNone(result)
-        self.assertEqual(result["title"], "Some Extracted Title")
+        self.assertIn("![Hero](https://example.com/hero.jpg)", result["content"])
+
+    def test_cloakbrowser_extract_falls_back_to_html_title_when_page_title_blank(self):
+        fake_module = Mock()
+        fake_module.extract = Mock(return_value="body")
+        with patch.dict("sys.modules", {"trafilatura": fake_module}):
+            result = web_api._extract_cloakbrowser_markdown(
+                "<html><head><title>HTML Title</title></head><body>body</body></html>",
+                "https://x",
+                "   ",
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["title"], "HTML Title")
 
     def test_web_read_tries_cloakbrowser_before_paid_adapters(self):
         rendered_payload = {
