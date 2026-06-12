@@ -157,7 +157,7 @@ def test_usage_stats_html_contains_analytics_dashboard_tab():
     assert 'id="analyticsRange"' in html
     assert 'id="analyticsBucket"' in html
     assert 'id="analyticsKeyScope"' in html
-    assert 'id="analyticsApiKeyId"' in html
+    assert 'id="analyticsApiKeyId"' not in html
     assert 'id="analyticsUpstreamKey"' in html
     assert 'id="analyticsOperation"' in html
     assert 'id="analyticsGateway"' in html
@@ -211,12 +211,14 @@ def test_usage_analytics_reads_fallback_summary_from_api_shape():
     assert "formatRate(fallbackSummary.success_rate)" in js
 
 
-def test_usage_analytics_does_not_send_api_key_id_for_non_master_identity():
+def test_usage_analytics_does_not_send_api_key_id():
     js = Path("static/usage-analytics.js").read_text(encoding="utf-8")
 
     assert "function isMaster()" in js
     assert 'if (isMaster()) {' in js
-    assert 'url.searchParams.set("api_key_id", state.els.apiKeyId.value);' in js
+    assert 'url.searchParams.set("api_key_id"' not in js
+    assert "state.els.apiKeyId" not in js
+    assert "updateKeyScopeState" not in js
     assert 'url.searchParams.set("upstream_key_fingerprint", state.els.upstreamKey.value);' in js
     assert "fetchIdentity" in js
 

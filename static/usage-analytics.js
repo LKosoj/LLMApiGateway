@@ -111,17 +111,6 @@
         replaceOptions(state.els.model, options.models || [], "All models");
         replaceOptions(state.els.xTitle, options.x_titles || [], "All titles");
         replaceOptions(state.els.upstreamKey, options.upstream_keys || [], "All provider keys");
-        replaceOptions(state.els.apiKeyId, options.api_keys || [], "Select key", "id", "name");
-        updateKeyScopeState();
-    }
-
-    function updateKeyScopeState() {
-        if (!state.els.keyScope || !state.els.apiKeyId) return;
-        const specificKeySelected = state.els.keyScope.value === "api_key";
-        state.els.apiKeyId.disabled = !specificKeySelected;
-        if (!specificKeySelected) {
-            state.els.apiKeyId.value = "";
-        }
     }
 
     function buildDashboardUrl() {
@@ -142,11 +131,6 @@
         if (isMaster()) {
             if (state.els.keyScope.value === "unattributed") {
                 url.searchParams.set("api_key_scope", "unattributed");
-            } else if (state.els.keyScope.value === "api_key") {
-                if (!state.els.apiKeyId.value) {
-                    throw new Error("Select a virtual key or switch key scope to All keys.");
-                }
-                url.searchParams.set("api_key_id", state.els.apiKeyId.value);
             }
             if (state.els.upstreamKey.value) {
                 url.searchParams.set("upstream_key_fingerprint", state.els.upstreamKey.value);
@@ -460,14 +444,10 @@
 
     function bindEvents() {
         state.els.refresh.addEventListener("click", loadAnalytics);
-        state.els.keyScope.addEventListener("change", () => {
-            updateKeyScopeState();
-            loadAnalytics();
-        });
+        state.els.keyScope.addEventListener("change", loadAnalytics);
         [
             state.els.range,
             state.els.bucket,
-            state.els.apiKeyId,
             state.els.upstreamKey,
             state.els.operation,
             state.els.gateway,
@@ -491,7 +471,6 @@
             range: document.getElementById("analyticsRange"),
             bucket: document.getElementById("analyticsBucket"),
             keyScope: document.getElementById("analyticsKeyScope"),
-            apiKeyId: document.getElementById("analyticsApiKeyId"),
             upstreamKey: document.getElementById("analyticsUpstreamKey"),
             operation: document.getElementById("analyticsOperation"),
             gateway: document.getElementById("analyticsGateway"),
@@ -515,7 +494,6 @@
         };
         if (!state.els.filters || !state.els.dashboard) return;
         bindEvents();
-        updateKeyScopeState();
         state.initialized = true;
     }
 

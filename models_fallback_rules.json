@@ -130,6 +130,13 @@
     "gateway_model_name": "llmgateway/qwen3.5",
     "fallback_models": [
       {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "minimax",
         "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
@@ -149,13 +156,6 @@
       {
         "provider": "gem",
         "model": "gemini-3.5-flash-thinking",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -216,6 +216,13 @@
         "custom_headers": {}
       },
       {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "alibaba",
         "model": "qwen3.7-max",
         "use_provider_order_as_fallback": false,
@@ -230,18 +237,6 @@
           "reasoning_effort": "high"
         },
         "custom_headers": {}
-      },
-      {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {
-          "enable_thinking": true
-        },
-        "custom_headers": {
-          "User-Agent": "Kimi Claw Plugin",
-          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
-        }
       },
       {
         "provider": "z.ai",
@@ -384,6 +379,16 @@
     "gateway_model_name": "llmgateway/free",
     "fallback_models": [
       {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "Kimi Claw Plugin",
+          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
+        }
+      },
+      {
         "provider": "z.ai",
         "model": "glm-5.1",
         "use_provider_order_as_fallback": false,
@@ -412,16 +417,6 @@
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
-      },
-      {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {
-          "User-Agent": "Kimi Claw Plugin",
-          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
-        }
       }
     ],
     "context_overflow_fallback": {

@@ -2,7 +2,6 @@
     const apiFetch = window.gatewayAuth.apiFetch;
 
     const keysArea = document.getElementById("keysArea");
-    const keyUsagePanel = document.getElementById("keyUsagePanel");
     const messageArea = document.getElementById("messageArea");
 
     const modalOverlay = document.getElementById("keyModal");
@@ -26,7 +25,6 @@
     const cancelKeyBtn = document.getElementById("cancelKeyBtn");
 
     let editingKeyId = null;
-    let currentUsageKeyId = null;
     let availableModels = [];
 
     function showMessage(text, isError = false) {
@@ -46,23 +44,6 @@
     function formatInteger(value) {
         if (value === null || value === undefined) return "—";
         return Number(value).toLocaleString();
-    }
-
-    function formatTimestamp(value) {
-        const timestamp = typeof value === "string" ? value.trim() : "";
-        if (!timestamp) return "—";
-        return timestamp.split(".")[0] || timestamp;
-    }
-
-    function formatResolvedTarget(row) {
-        const provider = typeof row?.provider === "string" ? row.provider.trim() : "";
-        const model = typeof row?.model === "string" ? row.model.trim() : "";
-        if (provider && model) return `${provider}/${model}`;
-        return model || provider || "—";
-    }
-
-    function sumMetric(rows, metric) {
-        return rows.reduce((total, row) => total + (Number(row[metric]) || 0), 0);
     }
 
     function escapeHtml(s) {
@@ -110,7 +91,6 @@
                     <td>${lastUsed}</td>
                     <td class="key-actions">
                         <button data-action="edit">Edit</button>
-                        <button data-action="usage">Usage</button>
                         <button data-action="delete">Delete</button>
                     </td>
                 </tr>
@@ -144,7 +124,6 @@
                 const record = currentKeys.find((k) => k.id === keyId);
                 if (!record) return;
                 if (action === "edit") openEditModal(record);
-                if (action === "usage") loadKeyUsage(record);
                 if (action === "delete") deleteKey(record);
             });
         });
@@ -159,142 +138,9 @@
             const data = await response.json();
             currentKeys = data.keys || [];
             renderKeysTable(currentKeys);
-            if (currentUsageKeyId !== null && !currentKeys.some((k) => k.id === currentUsageKeyId)) {
-                hideKeyUsage();
-            }
         } catch (error) {
             console.error(error);
             showMessage(`Failed to load keys: ${error.message}`, true);
-        }
-    }
-
-    function hideKeyUsage() {
-        currentUsageKeyId = null;
-        keyUsagePanel.classList.remove("visible");
-        keyUsagePanel.innerHTML = "";
-    }
-
-    function renderKeyUsageLoading(record) {
-        keyUsagePanel.classList.add("visible");
-        keyUsagePanel.innerHTML = `
-            <div class="key-usage-header">
-                <div>
-                    <h2>Usage for ${escapeHtml(record.name)}</h2>
-                    <small>id ${escapeHtml(record.id)} · ${escapeHtml(record.api_key)}</small>
-                </div>
-            </div>
-            <p>Loading usage statistics...</p>
-        `;
-    }
-
-    function renderKeyUsageError(record, message) {
-        keyUsagePanel.classList.add("visible");
-        keyUsagePanel.innerHTML = `
-            <div class="key-usage-header">
-                <div>
-                    <h2>Usage for ${escapeHtml(record.name)}</h2>
-                    <small>id ${escapeHtml(record.id)} · ${escapeHtml(record.api_key)}</small>
-                </div>
-                <div class="key-usage-actions">
-                    <button data-usage-action="close">Close</button>
-                </div>
-            </div>
-            <p class="error">${escapeHtml(message)}</p>
-        `;
-        keyUsagePanel.querySelector('button[data-usage-action="close"]').addEventListener("click", hideKeyUsage);
-    }
-
-    function renderKeyUsage(record, statsRows, recordsPayload) {
-        const stats = Array.isArray(statsRows) ? statsRows : [];
-        const records = Array.isArray(recordsPayload?.records) ? recordsPayload.records : [];
-        const totalRecords = recordsPayload?.total_records ?? records.length;
-        const requests = sumMetric(stats, "count");
-        const totalTokens = sumMetric(stats, "total_tokens");
-        const promptTokens = sumMetric(stats, "prompt_tokens");
-        const completionTokens = sumMetric(stats, "completion_tokens");
-        const cost = sumMetric(stats, "cost");
-        const costSaved = sumMetric(stats, "cost_saved");
-        const recordRows = records.length
-            ? records.map((row) => `
-                <tr>
-                    <td>${escapeHtml(formatTimestamp(row.timestamp))}</td>
-                    <td>${escapeHtml(row.operation || "—")}</td>
-                    <td>${escapeHtml(row.gateway_model || "—")}</td>
-                    <td>${escapeHtml(formatResolvedTarget(row))}</td>
-                    <td>${escapeHtml(formatInteger(row.total_tokens))}</td>
-                    <td>${escapeHtml(formatNumber(row.cost))}</td>
-                    <td>${escapeHtml(formatInteger(row.duration_ms))}</td>
-                </tr>
-            `).join("")
-            : '<tr><td colspan="7">No usage records for this key.</td></tr>';
-
-        keyUsagePanel.classList.add("visible");
-        keyUsagePanel.innerHTML = `
-            <div class="key-usage-header">
-                <div>
-                    <h2>Usage for ${escapeHtml(record.name)}</h2>
-                    <small>id ${escapeHtml(record.id)} · ${escapeHtml(record.api_key)}</small>
-                </div>
-                <div class="key-usage-actions">
-                    <button data-usage-action="refresh">Refresh</button>
-                    <button data-usage-action="close">Close</button>
-                </div>
-            </div>
-            <div class="key-usage-summary">
-                <div class="key-usage-metric"><span>Stored records</span><strong>${escapeHtml(formatInteger(totalRecords))}</strong></div>
-                <div class="key-usage-metric"><span>Requests, last 12 months</span><strong>${escapeHtml(formatInteger(requests))}</strong></div>
-                <div class="key-usage-metric"><span>Total tokens</span><strong>${escapeHtml(formatInteger(totalTokens))}</strong></div>
-                <div class="key-usage-metric"><span>Prompt / completion</span><strong>${escapeHtml(formatInteger(promptTokens))} / ${escapeHtml(formatInteger(completionTokens))}</strong></div>
-                <div class="key-usage-metric"><span>Cost, $</span><strong>${escapeHtml(formatNumber(cost))}</strong></div>
-                <div class="key-usage-metric"><span>Cost saved, $</span><strong>${escapeHtml(formatNumber(costSaved))}</strong></div>
-            </div>
-            <h3>Latest usage records</h3>
-            <div class="key-usage-records">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Timestamp</th>
-                            <th>Operation</th>
-                            <th>Gateway Model</th>
-                            <th>Resolved Model</th>
-                            <th>Total Tokens</th>
-                            <th>Cost ($)</th>
-                            <th>Duration (ms)</th>
-                        </tr>
-                    </thead>
-                    <tbody>${recordRows}</tbody>
-                </table>
-            </div>
-        `;
-        keyUsagePanel.querySelector('button[data-usage-action="refresh"]').addEventListener("click", () => {
-            const latestRecord = currentKeys.find((key) => key.id === record.id) || record;
-            loadKeyUsage(latestRecord);
-        });
-        keyUsagePanel.querySelector('button[data-usage-action="close"]').addEventListener("click", hideKeyUsage);
-    }
-
-    async function loadKeyUsage(record) {
-        currentUsageKeyId = record.id;
-        renderKeyUsageLoading(record);
-        try {
-            const keyId = encodeURIComponent(record.id);
-            const [statsResponse, recordsResponse] = await Promise.all([
-                apiFetch(`/v1/api/usage-stats/month?api_key_id=${keyId}`),
-                apiFetch(`/v1/api/usage-records?limit=25&offset=0&api_key_id=${keyId}`),
-            ]);
-            const statsData = await statsResponse.json().catch(() => null);
-            const recordsData = await recordsResponse.json().catch(() => null);
-            if (!statsResponse.ok) {
-                throw new Error(statsData?.detail || `HTTP ${statsResponse.status}`);
-            }
-            if (!recordsResponse.ok) {
-                throw new Error(recordsData?.detail || `HTTP ${recordsResponse.status}`);
-            }
-            renderKeyUsage(record, statsData, recordsData);
-        } catch (error) {
-            console.error(error);
-            renderKeyUsageError(record, `Failed to load usage: ${error.message}`);
-            showMessage(`Failed to load usage: ${error.message}`, true);
         }
     }
 

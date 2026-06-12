@@ -341,8 +341,8 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(payload["records"][0]["provider"], "openrouter")
         self.assertEqual(payload["records"][0]["model"], "qwen/qwen3")
         self.assertEqual(payload["records"][1]["status"], "completed")
-        self.assertEqual(fake_tokens_usage_db.calls, [(1, 0, 7)])
-        self.assertEqual(fake_tokens_usage_db.count_calls, [7])
+        self.assertEqual(fake_tokens_usage_db.calls, [(1, 0, None)])
+        self.assertEqual(fake_tokens_usage_db.count_calls, [None])
 
     def test_usage_records_pagination_offsets_past_running_requests(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
@@ -367,7 +367,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual([record["status"] for record in response.json()["records"]], ["completed", "completed"])
         self.assertEqual(fake_tokens_usage_db.calls, [(2, 0, None)])
 
-    def test_master_usage_records_can_filter_by_api_key_id(self):
+    def test_master_usage_records_ignore_api_key_id(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
         with self._client(fake_tokens_usage_db) as client:
@@ -377,10 +377,10 @@ class StatsApiPaginationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(fake_tokens_usage_db.calls, [(2, 0, 7)])
-        self.assertEqual(fake_tokens_usage_db.count_calls, [7])
+        self.assertEqual(fake_tokens_usage_db.calls, [(2, 0, None)])
+        self.assertEqual(fake_tokens_usage_db.count_calls, [None])
 
-    def test_master_usage_stats_can_filter_by_api_key_id(self):
+    def test_master_usage_stats_ignore_api_key_id(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
         with self._client(fake_tokens_usage_db) as client:
@@ -391,9 +391,9 @@ class StatsApiPaginationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(fake_tokens_usage_db.aggregated_calls), 1)
-        self.assertEqual(fake_tokens_usage_db.aggregated_calls[0][3], 7)
+        self.assertIsNone(fake_tokens_usage_db.aggregated_calls[0][3])
 
-    def test_master_usage_filter_rejects_non_positive_api_key_id(self):
+    def test_master_usage_filter_ignores_non_positive_api_key_id(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
         with self._client(fake_tokens_usage_db) as client:
@@ -402,10 +402,9 @@ class StatsApiPaginationTests(unittest.TestCase):
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "api_key_id must be a positive integer.")
-        self.assertEqual(fake_tokens_usage_db.calls, [])
-        self.assertEqual(fake_tokens_usage_db.count_calls, [])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(fake_tokens_usage_db.calls, [(25, 0, None)])
+        self.assertEqual(fake_tokens_usage_db.count_calls, [None])
 
     def test_virtual_key_usage_filter_ignores_requested_api_key_id(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
@@ -438,7 +437,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(len(fake_tokens_usage_db.aggregated_calls), 1)
         self.assertEqual(fake_tokens_usage_db.aggregated_calls[0][0], "day")
 
-    def test_master_upstream_stats_can_filter_by_api_key_id(self):
+    def test_master_upstream_stats_ignore_api_key_id(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
         fake_fallback_events_db = _FakeFallbackEventsDB()
 
@@ -458,7 +457,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(period, "day")
         self.assertIs(start_date.tzinfo, timezone.utc)
         self.assertIs(end_date.tzinfo, timezone.utc)
-        self.assertEqual(api_key_id, 7)
+        self.assertIsNone(api_key_id)
 
     def test_upstream_stats_are_master_only(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
@@ -534,8 +533,9 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["scope"]["role"], "master")
-        self.assertTrue(payload["scope"]["can_filter_keys"])
-        self.assertEqual(payload["filters"]["api_key_id"], 7)
+        self.assertFalse(payload["scope"]["can_filter_keys"])
+        self.assertIsNone(payload["filters"]["api_key_id"])
+        self.assertEqual(payload["filters"]["api_key_scope"], "all")
         self.assertEqual(payload["filters"]["operation"], "chat")
         self.assertEqual(payload["filters"]["x_title"], "tgBot")
         self.assertEqual(payload["totals"]["requests"], 2)
@@ -543,7 +543,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(payload["totals"]["fallback_attempts"], 3)
         self.assertEqual(payload["totals"]["rejections"], 0)
         self.assertEqual(len(payload["warnings"]), 1)
-        self.assertEqual(payload["breakdowns"]["api_keys"][0]["api_key_name"], "key-7")
+        self.assertEqual(payload["breakdowns"]["api_keys"][0]["api_key_name"], "Unattributed")
         self.assertEqual(payload["breakdowns"]["x_titles"][0]["label"], "tgBot")
         self.assertEqual(payload["recent_records"][0]["x_title"], "tgBot")
         self.assertEqual(payload["filter_options"]["api_keys"][0]["name"], "key-7")
@@ -553,13 +553,13 @@ class StatsApiPaginationTests(unittest.TestCase):
 
         usage_call = fake_tokens_usage_db.dashboard_calls[0]
         self.assertEqual(usage_call["period"], "day")
-        self.assertEqual(usage_call["api_key_id"], 7)
+        self.assertIsNone(usage_call["api_key_id"])
         self.assertEqual(usage_call["operation"], "chat")
         self.assertEqual(usage_call["upstream_key_fingerprint"], "fp-1")
         self.assertEqual(usage_call["usage_source"], "provider")
         self.assertEqual(usage_call["x_title"], "tgBot")
         self.assertTrue(usage_call["is_estimated"])
-        self.assertEqual(fake_fallback_events_db.dashboard_calls[0]["api_key_id"], 7)
+        self.assertIsNone(fake_fallback_events_db.dashboard_calls[0]["api_key_id"])
         self.assertEqual(fake_rejections_db.dashboard_calls, [])
 
     def test_virtual_key_usage_dashboard_forces_own_scope(self):
@@ -601,7 +601,7 @@ class StatsApiPaginationTests(unittest.TestCase):
                 "/v1/api/analytics-dashboard?api_key_scope=unknown",
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
-            mixed_scope = client.get(
+            unattributed_with_ignored_api_key_id = client.get(
                 "/v1/api/analytics-dashboard?api_key_scope=unattributed&api_key_id=7",
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
@@ -611,9 +611,10 @@ class StatsApiPaginationTests(unittest.TestCase):
             )
 
         self.assertEqual(invalid_scope.status_code, 400)
-        self.assertEqual(mixed_scope.status_code, 400)
+        self.assertEqual(unattributed_with_ignored_api_key_id.status_code, 200)
         self.assertEqual(invalid_bucket.status_code, 400)
-        self.assertEqual(fake_tokens_usage_db.dashboard_calls, [])
+        self.assertEqual(len(fake_tokens_usage_db.dashboard_calls), 1)
+        self.assertTrue(fake_tokens_usage_db.dashboard_calls[0]["api_key_unattributed"])
 
 
 if __name__ == "__main__":

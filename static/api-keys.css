@@ -61,79 +61,6 @@
     color: var(--text-muted);
 }
 
-.key-usage-panel {
-    display: none;
-    margin-top: 18px;
-    padding-top: 18px;
-    border-top: 1px solid var(--border);
-}
-
-.key-usage-panel.visible {
-    display: block;
-}
-
-.key-usage-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-
-.key-usage-header h2 {
-    margin: 0;
-    color: var(--text-strong);
-    font-size: 20px;
-    letter-spacing: 0;
-}
-
-.key-usage-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.key-usage-summary {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 10px;
-    margin-bottom: 16px;
-}
-
-.key-usage-metric {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 12px;
-    background: var(--bg-elevated);
-}
-
-.key-usage-metric span {
-    display: block;
-    margin-bottom: 4px;
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-}
-
-.key-usage-metric strong {
-    color: var(--text-strong);
-    font-family: var(--font-mono);
-    font-size: 18px;
-    font-variant-numeric: tabular-nums;
-}
-
-.key-usage-records {
-    overflow-x: auto;
-}
-
-.key-usage-records table {
-    width: 100%;
-    min-width: 780px;
-    border-collapse: separate;
-    border-spacing: 0;
-}
-
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -243,14 +170,12 @@
 
 @media (max-width: 700px) {
     .keys-toolbar,
-    .key-usage-header,
     .modal-buttons {
         align-items: stretch;
         flex-direction: column;
     }
 
     .keys-toolbar button,
-    .key-usage-actions button,
     .modal-buttons button {
         width: 100%;
     }

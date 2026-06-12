@@ -528,7 +528,7 @@ def test_usage_records_highlight_running_requests(page: Page, server):
     assert background not in {"rgba(0, 0, 0, 0)", "transparent"}
 
 
-def test_api_keys_page_renders_usage_for_selected_key(page: Page, server):
+def test_api_keys_page_does_not_offer_per_key_usage(page: Page, server):
     session = _build_master_session_cookie_value("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
     page.route(
@@ -567,72 +567,12 @@ def test_api_keys_page_renders_usage_for_selected_key(page: Page, server):
         ),
     )
 
-    def fulfill_usage_stats(route):
-        assert "api_key_id=12" in route.request.url
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                [
-                    {
-                        "time_period": "2026-04",
-                        "gateway_model": "gateway-chat",
-                        "operation": "chat",
-                        "provider": "openai",
-                        "model": "gpt-4o",
-                        "prompt_tokens": 10,
-                        "completion_tokens": 5,
-                        "total_tokens": 15,
-                        "count": 2,
-                        "cost": 0.0123,
-                        "cost_saved": 0.001,
-                    }
-                ]
-            ),
-        )
-
-    def fulfill_usage_records(route):
-        assert "api_key_id=12" in route.request.url
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {
-                    "records": [
-                        {
-                            "id": 1,
-                            "timestamp": "2026-04-24T02:15:30.123456",
-                            "duration_ms": 1234,
-                            "gateway_model": "gateway-chat",
-                            "operation": "chat",
-                            "provider": "openai",
-                            "model": "gpt-4o",
-                            "prompt_tokens": 10,
-                            "completion_tokens": 5,
-                            "total_tokens": 15,
-                            "cost": 0.0123,
-                        }
-                    ],
-                    "total_records": 1,
-                }
-            ),
-        )
-
-    page.route(f"{server}/v1/api/usage-stats/month*", fulfill_usage_stats)
-    page.route(f"{server}/v1/api/usage-records*", fulfill_usage_records)
-
     page.goto(f"{server}/v1/ui/api-keys")
 
     expect(page.locator("#keysArea")).to_contain_text("lgk_test")
     expect(page.locator("#keyModal")).not_to_contain_text("shown only once")
-
-    page.click('button[data-action="usage"]')
-
-    expect(page.locator("#keyUsagePanel")).to_be_visible()
-    expect(page.locator("#keyUsagePanel")).to_contain_text("Usage for team-key")
-    expect(page.locator("#keyUsagePanel")).to_contain_text("Requests, last 12 months")
-    expect(page.locator("#keyUsagePanel")).to_contain_text("openai/gpt-4o")
-    expect(page.locator("#keyUsagePanel")).to_contain_text("2026-04-24T02:15:30")
+    expect(page.locator('button[data-action="usage"]')).to_have_count(0)
+    expect(page.locator("#keyUsagePanel")).to_have_count(0)
 
 
 def test_fallback_chains_show_detailed_error_message(page: Page, server):

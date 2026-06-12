@@ -48,16 +48,16 @@ ANALYTICS_BUCKETS = {"hour", "day", "week", "month"}
 def _effective_api_key_filter(request: Request, requested_api_key_id: int | None = None) -> int | None:
     """Return the ``api_key_id`` filter to apply for the current caller.
 
-    Master callers may request a specific virtual key id, or omit the filter
-    to see everything. Virtual-key callers are always scoped to their own
-    ``api_key_id`` so they can only inspect their own statistics.
+    Master callers always see the full usage set. Virtual-key callers are
+    always scoped to their own ``api_key_id`` so they can only inspect their
+    own statistics.
     """
     role = getattr(request.state, "api_key_role", ROLE_MASTER)
     if role == ROLE_USER:
         return getattr(request.state, "api_key_id", None)
-    if requested_api_key_id is not None and requested_api_key_id <= 0:
-        raise HTTPException(status_code=400, detail="api_key_id must be a positive integer.")
-    return requested_api_key_id
+    if role != ROLE_MASTER:
+        raise HTTPException(status_code=401, detail="Authenticated API key role is not recognized.")
+    return None
 
 
 def _is_master_caller(request: Request) -> bool:
@@ -113,18 +113,12 @@ def _resolve_analytics_scope(
 
     if role != ROLE_MASTER:
         raise HTTPException(status_code=401, detail="Authenticated API key role is not recognized.")
-    if requested_api_key_id is not None and requested_api_key_id <= 0:
-        raise HTTPException(status_code=400, detail="api_key_id must be a positive integer.")
 
     scope = _optional_query_value(api_key_scope) or "all"
     if scope not in {"all", "unattributed"}:
         raise HTTPException(status_code=400, detail="api_key_scope must be 'all' or 'unattributed'.")
     if scope == "unattributed":
-        if requested_api_key_id is not None:
-            raise HTTPException(status_code=400, detail="api_key_id cannot be combined with api_key_scope=unattributed.")
         return role, None, True, "unattributed"
-    if requested_api_key_id is not None:
-        return role, requested_api_key_id, False, "api_key"
     return role, None, False, "all"
 
 
@@ -537,13 +531,13 @@ async def get_analytics_dashboard(
             "role": role,
             "api_key_id": api_key_id_filter,
             "api_key_scope": scope_name,
-            "can_filter_keys": is_master,
+            "can_filter_keys": False,
             "can_filter_upstream_keys": is_master,
         },
         "filters": {
             "range": range_name,
             "bucket": resolved_bucket,
-            "api_key_id": api_key_id_filter if scope_name == "api_key" else None,
+            "api_key_id": None,
             "api_key_scope": scope_name,
             "operation": operation_filter,
             "gateway_model": gateway_model_filter,
