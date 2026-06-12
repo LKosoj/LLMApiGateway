@@ -8,32 +8,45 @@
 .playground-panel {
     margin-top: 16px;
     padding: 18px;
-    border: 1px solid var(--border, #d7d7dd);
-    border-radius: 10px;
-    background: var(--bg-elevated, #fafafa);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
 }
 
 .playground-section-tabs {
     max-width: 100%;
-    flex-wrap: wrap;
+    width: 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
 }
 
 .web-operation-tabs {
     max-width: 100%;
-    flex-wrap: wrap;
+    width: 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
     margin-bottom: 16px;
 }
 
+.playground-section {
+    min-width: 0;
+}
+
 body.dark-mode .playground-panel {
-    background: #282c34;
-    border-color: #3b4047;
-    color: #e8e8ec;
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text);
 }
 
 .playground-form {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    min-width: 620px;
 }
 
 .playground-form .field-group {
@@ -54,11 +67,11 @@ body.dark-mode .playground-panel {
     max-width: 34ch;
     font-size: 0.78em;
     line-height: 1.35;
-    color: #626977;
+    color: var(--text-muted);
 }
 
 body.dark-mode .playground-form .field-help {
-    color: #aeb4c0;
+    color: var(--text-muted);
 }
 
 .playground-form input[type="text"],
@@ -69,12 +82,12 @@ body.dark-mode .playground-form .field-help {
 .playground-form textarea,
 .playground-form select {
     padding: 8px 10px;
-    border: 1px solid #c3c7cf;
-    border-radius: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
     font-family: inherit;
     font-size: 0.95em;
-    background: #fff;
-    color: #222;
+    background: var(--bg-elevated);
+    color: var(--text-strong);
 }
 
 body.dark-mode .playground-form input[type="text"],
@@ -84,9 +97,9 @@ body.dark-mode .playground-form input[type="password"],
 body.dark-mode .playground-form input[type="file"],
 body.dark-mode .playground-form textarea,
 body.dark-mode .playground-form select {
-    background: #1f232a;
-    border-color: #3b4047;
-    color: #f2f2f4;
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text-strong);
 }
 
 .playground-form textarea {
@@ -147,15 +160,19 @@ body.dark-mode .playground-form select {
 .playground-result {
     margin-top: 18px;
     padding: 16px;
-    border: 1px solid var(--border, #d7d7dd);
-    border-radius: 8px;
-    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
 }
 
 body.dark-mode .playground-result {
-    background: #1d2027;
-    border-color: #3b4047;
-    color: #eaeaee;
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text);
 }
 
 .chat-transcript {
@@ -166,9 +183,10 @@ body.dark-mode .playground-result {
     margin-top: 18px;
     padding: 14px;
     overflow: auto;
-    border: 1px solid var(--border, #d7d7dd);
-    border-radius: 8px;
-    background: #ffffff;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
 }
 
 .chat-transcript[hidden] {
@@ -176,22 +194,22 @@ body.dark-mode .playground-result {
 }
 
 body.dark-mode .chat-transcript {
-    background: #1d2027;
-    border-color: #3b4047;
+    background: var(--bg-elevated);
+    border-color: var(--border);
 }
 
 .chat-message {
     max-width: min(760px, 88%);
     padding: 10px 12px;
-    border: 1px solid #e1e2e7;
-    border-radius: 8px;
-    background: #f7f8fb;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-sunken);
 }
 
 .chat-message.user {
     align-self: flex-end;
-    background: #eef4ff;
-    border-color: #cddcff;
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .chat-message.assistant {
@@ -199,13 +217,13 @@ body.dark-mode .chat-transcript {
 }
 
 body.dark-mode .chat-message {
-    background: #24282f;
-    border-color: #353a42;
+    background: var(--bg-sunken);
+    border-color: var(--border);
 }
 
 body.dark-mode .chat-message.user {
-    background: #233047;
-    border-color: #3b4f78;
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .chat-role {
@@ -297,7 +315,7 @@ body.dark-mode .playground-result .search-hit {
 
 .playground-result .search-hit a {
     font-weight: 600;
-    color: #2962ff;
+    color: var(--accent-text);
     text-decoration: none;
     word-break: break-word;
 }
@@ -392,7 +410,7 @@ body.dark-mode .playground-result .progress-meter {
     height: 100%;
     width: 0%;
     border-radius: inherit;
-    background: #2962ff;
+    background: var(--accent);
     transition: width 0.25s ease;
 }
 

@@ -930,7 +930,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     // Edge colors must stay concrete hex: ReactFlow writes them into SVG
     // marker attributes where CSS variables are not substituted.
-    const EDGE_COLOR = { alias: '#94a3b8', fallback: '#0d9488', context_overflow: '#d97706' };
+    const EDGE_COLOR = { alias: '#94a3b8', fallback: '#4f46e5', context_overflow: '#d97706' };
     const TOPOLOGY_REFRESH_MS = 5000;
 
     let _topologyRootInstance = null;

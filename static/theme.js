@@ -9,7 +9,7 @@
  *   Theme.attachToggle(id)       — wire up a button and keep its label updated
  *
  * Storage key: 'llmgateway:theme'
- * Legacy keys migrated on first init: 'darkMode' ('enabled'/'disabled'/'1'/'0'), 'theme' ('light'/'dark')
+ * Legacy keys migrated on first init: 'darkMode' ('enabled'/'disabled'/'true'/'false'/'1'/'0'), 'theme' ('light'/'dark')
  */
 
 (function (global) {
@@ -57,9 +57,9 @@
             var themeLegacy = localStorage.getItem('theme');
 
             var resolved = null;
-            if (darkMode === 'enabled' || darkMode === '1') {
+            if (darkMode === 'enabled' || darkMode === 'true' || darkMode === '1') {
                 resolved = 'dark';
-            } else if (darkMode === 'disabled' || darkMode === '0') {
+            } else if (darkMode === 'disabled' || darkMode === 'false' || darkMode === '0') {
                 resolved = 'light';
             } else if (themeLegacy === 'dark') {
                 resolved = 'dark';

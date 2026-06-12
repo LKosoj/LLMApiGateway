@@ -38,15 +38,15 @@
     "gateway_model_name": "llmgateway/light_model",
     "fallback_models": [
       {
-        "provider": "freemodel",
-        "model": "gpt-5.4-mini",
+        "provider": "gem",
+        "model": "gemini-3.5-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
       },
       {
-        "provider": "gem",
-        "model": "gemini-3.5-flash",
+        "provider": "freemodel",
+        "model": "gpt-5.4-mini",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -216,19 +216,19 @@
         "custom_headers": {}
       },
       {
+        "provider": "alibaba",
+        "model": "qwen3.7-max",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "freemodel",
         "model": "gpt-5.5",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {
           "reasoning_effort": "high"
         },
-        "custom_headers": {}
-      },
-      {
-        "provider": "alibaba",
-        "model": "qwen3.7-max",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
         "custom_headers": {}
       },
       {

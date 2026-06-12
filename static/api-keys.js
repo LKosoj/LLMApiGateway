@@ -94,9 +94,9 @@
             const tpm = k.tpm == null ? "—" : k.tpm;
             const allowed = k.allowed_models && k.allowed_models.length
                 ? k.allowed_models.map(escapeHtml).join(", ")
-                : '<span style="opacity:0.6">all</span>';
+                : '<span class="muted-inline">all</span>';
             const lastUsed = k.last_used_at ? escapeHtml(k.last_used_at.replace("T", " ").slice(0, 19)) : "—";
-            const resetPeriod = (k.budget_period && k.budget_period !== "none") ? escapeHtml(k.budget_period) : '<span style="opacity:0.6">—</span>';
+            const resetPeriod = (k.budget_period && k.budget_period !== "none") ? escapeHtml(k.budget_period) : '<span class="muted-inline">—</span>';
             const keyCode = `<code>${escapeHtml(k.api_key)}</code>`;
             return `
                 <tr data-key-id="${k.id}">
@@ -117,22 +117,24 @@
             `;
         }).join("");
         keysArea.innerHTML = `
-            <table class="keys-table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Key</th>
-                        <th>Status</th>
-                        <th>Spent / Budget, $</th>
-                        <th>Reset</th>
-                        <th>RPM / TPM</th>
-                        <th>Allowed Models</th>
-                        <th>Last used</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
+            <div class="keys-table-wrap">
+                <table class="keys-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Key</th>
+                            <th>Status</th>
+                            <th>Spent / Budget, $</th>
+                            <th>Reset</th>
+                            <th>RPM / TPM</th>
+                            <th>Allowed Models</th>
+                            <th>Last used</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
         `;
         keysArea.querySelectorAll("button[data-action]").forEach((btn) => {
             btn.addEventListener("click", (event) => {

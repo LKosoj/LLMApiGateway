@@ -13,12 +13,18 @@ html, body {
 
 body {
     font-family: var(--font-sans);
-    background-color: var(--bg);
+    min-height: 100dvh;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 360px),
+        linear-gradient(90deg, color-mix(in srgb, var(--border) 42%, transparent) 1px, transparent 1px),
+        var(--bg);
+    background-size: auto, 48px 48px, auto;
     color: var(--text);
     line-height: 1.6;
     display: flex; /* Enable flex container */
     flex-direction: column; /* Stack children vertically */
     transition: background-color var(--transition-base), color var(--transition-base);
+    overflow-x: clip;
 }
 
 body.dark-mode {
@@ -27,15 +33,15 @@ body.dark-mode {
 }
 
 .container {
-    width: 70vw; /* Adjusted to 70% of browser width */
+    width: min(1440px, calc(100% - (var(--page-gutter) * 2)));
     margin: 0 auto; /* Use var for consistency */
-    padding-bottom: 30px;
-    padding-left: 5px;
-    padding-right: 5px;
+    padding: 18px;
     background-color: var(--bg-elevated);
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-md);
     border: 1px solid var(--border);
+    overflow-x: clip;
+    overflow-y: visible;
     flex: 1; /* Allow container to grow and shrink */
     display: flex; /* Enable flex container for its children */
     flex-direction: column; /* Stack children vertically */
@@ -46,11 +52,24 @@ body.dark-mode {
 
 h1 {
     color: var(--text-strong);
-    text-align: center;
-    margin: 10px 0 20px 0;
+    text-align: left;
+    margin: 12px 8px 22px;
     flex-shrink: 0; /* Prevent h1 from shrinking */
     font-weight: 800;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
+    line-height: 1.15;
+    text-wrap: balance;
+}
+
+.page-version {
+    display: inline-block;
+    margin-left: 8px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0;
+    vertical-align: middle;
 }
 
 /* Top Navigation Styles */
@@ -59,31 +78,38 @@ h1 {
     justify-content: flex-end;
     align-items: center;
     padding: 10px 0;
-    width: 70vw;
+    width: min(1440px, calc(100% - (var(--page-gutter) * 2)));
     margin: 0 auto;
     box-sizing: border-box;
-    position: relative;
+    position: sticky;
+    top: 0;
     z-index: var(--z-nav);
+    overflow-x: clip;
 }
 
 .top-nav-content {
     display: flex;
     align-items: center;
-    gap: 15px;
+    gap: 6px;
+    max-width: 100%;
     background: var(--bg-elevated);
     background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    padding: 8px 16px;
+    padding: 8px;
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-sm);
     border: 1px solid var(--border);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
     transition: background var(--transition-base), border-color var(--transition-base);
 }
 
 .top-nav-content .nav-button {
     display: flex;
     align-items: center;
+    flex: 0 0 auto;
     background-color: transparent;
     color: var(--text-muted);
     padding: 6px 12px;
@@ -91,7 +117,13 @@ h1 {
     text-decoration: none;
     font-weight: 600;
     font-size: 14px;
+    line-height: 1.2;
+    white-space: nowrap;
     transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.top-nav-content .nav-button svg {
+    flex: 0 0 auto;
 }
 
 .top-nav-content .nav-button:hover {
@@ -132,9 +164,14 @@ code {
     border-radius: var(--radius-lg);
     margin: 10px auto 25px auto;
     width: fit-content;
+    max-width: 100%;
     flex-shrink: 0;
     gap: 4px;
     border: 1px solid var(--border);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    box-sizing: border-box;
 }
 
 .tab-button {
@@ -147,6 +184,9 @@ code {
     color: var(--text-muted);
     border-radius: var(--radius-sm);
     transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+    flex: 0 0 auto;
+    min-height: var(--control-min-height);
+    white-space: nowrap;
 }
 
 .tab-button:hover {
@@ -177,6 +217,7 @@ div[style*="position:relative"] {
     flex-direction: column;
     box-sizing: border-box;
     padding-bottom: 10px; /* Add some padding so content doesn't touch save button margin */
+    min-width: 0;
 }
 
 .editor-tab-content {
@@ -185,6 +226,11 @@ div[style*="position:relative"] {
     flex: 1; /* Allow editor content to grow and shrink */
     display: flex;
     box-sizing: border-box;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: visible;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
 }
 
 .editor-tab-content.active {
@@ -199,6 +245,7 @@ div[style*="position:relative"] {
     padding: 10px;
     gap: 16px;
     background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 280px);
+    min-width: 0;
 }
 
 .rules-toolbar {
@@ -221,7 +268,7 @@ div[style*="position:relative"] {
 .rules-toolbar-copy strong {
     font-size: 1.05rem;
     font-weight: 700;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
     color: var(--text-strong);
 }
 
@@ -261,6 +308,7 @@ div[style*="position:relative"] {
     flex-direction: column;
     gap: 16px;
     flex: 1;
+    min-width: 0;
 }
 
 .rules-empty-state {
@@ -415,6 +463,7 @@ div[style*="position:relative"] {
     flex-direction: column;
     gap: 16px;
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    min-width: 0;
 }
 
 .rule-card:hover {
@@ -476,6 +525,7 @@ div[style*="position:relative"] {
     gap: 16px;
     padding-top: 8px;
     border-top: 1px solid var(--border);
+    min-width: 0;
 }
 
 .rule-card-title {
@@ -724,6 +774,10 @@ div[style*="position:relative"] {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
 }
 
 .context-overflow-section {
@@ -763,6 +817,10 @@ div[style*="position:relative"] {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
 }
 
 .fallback-row {
@@ -775,6 +833,7 @@ div[style*="position:relative"] {
     gap: 12px;
     cursor: grab;
     transition: opacity var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
+    min-width: 680px;
 }
 
 .fallback-row:hover {
@@ -918,7 +977,7 @@ div[style*="position:relative"] {
     cursor: pointer;
     font-size: 16px;
     font-weight: 700;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
     font-family: inherit;
     transition: background-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
     margin-bottom: 15px; /* Keep its original margin */
@@ -1030,15 +1089,6 @@ select:focus {
     height: 100%;
 }
 
-#darkModeToggle .icon-placeholder::before {
-    content: '🌙'; /* Moon icon for dark mode */
-    font-size: 16px;
-}
-
-body.dark-mode #darkModeToggle .icon-placeholder::before {
-    content: '☀️'; /* Sun icon for light mode */
-}
-
 #darkModeToggle:hover {
     background-color: var(--bg-sunken);
 }
@@ -1048,14 +1098,47 @@ body.dark-mode #darkModeToggle .icon-placeholder::before {
 }
 
 @media (max-width: 960px) {
+    .top-nav {
+        justify-content: flex-start;
+    }
+
     .container {
-        width: 100%;
+        width: calc(100% - 24px);
         max-height: none;
+        padding: 16px;
+        border-radius: var(--radius-lg);
+    }
+
+    .top-nav {
+        width: calc(100% - 24px);
+    }
+
+    .top-nav-content,
+    .tabs {
+        width: 100%;
+    }
+
+    .tabs {
+        justify-content: flex-start;
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    h1 {
+        margin-left: 0;
+        margin-right: 0;
+        font-size: 30px;
+        line-height: 1.2;
     }
 
     .rules-toolbar,
     .rule-card-header {
         flex-direction: column;
+    }
+
+    .rules-toolbar-actions,
+    .secondary-button {
+        width: 100%;
     }
 
     .fallback-row-grid,
@@ -1067,5 +1150,31 @@ body.dark-mode #darkModeToggle .icon-placeholder::before {
     .provider-base-url-field,
     .provider-api-key-field {
         grid-column: span 1;
+    }
+}
+
+@media (max-width: 640px) {
+    .editor-tab-content {
+        border-radius: var(--radius-md);
+    }
+
+    .rules-builder {
+        padding: 10px;
+    }
+
+    .rule-card,
+    .rules-toolbar,
+    .context-overflow-section,
+    .fallback-row {
+        padding: 14px;
+    }
+
+    .rule-card-header-left,
+    .context-overflow-header {
+        flex-direction: column;
+    }
+
+    .upstream-limit-row {
+        grid-template-columns: 1fr;
     }
 }

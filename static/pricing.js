@@ -17,22 +17,8 @@
     const calcResult = document.getElementById('calcResult');
     const toast = document.getElementById('toast');
 
-    // ---------- Dark mode (same as other pages) ----------
-    const darkModeToggle = document.getElementById('darkModeToggle');
-    if (darkModeToggle) {
-        const updateIcon = () => {
-            const isDark = document.body.classList.contains('dark-mode');
-            darkModeToggle.querySelector('.icon-placeholder').textContent = isDark ? '☀️' : '🌙';
-        };
-        const savedMode = localStorage.getItem('darkMode');
-        if (savedMode === 'true') { document.body.classList.add('dark-mode'); }
-        updateIcon();
-        darkModeToggle.addEventListener('click', () => {
-            document.body.classList.toggle('dark-mode');
-            localStorage.setItem('darkMode', document.body.classList.contains('dark-mode'));
-            updateIcon();
-        });
-    }
+    // ---------- Theme ----------
+    Theme.attachToggle('darkModeToggle');
 
     // ---------- Toast ----------
     let toastTimer = null;

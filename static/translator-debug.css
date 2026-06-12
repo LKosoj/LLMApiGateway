@@ -1,12 +1,18 @@
 /* Translator Debugger styles */
-/* Theme tokens come from theme.css (loaded before this file). */
+@import url('theme.css');
 
 body {
     font-family: var(--font-sans);
     margin: 0;
-    background-color: var(--bg);
+    min-height: 100dvh;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 360px),
+        linear-gradient(90deg, color-mix(in srgb, var(--border) 42%, transparent) 1px, transparent 1px),
+        var(--bg);
+    background-size: auto, 48px 48px, auto;
     color: var(--text);
     transition: background-color var(--transition-base), color var(--transition-base);
+    overflow-x: clip;
 }
 
 /* ── Top Navigation ── */
@@ -15,32 +21,41 @@ body {
     justify-content: flex-end;
     align-items: center;
     padding: 10px 0;
-    width: 100%;
-    max-width: 1400px;
+    width: min(var(--page-max-width), calc(100% - (var(--page-gutter) * 2)));
+    max-width: none;
     margin: 0 auto;
     box-sizing: border-box;
-    position: relative;
+    position: sticky;
+    top: 0;
     z-index: var(--z-nav);
+    overflow-x: clip;
 }
 
 .top-nav-content {
     display: flex;
     align-items: center;
-    gap: 15px;
-    background: var(--bg-elevated);
-    padding: 8px 16px;
-    border-radius: 40px;
+    gap: 6px;
+    max-width: 100%;
+    background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    padding: 8px;
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow-sm);
     border: 1px solid var(--border);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
 }
 
 .nav-button {
     display: flex;
     align-items: center;
-    padding: 6px 14px;
-    border-radius: 20px;
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
     text-decoration: none;
-    color: var(--text);
+    color: var(--text-muted);
     font-size: 14px;
     font-weight: 600;
     transition: background var(--transition-fast), color var(--transition-fast);
@@ -48,13 +63,13 @@ body {
 }
 
 .nav-button:hover {
-    background: var(--accent-soft);
-    color: var(--accent-text);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--text-strong);
 }
 
 .nav-button.active {
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--accent-soft);
+    color: var(--accent-text);
 }
 
 .theme-toggle {
@@ -75,15 +90,22 @@ body {
 
 /* ── Layout ── */
 .container {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 20px 40px;
+    width: min(var(--page-max-width), calc(100% - (var(--page-gutter) * 2)));
+    margin: 0 auto 28px;
+    padding: 34px 40px 40px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+    box-sizing: border-box;
+    overflow-x: clip;
+    overflow-y: visible;
 }
 
 h1 {
     font-size: 1.6rem;
     font-weight: 800;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     color: var(--text-strong);
     margin: 0 0 24px;
 }
@@ -93,9 +115,26 @@ h1 {
     grid-template-columns: 1fr 1fr;
     gap: 24px;
     align-items: start;
+    min-width: 0;
 }
 
 @media (max-width: 900px) {
+    .top-nav {
+        justify-content: flex-start;
+        width: calc(100% - 24px);
+    }
+
+    .top-nav-content {
+        width: 100%;
+        border-radius: var(--radius-lg);
+    }
+
+    .container {
+        width: calc(100% - 24px);
+        padding: 28px 24px 34px;
+        border-radius: var(--radius-lg);
+    }
+
     .layout-columns {
         grid-template-columns: 1fr;
     }
@@ -108,12 +147,16 @@ h1 {
     border-radius: var(--radius-lg);
     padding: 20px;
     box-shadow: var(--shadow-sm);
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
 }
 
 .panel h2 {
     font-size: 1rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     margin: 0 0 16px;
     color: var(--accent-text);
 }
@@ -129,6 +172,7 @@ label {
 
 select {
     width: 100%;
+    min-width: 0;
     padding: 8px 12px;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
@@ -147,6 +191,7 @@ select:hover {
 
 textarea {
     width: 100%;
+    min-width: 0;
     padding: 10px 12px;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
@@ -172,6 +217,10 @@ textarea:focus {
     gap: 8px;
     flex-wrap: wrap;
     margin-top: 12px;
+}
+
+.btn-row button {
+    flex: 0 0 auto;
 }
 
 button {
@@ -232,6 +281,31 @@ button {
     overflow: hidden;
     box-shadow: var(--shadow-sm);
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.step-card-body {
+    min-width: 0;
+}
+
+@media (max-width: 600px) {
+    .top-nav,
+    .container {
+        width: calc(100% - 24px);
+    }
+
+    .top-nav-content {
+        width: 100%;
+        border-radius: var(--radius-lg);
+    }
+
+    h1 {
+        font-size: 1.45rem;
+        line-height: 1.2;
+    }
+
+    .btn-row button {
+        flex: 1 1 180px;
+    }
 }
 
 .step-card:hover {
