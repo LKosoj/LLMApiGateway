@@ -557,6 +557,57 @@ def _category_from_exc(exc: HTTPException) -> str:
     return "unauthorized"
 
 
+def _client_ip(request: Request) -> str | None:
+    client = getattr(request, "client", None)
+    return client.host if client is not None else None
+
+
+def _ip_blocked_response(retry_after: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"detail": "Too many failed authentication attempts. Try again later."},
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _note_auth_failure(request: Request) -> None:
+    """Count a failed authentication for the client IP and, when it crosses the
+    threshold, audit the resulting block once (subsequent blocked requests are
+    rejected silently to avoid flooding the rejection log)."""
+    guard = getattr(request.app.state, "ip_block_guard", None)
+    if guard is None:
+        return
+    ip = _client_ip(request)
+    if not ip:
+        return
+    blocked_seconds = guard.register_failure(ip)
+    if blocked_seconds is not None:
+        logging.warning(
+            "IP %s blocked for %ss after %d consecutive failed auth attempts",
+            ip,
+            blocked_seconds,
+            guard.max_failures,
+        )
+        record_rejection(
+            request,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            reason=(
+                f"IP blocked for {blocked_seconds}s after "
+                f"{guard.max_failures} consecutive failed auth attempts"
+            ),
+            category="ip_blocked",
+        )
+
+
+def _note_auth_success(request: Request) -> None:
+    guard = getattr(request.app.state, "ip_block_guard", None)
+    if guard is None:
+        return
+    ip = _client_ip(request)
+    if ip:
+        guard.register_success(ip)
+
+
 async def api_key_auth(request: Request, call_next):
     """
     FastAPI middleware to authenticate requests using either a Bearer token or
@@ -585,11 +636,20 @@ async def api_key_auth(request: Request, call_next):
             request.state.gateway_auth_source = auth_source
             return await call_next(request)
 
+        guard = getattr(request.app.state, "ip_block_guard", None)
+        if guard is not None:
+            client_ip = _client_ip(request)
+            if client_ip:
+                retry_after = guard.check_blocked(client_ip)
+                if retry_after is not None:
+                    return _ip_blocked_response(retry_after)
+
         is_authenticated, auth_source = await _authenticate_request(request)
         request.state.gateway_authenticated = is_authenticated
         request.state.gateway_auth_source = auth_source
 
         if is_authenticated:
+            _note_auth_success(request)
             if (
                 _is_master_only_path(path)
                 and getattr(request.state, "api_key_role", ROLE_MASTER) != ROLE_MASTER
@@ -634,17 +694,21 @@ async def api_key_auth(request: Request, call_next):
             reason="Missing or invalid Authorization header",
             category="auth_invalid",
         )
+        _note_auth_failure(request)
         return _unauthorized_api_response()
     except HTTPException as exc:
         _finish_active_request(request, getattr(request.state, "llmgateway_active_request_id", None))
         _release_usd_budget_reservation(request)
         logging.warning(f"Error in authentication. {exc.detail} (Status: {exc.status_code})")
+        category = _category_from_exc(exc)
         record_rejection(
             request,
             status_code=exc.status_code,
             reason=str(exc.detail),
-            category=_category_from_exc(exc),
+            category=category,
         )
+        if category == "auth_invalid":
+            _note_auth_failure(request)
         if exc.status_code == status.HTTP_403_FORBIDDEN and exc.detail == API_KEY_DISABLED_DETAIL:
             return _api_key_disabled_response(request)
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})

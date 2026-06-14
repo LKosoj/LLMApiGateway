@@ -362,13 +362,69 @@ def test_fallback_rules_loads_with_unavailable_models_highlighted(page: Page, se
     expect(page.locator("#messageArea")).to_contain_text("missing-model-1")
     expect(page.locator("#messageArea")).to_contain_text("missing-model-2")
     expect(page.locator("#messageArea")).to_contain_text("openai")
+    expect(page.locator("#messageArea")).to_contain_text("my-gateway-model")
     expect(page.locator(".gateway-model-input")).to_have_value("my-gateway-model")
     expect(page.locator(".model-status").first).to_contain_text("missing-model-1")
     expect(page.locator(".model-status").nth(1)).to_contain_text("missing-model-2")
 
     page.click("#saveButton")
-    expect(page.locator("#messageArea")).to_contain_text("Model 'missing-model-1' is not available for provider 'openai'")
+    expect(page.locator("#messageArea")).to_contain_text("Cannot save Fallback Rules")
+    expect(page.locator("#messageArea")).to_contain_text("Unavailable fallback models")
     expect(page.locator("#messageArea")).to_contain_text("missing-model-1")
+    expect(page.locator("#messageArea")).to_contain_text("missing-model-2")
+    expect(page.locator("#messageArea")).to_contain_text("my-gateway-model")
+
+
+def test_fallback_rules_unavailable_model_can_be_replaced(page: Page, server):
+    session = create_authenticated_session("test-key")
+    page.context.add_cookies(
+        [{"name": "llmgateway_session", "value": session, "url": server}]
+    )
+
+    def handle_rules(route):
+        if route.request.method == "POST":
+            route.fulfill(json={"message": "Fallback Rules updated successfully."})
+        else:
+            route.fulfill(
+                json={
+                    "rules": [
+                        {
+                            "gateway_model_name": "my-gateway-model",
+                            "rotate_models": False,
+                            "fallback_models": [
+                                {"provider": "openai", "model": "missing-model-1"},
+                            ],
+                        }
+                    ],
+                    "providers": ["openai"],
+                }
+            )
+
+    page.route("**/v1/config/models-rules/structured", handle_rules)
+    page.route(
+        "**/v1/config/providers/openai/models",
+        lambda route: route.fulfill(
+            json={"provider": "openai", "models": [{"id": "gpt-4o"}]}
+        ),
+    )
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded with warnings")
+    expect(page.locator(".model-status").first).to_contain_text("is not available")
+
+    # Loaded rule cards are collapsed by default; expand to reach the select.
+    page.click(".accordion-toggle")
+
+    # Picking an available model must clear the stale "unavailable" error...
+    page.select_option(".model-select", "gpt-4o")
+    expect(page.locator(".model-status").first).to_contain_text("selected")
+    expect(page.locator(".model-status").first).not_to_contain_text("is not available")
+
+    # ...so the save is no longer blocked and succeeds.
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
 
 def test_usage_stats_page_loads(page: Page, server):
     session = create_authenticated_session("test-key")

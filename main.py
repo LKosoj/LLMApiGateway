@@ -39,6 +39,7 @@ from llm_gateway_core.services.model_availability import run_startup_model_verif
 from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
 from llm_gateway_core.services.rate_limiter import RateLimiter
+from llm_gateway_core.services.ip_blocklist import IpBlockGuard
 from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 from llm_gateway_core.services.upstream_subscription_quota import UpstreamSubscriptionQuotaService
@@ -325,6 +326,20 @@ async def lifespan(app: FastAPI):
     rate_limiter = RateLimiter()
     app.state.rate_limiter = rate_limiter
     _chat_logging_module.set_rate_limiter(rate_limiter)
+
+    if settings.ip_block_enabled:
+        app.state.ip_block_guard = IpBlockGuard(
+            max_failures=settings.ip_block_max_failures,
+            block_seconds=settings.ip_block_duration_minutes * 60,
+        )
+        logger.info(
+            "IP brute-force guard ENABLED (block after %d consecutive auth failures for %d min).",
+            settings.ip_block_max_failures,
+            settings.ip_block_duration_minutes,
+        )
+    else:
+        app.state.ip_block_guard = None
+        logger.info("IP brute-force guard is DISABLED (IP_BLOCK_ENABLED=false).")
 
     app.state.chat_model_failure_cooldowns = {}
     app.state.upstream_routing_state = UpstreamRoutingState()

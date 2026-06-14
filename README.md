@@ -157,14 +157,24 @@ CRUD над виртуальными ключами доступен через 
 - `DELETE /v1/admin/api-keys/{id}` — удаление ключа.
 - `GET /v1/admin/rejections` — список governance-отказов шлюза (только master-ключ). Query-параметры:
   - `api_key_id` (int, опционально) — фильтр по ID виртуального ключа.
-  - `category` (string, опционально) — фильтр по категории: `auth_invalid`, `key_disabled`, `model_not_allowed`, `budget_exhausted`, `rate_limited`, `master_only`, `unauthorized`.
+  - `category` (string, опционально) — фильтр по категории: `auth_invalid`, `key_disabled`, `model_not_allowed`, `budget_exhausted`, `rate_limited`, `master_only`, `unauthorized`, `ip_blocked`.
   - `since` (ISO 8601 string, опционально) — записи начиная с указанного момента.
   - `limit` (int, по умолчанию 50, максимум 200) — лимит записей в ответе.
   - `offset` (int, по умолчанию 0) — смещение для постраничной выборки (используется UI-страницей).
   Ответ: `{"items": [...], "total": <кол-во по фильтру>}`. Каждый элемент: `id`, `timestamp`, `request_id`, `api_key_id`, `path`, `method`, `client_ip`, `status_code`, `category`, `reason`, `auth_source`, `x_title`.
 
 ### Аудит отклонений (Rejections Audit UI)
-Страница http://localhost:9000/v1/ui/rejections (только master под `GATEWAY_API_KEY`) показывает журнал governance-отказов шлюза поверх `GET /v1/admin/rejections`. Таблица отображает время, категорию (цветной бейдж), HTTP-статус, метод, путь, ID ключа, входящий `X-Title`, client IP и причину. Доступны фильтры по категории, ID ключа и моменту начала (`since`), выбор размера страницы (25/50/100/200) и постраничная навигация (Newer/Older) через `offset`. Назначение — выявлять перебор ключей и зондирование, диагностировать, почему клиент блокируется (`model_not_allowed`/`budget_exhausted`/`rate_limited`), и вести аудит решений шлюза независимо от логов провайдера. Пункт **Rejections** в верхней навигации виден только master-ключу.
+Страница http://localhost:9000/v1/ui/rejections (только master под `GATEWAY_API_KEY`) показывает журнал governance-отказов шлюза поверх `GET /v1/admin/rejections`. Таблица отображает время, категорию (цветной бейдж), HTTP-статус, метод, путь, ID ключа, входящий `X-Title`, client IP и причину. Доступны фильтры по категории, ID ключа и моменту начала (`since`), выбор размера страницы (25/50/100/200) и постраничная навигация (Newer/Older) через `offset`. Назначение — выявлять перебор ключей и зондирование, диагностировать, почему клиент блокируется (`model_not_allowed`/`budget_exhausted`/`rate_limited`/`ip_blocked`), и вести аудит решений шлюза независимо от логов провайдера. Пункт **Rejections** в верхней навигации виден только master-ключу.
+
+### Блокировка IP при подборе ключей (brute-force protection)
+Шлюз автоматически временно блокирует клиентский IP, с которого идёт подбор API-ключей. Считаются **подряд идущие** неуспешные аутентификации (категория `auth_invalid` — неверный или отсутствующий ключ); успешная аутентификация с того же IP сбрасывает счётчик. Лимиты RPM/бюджета, отключённые ключи и прочие отказы в этот счётчик не входят.
+
+По умолчанию после **5** неудачных попыток подряд IP блокируется на **20 минут**. Пока действует блок, любые запросы к защищённым эндпоинтам с этого IP получают `429 Too Many Requests` с заголовком `Retry-After` ещё до проверки ключа; публичные пути (`/health`, `/auth/login`, `/static/*`) не блокируются. Момент срабатывания блокировки один раз записывается в Rejections Audit с категорией `ip_blocked` (последующие заблокированные запросы не пишутся, чтобы не засорять журнал) и в лог приложения. Состояние блокировок хранится in-memory и сбрасывается при перезапуске шлюза.
+
+Настройки (переменные окружения):
+- `IP_BLOCK_ENABLED` (по умолчанию `true`) — включение/выключение механизма.
+- `IP_BLOCK_MAX_FAILURES` (по умолчанию `5`) — число неудач подряд до блокировки.
+- `IP_BLOCK_DURATION_MINUTES` (по умолчанию `20`) — длительность блокировки в минутах.
 
 ### Gateway Documentation UI
 Страница http://localhost:9000/v1/ui/docs доступна любому авторизованному пользователю и описывает, как подключаться к gateway-моделям через публичные API. Она показывает текущие gateway-модели из `models_fallback_rules.json` и `models_operation_rules.json`, группирует их по capabilities (`chat`, `embeddings`, `rerank`, `images`, `audio_speech`, `audio_transcription`, `pdf_conversion`, `web_*`) и не делает сетевых запросов к downstream-провайдерам. Для virtual key с `allowed_models` каталог показывает только разрешённые gateway-модели.

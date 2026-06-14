@@ -5,7 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const KNOWN_CATEGORIES = new Set([
         'auth_invalid', 'key_disabled', 'model_not_allowed', 'budget_exhausted',
-        'rate_limited', 'master_only', 'unauthorized',
+        'rate_limited', 'master_only', 'unauthorized', 'ip_blocked',
     ]);
 
     const els = {

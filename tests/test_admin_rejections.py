@@ -116,6 +116,29 @@ class AdminRejectionsHttpTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["total"], 0)
 
+    def test_ip_blocked_category_is_accepted(self):
+        self.db.insert_rejection(
+            request_id="req-block",
+            api_key_id=None,
+            path="/v1/chat/completions",
+            method="POST",
+            client_ip="150.109.231.218",
+            status_code=429,
+            category="ip_blocked",
+            reason="IP blocked for 1200s after 5 consecutive failed auth attempts",
+            auth_source=None,
+        )
+
+        resp = self.client.get(
+            "/v1/admin/rejections",
+            params={"category": "ip_blocked"},
+            headers=self._master_headers(),
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["total"], 1)
+        self.assertEqual(resp.json()["items"][0]["client_ip"], "150.109.231.218")
+
     def test_invalid_since_returns_400(self):
         resp = self.client.get(
             "/v1/admin/rejections",

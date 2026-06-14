@@ -157,14 +157,24 @@ CRUD over virtual keys is available through the master-only Admin API:
 - `DELETE /v1/admin/api-keys/{id}` — remove a key.
 - `GET /v1/admin/rejections` — list gateway governance rejections (master key only). Query parameters:
   - `api_key_id` (int, optional) — filter by virtual key ID.
-  - `category` (string, optional) — filter by rejection category: `auth_invalid`, `key_disabled`, `model_not_allowed`, `budget_exhausted`, `rate_limited`, `master_only`, `unauthorized`.
+  - `category` (string, optional) — filter by rejection category: `auth_invalid`, `key_disabled`, `model_not_allowed`, `budget_exhausted`, `rate_limited`, `master_only`, `unauthorized`, `ip_blocked`.
   - `since` (ISO 8601 string, optional) — return only records at or after this timestamp.
   - `limit` (int, default 50, max 200) — maximum records to return.
   - `offset` (int, default 0) — pagination offset (used by the UI page).
   Response: `{"items": [...], "total": <count matching the filter>}`. Each item contains: `id`, `timestamp`, `request_id`, `api_key_id`, `path`, `method`, `client_ip`, `status_code`, `category`, `reason`, `auth_source`, `x_title`.
 
 ### Rejections Audit UI
-The page http://localhost:9000/v1/ui/rejections (master only, under `GATEWAY_API_KEY`) shows the gateway's governance-rejection log on top of `GET /v1/admin/rejections`. The table displays the time, category (color badge), HTTP status, method, path, key ID, incoming `X-Title`, client IP, and reason. It offers filters by category, key ID, and start time (`since`), a page-size selector (25/50/100/200), and Newer/Older pagination via `offset`. Its purpose is to surface key brute-forcing and probing, diagnose why a client is blocked (`model_not_allowed`/`budget_exhausted`/`rate_limited`), and audit the gateway's own access decisions independently of provider logs. The **Rejections** item in the top navigation is visible only to the master key.
+The page http://localhost:9000/v1/ui/rejections (master only, under `GATEWAY_API_KEY`) shows the gateway's governance-rejection log on top of `GET /v1/admin/rejections`. The table displays the time, category (color badge), HTTP status, method, path, key ID, incoming `X-Title`, client IP, and reason. It offers filters by category, key ID, and start time (`since`), a page-size selector (25/50/100/200), and Newer/Older pagination via `offset`. Its purpose is to surface key brute-forcing and probing, diagnose why a client is blocked (`model_not_allowed`/`budget_exhausted`/`rate_limited`/`ip_blocked`), and audit the gateway's own access decisions independently of provider logs. The **Rejections** item in the top navigation is visible only to the master key.
+
+### IP blocking on key brute-forcing (brute-force protection)
+The gateway automatically and temporarily blocks any client IP that brute-forces API keys. It counts **consecutive** failed authentications (the `auth_invalid` category — an invalid or missing key); a successful authentication from the same IP resets the counter. RPM/budget limits, disabled keys, and other rejections do not count toward this counter.
+
+By default, after **5** consecutive failures an IP is blocked for **20 minutes**. While the block is active, any request from that IP to protected endpoints gets `429 Too Many Requests` with a `Retry-After` header before the key is even checked; public paths (`/health`, `/auth/login`, `/static/*`) are never blocked. The moment a block is triggered is recorded once in the Rejections Audit under the `ip_blocked` category (subsequent blocked requests are not logged, to avoid flooding the audit) and in the application log. Block state is held in-memory and is cleared on gateway restart.
+
+Settings (environment variables):
+- `IP_BLOCK_ENABLED` (default `true`) — enable/disable the mechanism.
+- `IP_BLOCK_MAX_FAILURES` (default `5`) — number of consecutive failures before a block.
+- `IP_BLOCK_DURATION_MINUTES` (default `20`) — block duration in minutes.
 
 ### Gateway Documentation UI
 The page http://localhost:9000/v1/ui/docs is available to any authenticated user and documents how to call gateway models through the public APIs. It shows the current gateway models from `models_fallback_rules.json` and `models_operation_rules.json`, groups them by capabilities (`chat`, `embeddings`, `rerank`, `images`, `audio_speech`, `audio_transcription`, `pdf_conversion`, `web_*`), and does not make network calls to downstream providers. For a virtual key with `allowed_models`, the catalog shows only the gateway models allowed for that key.

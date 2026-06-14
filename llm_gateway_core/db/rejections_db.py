@@ -19,6 +19,7 @@ VALID_CATEGORIES = {
     "rate_limited",
     "master_only",
     "unauthorized",
+    "ip_blocked",
 }
 
 INSERT_REJECTION_SQL = """

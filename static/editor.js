@@ -160,9 +160,11 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         const providerSelect = fallbackRow.querySelector('.provider-select');
+        const gatewayModelInput = fallbackRow.closest('.rule-card')?.querySelector('.gateway-model-input');
         return {
             model: unavailableModel,
             provider: (fallbackRow.dataset.unavailableProvider || providerSelect?.value || '').trim(),
+            gatewayModel: (gatewayModelInput?.value || '').trim(),
         };
     }
 
@@ -177,11 +179,14 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         }
 
-        const formattedModels = unavailableModels.map(({ provider, model }) => (
-            provider
+        const formattedModels = unavailableModels.map(({ provider, model, gatewayModel }) => {
+            const target = provider
                 ? `'${model}' for provider '${provider}'`
-                : `'${model}'`
-        ));
+                : `'${model}'`;
+            return gatewayModel
+                ? `${target} in gateway model '${gatewayModel}'`
+                : target;
+        });
         return `Unavailable fallback models: ${formattedModels.join(', ')}.`;
     }
 
@@ -638,9 +643,12 @@ document.addEventListener('DOMContentLoaded', function () {
             throw new Error('Each fallback model row must have a provider selected.');
         }
         if (fallbackRow.dataset.modelsLoadError === 'true') {
+            const unavailableModelsMessage = unavailableFallbackModel
+                ? formatUnavailableFallbackModelsMessage([unavailableFallbackModel])
+                : '';
             throw new Error(
-                modelStatus.textContent
-                || formatUnavailableFallbackModelsMessage([unavailableFallbackModel])
+                unavailableModelsMessage
+                || modelStatus.textContent
                 || `Could not load models for provider '${provider}'.`
             );
         }
@@ -1060,6 +1068,17 @@ document.addEventListener('DOMContentLoaded', function () {
 
         providerSelect.addEventListener('change', async () => {
             await refreshFallbackRowModels(fallbackRow, providerSelect.value, '');
+        });
+
+        modelSelect.addEventListener('change', () => {
+            // Picking an available model clears a previous "model unavailable"
+            // error so the row can be saved (the options list only contains
+            // models the provider actually exposes).
+            if (modelSelect.value) {
+                fallbackRow.dataset.modelsLoadError = 'false';
+                clearUnavailableFallbackModelMetadata(fallbackRow);
+                setFallbackRowStatus(fallbackRow, `Model '${modelSelect.value}' selected.`, 'success');
+            }
         });
 
         fallbackRow._modelLoadPromise = refreshFallbackRowModels(
@@ -4151,6 +4170,15 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function saveRules() {
+        const unavailableFallbackModels = collectUnavailableFallbackModels(rulesList);
+        if (unavailableFallbackModels.length > 0) {
+            renderMessage(
+                'error',
+                `Cannot save Fallback Rules. ${formatUnavailableFallbackModelsMessage(unavailableFallbackModels)} Choose available models before saving.`
+            );
+            return;
+        }
+
         let payload;
         try {
             payload = getRulesPayloadForSave();

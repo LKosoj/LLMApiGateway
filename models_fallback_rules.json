@@ -45,13 +45,6 @@
         "custom_headers": {}
       },
       {
-        "provider": "freemodel",
-        "model": "gpt-5.4-mini",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "openrouter",
         "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
@@ -63,6 +56,13 @@
       {
         "provider": "aitunnel",
         "model": "deepseek-v4-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "freemodel",
+        "model": "gpt-5.4-mini",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -122,9 +122,9 @@
       "custom_headers": {}
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/qwen3.5",
@@ -173,7 +173,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/big_context",
@@ -296,7 +296,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/text",
@@ -350,7 +350,7 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": true
   },
   {
     "gateway_model_name": "llmgateway/ocr",

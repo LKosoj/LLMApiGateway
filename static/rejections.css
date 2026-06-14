@@ -118,6 +118,11 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+.cat-ip_blocked {
+    color: var(--bg);
+    background: var(--error);
+}
+
 .cat-unknown {
     color: var(--text-muted);
     background: var(--bg-sunken);
