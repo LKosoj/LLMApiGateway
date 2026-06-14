@@ -3544,6 +3544,26 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
         operation=getattr(request.state, "llmgateway_operation", "chat"),
     )
 
+    fusion_rules = getattr(config_loader_instance, "fusion_rules", None)
+    fusion_config = fusion_rules.get(requested_model) if isinstance(fusion_rules, dict) else None
+    if fusion_config is not None:
+        if request.headers.get("x-llmgateway-fusion"):
+            raise HTTPException(status_code=400, detail="Nested Fusion calls are not allowed.")
+        if is_streaming:
+            raise HTTPException(status_code=400, detail="Fusion models do not support streaming responses.")
+        fusion_service = getattr(request.app.state, "fusion_service", None)
+        if fusion_service is None:
+            raise HTTPException(status_code=500, detail="Fusion service is not available.")
+        proxy_http_clients = getattr(request.app.state, "proxy_http_clients", {})
+        return await fusion_service.run(
+            request=request,
+            gateway_model_name=requested_model,
+            fusion_config=fusion_config,
+            request_body=request_body_json,
+            http_client=http_client,
+            proxy_http_clients=proxy_http_clients,
+        )
+
     model_config = fallback_rules.get(requested_model)
     context_overflow_fallback = None
     strip_think_tags = False

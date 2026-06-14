@@ -63,6 +63,7 @@
             <button id="tabImages" class="tab-button" data-tab="images">Images</button>
             <button id="tabAudio" class="tab-button" data-tab="audio">Audio</button>
             <button id="tabWeb" class="tab-button" data-tab="web">Web</button>
+            <button id="tabFusion" class="tab-button" data-tab="fusion">Fusion</button>
             <button id="tabOpenRouterFree" class="tab-button" data-tab="openrouter-free" hidden>OpenRouter Free</button>
             <button id="tabFallbackEval" class="tab-button" data-tab="fallback-eval">Fallback Eval</button>
             <button id="tabProviders" class="tab-button" data-tab="providers">Providers</button>
@@ -117,6 +118,22 @@
                     <div id="rerankList" class="rules-list"></div>
                     <div id="rerankEmptyState" class="rules-empty-state" hidden>
                         No rerank routes yet. Add the first rerank model to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-fusion" class="editor-tab-content" style="display: none;">
+                <div id="fusionBuilder" class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Fusion Models</strong>
+                            <span>Each Fusion model runs a panel of models in parallel, a judge produces a structured analysis (agreements, disputes, per-model insights, blind spots), and a main model writes the final answer.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Pick a provider and model for each role. Register the gateway itself as a provider to reuse gateway (llmgateway/*) models. Panel size: 1–8.</span>
+                        </div>
+                        <button id="addFusionButton" type="button" class="secondary-button">Add Fusion Model</button>
+                    </div>
+                    <div id="fusionList" class="rules-list"></div>
+                    <div id="fusionEmptyState" class="rules-empty-state" hidden>
+                        No fusion models yet. Add the first fusion model to begin.
                     </div>
                 </div>
             </div>

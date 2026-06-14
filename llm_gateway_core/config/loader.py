@@ -402,6 +402,123 @@ class ModelFallbackConfig(BaseModel):
         return int(validated_value)
 
 
+FUSION_PANEL_MAX = 8
+
+
+class FusionMember(BaseModel):
+    """A single model taking part in a Fusion ensemble.
+
+    References a configured provider plus its model id — the same shape as a
+    fallback target — so the gateway itself can be used as a provider (self
+    loopback) to reach gateway models, or any upstream provider can be called
+    directly.
+    """
+
+    provider: str
+    model: str
+    temperature: float | None = None
+    reasoning: Dict[str, Any] | None = None
+    max_completion_tokens: int | None = None
+
+    @field_validator("provider", "model", mode="before")
+    @classmethod
+    def _validate_non_empty(cls, value: Any, info) -> Any:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"'{info.field_name}' must be a non-empty string.")
+        return value.strip()
+
+    @field_validator("temperature")
+    @classmethod
+    def _validate_temperature(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        numeric = float(value)
+        if not (0.0 <= numeric <= 2.0):
+            raise ValueError("'temperature' must be between 0 and 2.")
+        return numeric
+
+    @field_validator("max_completion_tokens")
+    @classmethod
+    def _validate_max_completion_tokens(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if int(value) <= 0:
+            raise ValueError("'max_completion_tokens' must be a positive integer.")
+        return int(value)
+
+
+class FusionWebToolsConfig(BaseModel):
+    """Optional agentic web tools granted to Fusion *panel* members.
+
+    When present, every panel member is run in a tool loop: it may call a
+    ``web_search`` tool (and, when ``read_model`` is set, a ``web_fetch`` tool)
+    before writing its answer. ``search_model`` / ``read_model`` reference
+    gateway web-search / web-read operation models (``models_operation_rules``).
+    The main and judge members never receive tools.
+    """
+
+    search_model: str
+    read_model: Optional[str] = None
+    max_tool_calls: int = 6
+    max_iterations: int = 4
+    max_results: int = 5
+
+    @field_validator("search_model", mode="before")
+    @classmethod
+    def _validate_search_model(cls, value: Any) -> Any:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("'search_model' must be a non-empty string.")
+        return value.strip()
+
+    @field_validator("read_model", mode="before")
+    @classmethod
+    def _validate_read_model(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("'read_model' must be a non-empty string when provided.")
+        return value.strip()
+
+    @field_validator("max_tool_calls", "max_iterations", "max_results")
+    @classmethod
+    def _validate_positive(cls, value: int, info) -> int:
+        if int(value) <= 0:
+            raise ValueError(f"'{info.field_name}' must be a positive integer.")
+        return int(value)
+
+
+class FusionModelConfig(BaseModel):
+    """A Fusion gateway model: a panel of models answers in parallel, a judge
+    produces a structured analysis, and a main model writes the final answer."""
+
+    gateway_model_name: str
+    panel: List[FusionMember]
+    main_model: FusionMember
+    # Judge defaults to ``main_model`` when omitted.
+    judge_model: Optional[FusionMember] = None
+    include_details_default: bool = True
+    # Optional agentic web tools for the panel members.
+    web_tools: Optional[FusionWebToolsConfig] = None
+
+    @field_validator("gateway_model_name", mode="before")
+    @classmethod
+    def _validate_gateway_model_name(cls, value: Any) -> Any:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("'gateway_model_name' must be a non-empty string.")
+        return value.strip()
+
+    @field_validator("panel")
+    @classmethod
+    def _validate_panel(cls, value: List[FusionMember]) -> List[FusionMember]:
+        if not value:
+            raise ValueError("Fusion 'panel' must contain at least one model.")
+        if len(value) > FUSION_PANEL_MAX:
+            raise ValueError(
+                f"Fusion 'panel' must contain at most {FUSION_PANEL_MAX} models."
+            )
+        return value
+
+
 class OperationRoute(BaseModel):
     provider: str
     model: str
@@ -733,22 +850,26 @@ class ConfigLoader:
         providers_filename: str | None = None,
         fallback_rules_filename: str | None = None,
         operation_rules_filename: str | None = None,
+        fusion_rules_filename: str | None = None,
     ):
         from .paths import PROJECT_ROOT
         self.project_root = PROJECT_ROOT
-        
+
         # Use provided filename, or environment variable, or default
         p_file = providers_filename or os.getenv("PROVIDERS_FILENAME", "providers.json")
         f_file = fallback_rules_filename or os.getenv("FALLBACK_RULES_FILENAME", "models_fallback_rules.json")
         o_file = operation_rules_filename or os.getenv("OPERATION_RULES_FILENAME", "models_operation_rules.json")
+        fusion_file = fusion_rules_filename or os.getenv("FUSION_RULES_FILENAME", "models_fusion_rules.json")
 
         self.providers_path = Path(p_file) if os.path.isabs(p_file) else self.project_root / p_file
         self.fallback_rules_path = Path(f_file) if os.path.isabs(f_file) else self.project_root / f_file
         self.operation_rules_path = Path(o_file) if os.path.isabs(o_file) else self.project_root / o_file
+        self.fusion_rules_path = Path(fusion_file) if os.path.isabs(fusion_file) else self.project_root / fusion_file
 
         self.providers_config: Dict[str, ProviderDetails] = {}
         self.fallback_rules: Dict[str, Dict[str, Any]] = {} # Store validated rules as dicts
         self.operation_rules: Dict[str, Dict[str, Any]] = _empty_operation_rules()
+        self.fusion_rules: Dict[str, Dict[str, Any]] = {} # Store validated fusion configs as dicts
 
     def _build_providers_config(self, raw_provider_list: Any) -> Dict[str, ProviderDetails]:
         if not isinstance(raw_provider_list, list):
@@ -797,6 +918,27 @@ class ConfigLoader:
             fallback_rules_temp[rule.gateway_model_name] = rule_config
 
         return fallback_rules_temp
+
+    def _build_fusion_rules_config(self, raw_rules: Any) -> Dict[str, Dict[str, Any]]:
+        if not isinstance(raw_rules, list):
+            raise ValueError("Invalid format: Expected a list of fusion model objects.")
+
+        fusion_rules_temp: Dict[str, Dict[str, Any]] = {}
+        seen_gateway_model_names: set[str] = set()
+        for item in raw_rules:
+            config = FusionModelConfig(**item)
+            if config.gateway_model_name in seen_gateway_model_names:
+                raise ValueError(
+                    "Duplicate gateway_model_name "
+                    f"'{config.gateway_model_name}' found in models_fusion_rules.json. "
+                    "Gateway model names must be unique."
+                )
+            seen_gateway_model_names.add(config.gateway_model_name)
+            data = config.model_dump(exclude_none=True)
+            data.pop("gateway_model_name", None)
+            fusion_rules_temp[config.gateway_model_name] = data
+
+        return fusion_rules_temp
 
     def _build_operation_config(self, raw_rules: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
         operation_rules = ModelsOperationConfig.model_validate(raw_rules)
@@ -896,6 +1038,53 @@ class ConfigLoader:
             fallback_model_rule.get("providers_order"),
             "providers_order",
         )
+
+    def validate_fusion_rules_mapping(
+        self,
+        fusion_rules_to_validate: Dict[str, Dict[str, Any]],
+        providers_config: Optional[Dict[str, ProviderDetails]] = None,
+    ) -> None:
+        if not fusion_rules_to_validate:
+            # No fusion models configured — nothing references providers, so skip validation.
+            return
+
+        effective_providers = providers_config or self.providers_config
+        if not effective_providers:
+            raise ValueError("Providers must be loaded before validating fusion rules.")
+
+        for gateway_model_name, config in fusion_rules_to_validate.items():
+            panel = config.get("panel", [])
+            if not panel:
+                raise ValueError(
+                    f"Fusion model '{gateway_model_name}' must have at least one panel member."
+                )
+            if len(panel) > FUSION_PANEL_MAX:
+                raise ValueError(
+                    f"Fusion model '{gateway_model_name}' has {len(panel)} panel members; "
+                    f"the maximum is {FUSION_PANEL_MAX}."
+                )
+
+            members: List[tuple[str, Dict[str, Any]]] = [("panel member", member) for member in panel]
+            members.append(("main_model", config.get("main_model") or {}))
+            judge_model = config.get("judge_model")
+            if judge_model:
+                members.append(("judge_model", judge_model))
+
+            for role_label, member in members:
+                provider = member.get("provider")
+                if not provider:
+                    raise ValueError(
+                        f"'provider' is missing for a {role_label} under fusion model '{gateway_model_name}'."
+                    )
+                if not member.get("model"):
+                    raise ValueError(
+                        f"'model' is missing for a {role_label} under fusion model '{gateway_model_name}'."
+                    )
+                if provider not in effective_providers:
+                    raise ValueError(
+                        f"Invalid provider '{provider}' used in {role_label} for fusion model "
+                        f"'{gateway_model_name}'. Provider not found in configuration."
+                    )
 
     def validate_operation_routes(
         self,
@@ -1253,6 +1442,78 @@ class ConfigLoader:
         except Exception as e:
             logging.error(f"Failed to reload or validate '{self.fallback_rules_path.name}': {str(e)}", exc_info=True)
             return False
+
+    def load_fusion_rules(self) -> Dict[str, Dict[str, Any]]:
+        """Loads and validates Fusion model configs from the JSON file."""
+        if not self.fusion_rules_path.exists():
+            logging.info(
+                f"Fusion rules file not found at {self.fusion_rules_path}. Proceeding without fusion models."
+            )
+            self.fusion_rules = {}
+            return {}
+
+        try:
+            with open(self.fusion_rules_path, 'r', encoding='utf-8') as f:
+                raw_rules = json5.load(f)
+
+            fusion_rules_temp = self._build_fusion_rules_config(raw_rules)
+
+            if not self.providers_config:
+                logging.warning("Providers not loaded. Loading providers before validating fusion rules.")
+                self.load_providers()
+
+            self.validate_fusion_rules_mapping(fusion_rules_temp, providers_config=self.providers_config)
+            self.fusion_rules = fusion_rules_temp
+            logging.info(f"Successfully loaded and validated fusion rules from {self.fusion_rules_path}")
+            logging.info(f"Loaded fusion models for: {list(self.fusion_rules.keys())}")
+            return self.fusion_rules
+
+        except ConfigError:
+            raise
+        except Exception as e:
+            logging.error(f"Failed to load or validate '{self.fusion_rules_path.name}': {str(e)}", exc_info=True)
+            raise ConfigError(f"Failed to load or validate '{self.fusion_rules_path.name}': {e}") from e
+
+    def reload_fusion_rules(self) -> bool:
+        """Reloads and validates Fusion model configs from the JSON file.
+        Returns True on success, False on failure."""
+        if not self.fusion_rules_path.exists():
+            # A missing file simply means "no fusion models"; treat as an empty, valid config.
+            self.fusion_rules = {}
+            return True
+
+        try:
+            with open(self.fusion_rules_path, 'r', encoding='utf-8') as f:
+                raw_rules = json5.load(f)
+
+            fusion_rules_temp = self._build_fusion_rules_config(raw_rules)
+
+            if not self.providers_config:
+                logging.warning("Providers not loaded. Loading providers before validating fusion rules reload.")
+                self.load_providers()
+
+            self.validate_fusion_rules_mapping(fusion_rules_temp, providers_config=self.providers_config)
+            self.fusion_rules = fusion_rules_temp
+            logging.info(f"Successfully reloaded and validated fusion rules from {self.fusion_rules_path}")
+            logging.info(f"Reloaded fusion models for: {list(self.fusion_rules.keys())}")
+            return True
+
+        except ValidationError as ve:
+            logging.error(f"Validation error during reload of '{self.fusion_rules_path.name}': {ve.errors()}", exc_info=False)
+            return False
+        except Exception as e:
+            logging.error(f"Failed to reload or validate '{self.fusion_rules_path.name}': {str(e)}", exc_info=True)
+            return False
+
+    def parse_and_validate_fusion_rules_payload(
+        self,
+        payload_text: str,
+        providers_config: Optional[Dict[str, ProviderDetails]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        raw_rules = json5.loads(payload_text)
+        fusion_rules = self._build_fusion_rules_config(raw_rules)
+        self.validate_fusion_rules_mapping(fusion_rules, providers_config=providers_config)
+        return fusion_rules
 
     def reload_providers_config(self) -> bool:
         """

@@ -46,7 +46,8 @@
       "baseUrl": "https://api.z.ai/api/coding/paas/v4",
       "apikey": "${APIKEY_ZAI}",
       "available_models": [
-        "glm-5.2"
+        "glm-5.2",
+        "glm-5-turbo"
       ]
     }
   },

@@ -247,6 +247,84 @@ body.dark-mode .chat-message.user {
     margin-bottom: 0;
 }
 
+.fusion-options .fusion-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+    cursor: pointer;
+}
+
+.fusion-options .fusion-checkbox input {
+    width: auto;
+    margin: 0;
+}
+
+.fusion-block {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    font-size: 0.92em;
+}
+
+.fusion-block > summary {
+    cursor: pointer;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.fusion-meta {
+    margin: 8px 0;
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+.fusion-analysis-section,
+.fusion-panel-section {
+    margin-top: 10px;
+}
+
+.fusion-analysis-section h4,
+.fusion-panel-section h4 {
+    margin: 0 0 4px;
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.7;
+}
+
+.fusion-analysis-section ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.fusion-panel-item {
+    margin-top: 6px;
+    padding: 4px 0;
+    border-top: 1px solid var(--border);
+}
+
+.fusion-panel-item > summary {
+    cursor: pointer;
+}
+
+.fusion-panel-content {
+    margin-top: 6px;
+    line-height: 1.5;
+}
+
+.fusion-panel-content.muted {
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.fusion-panel-error {
+    margin-top: 6px;
+    color: var(--danger, #c0392b);
+}
+
 .playground-result h3 {
     margin: 0 0 10px;
     font-size: 1em;

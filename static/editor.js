@@ -28,6 +28,11 @@ document.addEventListener('DOMContentLoaded', function () {
     const editorContainerOpenRouterFree = document.getElementById('editor-container-openrouter-free');
     const editorContainerFallbackEval = document.getElementById('editor-container-fallback-eval');
     const editorContainerProviders = document.getElementById('editor-container-providers');
+    const tabFusion = document.getElementById('tabFusion');
+    const editorContainerFusion = document.getElementById('editor-container-fusion');
+    const addFusionButton = document.getElementById('addFusionButton');
+    const fusionList = document.getElementById('fusionList');
+    const fusionEmptyState = document.getElementById('fusionEmptyState');
     const addProviderButton = document.getElementById('addProviderButton');
     const providersList = document.getElementById('providersList');
     const providersEmptyState = document.getElementById('providersEmptyState');
@@ -84,6 +89,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let originalAudioContent = null;
     let originalWebContent = null;
     let originalProvidersContent = null;
+    let originalFusionContent = null;
     let availableProviders = [];
     let embeddingRules = [];
     let rerankRules = [];
@@ -179,15 +185,29 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         }
 
-        const formattedModels = unavailableModels.map(({ provider, model, gatewayModel }) => {
-            const target = provider
-                ? `'${model}' for provider '${provider}'`
-                : `'${model}'`;
-            return gatewayModel
-                ? `${target} in gateway model '${gatewayModel}'`
-                : target;
+        const formatTarget = ({ provider, model }) =>
+            (provider ? `${provider}.${model}` : `${model}`);
+
+        // Group by gateway model so the message reports which gateway model each
+        // unavailable fallback belongs to (e.g. "llmgateway/high: z.ai.glm-5.1")
+        // instead of repeating the same provider/model pair for every row.
+        const groups = new Map();
+        unavailableModels.forEach((details) => {
+            const gatewayModel = (details.gatewayModel || '').trim();
+            if (!groups.has(gatewayModel)) {
+                groups.set(gatewayModel, new Set());
+            }
+            groups.get(gatewayModel).add(formatTarget(details));
         });
-        return `Unavailable fallback models: ${formattedModels.join(', ')}.`;
+
+        const formattedGroups = Array.from(groups.entries()).map(([gatewayModel, targets]) => {
+            const models = Array.from(targets).join(', ');
+            return gatewayModel
+                ? `gateway model '${gatewayModel}': ${models}`
+                : models;
+        });
+
+        return `Unavailable fallback models — ${formattedGroups.join('; ')}.`;
     }
 
     function stableSerialize(value) {
@@ -403,6 +423,8 @@ document.addEventListener('DOMContentLoaded', function () {
             saveButton.textContent = 'Save Audio Routes';
         } else if (activeEditor === 'web') {
             saveButton.textContent = 'Save Web Services';
+        } else if (activeEditor === 'fusion') {
+            saveButton.textContent = 'Save Fusion Models';
         } else if (activeEditor === 'openrouter-free') {
             saveButton.textContent = '';
         } else if (activeEditor === 'fallback-eval') {
@@ -458,6 +480,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function refreshProvidersEmptyState() {
         providersEmptyState.hidden = providersList.children.length !== 0;
+    }
+
+    function refreshFusionEmptyState() {
+        fusionEmptyState.hidden = fusionList.children.length !== 0;
     }
 
     function createFieldGroup(labelText, inputElement, className) {
@@ -2143,6 +2169,506 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (error) {
             console.error('Error saving Rerank:', error);
             renderMessage('error', `Error saving Rerank: ${error.message}`);
+        } finally {
+            saveButton.disabled = false;
+        }
+    }
+
+    const FUSION_PANEL_MAX = 8;
+
+    function buildFusionMemberRow(initialData, options) {
+        options = options || {};
+        const data = initialData || {};
+        const row = document.createElement('div');
+        row.className = 'fallback-row fusion-member-row';
+
+        const fieldsGrid = document.createElement('div');
+        fieldsGrid.className = 'fallback-row-grid';
+
+        const providerSelect = createSelect('provider-select');
+        setSelectOptions(providerSelect, availableProviders, 'Choose a provider', data.provider || '');
+
+        const modelInput = createTextInput('model-input', 'Choose or enter model');
+        modelInput.value = data.model || '';
+        const dataListId = `fusion-models-list-${Math.random().toString(36).substr(2, 9)}`;
+        modelInput.setAttribute('list', dataListId);
+        const dataList = document.createElement('datalist');
+        dataList.id = dataListId;
+        row.appendChild(dataList);
+
+        const temperatureInput = document.createElement('input');
+        temperatureInput.type = 'number';
+        temperatureInput.className = 'fusion-temperature-input';
+        temperatureInput.min = '0';
+        temperatureInput.max = '2';
+        temperatureInput.step = '0.1';
+        temperatureInput.placeholder = 'default';
+        if (data.temperature !== undefined && data.temperature !== null) {
+            temperatureInput.value = data.temperature;
+        }
+
+        const maxTokensInput = createNumberInput('fusion-max-tokens-input', 'default');
+        if (data.max_completion_tokens !== undefined && data.max_completion_tokens !== null) {
+            maxTokensInput.value = data.max_completion_tokens;
+        }
+
+        const reasoningInput = createTextarea('fusion-reasoning-input', '{"effort": "medium"}');
+        reasoningInput.value = data.reasoning ? normalizeObjectTextarea(data.reasoning) : '';
+
+        fieldsGrid.appendChild(createFieldGroup('Provider', providerSelect, 'provider-field'));
+        fieldsGrid.appendChild(createFieldGroup('Model', modelInput, 'model-field'));
+        fieldsGrid.appendChild(createFieldGroup('Temperature', temperatureInput));
+
+        const modelStatus = document.createElement('div');
+        modelStatus.className = 'model-status';
+        modelStatus.dataset.state = 'idle';
+
+        const advancedDetails = document.createElement('details');
+        advancedDetails.className = 'advanced-options';
+        const advancedSummary = document.createElement('summary');
+        advancedSummary.textContent = 'Advanced options';
+        advancedDetails.appendChild(advancedSummary);
+        const advancedGrid = document.createElement('div');
+        advancedGrid.className = 'advanced-grid';
+        advancedGrid.appendChild(createFieldGroup('Max Completion Tokens', maxTokensInput));
+        advancedGrid.appendChild(createFieldGroup('Reasoning (JSON)', reasoningInput, 'textarea-group'));
+        advancedDetails.appendChild(advancedGrid);
+
+        row.appendChild(fieldsGrid);
+        row.appendChild(modelStatus);
+        row.appendChild(advancedDetails);
+
+        if (options.removable) {
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.className = 'icon-button danger-button';
+            removeButton.textContent = 'Remove Panel Model';
+            removeButton.addEventListener('click', () => {
+                row.remove();
+            });
+            const rowActions = document.createElement('div');
+            rowActions.className = 'fallback-row-actions';
+            rowActions.appendChild(removeButton);
+            row.appendChild(rowActions);
+        }
+
+        const refreshModels = async (providerName) => {
+            if (!providerName) {
+                dataList.textContent = '';
+                return;
+            }
+            modelStatus.textContent = 'Loading models...';
+            modelStatus.dataset.state = 'loading';
+            try {
+                const models = await getProviderModels(providerName);
+                dataList.textContent = '';
+                models.forEach(modelId => {
+                    const option = document.createElement('option');
+                    option.value = modelId;
+                    dataList.appendChild(option);
+                });
+                modelStatus.textContent = `${models.length} models loaded for ${providerName}.`;
+                modelStatus.dataset.state = 'success';
+            } catch (error) {
+                modelStatus.textContent = `Could not load models: ${error.message}`;
+                modelStatus.dataset.state = 'error';
+            }
+        };
+        providerSelect.addEventListener('change', () => {
+            refreshModels(providerSelect.value);
+        });
+        row._modelLoadPromise = refreshModels(data.provider || '');
+        return row;
+    }
+
+    function buildFusionSectionHeading(text) {
+        const heading = document.createElement('div');
+        heading.className = 'fusion-section-heading';
+        heading.textContent = text;
+        return heading;
+    }
+
+    function buildFusionWebToolsSection(initialWebTools) {
+        const data = initialWebTools || null;
+        const wrap = document.createElement('div');
+        wrap.className = 'fusion-web-tools';
+
+        const enableLabel = document.createElement('label');
+        enableLabel.className = 'field-group fusion-include-details';
+        const enableCheckbox = document.createElement('input');
+        enableCheckbox.type = 'checkbox';
+        enableCheckbox.className = 'fusion-web-tools-enabled';
+        enableCheckbox.checked = Boolean(data);
+        const enableText = document.createElement('span');
+        enableText.className = 'field-label';
+        enableText.textContent = 'Give panel models web_search / web_fetch tools';
+        enableLabel.appendChild(enableCheckbox);
+        enableLabel.appendChild(enableText);
+
+        const fields = document.createElement('div');
+        fields.className = 'fusion-web-tools-fields fallback-list';
+
+        const searchModelInput = createTextInput('fusion-web-search-model', 'gateway web_search model (e.g. llmgateway/web-search)');
+        searchModelInput.value = data && data.search_model ? data.search_model : '';
+        const readModelInput = createTextInput('fusion-web-read-model', 'gateway web_read model (optional — enables web_fetch)');
+        readModelInput.value = data && data.read_model ? data.read_model : '';
+        const maxToolCallsInput = createNumberInput('fusion-web-max-tool-calls', '6');
+        maxToolCallsInput.value = data && data.max_tool_calls != null ? data.max_tool_calls : '';
+        const maxIterationsInput = createNumberInput('fusion-web-max-iterations', '4');
+        maxIterationsInput.value = data && data.max_iterations != null ? data.max_iterations : '';
+        const maxResultsInput = createNumberInput('fusion-web-max-results', '5');
+        maxResultsInput.value = data && data.max_results != null ? data.max_results : '';
+
+        fields.appendChild(createFieldGroup('Search model (required)', searchModelInput));
+        fields.appendChild(createFieldGroup('Read model (optional)', readModelInput));
+        fields.appendChild(createFieldGroup('Max tool calls per panel model', maxToolCallsInput));
+        fields.appendChild(createFieldGroup('Max iterations per panel model', maxIterationsInput));
+        fields.appendChild(createFieldGroup('Max results per search', maxResultsInput));
+
+        const syncVisibility = () => {
+            fields.style.display = enableCheckbox.checked ? '' : 'none';
+        };
+        enableCheckbox.addEventListener('change', syncVisibility);
+        syncVisibility();
+
+        wrap.appendChild(enableLabel);
+        wrap.appendChild(fields);
+        return wrap;
+    }
+
+    function buildFusionCard(initialData) {
+        const data = initialData || {};
+        const card = document.createElement('section');
+        card.className = 'rule-card fusion-card';
+
+        const cardHeader = document.createElement('div');
+        cardHeader.className = 'rule-card-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'rule-card-title';
+        const gatewayModelInput = createTextInput('gateway-model-input', 'llmgateway/fusion-quality');
+        gatewayModelInput.value = data.gateway_model_name || '';
+        titleWrap.appendChild(createFieldGroup('Gateway Model Name', gatewayModelInput, 'gateway-model-field'));
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'icon-button danger-button';
+        removeButton.textContent = 'Remove Model';
+        removeButton.addEventListener('click', () => {
+            card.remove();
+            refreshFusionEmptyState();
+        });
+
+        const accordionToggle = document.createElement('button');
+        accordionToggle.type = 'button';
+        accordionToggle.className = 'accordion-toggle';
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20');
+        svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        const polyline = document.createElementNS(svgNS, 'polyline');
+        polyline.setAttribute('points', '6 9 12 15 18 9');
+        svg.appendChild(polyline);
+        accordionToggle.appendChild(svg);
+        accordionToggle.addEventListener('click', () => {
+            card.classList.toggle('collapsed');
+        });
+
+        const headerLeft = document.createElement('div');
+        headerLeft.className = 'rule-card-header-left';
+        headerLeft.appendChild(accordionToggle);
+        headerLeft.appendChild(titleWrap);
+        cardHeader.appendChild(headerLeft);
+        cardHeader.appendChild(removeButton);
+
+        const cardBody = document.createElement('div');
+        cardBody.className = 'rule-card-body';
+
+        const modelLoadPromises = [];
+
+        const mainList = document.createElement('div');
+        mainList.className = 'fallback-list fusion-main-list';
+        const mainRow = buildFusionMemberRow(data.main_model || {}, { removable: false });
+        mainList.appendChild(mainRow);
+        modelLoadPromises.push(mainRow._modelLoadPromise);
+
+        const judgeList = document.createElement('div');
+        judgeList.className = 'fallback-list fusion-judge-list';
+        const judgeRow = buildFusionMemberRow(data.judge_model || {}, { removable: false });
+        judgeList.appendChild(judgeRow);
+        modelLoadPromises.push(judgeRow._modelLoadPromise);
+
+        const panelListEl = document.createElement('div');
+        panelListEl.className = 'fallback-list fusion-panel-list';
+
+        const addPanelButton = document.createElement('button');
+        addPanelButton.type = 'button';
+        addPanelButton.className = 'secondary-button add-fallback-button';
+        addPanelButton.textContent = 'Add Panel Model';
+        addPanelButton.addEventListener('click', () => {
+            if (panelListEl.children.length >= FUSION_PANEL_MAX) {
+                renderMessage('error', `A Fusion panel can have at most ${FUSION_PANEL_MAX} models.`);
+                return;
+            }
+            panelListEl.appendChild(buildFusionMemberRow({}, { removable: true }));
+        });
+
+        const panelMembers = Array.isArray(data.panel) ? data.panel : [];
+        panelMembers.forEach(member => {
+            const memberRow = buildFusionMemberRow(member, { removable: true });
+            panelListEl.appendChild(memberRow);
+            modelLoadPromises.push(memberRow._modelLoadPromise);
+        });
+        if (panelMembers.length === 0) {
+            const memberRow = buildFusionMemberRow({}, { removable: true });
+            panelListEl.appendChild(memberRow);
+            modelLoadPromises.push(memberRow._modelLoadPromise);
+        }
+
+        const includeDetailsLabel = document.createElement('label');
+        includeDetailsLabel.className = 'field-group fusion-include-details';
+        const includeDetailsCheckbox = document.createElement('input');
+        includeDetailsCheckbox.type = 'checkbox';
+        includeDetailsCheckbox.className = 'fusion-include-details-input';
+        includeDetailsCheckbox.checked = data.include_details_default !== false;
+        const includeDetailsText = document.createElement('span');
+        includeDetailsText.className = 'field-label';
+        includeDetailsText.textContent = 'Return full panel answers and analysis by default';
+        includeDetailsLabel.appendChild(includeDetailsCheckbox);
+        includeDetailsLabel.appendChild(includeDetailsText);
+
+        cardBody.appendChild(buildFusionSectionHeading('Main model (writes the final answer)'));
+        cardBody.appendChild(mainList);
+        cardBody.appendChild(buildFusionSectionHeading('Judge model (structured analysis — defaults to main if left empty)'));
+        cardBody.appendChild(judgeList);
+        cardBody.appendChild(buildFusionSectionHeading('Panel (1–8 models answering in parallel)'));
+        cardBody.appendChild(panelListEl);
+        cardBody.appendChild(addPanelButton);
+        cardBody.appendChild(includeDetailsLabel);
+        cardBody.appendChild(buildFusionSectionHeading('Web tools for the panel (optional)'));
+        cardBody.appendChild(buildFusionWebToolsSection(data.web_tools));
+
+        card.classList.add('collapsed');
+        card.appendChild(cardHeader);
+        card.appendChild(cardBody);
+
+        card._modelLoadPromises = modelLoadPromises;
+        return card;
+    }
+
+    function normalizeFusionMemberRow(row, settings) {
+        const required = settings.required;
+        const roleLabel = settings.roleLabel;
+        const providerSelect = row.querySelector('.provider-select');
+        const modelInput = row.querySelector('.model-input');
+        const temperatureInput = row.querySelector('.fusion-temperature-input');
+        const maxTokensInput = row.querySelector('.fusion-max-tokens-input');
+        const reasoningInput = row.querySelector('.fusion-reasoning-input');
+
+        const provider = providerSelect.value.trim();
+        const model = modelInput.value.trim();
+
+        if (!provider && !model) {
+            if (required) {
+                throw new Error(`${roleLabel} requires a provider and a model.`);
+            }
+            return null;
+        }
+        if (!provider) {
+            throw new Error(`${roleLabel} must have a provider selected.`);
+        }
+        if (!model) {
+            throw new Error(`${roleLabel} must have a model for provider '${provider}'.`);
+        }
+
+        const member = { provider, model };
+        const temperatureRaw = temperatureInput.value.trim();
+        if (temperatureRaw !== '') {
+            const temperature = Number(temperatureRaw);
+            if (Number.isNaN(temperature)) {
+                throw new Error(`${roleLabel} has an invalid temperature.`);
+            }
+            member.temperature = temperature;
+        }
+        const maxTokensRaw = maxTokensInput.value.trim();
+        if (maxTokensRaw !== '') {
+            const maxTokens = parseInt(maxTokensRaw, 10);
+            if (Number.isNaN(maxTokens)) {
+                throw new Error(`${roleLabel} has invalid max completion tokens.`);
+            }
+            member.max_completion_tokens = maxTokens;
+        }
+        const reasoningRaw = reasoningInput.value.trim();
+        if (reasoningRaw !== '') {
+            member.reasoning = parseObjectTextarea(reasoningInput.value, `${roleLabel} reasoning`);
+        }
+        return member;
+    }
+
+    function normalizeFusionCardForSave(card) {
+        const gatewayModelInput = card.querySelector('.gateway-model-input');
+        const gatewayModelName = gatewayModelInput.value.trim();
+        if (!gatewayModelName) {
+            throw new Error('Each fusion model must have a gateway model name.');
+        }
+
+        const mainRow = card.querySelector('.fusion-main-list > .fusion-member-row');
+        const main_model = normalizeFusionMemberRow(mainRow, {
+            required: true,
+            roleLabel: `Fusion '${gatewayModelName}' main model`,
+        });
+
+        const judgeRow = card.querySelector('.fusion-judge-list > .fusion-member-row');
+        const judge_model = normalizeFusionMemberRow(judgeRow, {
+            required: false,
+            roleLabel: `Fusion '${gatewayModelName}' judge model`,
+        });
+
+        const panelRows = Array.from(card.querySelectorAll('.fusion-panel-list > .fusion-member-row'));
+        const panel = panelRows
+            .map(rowEl => normalizeFusionMemberRow(rowEl, {
+                required: true,
+                roleLabel: `Fusion '${gatewayModelName}' panel model`,
+            }))
+            .filter(Boolean);
+        if (panel.length === 0) {
+            throw new Error(`Fusion model '${gatewayModelName}' must have at least one panel model.`);
+        }
+        if (panel.length > FUSION_PANEL_MAX) {
+            throw new Error(`Fusion model '${gatewayModelName}' can have at most ${FUSION_PANEL_MAX} panel models.`);
+        }
+
+        const includeDetailsCheckbox = card.querySelector('.fusion-include-details-input');
+        const rule = {
+            gateway_model_name: gatewayModelName,
+            panel,
+            main_model,
+            include_details_default: includeDetailsCheckbox ? includeDetailsCheckbox.checked : true,
+        };
+        if (judge_model) {
+            rule.judge_model = judge_model;
+        }
+
+        const webToolsEnabled = card.querySelector('.fusion-web-tools-enabled');
+        if (webToolsEnabled && webToolsEnabled.checked) {
+            const searchModel = card.querySelector('.fusion-web-search-model').value.trim();
+            if (!searchModel) {
+                throw new Error(`Fusion model '${gatewayModelName}' web tools require a search model.`);
+            }
+            const webTools = { search_model: searchModel };
+            const readModel = card.querySelector('.fusion-web-read-model').value.trim();
+            if (readModel) {
+                webTools.read_model = readModel;
+            }
+            const numericFields = [
+                ['.fusion-web-max-tool-calls', 'max_tool_calls', 'max tool calls'],
+                ['.fusion-web-max-iterations', 'max_iterations', 'max iterations'],
+                ['.fusion-web-max-results', 'max_results', 'max results'],
+            ];
+            numericFields.forEach(([selector, key, label]) => {
+                const raw = card.querySelector(selector).value.trim();
+                if (raw === '') {
+                    return;
+                }
+                const value = parseInt(raw, 10);
+                if (Number.isNaN(value) || value <= 0) {
+                    throw new Error(`Fusion model '${gatewayModelName}' ${label} must be a positive integer.`);
+                }
+                webTools[key] = value;
+            });
+            rule.web_tools = webTools;
+        }
+        return rule;
+    }
+
+    function getFusionPayloadForSave() {
+        const rules = Array.from(fusionList.querySelectorAll('.fusion-card')).map(normalizeFusionCardForSave);
+        return { rules };
+    }
+
+    function getNormalizedFusionContent() {
+        return stableSerialize(getFusionPayloadForSave());
+    }
+
+    async function renderFusion(rules) {
+        fusionList.textContent = '';
+        const modelLoadPromises = [];
+        if (Array.isArray(rules)) {
+            rules.forEach(rule => {
+                const card = buildFusionCard(rule);
+                fusionList.appendChild(card);
+                modelLoadPromises.push(...card._modelLoadPromises);
+            });
+        }
+        refreshFusionEmptyState();
+        await Promise.all(modelLoadPromises);
+    }
+
+    async function loadFusionEditor() {
+        try {
+            const response = await apiFetch('/v1/config/fusion-rules/structured');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            if (Array.isArray(payload.providers)) {
+                availableProviders = payload.providers;
+            }
+            await renderFusion(payload.rules || []);
+            originalFusionContent = getNormalizedFusionContent();
+            renderMessage('success', 'Fusion Models loaded successfully.');
+        } catch (error) {
+            console.error('Error fetching Fusion Models:', error);
+            renderErrorWithDetails('Error loading Fusion Models:', error.message);
+            fusionList.textContent = '';
+            refreshFusionEmptyState();
+            originalFusionContent = stableSerialize({ rules: [] });
+        }
+    }
+
+    async function saveFusion() {
+        let payload;
+        saveButton.disabled = true;
+        renderMessage('info', 'Saving Fusion Models...');
+        try {
+            payload = getFusionPayloadForSave();
+            const response = await apiFetch('/v1/config/fusion-rules/structured', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                if (body.detail && Array.isArray(body.detail.errors)) {
+                    const errorDetails = body.detail.errors.map(err => {
+                        const loc = err.loc ? err.loc.join(' -> ') : 'N/A';
+                        return `- Location: ${loc}, Message: ${err.msg}, Type: ${err.type}`;
+                    }).join('\n');
+                    renderErrorWithDetails(
+                        `Validation Error for Fusion (HTTP ${response.status}):`,
+                        `${body.detail.message || 'Validation Error'}\n${errorDetails}`
+                    );
+                } else {
+                    renderErrorWithDetails(
+                        `Error saving Fusion (HTTP ${response.status}):`,
+                        body.detail || 'Unknown error'
+                    );
+                }
+                return;
+            }
+            originalFusionContent = stableSerialize(payload);
+            renderMessage('success', body.message || 'Fusion Models updated successfully.');
+        } catch (error) {
+            console.error('Error saving Fusion:', error);
+            renderMessage('error', `Error saving Fusion: ${error.message}`);
         } finally {
             saveButton.disabled = false;
         }
@@ -4297,6 +4823,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 || originalAudioContent !== null
                 || originalWebContent !== null
                 || originalProvidersContent !== null
+                || originalFusionContent !== null
             )
         ) {
             return;
@@ -4359,6 +4886,14 @@ document.addEventListener('DOMContentLoaded', function () {
             } catch (error) {
                 hasUnsavedChanges = true;
             }
+        } else if (activeEditor === 'fusion' && originalFusionContent !== null) {
+            try {
+                if (getNormalizedFusionContent() !== originalFusionContent) {
+                    hasUnsavedChanges = true;
+                }
+            } catch (error) {
+                hasUnsavedChanges = true;
+            }
         }
 
         if (hasUnsavedChanges) {
@@ -4375,6 +4910,9 @@ document.addEventListener('DOMContentLoaded', function () {
         editorContainerOpenRouterFree.style.display = 'none';
         editorContainerFallbackEval.classList.remove('active');
         editorContainerFallbackEval.style.display = 'none';
+        tabFusion.classList.remove('active');
+        editorContainerFusion.classList.remove('active');
+        editorContainerFusion.style.display = 'none';
 
         if (tabName === 'rules') {
             tabRules.classList.add('active');
@@ -4608,6 +5146,35 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerProviders.classList.add('active');
             editorContainerProviders.style.display = 'flex';
             loadProvidersEditor();
+        } else if (tabName === 'fusion') {
+            tabRules.classList.remove('active');
+            tabEmbeddings.classList.remove('active');
+            tabRerank.classList.remove('active');
+            tabImages.classList.remove('active');
+            tabAudio.classList.remove('active');
+            tabWeb.classList.remove('active');
+            tabFallbackEval.classList.remove('active');
+            tabProviders.classList.remove('active');
+            tabFusion.classList.add('active');
+            editorContainerRules.classList.remove('active');
+            editorContainerRules.style.display = 'none';
+            editorContainerEmbeddings.classList.remove('active');
+            editorContainerEmbeddings.style.display = 'none';
+            editorContainerRerank.classList.remove('active');
+            editorContainerRerank.style.display = 'none';
+            editorContainerImages.classList.remove('active');
+            editorContainerImages.style.display = 'none';
+            editorContainerAudio.classList.remove('active');
+            editorContainerAudio.style.display = 'none';
+            editorContainerWeb.classList.remove('active');
+            editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
+            editorContainerProviders.classList.remove('active');
+            editorContainerProviders.style.display = 'none';
+            editorContainerFusion.classList.add('active');
+            editorContainerFusion.style.display = 'flex';
+            loadFusionEditor();
         }
     }
 
@@ -4620,11 +5187,18 @@ document.addEventListener('DOMContentLoaded', function () {
     tabOpenRouterFree.addEventListener('click', () => switchTab('openrouter-free'));
     tabFallbackEval.addEventListener('click', () => switchTab('fallback-eval'));
     tabProviders.addEventListener('click', () => switchTab('providers'));
+    tabFusion.addEventListener('click', () => switchTab('fusion'));
     addProviderButton.addEventListener('click', () => {
         const providerCard = buildProviderCard({});
         providerCard.classList.remove('collapsed');
         providersList.appendChild(providerCard);
         refreshProvidersEmptyState();
+    });
+    addFusionButton.addEventListener('click', () => {
+        const fusionCard = buildFusionCard({});
+        fusionCard.classList.remove('collapsed');
+        fusionList.appendChild(fusionCard);
+        refreshFusionEmptyState();
     });
     addRuleButton.addEventListener('click', () => {
         const ruleCard = buildRuleCard({});
@@ -4751,6 +5325,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (activeEditor === 'providers') {
             saveProviders();
+            return;
+        }
+
+        if (activeEditor === 'fusion') {
+            saveFusion();
             return;
         }
 

@@ -108,3 +108,4 @@ cython_debug/
 models_fallback_rules.mine.json
 model_rotation.sqlite
 *:Zone.Identifier
+/scripts/fix_config_perms.sh

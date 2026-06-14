@@ -78,6 +78,12 @@
                         <label for="chatModel">Gateway model</label>
                         <select id="chatModel" name="model" required></select>
                     </div>
+                    <div class="field-group fusion-options" id="chatFusionOptions" hidden>
+                        <label class="fusion-checkbox">
+                            <input type="checkbox" id="chatFusionDetails" checked>
+                            <span>Fusion: include panel answers &amp; analysis (<code>include_details</code>)</span>
+                        </label>
+                    </div>
                     <div class="field-group">
                         <label for="simpleChatInput">Message</label>
                         <textarea id="simpleChatInput" name="message" rows="4" required></textarea>

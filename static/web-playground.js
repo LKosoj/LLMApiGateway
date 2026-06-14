@@ -37,6 +37,7 @@
     const VOICE_CACHE = new Map();
     const CHAT_CONTEXT_LIMIT = 20;
     let simpleChatMessages = [];
+    let fusionModelNames = new Set();
     const { apiFetch } = window.gatewayAuth;
 
     function activateSection(name) {
@@ -73,7 +74,7 @@
         return response.json();
     }
 
-    function populateSelect(select, models) {
+    function populateSelect(select, models, fusionSet) {
         select.innerHTML = "";
         if (!models || models.length === 0) {
             const opt = document.createElement("option");
@@ -89,7 +90,9 @@
         models.forEach((name) => {
             const opt = document.createElement("option");
             opt.value = name;
-            opt.textContent = name;
+            const isFusion = fusionSet && fusionSet.has(name);
+            opt.textContent = isFusion ? `${name} · Fusion` : name;
+            if (isFusion) opt.dataset.fusion = "true";
             select.appendChild(opt);
         });
     }
@@ -320,14 +323,87 @@
             const content = role === "assistant"
                 ? renderMarkdown(message.content || "")
                 : `<p>${escapeHtml(message.content || "")}</p>`;
+            const fusionBlock = role === "assistant" && message.fusion
+                ? renderFusionBlock(message.fusion)
+                : "";
             return `
                 <article class="chat-message ${role}">
                     <div class="chat-role">${role === "assistant" ? "Assistant" : "User"}</div>
                     <div class="chat-content">${content}</div>
+                    ${fusionBlock}
                 </article>
             `;
         }).join("");
         transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    function renderFusionAttribution(member) {
+        if (!member || typeof member !== "object") return "";
+        const provider = member.provider || "?";
+        const model = member.model || "?";
+        return `${escapeHtml(String(provider))}/${escapeHtml(String(model))}`;
+    }
+
+    function renderFusionList(title, values) {
+        if (!Array.isArray(values) || values.length === 0) return "";
+        const items = values.map((value) => `<li>${escapeHtml(String(value))}</li>`).join("");
+        return `<div class="fusion-analysis-section"><h4>${escapeHtml(title)}</h4><ul>${items}</ul></div>`;
+    }
+
+    function renderFusionAnalysis(analysis) {
+        if (!analysis || typeof analysis !== "object") return "";
+        if (typeof analysis.raw === "string") {
+            return `<div class="fusion-analysis-section"><h4>Analysis (raw)</h4><pre class="raw-json">${escapeHtml(analysis.raw)}</pre></div>`;
+        }
+        if (typeof analysis.error === "string") {
+            return `<div class="fusion-analysis-section"><h4>Analysis unavailable</h4><p>${escapeHtml(analysis.error)}</p></div>`;
+        }
+        const insights = Array.isArray(analysis.per_model_insights)
+            ? analysis.per_model_insights
+                .map((item) => (item && typeof item === "object"
+                    ? `${escapeHtml(String(item.model || "?"))}: ${escapeHtml(String(item.insight || ""))}`
+                    : ""))
+                .filter(Boolean)
+            : [];
+        return [
+            renderFusionList("Agreements", analysis.agreements),
+            renderFusionList("Disputes", analysis.disputes),
+            renderFusionList("Per-model insights", insights),
+            renderFusionList("Blind spots", analysis.blind_spots),
+        ].join("");
+    }
+
+    function renderFusionPanel(panel) {
+        if (!Array.isArray(panel) || panel.length === 0) return "";
+        const rows = panel.map((member, index) => {
+            if (!member || typeof member !== "object") return "";
+            const label = `Model ${index + 1} (${renderFusionAttribution(member)})`;
+            let body;
+            if (typeof member.error === "string") {
+                body = `<p class="fusion-panel-error">Error: ${escapeHtml(member.error)}</p>`;
+            } else if (typeof member.content === "string") {
+                body = `<div class="fusion-panel-content">${renderMarkdown(member.content)}</div>`;
+            } else {
+                body = `<p class="fusion-panel-content muted">(answer hidden — enable include_details)</p>`;
+            }
+            return `<details class="fusion-panel-item"><summary>${label}</summary>${body}</details>`;
+        }).join("");
+        return `<div class="fusion-panel-section"><h4>Panel answers</h4>${rows}</div>`;
+    }
+
+    function renderFusionBlock(fusion) {
+        if (!fusion || typeof fusion !== "object") return "";
+        const attribution = `Main: ${renderFusionAttribution(fusion.main)} · Judge: ${renderFusionAttribution(fusion.judge)}`;
+        const analysis = renderFusionAnalysis(fusion.analysis);
+        const panel = renderFusionPanel(fusion.panel);
+        return `
+            <details class="fusion-block">
+                <summary>Fusion ensemble · panel &amp; analysis</summary>
+                <div class="fusion-meta">${attribution}</div>
+                ${analysis}
+                ${panel}
+            </details>
+        `;
     }
 
     function extractAssistantMessage(payload) {
@@ -776,14 +852,21 @@
         setStatus("chat", "Running…", false);
         const startedAt = performance.now();
         try {
+            // Only standard {role, content} fields go upstream; any locally
+            // attached Fusion render data is stripped here.
+            const requestBody = {
+                model,
+                messages: requestMessages.map((m) => ({role: m.role, content: m.content})),
+                stream: false,
+            };
+            if (fusionModelNames.has(model)) {
+                const detailsCheckbox = document.getElementById("chatFusionDetails");
+                requestBody.fusion = {include_details: detailsCheckbox ? detailsCheckbox.checked : true};
+            }
             const response = await apiFetch("/v1/chat/completions", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    model,
-                    messages: requestMessages,
-                    stream: false,
-                }),
+                body: JSON.stringify(requestBody),
             });
             const text = await response.text();
             let payload;
@@ -799,9 +882,13 @@
             }
 
             const assistantContent = extractAssistantMessage(payload);
+            const assistantMessage = {role: "assistant", content: assistantContent};
+            if (payload && payload.fusion && typeof payload.fusion === "object") {
+                assistantMessage.fusion = payload.fusion;
+            }
             simpleChatMessages = trimSimpleChatMessages([
                 ...requestMessages,
-                {role: "assistant", content: assistantContent},
+                assistantMessage,
             ]);
             if (input) input.value = "";
             renderSimpleChatTranscript();
@@ -995,10 +1082,19 @@
         });
     }
 
+    function syncChatFusionOptions() {
+        const select = document.getElementById("chatModel");
+        const options = document.getElementById("chatFusionOptions");
+        if (!select || !options) return;
+        options.hidden = !fusionModelNames.has(select.value);
+    }
+
     function wireSimpleChatForm() {
         const form = document.getElementById("simpleChatForm");
         if (!form) return;
         const resetButton = document.getElementById("resetSimpleChatButton");
+        const modelSelect = document.getElementById("chatModel");
+        if (modelSelect) modelSelect.addEventListener("change", syncChatFusionOptions);
         form.addEventListener("submit", (event) => {
             event.preventDefault();
             submitSimpleChatRequest(form);
@@ -1057,10 +1153,12 @@
         wireMultipartForm("image-edit", "imageEditForm", "/v1/images/edits", (payload) => renderImageOperationResult(payload, "Edited images"));
         try {
             const models = await loadModels();
+            fusionModelNames = new Set(models.fusion || []);
             MODEL_SELECTS.forEach(({id, section}) => {
                 const select = document.getElementById(id);
-                if (select) populateSelect(select, models[section] || []);
+                if (select) populateSelect(select, models[section] || [], section === "chat" ? fusionModelNames : null);
             });
+            syncChatFusionOptions();
             refreshAudioVoiceSelect();
         } catch (err) {
             STATUS_KINDS.forEach((kind) => {

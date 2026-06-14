@@ -356,6 +356,11 @@ async def get_models(request: Request):
     # 1. Add models defined in the gateway's fallback rules
     for model_name in fallback_rules.keys():
         _add_capability(gateway_models, model_name, "chat")
+    # Fusion ensemble models are callable as regular chat models.
+    fusion_rules = getattr(config_loader_instance, "fusion_rules", None)
+    if isinstance(fusion_rules, dict):
+        for model_name in fusion_rules.keys():
+            _add_capability(gateway_models, model_name, "chat")
     _add_gateway_operation_models(gateway_models, operation_rules)
 
     # 2. Fetch and add models from the fallback provider

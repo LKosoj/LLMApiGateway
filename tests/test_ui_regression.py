@@ -359,20 +359,19 @@ def test_fallback_rules_loads_with_unavailable_models_highlighted(page: Page, se
 
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded with warnings")
     expect(page.locator("#messageArea")).to_contain_text("Unavailable fallback models")
-    expect(page.locator("#messageArea")).to_contain_text("missing-model-1")
-    expect(page.locator("#messageArea")).to_contain_text("missing-model-2")
-    expect(page.locator("#messageArea")).to_contain_text("openai")
-    expect(page.locator("#messageArea")).to_contain_text("my-gateway-model")
+    # Unavailable fallbacks are grouped under their gateway model as provider.model.
+    expect(page.locator("#messageArea")).to_contain_text("gateway model 'my-gateway-model'")
+    expect(page.locator("#messageArea")).to_contain_text("openai.missing-model-1")
+    expect(page.locator("#messageArea")).to_contain_text("openai.missing-model-2")
     expect(page.locator(".gateway-model-input")).to_have_value("my-gateway-model")
     expect(page.locator(".model-status").first).to_contain_text("missing-model-1")
     expect(page.locator(".model-status").nth(1)).to_contain_text("missing-model-2")
 
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("Cannot save Fallback Rules")
-    expect(page.locator("#messageArea")).to_contain_text("Unavailable fallback models")
-    expect(page.locator("#messageArea")).to_contain_text("missing-model-1")
-    expect(page.locator("#messageArea")).to_contain_text("missing-model-2")
-    expect(page.locator("#messageArea")).to_contain_text("my-gateway-model")
+    expect(page.locator("#messageArea")).to_contain_text("gateway model 'my-gateway-model'")
+    expect(page.locator("#messageArea")).to_contain_text("openai.missing-model-1")
+    expect(page.locator("#messageArea")).to_contain_text("openai.missing-model-2")
 
 
 def test_fallback_rules_unavailable_model_can_be_replaced(page: Page, server):
@@ -424,6 +423,54 @@ def test_fallback_rules_unavailable_model_can_be_replaced(page: Page, server):
     # ...so the save is no longer blocked and succeeds.
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+
+def test_fallback_rules_unavailable_models_grouped_by_gateway_model(page: Page, server):
+    session = create_authenticated_session("test-key")
+    page.context.add_cookies(
+        [{"name": "llmgateway_session", "value": session, "url": server}]
+    )
+
+    # The same unavailable provider/model is referenced by two different gateway
+    # models; the warning must attribute it to each gateway model instead of
+    # repeating "z.ai.glm-5.1" without saying where it comes from.
+    page.route(
+        "**/v1/config/models-rules/structured",
+        lambda route: route.fulfill(
+            json={
+                "rules": [
+                    {
+                        "gateway_model_name": "llmgateway/high",
+                        "rotate_models": False,
+                        "fallback_models": [
+                            {"provider": "z.ai", "model": "glm-5.1"},
+                        ],
+                    },
+                    {
+                        "gateway_model_name": "llmgateway/low",
+                        "rotate_models": False,
+                        "fallback_models": [
+                            {"provider": "z.ai", "model": "glm-5.1"},
+                        ],
+                    },
+                ],
+                "providers": ["z.ai"],
+            }
+        ),
+    )
+    page.route(
+        "**/v1/config/providers/z.ai/models",
+        lambda route: route.fulfill(
+            json={"provider": "z.ai", "models": [{"id": "glm-4.6"}]}
+        ),
+    )
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+
+    message = page.locator("#messageArea")
+    expect(message).to_contain_text("Fallback Rules loaded with warnings")
+    expect(message).to_contain_text("gateway model 'llmgateway/high': z.ai.glm-5.1")
+    expect(message).to_contain_text("gateway model 'llmgateway/low': z.ai.glm-5.1")
 
 
 def test_usage_stats_page_loads(page: Page, server):

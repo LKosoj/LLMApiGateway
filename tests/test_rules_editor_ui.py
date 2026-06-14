@@ -12,7 +12,7 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "/v1/config/models-rules/structured" in content
     assert "/v1/config/providers/${encodeURIComponent(providerName)}/models" in content
     assert "Choose an available model for provider" in content
-    assert "Unavailable fallback models:" in content
+    assert "Unavailable fallback models —" in content
     assert "context_overflow_fallback" in content
     assert "Context Overflow Fallback" in content
     assert "Enable dedicated fallback for context overflow errors" in content

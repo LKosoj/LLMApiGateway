@@ -4,7 +4,7 @@
     "fallback_models": [
       {
         "provider": "z.ai",
-        "model": "glm-5.1",
+        "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
@@ -45,18 +45,21 @@
         "custom_headers": {}
       },
       {
+        "provider": "z.ai",
+        "model": "glm-5-turbo",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "OpenClaw-Gateway/1.0",
+          "Referer": "https://openclaw.ai"
+        }
+      },
+      {
         "provider": "openrouter",
         "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
         "retry_delay": 1,
         "retry_count": 1,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
-        "provider": "aitunnel",
-        "model": "deepseek-v4-flash",
-        "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
       },
@@ -69,13 +72,10 @@
       },
       {
         "provider": "aitunnel",
-        "model": "qwen3-235b-a22b-2507",
+        "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {
-          "User-Agent": "OpenClaw-Gateway/1.0",
-          "Referer": "https://openclaw.ai"
-        }
+        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {
@@ -130,13 +130,6 @@
     "gateway_model_name": "llmgateway/qwen3.5",
     "fallback_models": [
       {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "minimax",
         "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
@@ -145,13 +138,20 @@
       },
       {
         "provider": "z.ai",
-        "model": "glm-5.1",
+        "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
+      },
+      {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
       },
       {
         "provider": "gem",
@@ -163,7 +163,7 @@
     ],
     "context_overflow_fallback": {
       "provider": "aitunnel",
-      "model": "deepseek-v4-flash",
+      "model": "deepseek-v4-pro",
       "use_provider_order_as_fallback": false,
       "retry_delay": 1,
       "retry_count": 2,
@@ -178,6 +178,13 @@
   {
     "gateway_model_name": "llmgateway/big_context",
     "fallback_models": [
+      {
+        "provider": "z.ai",
+        "model": "glm-5.2",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
       {
         "provider": "aitunnel",
         "model": "deepseek-v4-pro",
@@ -223,6 +230,16 @@
         "custom_headers": {}
       },
       {
+        "provider": "z.ai",
+        "model": "glm-5.2",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "OpenClaw-Gateway/1.0",
+          "Referer": "https://openclaw.ai"
+        }
+      },
+      {
         "provider": "alibaba",
         "model": "qwen3.7-max",
         "use_provider_order_as_fallback": false,
@@ -237,16 +254,6 @@
           "reasoning_effort": "high"
         },
         "custom_headers": {}
-      },
-      {
-        "provider": "z.ai",
-        "model": "glm-5.1",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {
-          "User-Agent": "OpenClaw-Gateway/1.0",
-          "Referer": "https://openclaw.ai"
-        }
       }
     ],
     "context_overflow_fallback": {
@@ -316,21 +323,21 @@
         "custom_headers": {}
       },
       {
-        "provider": "gemini",
-        "model": "models/gemini-3.5-flash",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "z.ai",
-        "model": "glm-5.1",
+        "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
+      },
+      {
+        "provider": "gemini",
+        "model": "models/gemini-3.5-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
       },
       {
         "provider": "nvidia",
@@ -341,8 +348,8 @@
       }
     ],
     "context_overflow_fallback": {
-      "provider": "aitunnel",
-      "model": "deepseek-v4-pro",
+      "provider": "freemodel",
+      "model": "gpt-5.5",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}
@@ -390,7 +397,7 @@
       },
       {
         "provider": "z.ai",
-        "model": "glm-5.1",
+        "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -420,8 +427,8 @@
       }
     ],
     "context_overflow_fallback": {
-      "provider": "aitunnel",
-      "model": "deepseek-v4-flash",
+      "provider": "z.ai",
+      "model": "glm-5.2",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}
@@ -459,8 +466,8 @@
       }
     ],
     "context_overflow_fallback": {
-      "provider": "aitunnel",
-      "model": "deepseek-v4-flash",
+      "provider": "z.ai",
+      "model": "glm-5.2",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {}
