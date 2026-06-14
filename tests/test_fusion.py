@@ -1,4 +1,5 @@
 import json
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import main
 from llm_gateway_core.config.loader import ConfigLoader, FusionModelConfig, ProviderDetails
+from llm_gateway_core.services import fusion_ensemble
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
 from tests._async_compat import run_async
 
@@ -229,6 +231,92 @@ class FusionServiceTests(unittest.TestCase):
         errored = [entry for entry in panel if "error" in entry]
         self.assertEqual(len(errored), 1)
         self.assertEqual(errored[0]["model"], "m2")
+
+
+class FusionBaseContextTests(unittest.TestCase):
+    def _service(self):
+        config_loader = SimpleNamespace(
+            providers_config={
+                "p1": SimpleNamespace(baseUrl="https://p1.example", apikey="K", type="openai"),
+            }
+        )
+        return FusionEnsembleService(config_loader)
+
+    def _fusion_config(self, **overrides):
+        config = {
+            "panel": [
+                {"provider": "p1", "model": "m1"},
+                {"provider": "p1", "model": "m2"},
+            ],
+            "main_model": {"provider": "p1", "model": "main"},
+            "include_details_default": True,
+        }
+        config.update(overrides)
+        return config
+
+    def _run_capturing(self, fusion_config):
+        request = SimpleNamespace(state=SimpleNamespace())
+        records = []
+
+        async def recorder(client, url, headers, payload, is_streaming):
+            records.append(payload)
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=recorder,
+        ):
+            run_async(
+                self._service().run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=fusion_config,
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+        return records
+
+    def test_temporal_context_format_uses_injected_local_time(self):
+        moment = time.localtime(1600000000)
+        ctx = fusion_ensemble._temporal_context(moment)
+        expected = (
+            "Current date and time: "
+            f"{time.strftime('%Y-%m-%dT%H:%M %Z', moment).strip()} "
+            f"({time.strftime('%A', moment)})."
+        )
+        self.assertEqual(ctx, expected)
+
+    def test_temporal_context_injected_into_all_roles_without_web_hint(self):
+        records = self._run_capturing(self._fusion_config())
+        # Every member call (2 panel + judge + main) carries the date/time stamp.
+        self.assertEqual(len(records), 4)
+        for payload in records:
+            self.assertIn("Current date and time:", payload["messages"][0]["content"])
+        # No web tools → the recency cue must not appear anywhere.
+        self.assertNotIn("use web_search before answering", json.dumps(records))
+
+    def test_web_recency_hint_only_for_panel_when_web_tools_enabled(self):
+        config = self._fusion_config(web_tools={"search_model": "llmgateway/web-search"})
+        records = self._run_capturing(config)
+        panel_systems, judge_main_systems = [], []
+        for payload in records:
+            system = payload["messages"][0]["content"]
+            if "judge of a panel" in system or "lead model of a Fusion" in system:
+                judge_main_systems.append(system)
+            else:
+                panel_systems.append(system)
+        self.assertEqual(len(panel_systems), 2)
+        self.assertEqual(len(judge_main_systems), 2)
+        # Panel members hold the tools → they get the actionable recency cue.
+        for system in panel_systems:
+            self.assertIn("Current date and time:", system)
+            self.assertIn("use web_search before answering", system)
+        # Judge/main have no tools → time only, no tool cue.
+        for system in judge_main_systems:
+            self.assertIn("Current date and time:", system)
+            self.assertNotIn("use web_search before answering", system)
 
 
 class FusionWebToolsConfigTests(unittest.TestCase):

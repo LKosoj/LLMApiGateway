@@ -67,6 +67,25 @@ _MAIN_SYSTEM_PROMPT = (
     "and do not mention this internal process unless asked."
 )
 
+# Appended to a panel member's base context when the Fusion model enables web
+# tools, so the date stamp becomes an actionable cue to look things up.
+_WEB_RECENCY_HINT = (
+    "If the answer depends on recent or changing information, "
+    "use web_search before answering."
+)
+
+
+def _temporal_context(now: Optional[time.struct_time] = None) -> str:
+    """One-line current date/time in the server's local timezone.
+
+    Example: ``Current date and time: 2026-06-14T15:30 MSK (Saturday).``
+    ``now`` is injectable so tests stay deterministic.
+    """
+    moment = now if now is not None else time.localtime()
+    stamp = time.strftime("%Y-%m-%dT%H:%M %Z", moment).strip()
+    weekday = time.strftime("%A", moment)
+    return f"Current date and time: {stamp} ({weekday})."
+
 
 def _extract_text(openai_response: Dict[str, Any]) -> str:
     """Pull the assistant text out of an OpenAI chat.completion response."""
@@ -176,18 +195,25 @@ class FusionEnsembleService:
 
         usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
+        # Base context shared by all members of this run (single timestamp so
+        # panel/judge/main agree). Panel members also get a recency cue when web
+        # tools are available; judge/main have no tools, so they only get time.
+        temporal = _temporal_context()
+        panel_context = temporal + (f" {_WEB_RECENCY_HINT}" if web_tools else "")
+        panel_messages = [{"role": "system", "content": panel_context}, *base_messages]
+
         # 1. Fan-out: every panel member answers in parallel. When the Fusion
         #    model enables web tools, panel members run inside an agentic loop.
         if web_tools:
             panel_calls = [
                 self._call_member_with_tools(
-                    member, base_messages, http_client, proxy_http_clients, request, web_tools
+                    member, panel_messages, http_client, proxy_http_clients, request, web_tools
                 )
                 for member in panel
             ]
         else:
             panel_calls = [
-                self._call_member(member, base_messages, http_client, proxy_http_clients)
+                self._call_member(member, panel_messages, http_client, proxy_http_clients)
                 for member in panel
             ]
         panel_raw = await asyncio.gather(*panel_calls, return_exceptions=True)
@@ -221,7 +247,7 @@ class FusionEnsembleService:
         # 2. Fan-in: the judge returns a structured analysis.
         analysis: Dict[str, Any]
         judge_messages = [
-            {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+            {"role": "system", "content": f"{_JUDGE_SYSTEM_PROMPT}\n\n{temporal}"},
             {
                 "role": "user",
                 "content": (
@@ -243,7 +269,7 @@ class FusionEnsembleService:
 
         # 3. Main model: write the final answer using the analysis.
         main_messages = [
-            {"role": "system", "content": _MAIN_SYSTEM_PROMPT},
+            {"role": "system", "content": f"{_MAIN_SYSTEM_PROMPT}\n\n{temporal}"},
             {
                 "role": "user",
                 "content": (
