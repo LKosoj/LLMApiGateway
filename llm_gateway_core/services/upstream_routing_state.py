@@ -6,20 +6,39 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Literal, Mapping
 
-from llm_gateway_core.config.loader import resolve_provider_api_key_value
+from llm_gateway_core.config.loader import (
+    provider_auth_is_managed_oauth,
+    resolve_provider_api_key_value,
+    resolve_provider_oauth_token,
+)
 from llm_gateway_core.utils.api_keys import split_api_keys
 
 KEYLESS_FINGERPRINT = "keyless"
 DEFAULT_COOLDOWN_SECONDS = 600.0
 PENALTY_DECAY_SECONDS = 300.0
+DEFAULT_SESSION_AFFINITY_TTL_SECONDS = 3600.0
+KeySelectionStrategy = Literal["round-robin", "fill-first", "priority"]
 
 
 def fingerprint_api_key(api_key: str | None) -> str:
     if not api_key:
         return KEYLESS_FINGERPRINT
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+
+
+def managed_oauth_key_material(provider_name: str, provider_config: object) -> str | None:
+    auth_config = getattr(provider_config, "auth", None)
+    credential_id = getattr(auth_config, "credential_id", None)
+    if not provider_name or not credential_id:
+        return None
+    return f"managed-oauth:{provider_name}:{credential_id}"
+
+
+def managed_oauth_fingerprint(provider_name: str, provider_config: object) -> str | None:
+    key_material = managed_oauth_key_material(provider_name, provider_config)
+    return fingerprint_api_key(key_material) if key_material else None
 
 
 @dataclass(frozen=True)
@@ -56,10 +75,23 @@ class SelectedUpstreamKey:
     api_key: str | None
     fingerprint: str
     blocked_reason: str | None = None
+    candidate_id: str | None = None
 
     @property
     def available(self) -> bool:
         return self.blocked_reason is None
+
+
+@dataclass(frozen=True)
+class UpstreamKeyCandidate:
+    api_key: str | None
+    order: int = 0
+    priority: int = 0
+    candidate_id: str | None = None
+
+    @property
+    def fingerprint(self) -> str:
+        return fingerprint_api_key(self.api_key)
 
 
 @dataclass
@@ -72,6 +104,12 @@ class _RuntimeState:
     penalty_updated_at: float = 0.0
 
 
+@dataclass
+class _AffinityBinding:
+    fingerprint: str
+    expires_at: float
+
+
 class UpstreamRoutingState:
     def __init__(self, *, time_func: Any = time.time, monotonic_func: Any = time.monotonic) -> None:
         self._time_func = time_func
@@ -81,6 +119,7 @@ class UpstreamRoutingState:
         self._request_windows: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
         self._token_windows: dict[tuple[str, str, str], deque[tuple[float, int]]] = defaultdict(deque)
         self._round_robin_indexes: dict[tuple[str, str, tuple[str, ...]], int] = {}
+        self._session_affinity: dict[tuple[str, str, str, str], _AffinityBinding] = {}
 
     def select_key(
         self,
@@ -89,17 +128,53 @@ class UpstreamRoutingState:
         api_keys: Iterable[str | None],
         *,
         limits: UpstreamQuotaLimits | None = None,
+        strategy: KeySelectionStrategy = "round-robin",
+        session_id: str | None = None,
+        affinity_scope: str | None = None,
+        session_affinity_ttl_seconds: float | None = None,
+        pool_name: str = "default",
     ) -> SelectedUpstreamKey:
         keys = [key for key in api_keys if key]
         if not keys:
             keys = [None]
+        candidates = [UpstreamKeyCandidate(api_key=key, order=index) for index, key in enumerate(keys)]
+        return self.select_key_from_candidates(
+            provider,
+            model,
+            candidates,
+            limits=limits,
+            strategy=strategy,
+            session_id=session_id,
+            affinity_scope=affinity_scope,
+            session_affinity_ttl_seconds=session_affinity_ttl_seconds,
+            pool_name=pool_name,
+        )
+
+    def select_key_from_candidates(
+        self,
+        provider: str,
+        model: str,
+        candidates: Iterable[UpstreamKeyCandidate],
+        *,
+        limits: UpstreamQuotaLimits | None = None,
+        strategy: KeySelectionStrategy = "round-robin",
+        session_id: str | None = None,
+        affinity_scope: str | None = None,
+        session_affinity_ttl_seconds: float | None = None,
+        pool_name: str = "default",
+    ) -> SelectedUpstreamKey:
+        key_candidates = list(candidates)
+        if not key_candidates:
+            key_candidates = [UpstreamKeyCandidate(api_key=None)]
+        if strategy not in {"round-robin", "fill-first", "priority"}:
+            raise ValueError("strategy must be one of: round-robin, fill-first, priority")
 
         now = self._monotonic_func()
-        candidates: list[tuple[float, str | None, str]] = []
+        available: list[tuple[float, UpstreamKeyCandidate]] = []
         blocked_reasons: list[str] = []
         with self._lock:
-            for api_key in keys:
-                fingerprint = fingerprint_api_key(api_key)
+            for candidate in key_candidates:
+                fingerprint = candidate.fingerprint
                 ref = (provider, model, fingerprint)
                 state = self._state_for(ref)
                 cooldown_remaining = self._cooldown_remaining(state, now)
@@ -110,20 +185,34 @@ class UpstreamRoutingState:
                 if quota_reason:
                     blocked_reasons.append(f"{fingerprint}: {quota_reason}")
                     continue
-                candidates.append((self._decayed_penalty(state, now), api_key, fingerprint))
+                available.append((self._decayed_penalty(state, now), candidate))
 
-            if not candidates:
+            if not available:
                 reason = "; ".join(blocked_reasons) or "no upstream keys available"
                 return SelectedUpstreamKey(None, KEYLESS_FINGERPRINT, reason)
 
-            candidates.sort(key=lambda item: (item[0], item[2]))
-            best_penalty = candidates[0][0]
-            best_candidates = [item for item in candidates if item[0] == best_penalty]
-            pool_key = (provider, model, tuple(item[2] for item in best_candidates))
-            index = self._round_robin_indexes.get(pool_key, 0) % len(best_candidates)
-            self._round_robin_indexes[pool_key] = (index + 1) % len(best_candidates)
-            _penalty, api_key, fingerprint = best_candidates[index]
-            return SelectedUpstreamKey(api_key, fingerprint)
+            affinity_key = self._affinity_key(provider, model, pool_name, session_id, affinity_scope)
+            if affinity_key is not None:
+                binding = self._session_affinity.get(affinity_key)
+                if binding is not None and binding.expires_at > now:
+                    selected = self._candidate_by_fingerprint(available, binding.fingerprint)
+                    if selected is not None:
+                        self._session_affinity[affinity_key] = _AffinityBinding(
+                            fingerprint=binding.fingerprint,
+                            expires_at=now + self._normalized_affinity_ttl(session_affinity_ttl_seconds),
+                        )
+                        return self._selected_from_candidate(selected)
+                elif binding is not None:
+                    self._session_affinity.pop(affinity_key, None)
+
+            selected = self._select_available_candidate(provider, model, available, strategy)
+            result = self._selected_from_candidate(selected)
+            if affinity_key is not None:
+                self._session_affinity[affinity_key] = _AffinityBinding(
+                    fingerprint=result.fingerprint,
+                    expires_at=now + self._normalized_affinity_ttl(session_affinity_ttl_seconds),
+                )
+            return result
 
     def record_attempt_start(self, provider: str, model: str, key_fingerprint: str) -> None:
         ref = (provider, model, key_fingerprint)
@@ -205,7 +294,7 @@ class UpstreamRoutingState:
             if not isinstance(provider, str) or not isinstance(model, str):
                 return 0.0, index
             provider_config = providers_config.get(provider)
-            fingerprints = self._fingerprints_for_provider_config(provider_config)
+            fingerprints = self._fingerprints_for_rule(provider_config, rule)
             with self._lock:
                 penalties = [
                     self._decayed_penalty(self._state_for((provider, model, fingerprint)), now)
@@ -241,10 +330,23 @@ class UpstreamRoutingState:
                 )
             return rows
 
-    def _fingerprints_for_provider_config(self, provider_config: Any) -> list[str]:
+    def _fingerprints_for_rule(self, provider_config: Any, rule: Mapping[str, Any]) -> list[str]:
         if provider_config is None:
             return [KEYLESS_FINGERPRINT]
+        pool_name = rule.get("upstream_key_pool")
         try:
+            if isinstance(pool_name, str) and pool_name.strip():
+                pool_fingerprints = self._fingerprints_for_provider_key_pool(provider_config, pool_name.strip())
+                return pool_fingerprints
+
+            auth_config = getattr(provider_config, "auth", None)
+            if provider_auth_is_managed_oauth(auth_config):
+                provider_name = str(rule.get("provider") or "")
+                fingerprint = managed_oauth_fingerprint(provider_name, provider_config)
+                return [fingerprint or KEYLESS_FINGERPRINT]
+            if getattr(auth_config, "type", "api_key") in {"codex_oauth", "claude_oauth", "xai_oauth"}:
+                return [fingerprint_api_key(resolve_provider_oauth_token(auth_config))]
+
             resolved = resolve_provider_api_key_value(getattr(provider_config, "apikey", None))
         except Exception:
             return [KEYLESS_FINGERPRINT]
@@ -252,6 +354,93 @@ class UpstreamRoutingState:
         if not keys:
             return [KEYLESS_FINGERPRINT]
         return [fingerprint_api_key(key) for key in keys]
+
+    def _fingerprints_for_provider_key_pool(self, provider_config: Any, pool_name: str) -> list[str]:
+        pools = getattr(provider_config, "upstream_key_pools", None)
+        if not isinstance(pools, Mapping):
+            return []
+        pool = pools.get(pool_name)
+        if pool is None:
+            return []
+        fingerprints: list[str] = []
+        keys = getattr(pool, "keys", None)
+        if not isinstance(keys, list):
+            return fingerprints
+        for key_spec in keys:
+            if getattr(key_spec, "enabled", True) is False:
+                continue
+            resolved = resolve_provider_api_key_value(getattr(key_spec, "apikey", None))
+            for api_key in split_api_keys(resolved):
+                fingerprint = fingerprint_api_key(api_key)
+                if fingerprint not in fingerprints:
+                    fingerprints.append(fingerprint)
+        return fingerprints
+
+    def _affinity_key(
+        self,
+        provider: str,
+        model: str,
+        pool_name: str,
+        session_id: str | None,
+        affinity_scope: str | None,
+    ) -> tuple[str, str, str, str, str] | None:
+        if not session_id:
+            return None
+        normalized_session_id = session_id.strip()
+        if not normalized_session_id:
+            return None
+        normalized_scope = affinity_scope.strip() if isinstance(affinity_scope, str) else "default"
+        if not normalized_scope:
+            normalized_scope = "default"
+        return provider, model, pool_name, normalized_scope, normalized_session_id
+
+    def _normalized_affinity_ttl(self, value: float | None) -> float:
+        if value is None:
+            return DEFAULT_SESSION_AFFINITY_TTL_SECONDS
+        return max(1.0, float(value))
+
+    def _candidate_by_fingerprint(
+        self,
+        available: list[tuple[float, UpstreamKeyCandidate]],
+        fingerprint: str,
+    ) -> UpstreamKeyCandidate | None:
+        for _penalty, candidate in available:
+            if candidate.fingerprint == fingerprint:
+                return candidate
+        return None
+
+    def _selected_from_candidate(self, candidate: UpstreamKeyCandidate) -> SelectedUpstreamKey:
+        return SelectedUpstreamKey(
+            candidate.api_key,
+            candidate.fingerprint,
+            candidate_id=candidate.candidate_id,
+        )
+
+    def _select_available_candidate(
+        self,
+        provider: str,
+        model: str,
+        available: list[tuple[float, UpstreamKeyCandidate]],
+        strategy: KeySelectionStrategy,
+    ) -> UpstreamKeyCandidate:
+        if strategy == "fill-first":
+            return min(available, key=lambda item: (item[1].order, item[1].fingerprint))[1]
+
+        if strategy == "priority":
+            highest_priority = max(candidate.priority for _penalty, candidate in available)
+            available = [
+                (penalty, candidate)
+                for penalty, candidate in available
+                if candidate.priority == highest_priority
+            ]
+
+        available.sort(key=lambda item: (item[0], item[1].order, item[1].fingerprint))
+        best_penalty = available[0][0]
+        best_candidates = [item for item in available if item[0] == best_penalty]
+        pool_key = (provider, model, tuple(item[1].fingerprint for item in best_candidates))
+        index = self._round_robin_indexes.get(pool_key, 0) % len(best_candidates)
+        self._round_robin_indexes[pool_key] = (index + 1) % len(best_candidates)
+        return best_candidates[index][1]
 
     def _state_for(self, ref: tuple[str, str, str]) -> _RuntimeState:
         state = self._states.get(ref)

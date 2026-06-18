@@ -75,6 +75,7 @@ class DispatcherInitializationTests(unittest.TestCase):
                     fake_config_loader.providers_config,
                     fake_config_loader.operation_rules,
                     fake_http_client,
+                    model_rules={},
                 )
 
         self.assertTrue(fake_cleanup_task.cancel_called)

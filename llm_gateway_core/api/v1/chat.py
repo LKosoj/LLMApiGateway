@@ -10,12 +10,21 @@ import tiktoken
 import gzip
 import io
 import time
+import hashlib
 from uuid import uuid4
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 # Relative imports from the new structure
-from ...config.loader import ANTHROPIC_API_VERSION, ConfigLoader, resolve_provider_api_key, resolve_provider_api_keys
+from ...config.loader import (
+    ANTHROPIC_API_VERSION,
+    ConfigLoader,
+    provider_auth_is_managed_oauth,
+    resolve_provider_api_keys,
+    resolve_provider_config_api_key,
+    resolve_provider_api_key_value,
+    resolve_provider_oauth_token,
+)
 from ...config.settings import settings
 from ...db.model_rotation_db import ModelRotationDB
 from ...db.fallback_events_db import FallbackEventsDB
@@ -28,17 +37,27 @@ from ...services.error_classifier import (
     _normalize_provider_attempt_payload,
     classify_error,
 )
+from ...services.model_policy import resolve_model_name
 from ...services.request_handler import (
     MAX_RETRY_AFTER_SECONDS,
     SECURITY_HEADER_NAMES,
     make_llm_request,
     normalize_retry_settings,
 )
+from ...services.payload_transform import apply_payload_transforms
+from ...services.provider_auth import (
+    managed_oauth_fingerprint,
+    provider_uses_managed_oauth,
+    resolve_provider_auth_material,
+)
 from ...services.upstream_routing_state import (
+    UpstreamKeyCandidate,
     UpstreamRoutingState,
     fingerprint_api_key,
+    managed_oauth_key_material,
     upstream_limits_for_model,
 )
+from ...utils.api_keys import split_api_keys
 from ...utils.log_redaction import redact_payload_for_log
 from ...utils.text_sanitize import sanitize_payload
 from ...utils.usage_tracking import extract_request_x_title, extract_tokens_usage
@@ -63,6 +82,107 @@ TEMPORARY_MODEL_FAILURE_MARKERS = (
     "temporary unavailable",
     "service unavailable",
 )
+
+
+def _provider_key_routing_strategy(provider_config: object, pool_config: object | None) -> str:
+    pool_strategy = getattr(pool_config, "strategy", None)
+    if pool_strategy:
+        return str(pool_strategy)
+    routing_config = getattr(provider_config, "routing", None)
+    return str(getattr(routing_config, "strategy", "round-robin"))
+
+
+def _provider_key_routing_affinity_enabled(provider_config: object, pool_config: object | None) -> bool:
+    pool_affinity = getattr(pool_config, "session_affinity", None)
+    if pool_affinity is not None:
+        return bool(pool_affinity)
+    routing_config = getattr(provider_config, "routing", None)
+    return bool(getattr(routing_config, "session_affinity", False))
+
+
+def _provider_key_routing_affinity_header(provider_config: object, pool_config: object | None) -> str:
+    pool_header = getattr(pool_config, "session_affinity_header", None)
+    if pool_header:
+        return str(pool_header)
+    routing_config = getattr(provider_config, "routing", None)
+    return str(getattr(routing_config, "session_affinity_header", "X-Session-Id"))
+
+
+def _provider_key_routing_affinity_ttl(provider_config: object, pool_config: object | None) -> int:
+    pool_ttl = getattr(pool_config, "session_affinity_ttl_seconds", None)
+    if pool_ttl is not None:
+        return int(pool_ttl)
+    routing_config = getattr(provider_config, "routing", None)
+    return int(getattr(routing_config, "session_affinity_ttl_seconds", 3600))
+
+
+def _upstream_key_candidates_for_provider(
+    provider_name: str,
+    provider_config: object,
+    pool_name: str | None,
+) -> tuple[list[UpstreamKeyCandidate], object | None, str]:
+    if not pool_name:
+        auth_config = getattr(provider_config, "auth", None)
+        if provider_auth_is_managed_oauth(auth_config):
+            key_material = managed_oauth_key_material(provider_name, provider_config)
+            return (
+                [UpstreamKeyCandidate(api_key=key_material, order=0)],
+                None,
+                str(getattr(auth_config, "type", "oauth")),
+            )
+        if getattr(auth_config, "type", "api_key") in {"codex_oauth", "claude_oauth", "xai_oauth"}:
+            return (
+                [UpstreamKeyCandidate(api_key=resolve_provider_oauth_token(auth_config), order=0)],
+                None,
+                str(getattr(auth_config, "type", "oauth")),
+            )
+        if not getattr(provider_config, "apikey", None) and getattr(provider_config, "upstream_key_pools", None):
+            raise ValueError("fallback rule must specify upstream_key_pool for this pool-only provider.")
+        api_keys = resolve_provider_api_keys(getattr(provider_config, "apikey", None))
+        return (
+            [UpstreamKeyCandidate(api_key=api_key, order=index) for index, api_key in enumerate(api_keys)],
+            None,
+            "default",
+        )
+
+    pools = getattr(provider_config, "upstream_key_pools", None)
+    pool_config = pools.get(pool_name) if isinstance(pools, dict) else None
+    if pool_config is None:
+        raise ValueError(f"upstream_key_pool '{pool_name}' is not configured for provider.")
+
+    candidates: list[UpstreamKeyCandidate] = []
+    for key_index, key_spec in enumerate(pool_config.keys):
+        if not getattr(key_spec, "enabled", True):
+            continue
+        resolved_value = resolve_provider_api_key_value(key_spec.apikey)
+        for split_index, api_key in enumerate(split_api_keys(resolved_value)):
+            candidate_id = key_spec.id
+            if candidate_id and "," in str(resolved_value):
+                candidate_id = f"{candidate_id}:{split_index}"
+            candidates.append(
+                UpstreamKeyCandidate(
+                    api_key=api_key,
+                    order=len(candidates),
+                    priority=int(getattr(key_spec, "priority", 0)),
+                    candidate_id=candidate_id or f"{pool_name}:{key_index}:{split_index}",
+                )
+            )
+
+    if not candidates:
+        raise ValueError(f"upstream_key_pool '{pool_name}' for provider has no enabled keys.")
+    return candidates, pool_config, pool_name
+
+
+def _affinity_scope_for_request(request: Request) -> str:
+    api_key_id = getattr(request.state, "api_key_id", None)
+    if api_key_id is not None:
+        return f"user:{api_key_id}"
+    role = getattr(request.state, "api_key_role", "master")
+    if role != "master":
+        return f"role:{role}"
+    authorization = request.headers.get("authorization", "")
+    token_hash = hashlib.sha256(authorization.encode("utf-8")).hexdigest()[:16] if authorization else "session"
+    return f"master:{token_hash}"
 TEMPORARY_MODEL_FAILURE_STATUS_RE = re.compile(
     r"\b(?:downstream\s+error|http|status(?:\s+code)?|error)\s*(429|5[0-9]{2})\b",
     re.IGNORECASE,
@@ -1933,8 +2053,24 @@ def _anthropic_stream_to_openai(
 
 
 def _resolve_model_name_for_token_count(config_loader_instance: ConfigLoader, requested_model: str) -> str:
-    model_config = config_loader_instance.fallback_rules.get(requested_model)
+    try:
+        model_resolution = resolve_model_name(
+            requested_model,
+            getattr(config_loader_instance, "model_rules", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    model_config = config_loader_instance.fallback_rules.get(model_resolution.effective_model)
     if not model_config:
+        if model_resolution.changed:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Model policy resolved '{requested_model}' to "
+                    f"'{model_resolution.effective_model}', but no chat route is configured for it."
+                ),
+            )
         return requested_model
 
     fallback_models = model_config.get("fallback_models") or []
@@ -3108,12 +3244,35 @@ async def _attempt_model_fallback_rule(
     provider_base_url = provider_config.baseUrl
     upstream_state = getattr(request.app.state, "upstream_routing_state", None)
     if isinstance(upstream_state, UpstreamRoutingState):
-        provider_api_keys = resolve_provider_api_keys(provider_config.apikey)
-        selected_key = upstream_state.select_key(
+        upstream_key_pool_name = model_fallback_rule.get("upstream_key_pool")
+        try:
+            key_candidates, key_pool_config, key_pool_name = _upstream_key_candidates_for_provider(
+                provider_name,
+                provider_config,
+                upstream_key_pool_name,
+            )
+        except ValueError as exc:
+            error_detail = f"Invalid upstream key routing configuration for provider '{provider_name}': {exc}"
+            logging.error(error_detail)
+            _record_event(False, error_detail, 0)
+            return None, error_detail, attempt_number
+
+        strategy = _provider_key_routing_strategy(provider_config, key_pool_config)
+        affinity_enabled = _provider_key_routing_affinity_enabled(provider_config, key_pool_config)
+        affinity_header = _provider_key_routing_affinity_header(provider_config, key_pool_config)
+        affinity_ttl_seconds = _provider_key_routing_affinity_ttl(provider_config, key_pool_config)
+        session_id = request.headers.get(affinity_header) if affinity_enabled else None
+        affinity_scope = _affinity_scope_for_request(request) if affinity_enabled else None
+        selected_key = upstream_state.select_key_from_candidates(
             provider_name or "unknown",
             provider_model or "unknown",
-            provider_api_keys,
+            key_candidates,
             limits=upstream_limits_for_model(provider_config, provider_model or ""),
+            strategy=strategy,
+            session_id=session_id,
+            affinity_scope=affinity_scope,
+            session_affinity_ttl_seconds=affinity_ttl_seconds,
+            pool_name=key_pool_name,
         )
         if not selected_key.available:
             error_detail = (
@@ -3123,11 +3282,23 @@ async def _attempt_model_fallback_rule(
             logging.warning(error_detail)
             _record_event(False, error_detail, 0, upstream_key_fingerprint=selected_key.fingerprint)
             return None, error_detail, attempt_number
-        provider_api_key = selected_key.api_key
+        provider_api_key = None if provider_uses_managed_oauth(provider_config) else selected_key.api_key
         upstream_key_fingerprint = selected_key.fingerprint
     else:
-        provider_api_key = resolve_provider_api_key(provider_config.apikey)
-        upstream_key_fingerprint = fingerprint_api_key(provider_api_key)
+        if provider_uses_managed_oauth(provider_config):
+            provider_api_key = None
+            upstream_key_fingerprint = managed_oauth_fingerprint(provider_name or "unknown", provider_config)
+        else:
+            provider_api_key = resolve_provider_config_api_key(provider_config)
+            upstream_key_fingerprint = fingerprint_api_key(provider_api_key)
+    auth_material = await resolve_provider_auth_material(
+        request,
+        provider_name=provider_name or "unknown",
+        provider_config=provider_config,
+        api_key=provider_api_key,
+    )
+    if auth_material.upstream_key_fingerprint:
+        upstream_key_fingerprint = auth_material.upstream_key_fingerprint
     is_anthropic_provider = getattr(provider_config, "type", "openai") == "anthropic"
     client_expects_anthropic = isinstance(
         getattr(request.state, "llmgateway_original_anthropic_payload", None),
@@ -3139,7 +3310,7 @@ async def _attempt_model_fallback_rule(
         headers = {
             "Content-Type": "application/json",
             "anthropic-version": ANTHROPIC_API_VERSION,
-            **({"x-api-key": provider_api_key} if provider_api_key else {}),
+            **auth_material.headers,
         }
         target_url = f"{provider_base_url.rstrip('/')}/v1/messages"
         original_anthropic_payload = getattr(
@@ -3174,7 +3345,7 @@ async def _attempt_model_fallback_rule(
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
             "X-Title": "LLMGateway",
-            **({"Authorization": f"Bearer {provider_api_key}"} if provider_api_key else {}),
+            **auth_material.headers,
         }
         target_url = f"{provider_base_url.rstrip('/')}/chat/completions"
         provider_payload_template = copy.deepcopy(request_body_json)
@@ -3186,6 +3357,11 @@ async def _attempt_model_fallback_rule(
     if custom_body_params:
         for key, value in custom_body_params.items():
             provider_payload_template[key] = value
+
+    provider_payload_template = apply_payload_transforms(
+        provider_payload_template,
+        model_fallback_rule.get("payload_transforms"),
+    )
 
     custom_headers = model_fallback_rule.get("custom_headers", {})
     if custom_headers:
@@ -3524,6 +3700,22 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
 
     enforce_virtual_key_access(request, requested_model)
 
+    try:
+        model_resolution = resolve_model_name(
+            requested_model,
+            getattr(config_loader_instance, "model_rules", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    routing_model = model_resolution.effective_model
+    if model_resolution.changed:
+        logging.info(
+            "Model policy resolved requested model '%s' to routing model '%s' via %s.",
+            requested_model,
+            routing_model,
+            model_resolution.matched_rule,
+        )
+
     payload_to_log = redact_payload_for_log(request_body_json)
     logging.debug(
         "/v1/chat/completions: Request for model '%s'. Payload: %s",
@@ -3545,7 +3737,7 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
     )
 
     fusion_rules = getattr(config_loader_instance, "fusion_rules", None)
-    fusion_config = fusion_rules.get(requested_model) if isinstance(fusion_rules, dict) else None
+    fusion_config = fusion_rules.get(routing_model) if isinstance(fusion_rules, dict) else None
     if fusion_config is not None:
         if request.headers.get("x-llmgateway-fusion"):
             raise HTTPException(status_code=400, detail="Nested Fusion calls are not allowed.")
@@ -3557,19 +3749,27 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
         proxy_http_clients = getattr(request.app.state, "proxy_http_clients", {})
         return await fusion_service.run(
             request=request,
-            gateway_model_name=requested_model,
+            gateway_model_name=routing_model,
             fusion_config=fusion_config,
             request_body=request_body_json,
             http_client=http_client,
             proxy_http_clients=proxy_http_clients,
         )
 
-    model_config = fallback_rules.get(requested_model)
+    model_config = fallback_rules.get(routing_model)
     context_overflow_fallback = None
     strip_think_tags = False
     max_total_attempts: int | None = None
     dynamic_penalty_enabled = False
     if not model_config:
+        if model_resolution.changed:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Model '{requested_model}' resolved to '{routing_model}', "
+                    "but no routing rule is configured for the resolved model."
+                ),
+            )
         logging.warning(f"No specific fallback sequence found for model '{requested_model}'. Using '{settings.fallback_provider}' fallback provider.")
 
         model_fallbacks_sequence = [{"provider": settings.fallback_provider, "model": requested_model}]

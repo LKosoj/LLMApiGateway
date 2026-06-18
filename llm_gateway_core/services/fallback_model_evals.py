@@ -15,10 +15,13 @@ from ..config.loader import (
     ANTHROPIC_API_VERSION,
     ProviderDetails,
     SECURITY_HEADERS,
-    resolve_provider_api_key,
-    resolve_provider_api_key_value,
+    provider_auth_is_managed_oauth,
+    resolve_provider_config_auth_headers,
+    resolve_provider_config_api_key,
+    resolve_provider_config_api_keys,
 )
-from ..utils.api_keys import has_api_key
+from .managed_oauth import ManagedOAuthService
+from .payload_transform import apply_payload_transforms
 from .openrouter_free_models import (
     EVAL_SCORE_WEIGHT,
     HEALTH_PROBE_TIMEOUT_SECONDS,
@@ -174,6 +177,10 @@ class FallbackModelEvalService:
         self._last_checked_at: str | None = None
         self._snapshot: FallbackModelEvalSnapshot | None = None
         self._task: asyncio.Task | None = None
+        self._managed_oauth_service: ManagedOAuthService | None = None
+
+    def set_managed_oauth_service(self, service: ManagedOAuthService | None) -> None:
+        self._managed_oauth_service = service
 
     async def get_status(self) -> dict[str, Any]:
         async with self._lock:
@@ -348,21 +355,23 @@ class FallbackModelEvalService:
         if provider_config is None or not _is_official_openrouter_url(provider_config.baseUrl):
             return {}
         try:
-            raw_api_key = resolve_provider_api_key_value(provider_config.apikey)
+            provider_api_keys = (
+                [None]
+                if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None))
+                else resolve_provider_config_api_keys(provider_config)
+            )
         except Exception:
             return {}
-        if not has_api_key(raw_api_key):
+        if not provider_api_keys:
             return {}
 
-        api_key = resolve_provider_api_key(provider_config.apikey)
-        if not api_key:
-            return {}
+        auth_headers = await self._auth_headers(OPENROUTER_PROVIDER_NAME, provider_config)
 
         openrouter_client = proxy_http_clients.get(OPENROUTER_PROVIDER_NAME, http_client)
         response = await openrouter_client.get(
             f"{provider_config.baseUrl.rstrip('/')}/models",
             headers={
-                "Authorization": f"Bearer {api_key}",
+                **auth_headers,
                 "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
                 "X-Title": "LLMGateway Fallback Model Eval",
             },
@@ -386,6 +395,19 @@ class FallbackModelEvalService:
             if existing is None or _openrouter_metadata_rank(scored_model) > _openrouter_metadata_rank(existing):
                 metadata_by_name[key] = scored_model
         return metadata_by_name
+
+    async def _auth_headers(self, provider_name: str, provider_config: ProviderDetails) -> dict[str, str]:
+        auth_config = getattr(provider_config, "auth", None)
+        if provider_auth_is_managed_oauth(auth_config):
+            if self._managed_oauth_service is None:
+                raise ValueError("Managed OAuth service is not available for fallback model eval.")
+            token = await self._managed_oauth_service.get_access_token(
+                provider_name=provider_name,
+                auth_config=auth_config,
+            )
+            return {"Authorization": f"Bearer {token.access_token}"}
+        api_key = resolve_provider_config_api_key(provider_config)
+        return resolve_provider_config_auth_headers(provider_config, api_key)
 
     async def _apply_health_probe(
         self,
@@ -628,12 +650,11 @@ class FallbackModelEvalService:
         if getattr(provider_config, "type", "openai") == "anthropic":
             return await self._anthropic_completion(target, provider_config, http_client, payload, timeout=timeout)
 
-        api_key = resolve_provider_api_key(provider_config.apikey)
         headers = {
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
             "X-Title": "LLMGateway Fallback Model Eval",
-            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+            **await self._auth_headers(target.provider, provider_config),
         }
         for key, value in target.route.get("custom_headers", {}).items():
             if key.lower() not in SECURITY_HEADERS:
@@ -649,6 +670,10 @@ class FallbackModelEvalService:
             provider_payload["allow_fallbacks"] = False
         for key, value in target.route.get("custom_body_params", {}).items():
             provider_payload[key] = value
+        provider_payload = apply_payload_transforms(
+            provider_payload,
+            target.route.get("payload_transforms"),
+        )
 
         response = await http_client.post(
             f"{provider_config.baseUrl.rstrip('/')}/chat/completions",
@@ -668,11 +693,10 @@ class FallbackModelEvalService:
         *,
         timeout: float,
     ) -> dict[str, Any]:
-        api_key = resolve_provider_api_key(provider_config.apikey)
         headers = {
             "Content-Type": "application/json",
             "anthropic-version": ANTHROPIC_API_VERSION,
-            **({"x-api-key": api_key} if api_key else {}),
+            **await self._auth_headers(target.provider, provider_config),
         }
         for key, value in target.route.get("custom_headers", {}).items():
             if key.lower() not in SECURITY_HEADERS:
@@ -682,6 +706,10 @@ class FallbackModelEvalService:
         provider_payload["model"] = target.model
         for key, value in target.route.get("custom_body_params", {}).items():
             provider_payload[key] = value
+        provider_payload = apply_payload_transforms(
+            provider_payload,
+            target.route.get("payload_transforms"),
+        )
 
         response = await http_client.post(
             f"{provider_config.baseUrl.rstrip('/')}/v1/messages",

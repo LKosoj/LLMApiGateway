@@ -4,6 +4,7 @@ import uvicorn
 import httpx
 from asyncio import create_task as asyncio_create_task
 from asyncio import sleep as scheduler_sleep
+from collections.abc import Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +15,9 @@ from pathlib import Path, PurePath
 # Import components from the new core structure
 from llm_gateway_core.config.settings import settings
 from llm_gateway_core.config.paths import OUTPUTS_IMAGES_DIR, PROJECT_ROOT, STATIC_DIR
-from llm_gateway_core.config.loader import ConfigLoader, resolve_provider_proxy
+from llm_gateway_core.config.loader import ConfigLoader, provider_auth_is_managed_oauth, resolve_provider_proxy
+from llm_gateway_core.config.placeholder_secrets import is_placeholder_secret
+from llm_gateway_core.build_info import build_headers
 from llm_gateway_core.services.image_retention import cleanup_old_images
 from llm_gateway_core.utils.logging_setup import configure_logging
 from llm_gateway_core.middleware.request_logging import log_middleware_functional
@@ -30,6 +33,7 @@ from llm_gateway_core.db.fallback_events_db import FallbackEventsDB
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
+from llm_gateway_core.db.oauth_tokens_db import OAuthTokensDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
 from llm_gateway_core.api.v1 import chat as _chat_router_module
 from llm_gateway_core.services.provider_models import ProviderModelsService
@@ -44,6 +48,7 @@ from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 from llm_gateway_core.services.upstream_subscription_quota import UpstreamSubscriptionQuotaService
+from llm_gateway_core.services.managed_oauth import ManagedOAuthService
 from llm_gateway_core.utils.html_cache import preload_templates
 
 # --- Application Setup ---
@@ -73,6 +78,14 @@ def ensure_gateway_api_key_configured() -> None:
         message = "GATEWAY_API_KEY must be set before application startup and remain configured at runtime."
         logger.critical(message)
         raise RuntimeError(message)
+    if is_placeholder_secret(settings.gateway_api_key):
+        message = "GATEWAY_API_KEY uses a placeholder value; replace it with a real secret before startup."
+        logger.critical(message)
+        raise RuntimeError(message)
+
+
+def _set_build_headers(response: Response) -> None:
+    response.headers.update(build_headers())
 
 
 def _default_timeout() -> httpx.Timeout:
@@ -117,6 +130,15 @@ def create_proxy_http_clients(
             )
             logger.info("Created proxy HTTP client for provider '%s'.", provider_name)
     return clients
+
+
+def _providers_use_managed_oauth(providers_config: Mapping[str, object]) -> bool:
+    if not isinstance(providers_config, Mapping):
+        return False
+    return any(
+        provider_auth_is_managed_oauth(getattr(provider_config, "auth", None))
+        for provider_config in providers_config.values()
+    )
 
 
 def resolve_write_batcher_db_path(tokens_usage_db: object) -> Path:
@@ -283,6 +305,7 @@ async def lifespan(app: FastAPI):
     config_loader = ConfigLoader()
     config_loader.load_providers()
     config_loader.load_fallback_rules()
+    config_loader.load_model_rules()
     config_loader.load_operation_rules()
     config_loader.load_fusion_rules()
     config_loader.validate_fallback_operation_consistency()
@@ -355,6 +378,21 @@ async def lifespan(app: FastAPI):
     app.state.http_client = http_client
     logger.info("Shared httpx.AsyncClient initialized and attached to app.state.")
 
+    oauth_tokens_db = OAuthTokensDB(
+        encryption_key=settings.oauth_credential_encryption_key,
+    )
+    if _providers_use_managed_oauth(config_loader.providers_config) and not oauth_tokens_db.has_encryption_key():
+        raise RuntimeError(
+            "OAUTH_CREDENTIAL_ENCRYPTION_KEY must be set when providers use managed OAuth credential_id."
+        )
+    app.state.oauth_tokens_db = oauth_tokens_db
+    app.state.managed_oauth_service = ManagedOAuthService(
+        tokens_db=oauth_tokens_db,
+        http_client=http_client,
+        refresh_skew_seconds=settings.oauth_refresh_skew_seconds,
+    )
+    logger.info("ManagedOAuthService initialized and attached to app.state.")
+
     upstream_subscription_quota_service = UpstreamSubscriptionQuotaService(
         http_client=http_client
     )
@@ -368,6 +406,11 @@ async def lifespan(app: FastAPI):
         config_loader.providers_config,
         config_loader.operation_rules,
         http_client,
+        model_rules=(
+            config_loader.model_rules
+            if isinstance(getattr(config_loader, "model_rules", None), Mapping)
+            else {}
+        ),
     )
     app.state.operation_dispatcher = operation_dispatcher
     logger.info("OperationDispatcher initialized and attached to app.state.")
@@ -389,6 +432,7 @@ async def lifespan(app: FastAPI):
     )
 
     fallback_model_eval_service = FallbackModelEvalService()
+    fallback_model_eval_service.set_managed_oauth_service(app.state.managed_oauth_service)
     app.state.fallback_model_eval_service = fallback_model_eval_service
     logger.info("FallbackModelEvalService initialized and attached to app.state.")
 
@@ -399,6 +443,7 @@ async def lifespan(app: FastAPI):
         operation_rules=config_loader.operation_rules,
         provider_models_service=provider_models_service,
         http_client=http_client,
+        managed_oauth_service=app.state.managed_oauth_service,
     )
 
     usage_stats_cleanup_task = start_usage_stats_cleanup_task(tokens_usage_db, fallback_events_db, rejections_db)
@@ -556,9 +601,23 @@ logger.info(f"Deep research images mounted from {OUTPUTS_IMAGES_DIR}")
 
 # --- Basic Health Check Endpoint ---
 @app.get("/health", tags=["Health"])
-async def health_check():
+async def health_check(response: Response):
     """Basic health check endpoint."""
+    _set_build_headers(response)
     return {"status": "ok"}
+
+
+@app.get("/healthz", tags=["Health"])
+async def healthz_check(response: Response):
+    """Liveness endpoint intended for load balancers and container checks."""
+    _set_build_headers(response)
+    return {"status": "ok"}
+
+
+@app.head("/healthz", tags=["Health"])
+async def healthz_head():
+    """Header-only liveness endpoint."""
+    return Response(status_code=200, headers=build_headers())
 
 # --- Main Execution Block (for direct running) ---
 if __name__ == "__main__":

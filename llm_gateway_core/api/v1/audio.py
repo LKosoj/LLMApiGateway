@@ -7,8 +7,10 @@ from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from ...config.loader import ConfigLoader, OperationRoute, REQUEST_FORMAT_NVIDIA_RIVA_GRPC, resolve_provider_api_key
+from ...config.loader import ConfigLoader, OperationRoute, REQUEST_FORMAT_NVIDIA_RIVA_GRPC, resolve_provider_config_api_key
 from ...services.access_control import enforce_virtual_key_access
+from ...services.payload_transform import apply_payload_transforms
+from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from .audio_adapters import sanitize_nvidia_riva_request_payload, transcribe_with_nvidia_riva_grpc
 from .operation_proxy import (
@@ -187,7 +189,7 @@ def _build_route_payload(
             continue
         downstream_payload[param_name] = param_value
 
-    return downstream_payload
+    return apply_payload_transforms(downstream_payload, route.payload_transforms)
 
 
 def _build_speech_route_payload(
@@ -202,7 +204,7 @@ def _build_speech_route_payload(
             continue
         downstream_payload[param_name] = param_value
 
-    return downstream_payload
+    return apply_payload_transforms(downstream_payload, route.payload_transforms)
 
 
 def _prepare_audio_request_state(
@@ -226,42 +228,57 @@ def _prepare_audio_request_state(
     return retry_settings
 
 
-def _prepare_audio_http_request(
+async def _prepare_audio_http_request(
+    request: Request,
     dispatcher: OperationDispatcher,
     route,
     provider_config,
 ) -> tuple[str, dict[str, str]]:
-    provider_api_key = resolve_provider_api_key(provider_config.apikey)
     target_url = dispatcher.build_target_url(route, provider_config)
-    headers = dispatcher.build_headers(route, provider_api_key)
+    auth_headers = await resolve_provider_auth_headers(
+        request,
+        provider_name=route.provider,
+        provider_config=provider_config,
+    )
+    headers = dispatcher.build_headers(route, auth_headers=auth_headers)
     multipart_headers = {key: value for key, value in headers.items() if key.lower() != "content-type"}
     return target_url, multipart_headers
 
 
-def _prepare_audio_json_http_request(
+async def _prepare_audio_json_http_request(
+    request: Request,
     dispatcher: OperationDispatcher,
     route,
     provider_config,
 ) -> tuple[str, dict[str, str]]:
-    provider_api_key = resolve_provider_api_key(provider_config.apikey)
     target_url = dispatcher.build_target_url(route, provider_config)
-    headers = dispatcher.build_headers(route, provider_api_key)
+    auth_headers = await resolve_provider_auth_headers(
+        request,
+        provider_name=route.provider,
+        provider_config=provider_config,
+    )
+    headers = dispatcher.build_headers(route, auth_headers=auth_headers)
     return target_url, headers
 
 
-def _prepare_audio_voices_http_request(
+async def _prepare_audio_voices_http_request(
+    request: Request,
     dispatcher: OperationDispatcher,
     route: OperationRoute,
     provider_config,
 ) -> tuple[str, dict[str, str]]:
-    provider_api_key = resolve_provider_api_key(provider_config.apikey)
     target_path = route.voices_target_path or AUDIO_VOICES_DEFAULT_TARGET_PATH
     target_url = (
         target_path
         if target_path.startswith(("http://", "https://"))
         else f"{provider_config.baseUrl.rstrip('/')}/{target_path.lstrip('/')}"
     )
-    headers = dispatcher.build_headers(route, provider_api_key)
+    auth_headers = await resolve_provider_auth_headers(
+        request,
+        provider_name=route.provider,
+        provider_config=provider_config,
+    )
+    headers = dispatcher.build_headers(route, auth_headers=auth_headers)
     headers.pop("Content-Type", None)
     headers.pop("content-type", None)
     return target_url, headers
@@ -447,7 +464,7 @@ async def _get_audio_voices_for_model(request: Request, requested_model: str) ->
         )
 
     retry_count, retry_delay = normalize_retry_settings(route.retry_count, route.retry_delay)
-    target_url, headers = _prepare_audio_voices_http_request(dispatcher, route, provider_config)
+    target_url, headers = await _prepare_audio_voices_http_request(request, dispatcher, route, provider_config)
     effective_client = proxy_http_clients.get(route.provider, http_client)
     downstream_payload = await _fetch_audio_voices_payload(
         target_url,
@@ -536,7 +553,7 @@ async def create_audio_transcription(request: Request):
                     files_payload=files_payload,
                     provider_name=route.provider,
                     provider_base_url=provider_config.baseUrl,
-                    provider_api_key=resolve_provider_api_key(provider_config.apikey),
+                    provider_api_key=resolve_provider_config_api_key(provider_config),
                     route_custom_headers=route.custom_headers,
                     target_path=route.target_path,
                     retry_count=retry_count,
@@ -559,7 +576,8 @@ async def create_audio_transcription(request: Request):
                     headers={"content-type": adapter_response.content_type},
                 )
 
-            target_url, headers = _prepare_audio_http_request(
+            target_url, headers = await _prepare_audio_http_request(
+                request,
                 dispatcher,
                 route,
                 provider_config,
@@ -666,7 +684,7 @@ async def create_audio_speech(request: Request):
         operation=AUDIO_SPEECH_OPERATION,
     )
     route_payload = _build_speech_route_payload(request_payload, route)
-    target_url, headers = _prepare_audio_json_http_request(dispatcher, route, provider_config)
+    target_url, headers = await _prepare_audio_json_http_request(request, dispatcher, route, provider_config)
     effective_client = proxy_http_clients.get(route.provider, http_client)
     response_body, downstream_status_code, downstream_content_type = await proxy_json_raw_to_downstream(
         target_url,

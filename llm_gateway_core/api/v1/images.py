@@ -5,8 +5,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from ...config.loader import ConfigLoader, OperationRoute, resolve_provider_api_key
+from ...config.loader import ConfigLoader, OperationRoute
 from ...services.access_control import enforce_virtual_key_access
+from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from .image_adapters import (
     ImageDownstreamResponseError,
@@ -185,7 +186,7 @@ async def _parse_multipart_edit_request(
     return requested_model, normalized_payload
 
 
-def _prepare_route_request(
+async def _prepare_route_request(
     request: Request,
     dispatcher: OperationDispatcher,
     route,
@@ -194,9 +195,13 @@ def _prepare_route_request(
     gateway_model: str,
     operation_name: str,
 ) -> tuple[str, dict, tuple[int, float]]:
-    provider_api_key = resolve_provider_api_key(provider_config.apikey)
     target_url = dispatcher.build_target_url(route, provider_config)
-    headers = dispatcher.build_headers(route, provider_api_key)
+    auth_headers = await resolve_provider_auth_headers(
+        request,
+        provider_name=route.provider,
+        provider_config=provider_config,
+    )
+    headers = dispatcher.build_headers(route, auth_headers=auth_headers)
     retry_settings = normalize_retry_settings(route.retry_count, route.retry_delay)
 
     request.state.llmgateway_gateway_model = gateway_model
@@ -273,7 +278,7 @@ async def _proxy_image_with_fallback(
                     detail="Internal server error: Provider configuration not available.",
                 )
 
-            target_url, headers, (retry_count, retry_delay) = _prepare_route_request(
+            target_url, headers, (retry_count, retry_delay) = await _prepare_route_request(
                 request,
                 dispatcher,
                 route,

@@ -99,6 +99,7 @@ class ModelsRuntimeConfigTests(unittest.TestCase):
         fake_http_client = Mock()
         fake_http_client.get = AsyncMock(return_value=_FallbackModelsResponse())
         fake_http_client.aclose = AsyncMock()
+        self.config_loader.load_fusion_rules = Mock(return_value={})
 
         with ExitStack() as stack:
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))

@@ -73,9 +73,11 @@ class ProvidersRefreshTests(unittest.TestCase):
         self.providers_path = Path(self.temp_dir.name) / "providers.json"
         self.rules_path = Path(self.temp_dir.name) / "models_fallback_rules.json"
         self.operation_rules_path = Path(self.temp_dir.name) / "models_operation_rules.json"
+        self.fusion_rules_path = Path(self.temp_dir.name) / "models_fusion_rules.json"
         self.providers_path.write_text(VALID_PROVIDERS_TEXT, encoding="utf-8")
         self.rules_path.write_text(VALID_RULES_TEXT, encoding="utf-8")
         self.operation_rules_path.write_text("{}", encoding="utf-8")
+        self.fusion_rules_path.write_text("[]", encoding="utf-8")
         self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
         self.fallback_provider_patcher.start()
 
@@ -83,6 +85,7 @@ class ProvidersRefreshTests(unittest.TestCase):
             providers_filename=str(self.providers_path),
             fallback_rules_filename=str(self.rules_path),
             operation_rules_filename=str(self.operation_rules_path),
+            fusion_rules_filename=str(self.fusion_rules_path),
         )
         self.config_loader.load_providers()
         self.config_loader.load_fallback_rules()

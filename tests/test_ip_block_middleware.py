@@ -21,6 +21,14 @@ def build_app(guard: IpBlockGuard | None) -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    @app.get("/healthz")
+    async def healthz():
+        return {"status": "ok"}
+
+    @app.head("/healthz")
+    async def healthz_head():
+        return None
+
     @app.get("/v1/models")
     async def models():
         return {"status": "ok"}
@@ -108,6 +116,7 @@ class IpBlockMiddlewareTests(unittest.TestCase):
             self.assertEqual(client.get("/v1/models").status_code, 429)
             # /health does not require a key and must remain reachable.
             self.assertEqual(client.get("/health").status_code, 200)
+            self.assertEqual(client.head("/healthz").status_code, 200)
 
     def test_no_guard_means_no_blocking(self):
         app = build_app(None)

@@ -79,7 +79,8 @@ LLM Gateway работает локально как OpenAI-совместимы
 
 ### Редактирование провайдеров и fallback-правил
 Перед началом работы с LLMGateway нужно заполнить список провайдеров и моделей с их fallback-правилами. Для этого откройте страницу конфигурации в браузере: http://localhost:9000/v1/ui/rules-editor. Ниже описано, как должны быть устроены эти правила.
-Браузерный вход теперь идёт через отдельную страницу `/auth/login`. Если открыть `/` без авторизации, gateway перенаправит на `/auth/login`; если валидная авторизация уже есть, `/` перенаправит на `/v1/ui/usage-stats`. После успешного входа сервер создаёт долговечную подписанную HttpOnly cookie, и браузерный UI использует уже её, а не `sessionStorage`; эта cookie сохраняется между перезапусками браузера и самого gateway, пока вы явно не выйдете или не изменится `GATEWAY_API_KEY`. Для SDK и прямых API-вызовов по-прежнему поддерживается заголовок `Authorization: Bearer <GATEWAY_API_KEY>`, а для `/v1/messages` дополнительно принимается `X-Api-Key: <GATEWAY_API_KEY>` вместе со стандартным заголовком `anthropic-version` официального SDK. Gateway разбирает Bearer-заголовок строго как `scheme + token`, разделённые пробелами, принимает `Bearer` без учёта регистра, возвращает `401` для некорректного формата или отсутствующей авторизации и возвращает `403` только в случае, когда формат заголовка корректен, но значение токена неверно. Публичными остаются только `/health`, `/auth/login`, `/` как redirect-entrypoint и статические assets под `/static/`. HTML-страницы без cookie или Bearer-токена перенаправляются на login, а API-эндпоинты без валидной авторизации продолжают отвечать `401/403`. Незарегистрированные маршруты по-прежнему отдают стандартный `404`.
+Браузерный вход теперь идёт через отдельную страницу `/auth/login`. Если открыть `/` без авторизации, gateway перенаправит на `/auth/login`; если валидная авторизация уже есть, `/` перенаправит на `/v1/ui/usage-stats`. После успешного входа сервер создаёт долговечную подписанную HttpOnly cookie, и браузерный UI использует уже её, а не `sessionStorage`; эта cookie сохраняется между перезапусками браузера и самого gateway, пока вы явно не выйдете или не изменится `GATEWAY_API_KEY`. Для SDK и прямых API-вызовов по-прежнему поддерживается заголовок `Authorization: Bearer <GATEWAY_API_KEY>`, а для `/v1/messages` дополнительно принимается `X-Api-Key: <GATEWAY_API_KEY>` вместе со стандартным заголовком `anthropic-version` официального SDK. Gateway разбирает Bearer-заголовок строго как `scheme + token`, разделённые пробелами, принимает `Bearer` без учёта регистра, возвращает `401` для некорректного формата или отсутствующей авторизации и возвращает `403` только в случае, когда формат заголовка корректен, но значение токена неверно. Публичными остаются только `/health`, `/healthz`, `/auth/login`, `/` как redirect-entrypoint и статические assets под `/static/`. HTML-страницы без cookie или Bearer-токена перенаправляются на login, а API-эндпоинты без валидной авторизации продолжают отвечать `401/403`. Незарегистрированные маршруты по-прежнему отдают стандартный `404`.
+`GET /health` сохраняет совместимый ответ `{"status": "ok"}`. Для container/load-balancer проверок добавлен `GET`/`HEAD /healthz`; оба health endpoint добавляют build headers `X-LLMGateway-Build-Version`, `X-LLMGateway-Build-Sha`, `X-LLMGateway-Build-Date` и `X-LLMGateway-Build-Ref`, если соответствующие build-переменные заданы.
 Редактор конфигурации включает основные вкладки:
 - **Fallback Rules**: структурированная форма для управления цепочками fallback для чат-моделей.
 - **Embeddings**: структурированная форма для управления маршрутами `/v1/embeddings`.
@@ -87,12 +88,13 @@ LLM Gateway работает локально как OpenAI-совместимы
 - **Images**: структурированная форма для управления маршрутами `/v1/images`, `/v1/images/generations` и `/v1/images/edits`.
 - **Audio**: структурированная форма для управления маршрутами `/v1/audio/speech` и `/v1/audio/transcriptions`; секция `pdf_conversions` сохраняется структурированным API, но пока редактируется через JSON.
 - **Web**: структурированная форма для управления сервисами `/v1/web/search`, `/v1/web/read`, `/v1/web/research` и `/v1/web/deep-research`.
+- **Model Rules**: raw JSON-редактор `models_model_rules.json` для alias/prefix/exclude/pool политики моделей.
 - **OpenRouter Free**: read-only рейтинг бесплатных text-моделей OpenRouter. Lite eval включает instruction following, tool-call JSON, Python code с unit tests, параметризованную арифметику и factual QA. Вкладка показывается только если настроен официальный провайдер `openrouter` и его API-ключ; правила маршрутизации она автоматически не меняет. Кнопка `Run Full Eval` запускает полноценную переоценку всех eligible моделей в фоне (`POST /v1/openrouter/free-models/run`) без ожидания следующего планового цикла.
 - **Fallback Eval**: read-only ручной eval уникальных fallback-целей из `models_fallback_rules.json`. Запускается кнопкой, показывает health/latency/lite-eval score и не сохраняет конфигурацию.
-- **Providers**: структурированная форма для управления провайдерами: имя, `baseUrl`, `apikey`, тип API (`openai`/`anthropic`), опциональный `proxy` и JSON-поле `models`.
+- **Providers**: структурированная форма для управления провайдерами: имя, `baseUrl`, `apikey`, тип API (`openai`/`anthropic`), опциональный `proxy`, JSON-поля `models`, `auth`, `routing` и `upstream_key_pools`.
 - **Fusion**: структурированная форма для управления Fusion-ансамблями (`models_fusion_rules.json`): имя gateway-модели, главная модель, опциональная модель-судья и панель из 1–8 моделей. Каждая роль выбирается как пара `provider/model`; для каждой можно дополнительно задать `temperature`, `max_completion_tokens` и `reasoning` (JSON). Опциональный блок **Web tools** выдаёт моделям панели инструменты `web_search`/`web_fetch` с бюджетами вызовов и итераций.
 
-Вкладки Fallback Rules, Embeddings, Rerank, Images, Audio, Web, Providers и Fusion используют структурированную форму вместо сырого JSON. Вкладки OpenRouter Free и Fallback Eval только показывают текущие snapshots и не сохраняют конфигурацию.
+Вкладки Fallback Rules, Embeddings, Rerank, Images, Audio, Web, Providers и Fusion используют структурированную форму вместо сырого JSON. Вкладка Model Rules редактирует raw JSON с валидацией перед записью. Вкладки OpenRouter Free и Fallback Eval только показывают текущие snapshots и не сохраняют конфигурацию.
 Во вкладке Fallback Rules доступны read-only `Preview Changes` и `Suggest Eval Order`: они показывают diff/предложенный порядок по текущему eval, но не сохраняют и не переставляют маршруты автоматически. Для каждого chat-правила можно отдельно включить `dynamic_penalty`, чтобы после временных upstream-ошибок gateway временно предпочитал менее штрафованные ключи/маршруты.
 Список моделей выбранного провайдера запрашивается лениво, сортируется по алфавиту с natural numeric order и кэшируется на 15 минут. Во вкладке Fallback Rules ручной ввод модели не поддерживается. Во вкладках Embeddings, Rerank, Images и Audio вы можете либо выбрать модель из списка, либо ввести её вручную, если это необходимо.
 **Скоринг настроенных fallback-моделей** находится во вкладке **Fallback Eval**. Он запускается вручную кнопкой `Run Eval`, берёт все `fallback_models` и `context_overflow_fallback` из `models_fallback_rules.json`, схлопывает повторы до уникальных пар `provider/model` и показывает, какие gateway-модели ссылаются на каждую цель. Если настроен официальный провайдер `openrouter` с API-ключом, eval один раз загружает `{openrouter.baseUrl}/models`, берёт OpenRouter-карточку по basename модели без provider prefix и без суффикса после `:`, например `openai/gpt-oss-120b:free` -> `gpt-oss-120b`, и копирует из неё `metadataScore`, context, max completion tokens, pricing и support-флаги. Если у цели нет OpenRouter metadata-match, но у других fallback-целей в том же запуске есть известные metadata-оценки, недостающий `metadataScore` оценивается как медиана этих известных score; детальные поля OpenRouter вроде context и pricing для такой цели остаются пустыми. Для OpenAI-compatible провайдеров eval отправляет запросы напрямую в `{baseUrl}/chat/completions`, учитывает `custom_headers` (кроме security-заголовков), `custom_body_params`, `providers_order`, provider-specific proxy clients и round-robin выбор ключей, если в `apikey` указано несколько ключей через запятую. Для провайдеров `type: "anthropic"` eval отправляет нативные запросы в `{baseUrl}/v1/messages` с `x-api-key` и `anthropic-version`, а затем приводит ответ к внутренней форме для тех же проверок.
@@ -117,7 +119,7 @@ Lite eval даёт максимум 750 баллов и состоит из пя
 Вкладка Fallback Rules работает через Structured API `/v1/config/models-rules/structured`. Для каждой gateway-модели там также доступен toggle `Strip <think> tags from replies`, который управляет вырезанием literal `<think>...</think>` в обычных и streaming chat-ответах. Вкладки Embeddings, Rerank, Images, Audio и Web используют Structured API `/v1/config/model-operations/structured`, который читает и сохраняет секции `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research` и `web_deep_research` без перезапуска сервера. Через UI редактируются Embeddings, Rerank, Images, Audio Speech, Audio Transcriptions и Web-секции; `pdf_conversions` сохраняется при таких изменениях, но остаётся JSON-only. Вкладка Providers использует Structured API `/v1/config/providers/structured`; при сохранении она по-прежнему валидирует `${VAR}`-ссылки, проверяет, что удаление или переименование провайдера не ломает fallback/operation rules, обновляет runtime-конфиг и сбрасывает кэш списков моделей. Web-вкладка настраивает четыре сервиса: поиск, чтение страницы, исследование и глубокое исследование с моделями GPT Researcher, embedding и image-generation. При сохранении отдельной operation-вкладки редактор перечитывает актуальный operation-config и заменяет только сохраняемую секцию, чтобы не перетирать изменения в других секциях. Поле `retry_delay` сохраняется как дробное число, если вы указали значение вроде `0.5`.
 После загрузки сохранённые карточки Embeddings, Rerank, Images, Audio, Web и Providers показываются в виде свёрнутых аккордеонов; при создании новой карточки она автоматически раскрывается для редактирования.
 
-Если вы запускаете gateway через `docker-compose.yml`, смонтированные файлы `providers.json`, `models_fallback_rules.json` и `models_operation_rules.json` доступны на запись внутри контейнера. Изменения, внесённые в веб-редакторе, сохраняются обратно в файлы на хосте.
+Если вы запускаете gateway через `docker-compose.yml`, смонтированные файлы `providers.json`, `models_fallback_rules.json`, `models_operation_rules.json` и `models_model_rules.json` доступны на запись внутри контейнера. Изменения, внесённые в веб-редакторе, сохраняются обратно в файлы на хосте.
 
 ![Пример конфигурации](./images/config-example.png)
 
@@ -444,6 +446,10 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | Переменная | Описание | Значение по умолчанию |
 |----------|-------------|---------|
 | `GATEWAY_API_KEY` | Фиксированный API-ключ, который клиенты должны использовать для доступа к этому gateway | *required* |
+| `LLMGATEWAY_BUILD_VERSION` | Версия сборки, публикуется в health response headers и задаётся Docker build arg `LLMGATEWAY_BUILD_VERSION` | `dev` |
+| `LLMGATEWAY_BUILD_SHA` | Git SHA или другой идентификатор ревизии, публикуется в health response headers и OCI label | empty |
+| `LLMGATEWAY_BUILD_DATE` | Время сборки, публикуется в health response headers и OCI label | empty |
+| `LLMGATEWAY_BUILD_REF` | Git ref или имя релиза, публикуется в health response headers и OCI label | empty |
 | `LOG_FILE_LIMIT` | Максимальное количество файлов логов чата, которое нужно хранить | `15` |
 | `LOG_CHAT_ENABLED` | Включает подробное файловое логирование чата в директорию `logs/`. На сбор usage-статистики не влияет. | `false` |
 | `LOG_FALLBACK_FULL_MESSAGES` | Временный debug-флаг для fallback-расследований. Когда включён, warning-логи не вырезают `messages` из неуспешных fallback attempts. Используйте только временно, потому что в лог попадёт полный prompt/history. | `false` |
@@ -456,15 +462,21 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | `JINA_API_KEY` | API-ключ Jina AI для встроенных адаптеров `/v1/web/search` (Jina Search) и `/v1/web/read` (Jina Reader `r.jina.ai`). Можно указать несколько ключей через запятую: при каждом вызове Jina gateway выбирает следующий непустой ключ по round-robin. Если не задан, адаптер Jina пропускается. | disabled |
 | `ZAI_API_KEY` | API-ключ Z.AI для встроенных адаптеров `/v1/web/search` и `/v1/web/read`. Адаптер использует MCP-серверы Z.AI по Streamable HTTP — `web_search_prime` для поиска и `web_reader` для извлечения содержимого страниц (требуется подписка GLM Coding Plan). Регион поиска (`cn`/`us`) выбирается автоматически по запросу. Можно указать несколько ключей через запятую: при каждом вызове Z.AI gateway выбирает следующий непустой ключ по round-robin. Если не задан, адаптер Z.AI пропускается. | disabled |
 | `APIKEY_PROVIDERNAME` | API-ключ конкретного провайдера, например `APIKEY_OPENROUTER`. В `providers.json` ссылка на env задаётся явно как `${APIKEY_PROVIDERNAME}`. Можно указать несколько ключей через запятую: при каждом downstream-вызове провайдера gateway выбирает следующий непустой ключ по round-robin. OpenRouter Free scoring и ручной Fallback Eval используют то же правило и выбирают ключ отдельно для каждого запроса к провайдеру. | *required for providers in providers.json* |
+| `OAUTH_CREDENTIAL_ENCRYPTION_KEY` | Fernet key для encrypted-at-rest хранилища managed OAuth credentials. Обязателен, если хотя бы один провайдер использует `auth.credential_id`. Сгенерировать можно командой `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. | disabled |
+| `OAUTH_REFRESH_SKEW_SECONDS` | За сколько секунд до `expires_at` managed OAuth credential считается требующим refresh. | `300` |
 
 ## Пример провайдеров (`providers.json`)
 Здесь нужно определить ваших провайдеров. По умолчанию провайдер считается OpenAI-совместимым, но опциональное поле `type` позволяет указать native-формат: `"openai"` (по умолчанию) или `"anthropic"`. Anthropic-провайдеры вызываются по адресу `{baseUrl}/v1/messages` с заголовками `x-api-key` и `anthropic-version`, а их список моделей запрашивается с `{baseUrl}/v1/models`. Gateway автоматически конвертирует запросы и ответы в обе стороны: OpenAI-клиент, попавший в Anthropic-провайдера по fallback, получит OpenAI-совместимый ответ (включая streaming SSE chunks и `tool_calls`), а Anthropic-клиент, попавший в OpenAI-провайдера, получит нативный Anthropic-ответ. Для Anthropic-провайдеров gateway подставляет `max_tokens=32768`, если запрос клиента не указал его явно. Для OpenAI-провайдеров `type` можно опустить — поведение старых `providers.json` остаётся прежним.
-Поля `apikey` и `proxy` по умолчанию считаются литералами. Чтобы взять значение из переменной окружения, используйте явный синтаксис `${VAR_NAME}`, например `"apikey": "${APIKEY_OPENROUTER}"`. Значение `"APIKEY_OPENROUTER"` без `${...}` не резолвится через окружение; если такая переменная существует, gateway логирует предупреждение и всё равно использует строку как литерал.
+Поля `apikey` и `proxy` по умолчанию считаются литералами. Чтобы взять значение из переменной окружения, используйте явный синтаксис `${VAR_NAME}`, например `"apikey": "${APIKEY_OPENROUTER}"`. Значение `"APIKEY_OPENROUTER"` без `${...}` не резолвится через окружение; если такая переменная существует, gateway логирует предупреждение и всё равно использует строку как литерал. Известные шаблонные значения вроде `your-secure-api-key` и `your-openrouter-api-key` запрещены для `GATEWAY_API_KEY` и provider `apikey`: приложение завершит старт или отклонит конфиг вместо запуска с демонстрационным секретом.
 Имена провайдеров в `providers.json` должны быть уникальными. Дубли отклоняются при старте приложения, а веб-редактор возвращает `400` вместо молчаливого перезаписывания предыдущей записи.
 При сохранении `providers.json` через UI gateway включает строгий режим резолвинга `${VAR}`: если payload ссылается на переменную окружения, которой нет в процессе или в `.env`, gateway отвечает `400` с сообщением `env var X referenced but missing for provider 'Y' field 'Z'` и не записывает файл. Сохранение также повторно валидирует ссылки `provider` из уже загруженных `models_fallback_rules.json` и `models_operation_rules.json`: если переименование или удаление провайдера оставляет в правилах битые ссылки, gateway отвечает `400` со списком сломанных маршрутов вместо тихой записи противоречивого состояния.
 Если `apikey` содержит несколько ключей через запятую, chat fallback выбирает конкретный upstream-ключ с учётом per-key cooldown и upstream-лимитов. Лимиты задаются в `models.<model>.upstream_limits` как `rpm`, `rpd`, `tpm`, `tpd`; это отдельный ledger upstream-провайдера и он не заменяет лимиты virtual API keys клиентов.
 В UI редактора (`Providers` → `Advanced options` → `Upstream Limits per Model`) эти лимиты доступны как отдельные поля `Model`, `RPM`, `RPD`, `TPM`, `TPD` для каждой модели; рядом с каждой переменной — иконка `ⓘ` со всплывающей подсказкой о значении параметра. Поле `Models Metadata (JSON)` используется для остальной произвольной метаданных (например, `pricing`); при сохранении gateway сливает структурные лимиты с этим JSON, поэтому два представления не конфликтуют.
 Отдельное поле `available_models` задаёт явный список id моделей провайдера в виде JSON-массива строк (например `"available_models": ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]`). Если список задан, gateway использует именно его и не запрашивает `/models` у провайдера — это полезно для прокси без рабочего эндпоинта `/models`. Список применяется везде, где нужен перечень моделей провайдера: dropdown выбора модели в редакторе fallback-правил, валидация правил при сохранении и публичный `/v1/models` (когда провайдер выбран как `FALLBACK_PROVIDER`). Если `available_models` не задан, поведение прежнее — список берётся из API провайдера. Это поле независимо от `models`, поэтому явный список можно сочетать с метаданными/`upstream_limits` в `models`. В UI редактора (`Providers` → `Advanced options`) список вводится в поле `Available Models` — по одному id в строке (запятые тоже допускаются).
+Поле `auth` позволяет провайдеру брать Bearer-токен из окружения, файла или managed OAuth хранилища без хранения его в `apikey`. Поддерживаются типы `codex_oauth`, `claude_oauth` и `xai_oauth`; для каждого OAuth-типа нужно указать ровно один источник: `token_env`, `token_file` или `credential_id`. OAuth `auth` нельзя смешивать с `apikey` или `upstream_key_pools`: такая конфигурация отклоняется при загрузке.
+Для `credential_id` нужно задать `oauth_client`: `client_id` или `client_id_env`, `token_endpoint`, опционально `device_authorization_endpoint`, `authorization_endpoint`, `redirect_uri`, `client_secret_env` и `scopes`. Gateway реализует стандартные BYO OAuth/OIDC flows: device-code login, authorization-code PKCE login, refresh-token lifecycle, ручной import access/refresh token и encrypted-at-rest хранение в `db/oauth_tokens.db`. Управление доступно master-админу в Providers UI и через `/v1/admin/oauth/*`; ответы API и DOM не возвращают raw access/refresh tokens. Если managed credential отсутствует, refresh невозможен или токен не расшифровывается текущим `OAUTH_CREDENTIAL_ENCRYPTION_KEY`, запрос падает явно, без скрытого fallback.
+Gateway не добавляет cloak mode, spoofed identity headers, hard-coded official CLI client IDs, prompt/cache remapping и не пытается выглядеть как официальный CLI. Для OpenAI/Codex и xAI используйте собственный OAuth/OIDC client config или импортируйте уже выданный access/refresh token; xAI API-key сценарий по-прежнему настраивается через обычный `apikey`.
+Поле `routing` задаёт поведение выбора upstream-ключа по умолчанию: `strategy` (`round-robin`, `fill-first`, `priority`), `session_affinity`, `session_affinity_header` и `session_affinity_ttl_seconds`. `upstream_key_pools` позволяет завести несколько именованных пулов ключей с собственными стратегиями и параметрами affinity. Fallback-строка выбирает пул через `upstream_key_pool`. Если провайдер настроен только через `upstream_key_pools` и без legacy `apikey`, ссылка `upstream_key_pool` обязательна — gateway падает с ошибкой конфигурации, а не откатывается на случайный ключ или другой пул.
 Справочный каталог free-tier провайдеров лежит в [`examples/free-tier-providers.md`](examples/free-tier-providers.md). Он не применяется автоматически: free-tier условия часто меняются, поэтому провайдеры и лимиты нужно включать вручную.
 
 ```json
@@ -500,6 +512,56 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
             "apikey" : "${APIKEY_CUSTOMPROXY}",
             // явный список моделей: gateway не будет запрашивать /models у провайдера
             "available_models" : ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]
+        }
+    },
+    {
+        "codex_oauth_proxy":
+        {
+            "baseUrl" : "https://codex.example/v1",
+            "auth" : {
+                "type" : "codex_oauth",
+                "token_env" : "CODEX_OAUTH_TOKEN"
+            }
+        }
+    },
+    {
+        "codex_managed_oauth_proxy":
+        {
+            "baseUrl" : "https://codex.example/v1",
+            "auth" : {
+                "type" : "codex_oauth",
+                "credential_id" : "codex-main",
+                "oauth_client" : {
+                    "client_id_env" : "CODEX_OAUTH_CLIENT_ID",
+                    "token_endpoint" : "https://issuer.example/oauth/token",
+                    "device_authorization_endpoint" : "https://issuer.example/oauth/device/code",
+                    "authorization_endpoint" : "https://issuer.example/oauth/authorize",
+                    "redirect_uri" : "https://gateway.example/v1/auth/oauth/callback/codex_managed_oauth_proxy",
+                    "scopes" : ["openid", "profile"]
+                }
+            }
+        }
+    },
+    {
+        "pooled_proxy":
+        {
+            "baseUrl" : "https://proxy.example/v1",
+            "type" : "openai",
+            "routing" : {
+                "strategy" : "fill-first",
+                "session_affinity" : true,
+                "session_affinity_header" : "X-Workspace-Session",
+                "session_affinity_ttl_seconds" : 3600
+            },
+            "upstream_key_pools" : {
+                "primary" : {
+                    "strategy" : "priority",
+                    "keys" : [
+                        { "id" : "team-a", "apikey" : "${APIKEY_POOL_A}", "priority" : 100 },
+                        { "id" : "team-b", "apikey" : "${APIKEY_POOL_B}", "priority" : 10 }
+                    ]
+                }
+            }
         }
     },
     {
@@ -619,6 +681,20 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 ]    
 ```
 
+Для ограниченных top-level изменений payload доступно поле `payload_transforms` на fallback-строке и operation route. Оно применяется после базового payload и `custom_body_params`: `defaults` добавляет значение только если поля ещё нет, `overrides` явно заменяет поле, `filters` удаляет поле перед downstream-вызовом. Transform engine работает fail-closed и поддерживает только top-level поля; зарезервированные или auth-sensitive поля (`model`, `messages`, `stream`, `tools`, `tool_choice`, `authorization`, `api_key`, `x-api-key`, `cookie`) менять нельзя.
+
+```json
+{
+    "provider": "xAI",
+    "model": "grok-3-mini-beta",
+    "payload_transforms": {
+        "defaults": { "top_p": 0.9 },
+        "overrides": { "parallel_tool_calls": false },
+        "filters": ["seed"]
+    }
+}
+```
+
 #### Специальная fallback-модель для ошибок нехватки контекста
 Если у базовой модели меньше контекстное окно, чем у резервной, можно явно задать отдельную модель для ошибок переполнения контекста.
 ```json
@@ -697,15 +773,17 @@ Gateway поддерживает сжатие содержимого tool-рез
 
 Когда запрос приходит на `/v1/chat/completions`:
 
-1.  Gateway находит правило, соответствующее запрошенной `model`, в файле models_fallback_rules.json.
-2.  Если модель не найдена в правилах, gateway направляет запрос к fallback-провайдеру, заданному переменной окружения `FALLBACK_PROVIDER` (по умолчанию: `openrouter`). Этот же fallback-провайдер используется и в `/v1/models`. Если настроенного fallback-провайдера нет в `providers.json`, приложение завершится с ошибкой валидации при старте. Имя модели при этом остаётся таким же, каким пришло в запросе.
-3.  Если включена ротация моделей (`"rotate_models": true`), gateway выбирает следующую модель в последовательности для каждого запроса.
-4.  Если ротация моделей выключена (`"rotate_models": false` или параметр опущен), gateway всегда начинает с первой модели в последовательности и переключается на следующие только при ошибке.
-5.  (Только OpenRouter) Если у текущей модели установлен параметр `use_provider_order_as_fallback=true` и задан список `providers_order`, gateway сначала использует только первого провайдера из списка и переключается на следующих только в случае ошибок. Таким образом fallback обрабатывается самим gateway, а не OpenRouter.
-6.  Если выбранная модель завершилась ошибкой нехватки контекста и для правила настроен `context_overflow_fallback`, gateway сначала пытается вызвать именно эту специальную модель.
-7.  Если выбранная модель получила временный сбой доступности (`429`, `5xx`, timeout/connect, `overloaded`, `rate_limit`, `try again later`), gateway ставит конкретный upstream-ключ для пары `provider/model` в in-memory cooldown на 10 минут. Если у провайдера указано несколько ключей, следующие запросы могут использовать другой доступный ключ этой же модели.
-8.  Если выбранная модель завершилась другой ошибкой, либо `context_overflow_fallback` тоже не сработал, gateway пытается вызвать следующую модель в последовательности, пока одна из них не отработает успешно. Ключи в активном cooldown или с исчерпанным upstream ledger пропускаются без downstream-вызова; `dynamic_penalty` меняет порядок только для правил, где он явно включён.
-9.  Если ни одна из вызванных моделей не сработала, возвращается HTTP 503.
+1.  Gateway сначала применяет `models_model_rules.json`: alias/prefix правила могут превратить публичное имя модели в внутреннее имя маршрута, а `excluded_models` отклоняет запрещённые имена.
+2.  Gateway находит правило, соответствующее resolved `model`, в файле models_fallback_rules.json.
+3.  Если модель не найдена в правилах, gateway направляет запрос к fallback-провайдеру, заданному переменной окружения `FALLBACK_PROVIDER` (по умолчанию: `openrouter`). Этот же fallback-провайдер используется и в `/v1/models`. Если настроенного fallback-провайдера нет в `providers.json`, приложение завершится с ошибкой валидации при старте. Имя модели при этом остаётся таким же, каким пришло в запросе.
+4.  Если включена ротация моделей (`"rotate_models": true`), gateway выбирает следующую модель в последовательности для каждого запроса.
+5.  Если ротация моделей выключена (`"rotate_models": false` или параметр опущен), gateway всегда начинает с первой модели в последовательности и переключается на следующие только при ошибке.
+6.  (Только OpenRouter) Если у текущей модели установлен параметр `use_provider_order_as_fallback=true` и задан список `providers_order`, gateway сначала использует только первого провайдера из списка и переключается на следующих только в случае ошибок. Таким образом fallback обрабатывается самим gateway, а не OpenRouter.
+7.  Если выбранная модель завершилась ошибкой нехватки контекста и для правила настроен `context_overflow_fallback`, gateway сначала пытается вызвать именно эту специальную модель.
+8.  Если выбранная модель получила временный сбой доступности (`429`, `5xx`, timeout/connect, `overloaded`, `rate_limit`, `try again later`), gateway ставит конкретный upstream-ключ для пары `provider/model` в in-memory cooldown на 10 минут. Если у провайдера указано несколько ключей, следующие запросы могут использовать другой доступный ключ этой же модели.
+9.  Для streaming-запросов gateway может безопасно перейти к следующему retry/fallback только до первого реального payload chunk, отправленного клиенту. Keepalive/comment chunks не считаются успешным стартом потока. После первого payload chunk поток уже закреплён за выбранным upstream.
+10.  Если выбранная модель завершилась другой ошибкой, либо `context_overflow_fallback` тоже не сработал, gateway пытается вызвать следующую модель в последовательности, пока одна из них не отработает успешно. Ключи в активном cooldown или с исчерпанным upstream ledger пропускаются без downstream-вызова; `dynamic_penalty` меняет порядок только для правил, где он явно включён.
+11.  Если ни одна из вызванных моделей не сработала, возвращается HTTP 503.
 
 **Ротация моделей:**
 
@@ -716,6 +794,34 @@ Gateway поддерживает сжатие содержимого tool-рез
 - снижения затрат за счёт распределения использования.
 
 Состояние ротации отслеживается для каждой комбинации API-ключа и gateway-модели, чтобы обеспечить предсказуемое поведение для каждого клиента.
+
+### Model policy (`models_model_rules.json`)
+Файл `models_model_rules.json` задаётся переменной `MODEL_RULES_FILENAME` и опционален. Он применяется поверх chat rules и operation routes до выбора downstream-маршрута:
+
+- `aliases` публикует дополнительное имя модели и резолвит его в существующую gateway-модель. Alias отображается в `/v1/models` как отдельная запись с `aliases_to`.
+- `prefixes` переписывает имена по префиксу: либо в фиксированный `target`, либо заменой `prefix` на `target_prefix`.
+- `excluded_models` скрывает и запрещает модели. Поддерживается точное имя и простой wildcard в конце (`"legacy/*"`).
+- `upstream_model_pools` создаёт синтетические fallback rules из того же набора полей, что `models_fallback_rules.json`. Это удобно для отдельных upstream pools без ручного дублирования в основном файле.
+
+```json
+{
+    "aliases": {
+        "public-fast": "pool-fast"
+    },
+    "prefixes": [
+        { "prefix": "openai/", "target_prefix": "gateway/openai/" }
+    ],
+    "excluded_models": ["legacy/*"],
+    "upstream_model_pools": {
+        "pool-fast": {
+            "fallback_models": [
+                { "provider": "pooled_proxy", "model": "fast-model", "upstream_key_pool": "primary" }
+            ],
+            "rotate_models": false
+        }
+    }
+}
+```
 
 ### Конфигурация operation routes (`models_operation_rules.json`)
 Gateway также умеет загружать отдельный конфиг operation routes для секций `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research` и `web_deep_research`. Этот файл опционален: если `models_operation_rules.json` отсутствует или пуст, приложение стартует с пустыми секциями для всех этих operation-type. Эндпоинт `/v1/models` объединяет эти секции с chat rules и возвращает для gateway-моделей список `capabilities`, например `["chat", "embeddings"]`, `["images"]`, `["audio_speech"]`, `["audio_transcription"]`, `["pdf_conversion"]`, `["web_research"]` или `["web_deep_research"]`.
@@ -737,7 +843,7 @@ PDF-конвертер использует секцию `pdf_conversions`. `POS
 Для mapping-based image-route gateway не молча отбрасывает неподдерживаемые client-поля: если поле не разрешено конфигом mapping’а, endpoint возвращает явный `400`. Если клиентское поле нужно принять для совместимости, но downstream его не поддерживает, его можно замапить в пустой target-key `""`; такое поле считается разрешённым, но не попадает в downstream JSON. Так настроен NVIDIA `flux.2-klein-4b` generation для OpenAI-параметра `n`.
 Для OpenAI-compatible image routes, где downstream почти совместим с OpenAI Images API, но отвергает отдельные client-поля, можно задать `request_mapping.omit_client_fields`, например `["response_format", "seed"]`. Gateway примет эти поля от клиента, а в downstream JSON их не отправит.
 
-Структура `models_operation_rules.json` состоит из секций `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research` и `web_deep_research`. Route-based запись (`embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`) содержит `gateway_model_name` и список `routes`, где для каждого route доступны поля `provider`, `model`, `target_path`, `custom_headers`, `custom_body_params`, `retry_count` и `retry_delay`; для `audio_speech` route также можно указать `voices_target_path`, если список голосов живёт не на `"/voices"`. Для `embeddings`, `rerank`, `images_generations`, `images_edits` и `audio_transcriptions` порядок routes задаёт fallback chain; для `audio_speech` и `pdf_conversions` используется первый route. Для image routes также доступны `request_format`, `response_format`, `request_mapping` и `response_mapping`; для rerank routes — опциональные поля `request_format`, `response_format` и `response_output_format`; для audio transcription routes — поле `request_format`. Секции `web_search` и `web_read` не содержат downstream routes вообще: запись состоит только из `gateway_model_name` (и опционально `query_model` для `web_search`), а реальные поисковые и reader-провайдеры встроены в gateway и выбираются по наличию env-переменных `PROXY_URL` / `TAVILY_API_KEY` / `JINA_API_KEY` / `ZAI_API_KEY`. Старые поля `routes` под `web_search`/`web_read` больше не поддерживаются: если они остались в `models_operation_rules.json`, gateway не стартует и падает с явной ошибкой валидации — нужно удалить блок `routes` из этих секций вручную. Запись `web_research` задаёт сервисную модель, ссылки на gateway search/read (`search_model`, `read_model`), модель ранжирования (`rerank_model`) и chat-модель анализа (`analysis_model`). Запись `web_deep_research` не содержит downstream routes: она задаёт сервисную модель, ссылки на gateway search/read (`search_model`, `read_model`), модели GPT Researcher (`fast_model`, `smart_model`, `strategic_model`, `embedding_model`) и image-настройки (`image_generation_model`, `image_generation_size`). `image_generation_model` всегда ссылается на gateway-модель из `images_generations`. При сохранении operation routes gateway дополнительно проверяет cross-section ссылки: `analysis_model`, `fast_model`, `smart_model`, `strategic_model` должны быть объявлены в fallback rules, `rerank_model` — в `rerank`, `embedding_model` — в `embeddings`, `image_generation_model` — в `images_generations`, а `search_model` / `read_model` — в `web_search` / `web_read`. В web-вкладке rules editor все эти поля реализованы выпадающими списками с автообновлением при изменении соответствующих секций.
+Структура `models_operation_rules.json` состоит из секций `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research` и `web_deep_research`. Route-based запись (`embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`) содержит `gateway_model_name` и список `routes`, где для каждого route доступны поля `provider`, `model`, `target_path`, `custom_headers`, `custom_body_params`, `payload_transforms`, `retry_count` и `retry_delay`; для `audio_speech` route также можно указать `voices_target_path`, если список голосов живёт не на `"/voices"`. Для `embeddings`, `rerank`, `images_generations`, `images_edits` и `audio_transcriptions` порядок routes задаёт fallback chain; для `audio_speech` и `pdf_conversions` используется первый route. Для image routes также доступны `request_format`, `response_format`, `request_mapping` и `response_mapping`; для rerank routes — опциональные поля `request_format`, `response_format` и `response_output_format`; для audio transcription routes — поле `request_format`. Секции `web_search` и `web_read` не содержат downstream routes вообще: запись состоит только из `gateway_model_name` (и опционально `query_model` для `web_search`), а реальные поисковые и reader-провайдеры встроены в gateway и выбираются по наличию env-переменных `PROXY_URL` / `TAVILY_API_KEY` / `JINA_API_KEY` / `ZAI_API_KEY`. Старые поля `routes` под `web_search`/`web_read` больше не поддерживаются: если они остались в `models_operation_rules.json`, gateway не стартует и падает с явной ошибкой валидации — нужно удалить блок `routes` из этих секций вручную. Запись `web_research` задаёт сервисную модель, ссылки на gateway search/read (`search_model`, `read_model`), модель ранжирования (`rerank_model`) и chat-модель анализа (`analysis_model`). Запись `web_deep_research` не содержит downstream routes: она задаёт сервисную модель, ссылки на gateway search/read (`search_model`, `read_model`), модели GPT Researcher (`fast_model`, `smart_model`, `strategic_model`, `embedding_model`) и image-настройки (`image_generation_model`, `image_generation_size`). `image_generation_model` всегда ссылается на gateway-модель из `images_generations`. При сохранении operation routes gateway дополнительно проверяет cross-section ссылки: `analysis_model`, `fast_model`, `smart_model`, `strategic_model` должны быть объявлены в fallback rules, `rerank_model` — в `rerank`, `embedding_model` — в `embeddings`, `image_generation_model` — в `images_generations`, а `search_model` / `read_model` — в `web_search` / `web_read`. В web-вкладке rules editor все эти поля реализованы выпадающими списками с автообновлением при изменении соответствующих секций.
 Для каждого `gateway_model_name` внутри одной секции имя должно быть уникальным. Каждый `provider` должен существовать в `providers.json`. Для `rerank` поле `target_path` по умолчанию равно `"/score"`, для `images_edits` — `"/images/edits"`, для `audio_speech` — `"/audio/speech"`, для `audio_transcriptions` — `"/audio/transcriptions"`, а для `pdf_conversions` — `"/api"`, если его не указать явно. `target_path` может быть либо относительным путём, начинающимся с `/`, либо абсолютным `http(s)` URL. Для audio route с `request_format: "nvidia_riva_grpc"` поле `target_path` должно оставаться дефолтным `"/audio/transcriptions"`, потому что реальный downstream идёт через gRPC transport, а не через HTTP path. Одинаковый `gateway_model_name` разрешён одновременно в chat rules и operation routes, потому что это разные конфигурационные секции.
 
 ```json
@@ -906,8 +1012,9 @@ pip install -r requirements-dev.txt
 Если вы предпочитаете запуск через Docker, смотрите [это руководство](/docker/README.md) (спасибо [canadaduane](https://github.com/canadaduane)!👍)
 
 Docker image собирается на `python:3.12-slim` и устанавливает зависимости из `requirements.txt`, поэтому обновления зависимостей попадают в контейнер при пересборке image.
+В image можно прошить build metadata через build args `LLMGATEWAY_BUILD_VERSION`, `LLMGATEWAY_BUILD_SHA`, `LLMGATEWAY_BUILD_DATE` и `LLMGATEWAY_BUILD_REF`; значения попадут в OCI labels и health headers. Docker healthcheck использует `HEAD /healthz`.
 
-При использовании `docker-compose.yml` файлы конфигурации `providers.json`, `models_fallback_rules.json` и `models_operation_rules.json` монтируются с доступом на запись, поэтому веб-редактор может сохранять изменения прямо из контейнера.
+При использовании `docker-compose.yml` файлы конфигурации `providers.json`, `models_fallback_rules.json`, `models_operation_rules.json` и `models_model_rules.json` монтируются с доступом на запись, поэтому веб-редактор может сохранять изменения прямо из контейнера.
 
 ### Через systemd service
 Если нужен локальный systemd-сервис для запуска gateway вне Docker, используйте deployment-скрипт:

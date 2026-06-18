@@ -8,8 +8,10 @@ from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from ...config.loader import ConfigLoader, resolve_provider_api_key
+from ...config.loader import ConfigLoader
 from ...services.access_control import enforce_virtual_key_access
+from ...services.payload_transform import apply_payload_transforms
+from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from .operation_proxy import (
     extract_downstream_error_detail,
@@ -106,7 +108,7 @@ def _build_route_payload(request_payload: dict[str, object], route) -> dict[str,
         if param_name.lower() in PROTECTED_PDF_CUSTOM_PARAM_KEYS:
             continue
         downstream_payload[param_name] = param_value
-    return downstream_payload
+    return apply_payload_transforms(downstream_payload, route.payload_transforms)
 
 
 def _prepare_pdf_route(
@@ -128,14 +130,19 @@ def _prepare_pdf_route(
     return retry_settings
 
 
-def _prepare_pdf_http_request(
+async def _prepare_pdf_http_request(
+    request: Request,
     dispatcher: OperationDispatcher,
     route,
     provider_config,
 ) -> tuple[str, dict[str, str]]:
-    provider_api_key = resolve_provider_api_key(provider_config.apikey)
     base_url = dispatcher.build_target_url(route, provider_config).rstrip("/")
-    headers = dispatcher.build_headers(route, provider_api_key)
+    auth_headers = await resolve_provider_auth_headers(
+        request,
+        provider_name=route.provider,
+        provider_config=provider_config,
+    )
+    headers = dispatcher.build_headers(route, auth_headers=auth_headers)
     multipart_headers = {key: value for key, value in headers.items() if key.lower() != "content-type"}
     return base_url, multipart_headers
 
@@ -234,7 +241,7 @@ def _response_from_raw_body(
     return Response(content=response_body, status_code=status_code, headers=response_headers)
 
 
-def _resolve_pdf_route(request: Request, requested_model: str):
+async def _resolve_pdf_route(request: Request, requested_model: str):
     enforce_virtual_key_access(request, requested_model)
     dispatcher, http_client, config_loader_instance, proxy_http_clients = _get_operation_runtime(request)
     route = dispatcher.lookup_route(PDF_CONVERSIONS_SECTION, requested_model)
@@ -254,7 +261,7 @@ def _resolve_pdf_route(request: Request, requested_model: str):
         raise HTTPException(status_code=500, detail="Internal server error: Provider configuration not available.")
 
     retry_count, retry_delay = _prepare_pdf_route(request, dispatcher, route, gateway_model=requested_model)
-    base_url, headers = _prepare_pdf_http_request(dispatcher, route, provider_config)
+    base_url, headers = await _prepare_pdf_http_request(request, dispatcher, route, provider_config)
     effective_client = proxy_http_clients.get(route.provider, http_client)
     return route, base_url, headers, effective_client, retry_count, retry_delay
 
@@ -263,7 +270,7 @@ def _resolve_pdf_route(request: Request, requested_model: str):
 async def convert_pdf(request: Request):
     requested_model, request_payload, files_payload = await _parse_pdf_multipart_request(request)
     request_started_at = time.monotonic()
-    route, base_url, headers, effective_client, retry_count, retry_delay = _resolve_pdf_route(
+    route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
         request,
         requested_model,
     )
@@ -292,7 +299,7 @@ async def convert_pdf(request: Request):
 async def create_pdf_job(request: Request):
     requested_model, request_payload, files_payload = await _parse_pdf_multipart_request(request)
     request_started_at = time.monotonic()
-    route, base_url, headers, effective_client, retry_count, retry_delay = _resolve_pdf_route(
+    route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
         request,
         requested_model,
     )
@@ -319,7 +326,7 @@ async def create_pdf_job(request: Request):
 
 @router.get("/pdf/jobs/{job_id}")
 async def get_pdf_job(job_id: str, model: str, request: Request):
-    _route, base_url, headers, effective_client, retry_count, retry_delay = _resolve_pdf_route(request, model)
+    _route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(request, model)
     response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
         _join_downstream_path(base_url, "jobs", job_id),
         headers,
@@ -332,7 +339,7 @@ async def get_pdf_job(job_id: str, model: str, request: Request):
 
 @router.get("/pdf/jobs/{job_id}/result")
 async def get_pdf_job_result(job_id: str, model: str, request: Request):
-    _route, base_url, headers, effective_client, retry_count, retry_delay = _resolve_pdf_route(request, model)
+    _route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(request, model)
     response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
         _join_downstream_path(base_url, "jobs", job_id, "result"),
         headers,
@@ -345,7 +352,7 @@ async def get_pdf_job_result(job_id: str, model: str, request: Request):
 
 @router.get("/pdf/jobs/{job_id}/download/{artifact:path}")
 async def download_pdf_job_artifact(job_id: str, artifact: str, model: str, request: Request):
-    _route, base_url, headers, effective_client, retry_count, retry_delay = _resolve_pdf_route(request, model)
+    _route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(request, model)
     response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
         _join_downstream_path(base_url, "jobs", job_id, "download", artifact),
         headers,

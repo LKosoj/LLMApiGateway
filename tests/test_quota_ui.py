@@ -174,6 +174,7 @@ def quota_server():
         providers_path = temp_path / "providers.json"
         fallback_rules_path = temp_path / "models_fallback_rules.json"
         operation_rules_path = temp_path / "models_operation_rules.json"
+        fusion_rules_path = temp_path / "models_fusion_rules.json"
 
         providers_path.write_text(
             '[{"openai": {"baseUrl": "http://api.openai.com", "apikey": "key"}}]',
@@ -191,6 +192,7 @@ def quota_server():
             '"web_research": [], "web_deep_research": []}',
             encoding="utf-8",
         )
+        fusion_rules_path.write_text("[]", encoding="utf-8")
 
         db_dir = temp_path / "db"
         db_dir.mkdir(parents=True, exist_ok=True)
@@ -201,6 +203,7 @@ def quota_server():
         env["PROVIDERS_FILENAME"] = str(providers_path)
         env["FALLBACK_RULES_FILENAME"] = str(fallback_rules_path)
         env["OPERATION_RULES_FILENAME"] = str(operation_rules_path)
+        env["FUSION_RULES_FILENAME"] = str(fusion_rules_path)
         env["GATEWAY_DB_DIR"] = str(db_dir)
         port = get_free_port()
         env["GATEWAY_PORT"] = str(port)

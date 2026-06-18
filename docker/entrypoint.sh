@@ -111,6 +111,12 @@ if [ ! -f "/app/models_operation_rules.json" ]; then
 }' > /app/models_operation_rules.json
 fi
 
+# If models_model_rules.json doesn't exist, create an empty model policy file
+if [ ! -f "/app/models_model_rules.json" ]; then
+    echo "models_model_rules.json not found, creating empty model policy."
+    echo '{}' > /app/models_model_rules.json
+fi
+
 # Print some useful information
 echo "Gateway configured to listen on ${GATEWAY_HOST:-0.0.0.0}:${GATEWAY_PORT:-9000}"
 echo "Default fallback provider: ${FALLBACK_PROVIDER:-openrouter}"

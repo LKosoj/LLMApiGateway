@@ -33,7 +33,13 @@ from uuid import uuid4
 
 from fastapi import HTTPException, Request
 
-from ..config.loader import ANTHROPIC_API_VERSION, resolve_provider_api_key
+from ..config.loader import (
+    ANTHROPIC_API_VERSION,
+    provider_auth_is_managed_oauth,
+    resolve_provider_config_api_key,
+    resolve_provider_config_auth_headers,
+)
+from ..services.provider_auth import resolve_provider_auth_material
 from ..services.request_handler import make_llm_request
 
 logger = logging.getLogger(__name__)
@@ -213,7 +219,7 @@ class FusionEnsembleService:
             ]
         else:
             panel_calls = [
-                self._call_member(member, panel_messages, http_client, proxy_http_clients)
+                self._call_member(member, panel_messages, http_client, proxy_http_clients, request)
                 for member in panel
             ]
         panel_raw = await asyncio.gather(*panel_calls, return_exceptions=True)
@@ -259,7 +265,7 @@ class FusionEnsembleService:
         ]
         try:
             judge_text, judge_usage = await self._call_member(
-                judge_member, judge_messages, http_client, proxy_http_clients
+                judge_member, judge_messages, http_client, proxy_http_clients, request
             )
             _add_usage(usage_total, judge_usage)
             analysis = _parse_judge_analysis(judge_text)
@@ -281,7 +287,7 @@ class FusionEnsembleService:
             },
         ]
         final_content, main_usage = await self._call_member(
-            main_member, main_messages, http_client, proxy_http_clients
+            main_member, main_messages, http_client, proxy_http_clients, request
         )
         _add_usage(usage_total, main_usage)
 
@@ -320,10 +326,11 @@ class FusionEnsembleService:
         messages: List[Dict[str, Any]],
         http_client: Any,
         proxy_http_clients: Dict[str, Any],
+        request: Request,
     ) -> Tuple[str, Dict[str, Any]]:
         """Call a single ``{provider, model}`` member and return (text, usage)."""
         openai_response = await self._raw_chat_call(
-            member, messages, http_client, proxy_http_clients
+            member, messages, http_client, proxy_http_clients, request
         )
         return _extract_text(openai_response), openai_response.get("usage") or {}
 
@@ -333,6 +340,7 @@ class FusionEnsembleService:
         messages: List[Dict[str, Any]],
         http_client: Any,
         proxy_http_clients: Dict[str, Any],
+        request: Request | None = None,
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Perform one chat call for a member and return the full OpenAI response.
@@ -351,7 +359,18 @@ class FusionEnsembleService:
             )
 
         client = proxy_http_clients.get(provider_name, http_client)
-        api_key = resolve_provider_api_key(provider_config.apikey)
+        if request is None:
+            if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None)):
+                raise HTTPException(status_code=500, detail="Managed OAuth Fusion calls require request state.")
+            api_key = resolve_provider_config_api_key(provider_config)
+            auth_headers = resolve_provider_config_auth_headers(provider_config, api_key)
+        else:
+            auth_material = await resolve_provider_auth_material(
+                request,
+                provider_name=str(provider_name),
+                provider_config=provider_config,
+            )
+            auth_headers = auth_material.headers
 
         payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": False}
         if member.get("temperature") is not None:
@@ -382,7 +401,7 @@ class FusionEnsembleService:
                 "Content-Type": "application/json",
                 "anthropic-version": ANTHROPIC_API_VERSION,
                 FUSION_DEPTH_HEADER: "1",
-                **({"x-api-key": api_key} if api_key else {}),
+                **auth_headers,
             }
             target_url = f"{base_url}/v1/messages"
             response_data, error_detail = await make_llm_request(
@@ -395,7 +414,7 @@ class FusionEnsembleService:
         headers = {
             "Content-Type": "application/json",
             FUSION_DEPTH_HEADER: "1",
-            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+            **auth_headers,
         }
         target_url = f"{base_url}/chat/completions"
         response_data, error_detail = await make_llm_request(
@@ -432,7 +451,7 @@ class FusionEnsembleService:
         for _iteration in range(max_iterations):
             offer_tools = tool_calls_made < max_tool_calls
             response = await self._raw_chat_call(
-                member, convo, http_client, proxy_http_clients,
+                member, convo, http_client, proxy_http_clients, request,
                 tools=tool_schemas if offer_tools else None,
             )
             _add_usage(usage_total, response.get("usage") or {})

@@ -1,13 +1,21 @@
 import json5
+import ipaddress
 import logging
 import os
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Literal, Optional
+from typing import List, Dict, Any, Literal, Optional, Mapping
+from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, RootModel, model_validator
 
 # Import settings using relative path within the package
 from .settings import settings
+from .placeholder_secrets import is_placeholder_secret, placeholder_secret_error
+from ..services.payload_transform import (
+    validate_payload_transform_filters,
+    validate_payload_transform_object,
+)
+from ..services.model_policy import is_model_excluded
 from ..utils.api_keys import select_next_api_key, split_api_keys
 
 
@@ -83,6 +91,86 @@ def resolve_provider_api_keys(api_key_reference_or_literal: str | None) -> list[
     return split_api_keys(resolve_provider_api_key_value(api_key_reference_or_literal))
 
 
+def resolve_provider_config_api_key(provider_config: object) -> str | None:
+    api_keys = resolve_provider_config_api_keys(provider_config)
+    return select_next_api_key(",".join(api_keys))
+
+
+def resolve_provider_config_api_keys(provider_config: object) -> list[str]:
+    legacy_api_key = getattr(provider_config, "apikey", None)
+    if legacy_api_key:
+        return resolve_provider_api_keys(legacy_api_key)
+
+    auth_config = getattr(provider_config, "auth", None)
+    if _provider_auth_is_oauth(auth_config):
+        return [resolve_provider_oauth_token(auth_config)]
+
+    pools = getattr(provider_config, "upstream_key_pools", None)
+    if not isinstance(pools, Mapping):
+        return []
+
+    api_keys: list[str] = []
+    for pool_config in pools.values():
+        key_specs = getattr(pool_config, "keys", None)
+        if not isinstance(key_specs, list):
+            continue
+        for key_spec in key_specs:
+            if getattr(key_spec, "enabled", True) is False:
+                continue
+            api_keys.extend(resolve_provider_api_keys(getattr(key_spec, "apikey", None)))
+    return api_keys
+
+
+def resolve_provider_config_auth_headers(provider_config: object, api_key: str | None = None) -> dict[str, str]:
+    auth_config = getattr(provider_config, "auth", None)
+    if _provider_auth_is_oauth(auth_config):
+        return {"Authorization": f"Bearer {resolve_provider_oauth_token(auth_config)}"}
+
+    resolved_api_key = api_key or resolve_provider_config_api_key(provider_config)
+    if not resolved_api_key:
+        return {}
+    if getattr(provider_config, "type", "openai") == "anthropic":
+        return {"x-api-key": resolved_api_key}
+    return {"Authorization": f"Bearer {resolved_api_key}"}
+
+
+def resolve_provider_oauth_token(auth_config: object) -> str:
+    if provider_auth_is_managed_oauth(auth_config):
+        raise ConfigError("Managed OAuth auth must be resolved through the async provider auth service.")
+
+    token_env = getattr(auth_config, "token_env", None)
+    if token_env:
+        token = os.getenv(str(token_env), "").strip()
+        if not token:
+            raise ConfigError(f"env var {token_env} referenced but missing or empty for provider OAuth token")
+        if is_placeholder_secret(token):
+            raise ConfigError(placeholder_secret_error(str(token_env), token))
+        return token
+
+    token_file = getattr(auth_config, "token_file", None)
+    if token_file:
+        path = Path(str(token_file)).expanduser()
+        try:
+            token = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(f"OAuth token file '{path}' could not be read: {exc}") from exc
+        if not token:
+            raise ConfigError(f"OAuth token file '{path}' is empty")
+        if is_placeholder_secret(token):
+            raise ConfigError(placeholder_secret_error(str(path), token))
+        return token
+
+    raise ConfigError("OAuth auth config must define token_env or token_file")
+
+
+def _provider_auth_is_oauth(auth_config: object) -> bool:
+    return getattr(auth_config, "type", "api_key") in {"codex_oauth", "claude_oauth", "xai_oauth"}
+
+
+def provider_auth_is_managed_oauth(auth_config: object) -> bool:
+    return _provider_auth_is_oauth(auth_config) and bool(getattr(auth_config, "credential_id", None))
+
+
 def resolve_provider_api_key_value(api_key_reference_or_literal: str | None) -> str | None:
     if not api_key_reference_or_literal:
         return None
@@ -130,6 +218,8 @@ def _explicit_env_reference_name(value: str, field_name: str) -> str | None:
 def _resolve_explicit_env_reference(env_name: str, field_name: str) -> str:
     resolved = os.getenv(env_name)
     if resolved:
+        if field_name == "apikey" and is_placeholder_secret(resolved):
+            raise ConfigError(placeholder_secret_error(env_name, resolved))
         return resolved
 
     raise ConfigError(
@@ -267,6 +357,15 @@ def _validate_provider_name_list(value: Any, field_name: str) -> List[str] | Non
     return normalized_values
 
 
+def _validate_header_name(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    normalized_value = _validate_non_empty_string(value, field_name)
+    if not re.fullmatch(r"[A-Za-z0-9-]+", normalized_value):
+        raise ValueError(f"'{field_name}' must contain only letters, digits, and hyphens.")
+    return normalized_value
+
+
 def _empty_operation_rules() -> Dict[str, Dict[str, Any]]:
     return {
         "embeddings": {},
@@ -290,9 +389,245 @@ class SubscriptionQuotaConfig(BaseModel):
     token_env: str
 
 
+class UpstreamRoutingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: Literal["round-robin", "fill-first", "priority"] = "round-robin"
+    session_affinity: bool = False
+    session_affinity_header: str = "X-Session-Id"
+    session_affinity_ttl_seconds: int = 3600
+
+    @field_validator("session_affinity_header", mode="before")
+    @classmethod
+    def validate_session_affinity_header(cls, value: Any) -> str:
+        return _validate_header_name(value, "session_affinity_header") or "X-Session-Id"
+
+    @field_validator("session_affinity_ttl_seconds")
+    @classmethod
+    def validate_session_affinity_ttl_seconds(cls, value: int) -> int:
+        parsed = int(value)
+        if parsed <= 0:
+            raise ValueError("'session_affinity_ttl_seconds' must be a positive integer.")
+        return parsed
+
+
+class UpstreamKeySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = None
+    apikey: str
+    priority: int = 0
+    enabled: bool = True
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def validate_id(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized_value = _validate_non_empty_string(value, "id")
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]+", normalized_value):
+            raise ValueError("'id' must contain only letters, digits, dots, underscores, colons, and hyphens.")
+        return normalized_value
+
+    @field_validator("apikey", mode="before")
+    @classmethod
+    def validate_apikey(cls, value: Any) -> str | None:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("'apikey' must be a non-empty string.")
+        if is_placeholder_secret(value):
+            raise ValueError(placeholder_secret_error("upstream key apikey", value))
+        return value
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, value: int) -> int:
+        return int(value)
+
+
+class UpstreamKeyPoolConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: Literal["round-robin", "fill-first", "priority"] | None = None
+    session_affinity: bool | None = None
+    session_affinity_header: str | None = None
+    session_affinity_ttl_seconds: int | None = None
+    keys: list[UpstreamKeySpec]
+
+    @field_validator("session_affinity_header", mode="before")
+    @classmethod
+    def validate_session_affinity_header(cls, value: Any) -> str | None:
+        return _validate_header_name(value, "session_affinity_header")
+
+    @field_validator("session_affinity_ttl_seconds")
+    @classmethod
+    def validate_session_affinity_ttl_seconds(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        parsed = int(value)
+        if parsed <= 0:
+            raise ValueError("'session_affinity_ttl_seconds' must be a positive integer.")
+        return parsed
+
+    @field_validator("keys")
+    @classmethod
+    def validate_keys(cls, value: list[UpstreamKeySpec]) -> list[UpstreamKeySpec]:
+        if not value:
+            raise ValueError("'keys' must not be empty.")
+        seen_ids: set[str] = set()
+        for key_spec in value:
+            if key_spec.id is None:
+                continue
+            if key_spec.id in seen_ids:
+                raise ValueError("'keys' must not contain duplicate ids.")
+            seen_ids.add(key_spec.id)
+        return value
+
+
+class ProviderAuthConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["api_key", "codex_oauth", "claude_oauth", "xai_oauth"] = "api_key"
+    token_env: str | None = None
+    token_file: str | None = None
+    credential_id: str | None = None
+    oauth_client: "OAuthClientConfig | None" = None
+
+    @field_validator("token_env", mode="before")
+    @classmethod
+    def validate_token_env(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized_value = _validate_non_empty_string(value, "token_env")
+        if not ENV_REFERENCE_NAME_RE.fullmatch(normalized_value):
+            raise ValueError("'token_env' must be an environment variable name like CODEX_OAUTH_TOKEN.")
+        return normalized_value
+
+    @field_validator("token_file", mode="before")
+    @classmethod
+    def validate_token_file(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, "token_file")
+
+    @field_validator("credential_id", mode="before")
+    @classmethod
+    def validate_credential_id(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, "credential_id")
+
+    @model_validator(mode="after")
+    def validate_token_source(self) -> "ProviderAuthConfig":
+        if self.type == "api_key":
+            if self.token_env or self.token_file or self.credential_id or self.oauth_client:
+                raise ValueError("'api_key' auth must not define token_env, token_file, credential_id, or oauth_client.")
+            return self
+        source_count = sum(bool(value) for value in (self.token_env, self.token_file, self.credential_id))
+        if source_count != 1:
+            raise ValueError("OAuth auth must define exactly one of token_env, token_file, or credential_id.")
+        if self.credential_id:
+            if self.oauth_client is None:
+                raise ValueError("OAuth auth with credential_id must define oauth_client.")
+        elif self.oauth_client is not None:
+            raise ValueError("OAuth auth with token_env or token_file must not define oauth_client.")
+        return self
+
+
+class OAuthClientConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str | None = None
+    client_id_env: str | None = None
+    client_secret_env: str | None = None
+    authorization_endpoint: str | None = None
+    device_authorization_endpoint: str | None = None
+    token_endpoint: str
+    redirect_uri: str | None = None
+    scopes: list[str] = Field(default_factory=list)
+
+    @field_validator("client_id", "token_endpoint", "authorization_endpoint", "device_authorization_endpoint", "redirect_uri", mode="before")
+    @classmethod
+    def validate_optional_string_fields(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, "oauth_client field")
+
+    @field_validator("client_id_env", "client_secret_env", mode="before")
+    @classmethod
+    def validate_oauth_env_name(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized_value = _validate_non_empty_string(value, "oauth_client env field")
+        if not ENV_REFERENCE_NAME_RE.fullmatch(normalized_value):
+            raise ValueError("OAuth client env fields must be environment variable names like OAUTH_CLIENT_ID.")
+        return normalized_value
+
+    @field_validator("scopes", mode="before")
+    @classmethod
+    def normalize_scopes(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split()
+        if not isinstance(value, list):
+            raise ValueError("'scopes' must be a list of strings or a space-separated string.")
+        scopes: list[str] = []
+        for item in value:
+            scope = _validate_non_empty_string(item, "oauth scope")
+            if _contains_forbidden_oauth_marker(scope):
+                raise ValueError("OAuth scopes must not contain official CLI spoofing markers.")
+            scopes.append(scope)
+        return scopes
+
+    @field_validator("token_endpoint", "authorization_endpoint", "device_authorization_endpoint", "redirect_uri")
+    @classmethod
+    def validate_oauth_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("OAuth endpoints and redirect_uri must be absolute HTTP(S) URLs.")
+        if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
+            raise ValueError("OAuth endpoints and redirect_uri must use HTTPS unless they target localhost/loopback.")
+        if _contains_forbidden_oauth_marker(value):
+            raise ValueError("OAuth endpoints and redirect_uri must not contain official CLI spoofing markers.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_client_identity(self) -> "OAuthClientConfig":
+        if bool(self.client_id) == bool(self.client_id_env):
+            raise ValueError("oauth_client must define exactly one of client_id or client_id_env.")
+        return self
+
+
+def _contains_forbidden_oauth_marker(value: str) -> bool:
+    lowered = value.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "codex_cli_simplified_flow",
+            "grok-cli:access",
+            "referrer=cli",
+            "referrer=cli-proxy-api",
+        )
+    )
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    normalized = hostname.strip("[]").lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 class ProviderDetails(BaseModel):
     baseUrl: str
-    apikey: str
+    apikey: str | None = None
     # API dialect this provider speaks. ``openai`` — OpenAI-compatible
     # /chat/completions with Bearer auth. ``anthropic`` — native Anthropic
     # /v1/messages with ``x-api-key`` and ``anthropic-version`` headers.
@@ -304,6 +639,9 @@ class ProviderDetails(BaseModel):
     # ``models`` stays reserved for per-model metadata (``upstream_limits`` etc.).
     available_models: list[str] | None = None
     subscription_quota: Optional[SubscriptionQuotaConfig] = None
+    routing: UpstreamRoutingConfig = Field(default_factory=UpstreamRoutingConfig)
+    upstream_key_pools: Dict[str, UpstreamKeyPoolConfig] = Field(default_factory=dict)
+    auth: ProviderAuthConfig | None = None
 
     @field_validator("baseUrl", mode="before")
     @classmethod
@@ -320,10 +658,34 @@ class ProviderDetails(BaseModel):
     @field_validator("apikey", mode="before")
     @classmethod
     def validate_apikey(cls, value: Any) -> str:
+        if value is None:
+            return None
         if not isinstance(value, str) or not value.strip():
             raise ValueError("'apikey' must be a non-empty string.")
+        if is_placeholder_secret(value):
+            raise ValueError(placeholder_secret_error("provider apikey", value))
 
         return value
+
+    @field_validator("upstream_key_pools")
+    @classmethod
+    def validate_upstream_key_pools(
+        cls,
+        value: Dict[str, UpstreamKeyPoolConfig],
+    ) -> Dict[str, UpstreamKeyPoolConfig]:
+        for pool_name in value:
+            _validate_non_empty_string(pool_name, "upstream_key_pools key")
+        return value
+
+    @model_validator(mode="after")
+    def validate_auth_material(self) -> "ProviderDetails":
+        if self.auth and self.auth.type != "api_key":
+            if self.apikey or self.upstream_key_pools:
+                raise ValueError("OAuth 'auth' must not be combined with 'apikey' or 'upstream_key_pools'.")
+            return self
+        if self.apikey or self.upstream_key_pools:
+            return self
+        raise ValueError("provider must define either 'apikey', 'upstream_key_pools', or OAuth 'auth'.")
 
 class ProviderConfig(RootModel[Dict[str, ProviderDetails]]):
     """
@@ -344,15 +706,41 @@ class ProviderConfig(RootModel[Dict[str, ProviderDetails]]):
         # For example, the value associated with the key must match ProviderDetails structure.
         return data
 
+
+class PayloadTransformConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    defaults: Dict[str, Any] = Field(default_factory=dict)
+    overrides: Dict[str, Any] = Field(default_factory=dict)
+    filters: list[str] = Field(default_factory=list)
+
+    @field_validator("defaults")
+    @classmethod
+    def validate_defaults(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return validate_payload_transform_object(value, "payload_transforms.defaults")
+
+    @field_validator("overrides")
+    @classmethod
+    def validate_overrides(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return validate_payload_transform_object(value, "payload_transforms.overrides")
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, value: list[str]) -> list[str]:
+        return validate_payload_transform_filters(value, "payload_transforms.filters")
+
+
 class FallbackModelRule(BaseModel):
     provider: str
     model: str
+    upstream_key_pool: str | None = None
     use_provider_order_as_fallback: bool = False
     providers_order: Optional[List[str]] = None
     retry_delay: Optional[int] = None
     retry_count: Optional[int] = None
     custom_body_params: Dict[str, Any] = Field(default_factory=dict)
     custom_headers: Dict[str, Any] = Field(default_factory=dict)
+    payload_transforms: PayloadTransformConfig | None = None
 
     @field_validator("custom_headers")
     @classmethod
@@ -370,6 +758,13 @@ class FallbackModelRule(BaseModel):
     @classmethod
     def validate_providers_order(cls, value: Optional[List[str]]) -> Optional[List[str]]:
         return _validate_provider_name_list(value, "providers_order")
+
+    @field_validator("upstream_key_pool", mode="before")
+    @classmethod
+    def validate_upstream_key_pool(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, "upstream_key_pool")
 
 class ModelFallbackConfig(BaseModel):
     gateway_model_name: str
@@ -400,6 +795,107 @@ class ModelFallbackConfig(BaseModel):
         if validated_value is None:
             return None
         return int(validated_value)
+
+
+class ModelPrefixRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prefix: str
+    target: str | None = None
+    target_prefix: str | None = None
+
+    @field_validator("prefix", mode="before")
+    @classmethod
+    def validate_prefix(cls, value: Any) -> str:
+        return _validate_non_empty_string(value, "prefix")
+
+    @field_validator("target", "target_prefix", mode="before")
+    @classmethod
+    def validate_targets(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, "target")
+
+    @model_validator(mode="after")
+    def validate_target_shape(self) -> "ModelPrefixRule":
+        if bool(self.target) == bool(self.target_prefix):
+            raise ValueError("Exactly one of 'target' or 'target_prefix' must be set for a prefix rule.")
+        return self
+
+
+class UpstreamModelPoolConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fallback_models: List[FallbackModelRule]
+    rotate_models: bool = False
+    dynamic_penalty: bool = False
+    strip_think_tags: bool = False
+    compress_tool_results: bool = False
+    max_total_attempts: Optional[int] = None
+    context_overflow_fallback: Optional[FallbackModelRule] = None
+
+    @field_validator("fallback_models")
+    @classmethod
+    def validate_fallback_models(cls, value: List[FallbackModelRule]) -> List[FallbackModelRule]:
+        if not value:
+            raise ValueError("'fallback_models' must not be empty.")
+        return value
+
+    @field_validator("rotate_models", "dynamic_penalty", "strip_think_tags", "compress_tool_results", mode="before")
+    def validate_bool_fields(cls, value):
+        if isinstance(value, str):
+            return value.lower() == "true"
+        return value
+
+    @field_validator("max_total_attempts")
+    @classmethod
+    def validate_max_total_attempts(cls, value: int | None) -> int | None:
+        validated_value = _validate_non_negative_number(value, "max_total_attempts")
+        if validated_value is None:
+            return None
+        return int(validated_value)
+
+
+class ModelRulesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    aliases: Dict[str, str] = Field(default_factory=dict)
+    prefixes: List[ModelPrefixRule] = Field(default_factory=list)
+    excluded_models: List[str] = Field(default_factory=list)
+    upstream_model_pools: Dict[str, UpstreamModelPoolConfig] = Field(default_factory=dict)
+
+    @field_validator("aliases")
+    @classmethod
+    def validate_aliases(cls, value: Dict[str, str]) -> Dict[str, str]:
+        normalized_aliases: dict[str, str] = {}
+        for alias, target in value.items():
+            normalized_aliases[
+                _validate_non_empty_string(alias, "aliases key")
+            ] = _validate_non_empty_string(target, "aliases target")
+        return normalized_aliases
+
+    @field_validator("excluded_models")
+    @classmethod
+    def validate_excluded_models(cls, value: List[str]) -> List[str]:
+        normalized_values: list[str] = []
+        seen_values: set[str] = set()
+        for model_name in value:
+            normalized_model_name = _validate_non_empty_string(model_name, "excluded_models")
+            if normalized_model_name in seen_values:
+                raise ValueError("'excluded_models' must not contain duplicate values.")
+            seen_values.add(normalized_model_name)
+            normalized_values.append(normalized_model_name)
+        return normalized_values
+
+    @field_validator("upstream_model_pools")
+    @classmethod
+    def validate_upstream_model_pool_names(
+        cls,
+        value: Dict[str, UpstreamModelPoolConfig],
+    ) -> Dict[str, UpstreamModelPoolConfig]:
+        for model_name in value:
+            _validate_non_empty_string(model_name, "upstream_model_pools key")
+        return value
 
 
 FUSION_PANEL_MAX = 8
@@ -526,6 +1022,7 @@ class OperationRoute(BaseModel):
     voices_target_path: str | None = None
     custom_headers: Dict[str, Any] = Field(default_factory=dict)
     custom_body_params: Dict[str, Any] = Field(default_factory=dict)
+    payload_transforms: PayloadTransformConfig | None = None
     request_format: str | None = None
     response_format: str | None = None
     response_output_format: str | None = None
@@ -851,6 +1348,7 @@ class ConfigLoader:
         fallback_rules_filename: str | None = None,
         operation_rules_filename: str | None = None,
         fusion_rules_filename: str | None = None,
+        model_rules_filename: str | None = None,
     ):
         from .paths import PROJECT_ROOT
         self.project_root = PROJECT_ROOT
@@ -860,16 +1358,20 @@ class ConfigLoader:
         f_file = fallback_rules_filename or os.getenv("FALLBACK_RULES_FILENAME", "models_fallback_rules.json")
         o_file = operation_rules_filename or os.getenv("OPERATION_RULES_FILENAME", "models_operation_rules.json")
         fusion_file = fusion_rules_filename or os.getenv("FUSION_RULES_FILENAME", "models_fusion_rules.json")
+        model_file = model_rules_filename or os.getenv("MODEL_RULES_FILENAME", "models_model_rules.json")
 
         self.providers_path = Path(p_file) if os.path.isabs(p_file) else self.project_root / p_file
         self.fallback_rules_path = Path(f_file) if os.path.isabs(f_file) else self.project_root / f_file
         self.operation_rules_path = Path(o_file) if os.path.isabs(o_file) else self.project_root / o_file
         self.fusion_rules_path = Path(fusion_file) if os.path.isabs(fusion_file) else self.project_root / fusion_file
+        self.model_rules_path = Path(model_file) if os.path.isabs(model_file) else self.project_root / model_file
 
         self.providers_config: Dict[str, ProviderDetails] = {}
         self.fallback_rules: Dict[str, Dict[str, Any]] = {} # Store validated rules as dicts
+        self._fallback_rules_base: Dict[str, Dict[str, Any]] = {}
         self.operation_rules: Dict[str, Dict[str, Any]] = _empty_operation_rules()
         self.fusion_rules: Dict[str, Dict[str, Any]] = {} # Store validated fusion configs as dicts
+        self.model_rules: Dict[str, Any] = {}
 
     def _build_providers_config(self, raw_provider_list: Any) -> Dict[str, ProviderDetails]:
         if not isinstance(raw_provider_list, list):
@@ -918,6 +1420,81 @@ class ConfigLoader:
             fallback_rules_temp[rule.gateway_model_name] = rule_config
 
         return fallback_rules_temp
+
+    def _build_model_rules_config(self, raw_rules: Any) -> Dict[str, Any]:
+        if raw_rules in (None, ""):
+            return {}
+        config = ModelRulesConfig.model_validate(raw_rules)
+        model_rules = config.model_dump(exclude_none=True)
+        return model_rules
+
+    def _model_pool_fallback_rules(
+        self,
+        model_rules: Dict[str, Any],
+        base_fallback_rules: Dict[str, Dict[str, Any]] | None = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        pool_rules: dict[str, dict[str, Any]] = {}
+        upstream_model_pools = model_rules.get("upstream_model_pools", {})
+        if not isinstance(upstream_model_pools, dict):
+            return pool_rules
+
+        effective_base_rules = self.fallback_rules if base_fallback_rules is None else base_fallback_rules
+        for gateway_model_name, pool_config in upstream_model_pools.items():
+            if gateway_model_name in effective_base_rules:
+                raise ValueError(
+                    f"upstream_model_pools entry '{gateway_model_name}' conflicts with an existing fallback rule."
+                )
+            fallback_models = pool_config.get("fallback_models", [])
+            pool_rule = {
+                "fallback_models": fallback_models,
+                "rotate_models": bool(pool_config.get("rotate_models", False)),
+                "dynamic_penalty": bool(pool_config.get("dynamic_penalty", False)),
+                "strip_think_tags": bool(pool_config.get("strip_think_tags", False)),
+                "compress_tool_results": bool(pool_config.get("compress_tool_results", False)),
+            }
+            if pool_config.get("max_total_attempts") is not None:
+                pool_rule["max_total_attempts"] = pool_config["max_total_attempts"]
+            if pool_config.get("context_overflow_fallback") is not None:
+                pool_rule["context_overflow_fallback"] = pool_config["context_overflow_fallback"]
+            pool_rules[gateway_model_name] = pool_rule
+        return pool_rules
+
+    def _validate_model_rules_mapping(
+        self,
+        model_rules: Dict[str, Any],
+        combined_fallback_rules: Dict[str, Dict[str, Any]],
+    ) -> None:
+        aliases = model_rules.get("aliases", {})
+        if isinstance(aliases, dict):
+            for alias, target in aliases.items():
+                if alias in combined_fallback_rules:
+                    raise ValueError(
+                        f"model_rules alias '{alias}' conflicts with an existing fallback rule."
+                    )
+                if target not in combined_fallback_rules:
+                    raise ValueError(
+                        f"model_rules alias '{alias}' references unknown target model '{target}'."
+                    )
+                if is_model_excluded(alias, model_rules) or is_model_excluded(target, model_rules):
+                    raise ValueError(
+                        f"model_rules alias '{alias}' must not reference an excluded model."
+                    )
+
+        prefixes = model_rules.get("prefixes", [])
+        if isinstance(prefixes, list):
+            seen_prefixes: set[str] = set()
+            for prefix_rule in prefixes:
+                prefix = prefix_rule.get("prefix") if isinstance(prefix_rule, dict) else None
+                if not isinstance(prefix, str):
+                    continue
+                if prefix in seen_prefixes:
+                    raise ValueError(f"Duplicate model_rules prefix '{prefix}'.")
+                seen_prefixes.add(prefix)
+                target = prefix_rule.get("target")
+                if target and target not in combined_fallback_rules:
+                    raise ValueError(
+                        f"model_rules prefix '{prefix}' references unknown target model '{target}'."
+                    )
 
     def _build_fusion_rules_config(self, raw_rules: Any) -> Dict[str, Dict[str, Any]]:
         if not isinstance(raw_rules, list):
@@ -1032,6 +1609,19 @@ class ConfigLoader:
             raise ValueError(
                 f"Invalid provider '{provider}' used in {rule_label} for '{gateway_model_name}'. "
                 "Provider not found in configuration."
+            )
+        provider_config = effective_providers[provider]
+        upstream_key_pool = fallback_model_rule.get("upstream_key_pool")
+        if upstream_key_pool:
+            if upstream_key_pool not in provider_config.upstream_key_pools:
+                raise ValueError(
+                    f"Invalid upstream_key_pool '{upstream_key_pool}' used in {rule_label} "
+                    f"for '{gateway_model_name}' (provider: {provider}). Pool not found in provider configuration."
+                )
+        elif provider_config.apikey is None and provider_config.upstream_key_pools:
+            raise ValueError(
+                f"'upstream_key_pool' is required for {rule_label} under '{gateway_model_name}' "
+                f"because provider '{provider}' is configured with upstream_key_pools but no legacy apikey."
             )
 
         _validate_provider_name_list(
@@ -1256,6 +1846,30 @@ class ConfigLoader:
         self.validate_fallback_rules_mapping(fallback_rules, providers_config=providers_config)
         return fallback_rules
 
+    def parse_and_validate_model_rules_payload(
+        self,
+        payload_text: str,
+        providers_config: Optional[Dict[str, ProviderDetails]] = None,
+        fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        raw_rules = json5.loads(payload_text)
+        model_rules = self._build_model_rules_config(raw_rules)
+        original_fallback_rules = self.fallback_rules
+        try:
+            if fallback_rules is not None:
+                self.fallback_rules = fallback_rules
+            base_fallback_rules = self.fallback_rules
+            pool_rules = self._model_pool_fallback_rules(model_rules, base_fallback_rules)
+            combined_fallback_rules = {**base_fallback_rules, **pool_rules}
+            self.validate_fallback_rules_mapping(
+                combined_fallback_rules,
+                providers_config=providers_config,
+            )
+            self._validate_model_rules_mapping(model_rules, combined_fallback_rules)
+            return model_rules
+        finally:
+            self.fallback_rules = original_fallback_rules
+
     def parse_and_validate_operation_routes_payload(
         self,
         payload_text: str,
@@ -1339,6 +1953,28 @@ class ConfigLoader:
                 raise ConfigError(message)
             all_valid = False # Mark as invalid but continue checking other things if not raising
 
+        credential_owners: dict[str, str] = {}
+        credential_errors: list[str] = []
+        for provider_name, config in providers_to_validate.items():
+            if not provider_auth_is_managed_oauth(config.auth):
+                continue
+            credential_id = str(getattr(config.auth, "credential_id", "")).strip()
+            existing_provider = credential_owners.get(credential_id)
+            if existing_provider is not None:
+                credential_errors.append(
+                    f"OAuth credential_id '{credential_id}' is reused by providers "
+                    f"'{existing_provider}' and '{provider_name}'. credential_id values must be unique."
+                )
+                continue
+            credential_owners[credential_id] = provider_name
+
+        if credential_errors:
+            for message in credential_errors:
+                logging.error(message)
+            if raise_on_error:
+                raise ConfigError("; ".join(credential_errors))
+            all_valid = False
+
         env_errors: list[str] = []
         for provider_name, config in providers_to_validate.items():
             for field_name, field_value in (("apikey", config.apikey), ("proxy", config.proxy)):
@@ -1364,12 +2000,75 @@ class ConfigLoader:
                         )
                     continue
 
-                if os.getenv(env_name):
+                resolved_env_value = os.getenv(env_name)
+                if resolved_env_value:
+                    if field_name == "apikey" and is_placeholder_secret(resolved_env_value):
+                        message = placeholder_secret_error(env_name, resolved_env_value)
+                        logging.error(message)
+                        env_errors.append(message)
                     continue
 
                 message = _provider_env_reference_error(provider_name, field_name, env_name)
                 logging.error(message)
                 env_errors.append(message)
+
+            for pool_name, pool_config in config.upstream_key_pools.items():
+                for key_index, key_spec in enumerate(pool_config.keys):
+                    field_name = f"upstream_key_pools.{pool_name}.keys[{key_index}].apikey"
+                    try:
+                        env_name = _explicit_env_reference_name(key_spec.apikey, field_name)
+                    except ConfigError as exc:
+                        message = str(exc)
+                        logging.error(message)
+                        env_errors.append(message)
+                        continue
+
+                    if env_name is None:
+                        if _looks_like_env_reference(key_spec.apikey):
+                            logging.warning(
+                                "Provider '%s' field '%s' value '%s' looks like an environment variable name, "
+                                "but '${VAR}' syntax was not used; treating it as a literal.",
+                                provider_name,
+                                field_name,
+                                key_spec.apikey,
+                            )
+                        continue
+
+                    resolved_env_value = os.getenv(env_name)
+                    if resolved_env_value:
+                        if is_placeholder_secret(resolved_env_value):
+                            message = placeholder_secret_error(env_name, resolved_env_value)
+                            logging.error(message)
+                            env_errors.append(message)
+                        continue
+
+                    message = _provider_env_reference_error(provider_name, field_name, env_name)
+                    logging.error(message)
+                    env_errors.append(message)
+
+            if provider_auth_is_managed_oauth(config.auth):
+                oauth_client = getattr(config.auth, "oauth_client", None)
+                for field_name in ("client_id_env", "client_secret_env"):
+                    env_name = getattr(oauth_client, field_name, None)
+                    if not env_name:
+                        continue
+                    resolved_env_value = os.getenv(env_name)
+                    if resolved_env_value:
+                        if is_placeholder_secret(resolved_env_value):
+                            message = placeholder_secret_error(env_name, resolved_env_value)
+                            logging.error(message)
+                            env_errors.append(message)
+                        continue
+                    message = _provider_env_reference_error(provider_name, f"auth.oauth_client.{field_name}", env_name)
+                    logging.error(message)
+                    env_errors.append(message)
+            elif _provider_auth_is_oauth(config.auth):
+                try:
+                    resolve_provider_oauth_token(config.auth)
+                except ConfigError as exc:
+                    message = f"Provider '{provider_name}' OAuth auth is invalid: {exc}"
+                    logging.error(message)
+                    env_errors.append(message)
 
         if env_errors:
             if raise_on_error:
@@ -1387,6 +2086,37 @@ class ConfigLoader:
             raise ConfigError("Provider semantic validation failed during initial load.")
 
 
+    def load_model_rules(self) -> Dict[str, Any]:
+        """Loads optional model alias/prefix/exclusion/upstream-pool rules."""
+        if not self.model_rules_path.exists():
+            self.model_rules = {}
+            return {}
+
+        try:
+            with open(self.model_rules_path, 'r', encoding='utf-8') as f:
+                raw_rules = json5.load(f)
+
+            model_rules_temp = self._build_model_rules_config(raw_rules)
+            base_fallback_rules = self._fallback_rules_base or self.fallback_rules
+            pool_rules = self._model_pool_fallback_rules(model_rules_temp, base_fallback_rules)
+            combined_fallback_rules = {**base_fallback_rules, **pool_rules}
+            self.validate_fallback_rules_mapping(
+                combined_fallback_rules,
+                providers_config=self.providers_config,
+            )
+            self._validate_model_rules_mapping(model_rules_temp, combined_fallback_rules)
+            self.fallback_rules = combined_fallback_rules
+            self.model_rules = model_rules_temp
+            logging.info(f"Successfully loaded model rules from {self.model_rules_path}")
+            return self.model_rules
+
+        except ConfigError:
+            raise
+        except Exception as e:
+            logging.error(f"Failed to load or validate '{self.model_rules_path.name}': {str(e)}", exc_info=True)
+            raise ConfigError(f"Failed to load or validate '{self.model_rules_path.name}': {e}") from e
+
+
     def load_fallback_rules(self) -> Dict[str, Dict[str, Any]]:
         """Loads and validates model fallback rules from the JSON file."""
         if not self.fallback_rules_path.exists():
@@ -1400,6 +2130,7 @@ class ConfigLoader:
             fallback_rules_temp = self._build_fallback_rules_config(raw_rules)
 
             self.fallback_rules = fallback_rules_temp
+            self._fallback_rules_base = fallback_rules_temp
             self._validate_fallback_rules() # Perform post-load validation
             logging.info(f"Successfully loaded and validated model fallback rules from {self.fallback_rules_path}")
             logging.info(f"Loaded model rules for: {list(self.fallback_rules.keys())}")
@@ -1432,6 +2163,9 @@ class ConfigLoader:
 
             # If all validations pass, update the actual instance rules
             self.fallback_rules = fallback_rules_temp
+            self._fallback_rules_base = fallback_rules_temp
+            if self.model_rules_path.exists():
+                self.load_model_rules()
             logging.info(f"Successfully reloaded and validated model fallback rules from {self.fallback_rules_path}")
             logging.info(f"Reloaded model rules for: {list(self.fallback_rules.keys())}")
             return True

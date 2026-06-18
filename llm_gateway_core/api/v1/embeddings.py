@@ -15,9 +15,10 @@ from ...config.loader import (
     RESPONSE_FORMAT_RANKINGS_LOGIT,
     RESPONSE_FORMAT_SCORES,
     RESPONSE_OUTPUT_FORMAT_JINA_RESULTS,
-    resolve_provider_api_key,
 )
 from ...services.access_control import enforce_virtual_key_access
+from ...services.payload_transform import apply_payload_transforms
+from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from .operation_proxy import (
     json_response,
@@ -66,14 +67,14 @@ def map_rerank_payload(query: str, documents: list[str], route: OperationRoute) 
             if normalized_param_name in QUERY_PASSAGES_ALLOWED_CUSTOM_PARAMS:
                 downstream_payload[param_name] = param_value
 
-        return downstream_payload
+        return apply_payload_transforms(downstream_payload, route.payload_transforms)
 
     if _uses_query_texts_request_format(route):
-        return {
+        return apply_payload_transforms({
             "model": route.model,
             "query": query,
             "texts": documents,
-        }
+        }, route.payload_transforms)
 
     downstream_payload = {
         "model": route.model,
@@ -89,7 +90,7 @@ def map_rerank_payload(query: str, documents: list[str], route: OperationRoute) 
             continue
         downstream_payload[param_name] = param_value
 
-    return downstream_payload
+    return apply_payload_transforms(downstream_payload, route.payload_transforms)
 
 
 def extract_score(result: dict, response_format: str | None = None) -> float:
@@ -353,9 +354,13 @@ async def create_embeddings(request: Request):
                     detail="Internal server error: Provider configuration not available.",
                 )
 
-            provider_api_key = resolve_provider_api_key(provider_config.apikey)
             target_url = dispatcher.build_target_url(route, provider_config)
-            headers = dispatcher.build_headers(route, provider_api_key)
+            auth_headers = await resolve_provider_auth_headers(
+                request,
+                provider_name=route.provider,
+                provider_config=provider_config,
+            )
+            headers = dispatcher.build_headers(route, auth_headers=auth_headers)
             payload = dispatcher.build_payload(request_body_json, route, "embeddings")
             retry_count, retry_delay = normalize_retry_settings(route.retry_count, route.retry_delay)
 
@@ -449,9 +454,13 @@ async def create_rerank(request: Request):
                     detail="Internal server error: Provider configuration not available.",
                 )
 
-            provider_api_key = resolve_provider_api_key(provider_config.apikey)
             target_url = dispatcher.build_target_url(route, provider_config)
-            headers = dispatcher.build_headers(route, provider_api_key)
+            auth_headers = await resolve_provider_auth_headers(
+                request,
+                provider_name=route.provider,
+                provider_config=provider_config,
+            )
+            headers = dispatcher.build_headers(route, auth_headers=auth_headers)
             payload = map_rerank_payload(query, documents, route)
             retry_count, retry_delay = normalize_retry_settings(route.retry_count, route.retry_delay)
 

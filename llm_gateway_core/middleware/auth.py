@@ -58,8 +58,8 @@ CHAT_USAGE_RESERVATION_SUFFIXES = (
     "/messages",
 )
 
-PUBLIC_EXACT_PATHS = {"/health", LOGIN_PATH}
-PUBLIC_PREFIXES = ("/static/",)
+PUBLIC_EXACT_PATHS = {"/health", "/healthz", LOGIN_PATH}
+PUBLIC_PREFIXES = ("/static/", "/v1/auth/oauth/callback/")
 OPTIONAL_AUTH_PATHS = {"/"}
 # Paths that accept X-Api-Key header (Anthropic SDK style authentication)
 ANTHROPIC_API_PREFIXES = (

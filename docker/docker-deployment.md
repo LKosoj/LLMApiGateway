@@ -22,6 +22,7 @@ mkdir -p data/db
 nano providers.json
 nano models_fallback_rules.json
 nano models_operation_rules.json
+nano models_model_rules.json
 
 # 3. Edit the docker-compose.yml file to set your API keys
 # (you need to customize this file)
@@ -44,6 +45,7 @@ mkdir -p data/db
 nano providers.json
 nano models_fallback_rules.json
 nano models_operation_rules.json
+nano models_model_rules.json
 
 # 3. Build the image
 docker build -t llm-gateway:latest .
@@ -55,6 +57,7 @@ docker run -d \
   -v "$(pwd)/providers.json:/app/providers.json" \
   -v "$(pwd)/models_fallback_rules.json:/app/models_fallback_rules.json" \
   -v "$(pwd)/models_operation_rules.json:/app/models_operation_rules.json" \
+  -v "$(pwd)/models_model_rules.json:/app/models_model_rules.json" \
   -v "$(pwd)/data/db:/app/db" \
   -e GATEWAY_API_KEY=your-secure-api-key \
   -e APIKEY_OPENROUTER=your-openrouter-key \
@@ -110,7 +113,12 @@ Set any of these environment variables for the providers you want to use:
    - Contains embeddings, rerank, image, audio, PDF, and web operation routes
    - Mounted read-write so `/v1/ui/rules-editor` can persist operation-route changes
 
-4. **Database**: `-v ./data/db:/app/db`
+4. **models_model_rules.json**: `-v ./models_model_rules.json:/app/models_model_rules.json`
+
+   - Contains model alias, prefix, exclude, and upstream model pool policy
+   - Mounted read-write so `/v1/ui/rules-editor` can persist model-policy changes
+
+5. **Database**: `-v ./data/db:/app/db`
    - Persists SQLite database for model rotation state
    - Read-write access required
 
@@ -175,7 +183,7 @@ Verify that:
 
 1. You've provided the correct API keys
 2. Your `providers.json` file is correctly configured
-3. Your `models_fallback_rules.json` and `models_operation_rules.json` files reference existing providers and gateway models
+3. Your `models_fallback_rules.json`, `models_operation_rules.json`, and `models_model_rules.json` files reference existing providers and gateway models
 4. You're including the `Authorization` header in your requests
 
 ### Database persistence issues

@@ -31,8 +31,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ============= RUNTIME STAGE =============
 FROM python:3.12-slim AS runtime
 
+ARG LLMGATEWAY_BUILD_VERSION=dev
+ARG LLMGATEWAY_BUILD_SHA=
+ARG LLMGATEWAY_BUILD_DATE=
+ARG LLMGATEWAY_BUILD_REF=
+
 # Set metadata
-LABEL description="Fault-Tolerant Personal LLM Gateway with advanced fallback support"
+LABEL description="Fault-Tolerant Personal LLM Gateway with advanced fallback support" \
+      org.opencontainers.image.version="${LLMGATEWAY_BUILD_VERSION}" \
+      org.opencontainers.image.revision="${LLMGATEWAY_BUILD_SHA}" \
+      org.opencontainers.image.created="${LLMGATEWAY_BUILD_DATE}" \
+      org.opencontainers.image.ref.name="${LLMGATEWAY_BUILD_REF}"
 
 # Create non-root user
 RUN groupadd -r llmgateway && useradd -r -g llmgateway llmgateway
@@ -54,8 +63,11 @@ RUN mkdir -p /app/logs /app/db && \
     chown -R llmgateway:llmgateway /app/logs /app/db
 
 # Copy application code
-COPY --exclude=docker . /app/
-RUN rm -f /app/.env /app/providers.json /app/models_fallback_rules.json /app/models_operation_rules.json
+COPY . /app/
+RUN rm -rf /app/docker && \
+    rm -f /app/.env /app/providers.json /app/models_fallback_rules.json \
+    /app/models_operation_rules.json /app/models_fusion_rules.json \
+    /app/models_model_rules.json
 
 # Copy the healthcheck and entrypoint scripts
 COPY docker/healthcheck.py /app/
@@ -72,6 +84,10 @@ ENV GATEWAY_PORT=9000 \
     LOG_FILE_LIMIT=15 \
     LOG_CHAT_ENABLED=false \
     FALLBACK_PROVIDER=openrouter \
+    LLMGATEWAY_BUILD_VERSION="${LLMGATEWAY_BUILD_VERSION}" \
+    LLMGATEWAY_BUILD_SHA="${LLMGATEWAY_BUILD_SHA}" \
+    LLMGATEWAY_BUILD_DATE="${LLMGATEWAY_BUILD_DATE}" \
+    LLMGATEWAY_BUILD_REF="${LLMGATEWAY_BUILD_REF}" \
     PYTHONUNBUFFERED=1
 
 # Expose the application port

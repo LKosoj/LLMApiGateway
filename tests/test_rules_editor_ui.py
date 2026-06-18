@@ -24,6 +24,9 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "use-provider-order-checkbox" in content
     assert "use_provider_order_as_fallback" in content
     assert "Use provider order as fallback" in content
+    assert "upstream-key-pool-input" in content
+    assert "upstream_key_pool" in content
+    assert "Upstream Key Pool" in content
     assert "Number.parseFloat(retryDelayInput.value)" in content
     assert "payload = getEmbeddingsPayloadForSave(await fetchOperationRulesPayload())" in content
     assert "availableProviders = [];" in content
@@ -55,6 +58,24 @@ def test_editor_js_exposes_provider_field_tooltips_and_upstream_limits_editor():
     assert "Upstream Limits per Model" in content
     assert "Per-model upstream quota ledger" in content
     assert "Requests per minute allowed per upstream key" in content
+    assert "provider-routing-input" in content
+    assert "provider-upstream-key-pools-input" in content
+    assert "provider-auth-input" in content
+    assert "Routing Policy (JSON)" in content
+    assert "Upstream Key Pools (JSON)" in content
+    assert "Auth (JSON)" in content
+    assert "session_affinity" in content
+    assert "payload-transforms-input" in content
+    assert "Payload Transforms" in content
+    assert "/v1/config/model-rules" in content
+
+
+def test_rules_editor_html_contains_model_rules_tab():
+    content = Path("static/rules-editor.html").read_text(encoding="utf-8")
+
+    assert "tabModelRules" in content
+    assert "editor-container-model-rules" in content
+    assert "models_model_rules.json" in content
 
 
 def test_editor_css_includes_tooltip_and_upstream_limits_styles():

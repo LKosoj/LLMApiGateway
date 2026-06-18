@@ -16,6 +16,7 @@ from ...config.loader import (
     RESPONSE_FORMAT_NVIDIA_ARTIFACTS,
     RESPONSE_FORMAT_OPENAI_IMAGES,
 )
+from ...services.payload_transform import apply_payload_transforms
 from ...services.request_handler import FORBIDDEN_CUSTOM_BODY_PARAM_KEYS
 
 DEFAULT_IMAGE_MEDIA_TYPE = "image/png"
@@ -103,7 +104,7 @@ def _merge_route_custom_body_params(base_payload: dict[str, Any], route: Operati
             continue
         merged_payload[param_name] = _deepcopy_if_needed(param_value)
 
-    return merged_payload
+    return apply_payload_transforms(merged_payload, route.payload_transforms)
 
 
 def _configured_omitted_client_fields(route: OperationRoute) -> frozenset[str]:

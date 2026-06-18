@@ -129,6 +129,7 @@ class OperationDispatchTests(unittest.TestCase):
         fake_http_client = Mock(spec=httpx.AsyncClient)
         fake_http_client.post = AsyncMock()
         fake_http_client.aclose = AsyncMock()
+        self.config_loader.load_fusion_rules = Mock(return_value={})
 
         with ExitStack() as stack:
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
@@ -161,6 +162,20 @@ class OperationDispatchTests(unittest.TestCase):
         self.assertIs(dispatcher, client.app.state.operation_dispatcher)
         self.assertIs(dispatcher._http_client, fake_http_client)
         self.assertIsNone(route)
+
+    def test_dispatch_lookup_resolves_model_alias(self):
+        self.config_loader.model_rules = {
+            "aliases": {"public/embed": "gateway/embed-small"},
+        }
+        self.config_loader.load_model_rules = Mock(return_value=self.config_loader.model_rules)
+
+        with self._client() as (client, dispatcher, fake_http_client):
+            route = dispatcher.lookup_route("embeddings", "public/embed")
+
+        self.assertIs(dispatcher, client.app.state.operation_dispatcher)
+        self.assertIs(dispatcher._http_client, fake_http_client)
+        self.assertIsNotNone(route)
+        self.assertEqual(route.model, "text-embedding-3-small")
 
     def test_dispatch_build_target_url(self):
         with self._client() as (client, dispatcher, fake_http_client):

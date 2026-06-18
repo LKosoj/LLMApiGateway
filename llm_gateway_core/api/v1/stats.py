@@ -6,7 +6,13 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # Import the TokensUsageDB
-from llm_gateway_core.config.loader import ANTHROPIC_API_VERSION, resolve_provider_api_keys
+from llm_gateway_core.config.loader import (
+    ANTHROPIC_API_VERSION,
+    provider_auth_is_managed_oauth,
+    resolve_provider_api_key_value,
+    resolve_provider_config_auth_headers,
+    resolve_provider_config_api_keys,
+)
 from llm_gateway_core.config.paths import STATIC_DIR
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord, ApiKeysDB
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB, validate_usage_records_pagination
@@ -14,7 +20,12 @@ from llm_gateway_core.db.fallback_events_db import FallbackEventsDB, validate_fa
 from llm_gateway_core.db.rejections_db import RejectionsDB, VALID_CATEGORIES
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.active_requests import get_active_requests_registry
+from llm_gateway_core.services.provider_auth import (
+    managed_oauth_fingerprint,
+    resolve_provider_auth_headers,
+)
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState, fingerprint_api_key
+from llm_gateway_core.utils.api_keys import split_api_keys
 from llm_gateway_core.utils.html_cache import get_template
 from llm_gateway_core.utils.ttl_cache import AsyncTtlCache
 
@@ -606,14 +617,22 @@ def _iter_fallback_targets(fallback_rules: dict):
             yield context_rule
 
 
-def _build_health_probe_request(provider_config, model: str, api_key: str | None):
+def _build_health_probe_request(*args):
+    if len(args) == 3:
+        provider_config, model, api_key = args
+        return _build_health_probe_request_static(provider_config, model, api_key)
+    return _build_health_probe_request_async(*args)
+
+
+def _build_health_probe_request_static(provider_config, model: str, api_key: str | None):
+    auth_headers = resolve_provider_config_auth_headers(provider_config, api_key)
     if getattr(provider_config, "type", "openai") == "anthropic":
         return (
             f"{provider_config.baseUrl.rstrip('/')}/v1/messages",
             {
                 "Content-Type": "application/json",
                 "anthropic-version": ANTHROPIC_API_VERSION,
-                **({"x-api-key": api_key} if api_key else {}),
+                **auth_headers,
             },
             {
                 "model": model,
@@ -627,7 +646,7 @@ def _build_health_probe_request(provider_config, model: str, api_key: str | None
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
             "X-Title": "LLMGateway Upstream Health",
-            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+            **auth_headers,
         },
         {
             "model": model,
@@ -636,6 +655,79 @@ def _build_health_probe_request(provider_config, model: str, api_key: str | None
             "temperature": 0,
         },
     )
+
+
+async def _build_health_probe_request_async(
+    request: Request,
+    provider_name: str,
+    provider_config,
+    model: str,
+    api_key: str | None,
+):
+    auth_headers = await resolve_provider_auth_headers(
+        request,
+        provider_name=provider_name,
+        provider_config=provider_config,
+        api_key=api_key,
+    )
+    if getattr(provider_config, "type", "openai") == "anthropic":
+        return (
+            f"{provider_config.baseUrl.rstrip('/')}/v1/messages",
+            {
+                "Content-Type": "application/json",
+                "anthropic-version": ANTHROPIC_API_VERSION,
+                **auth_headers,
+            },
+            {
+                "model": model,
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+                "max_tokens": 1,
+            },
+        )
+    return (
+        f"{provider_config.baseUrl.rstrip('/')}/chat/completions",
+        {
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+            "X-Title": "LLMGateway Upstream Health",
+            **auth_headers,
+        },
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "max_tokens": 1,
+            "temperature": 0,
+        },
+    )
+
+
+def _resolve_health_probe_api_keys(provider_config, pool_name: str | None) -> list[str | None]:
+    if not pool_name:
+        if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None)):
+            return [None]
+        return resolve_provider_config_api_keys(provider_config) or [None]
+
+    pools = getattr(provider_config, "upstream_key_pools", None)
+    pool_config = pools.get(pool_name) if isinstance(pools, dict) else None
+    if pool_config is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invalid upstream health configuration: upstream_key_pool '{pool_name}' is not configured.",
+        )
+
+    api_keys: list[str | None] = []
+    for key_spec in pool_config.keys:
+        if not getattr(key_spec, "enabled", True):
+            continue
+        resolved_value = resolve_provider_api_key_value(key_spec.apikey)
+        api_keys.extend(split_api_keys(resolved_value))
+
+    if not api_keys:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invalid upstream health configuration: upstream_key_pool '{pool_name}' has no enabled keys.",
+        )
+    return api_keys
 
 
 @stats_router.get("/api/fallback-stats/{period}", response_class=JSONResponse, tags=["Fallback Analytics API"])
@@ -731,15 +823,21 @@ async def run_upstream_health_checks(request: Request):
         provider_config = config_loader.providers_config.get(provider_name)
         if provider_config is None:
             continue
-        api_keys = resolve_provider_api_keys(provider_config.apikey) or [None]
+        api_keys = _resolve_health_probe_api_keys(provider_config, rule.get("upstream_key_pool"))
         effective_client = proxy_http_clients.get(provider_name, http_client)
         for api_key in api_keys:
-            key_fingerprint = fingerprint_api_key(api_key)
+            key_fingerprint = (
+                managed_oauth_fingerprint(provider_name, provider_config) or fingerprint_api_key(api_key)
+                if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None))
+                else fingerprint_api_key(api_key)
+            )
             target_key = (provider_name, provider_model, key_fingerprint)
             if target_key in seen_targets:
                 continue
             seen_targets.add(target_key)
-            target_url, headers, payload = _build_health_probe_request(
+            target_url, headers, payload = await _build_health_probe_request(
+                request,
+                provider_name,
                 provider_config,
                 provider_model,
                 api_key,

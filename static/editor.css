@@ -320,6 +320,94 @@ div[style*="position:relative"] {
     background: var(--bg-sunken);
 }
 
+.oauth-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-sunken);
+    padding: 12px;
+}
+
+.oauth-panel-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.oauth-panel-header div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.oauth-panel-header span,
+.oauth-meta {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+
+.oauth-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.oauth-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+}
+
+.oauth-row-title {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.oauth-row-title strong,
+.oauth-meta {
+    overflow-wrap: anywhere;
+}
+
+.oauth-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.oauth-actions .secondary-button {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.oauth-status-badge {
+    width: fit-content;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px 7px;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.oauth-status-badge[data-status="active"] {
+    color: var(--success);
+    background: var(--success-soft);
+}
+
+.oauth-status-badge[data-status="reauth_required"],
+.oauth-status-badge[data-status="missing"] {
+    color: var(--warning);
+    background: var(--warning-soft);
+}
+
 .openrouter-free-status {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

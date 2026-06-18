@@ -12,6 +12,8 @@ from fastapi.responses import StreamingResponse
 
 from llm_gateway_core.config.loader import OperationRoute, ProviderDetails
 from llm_gateway_core.services.active_requests import update_active_request_from_state
+from llm_gateway_core.services.model_policy import resolve_model_name
+from llm_gateway_core.services.payload_transform import apply_payload_transforms
 from llm_gateway_core.utils.text_sanitize import sanitize_payload
 
 DEFAULT_RETRY_COUNT = 0
@@ -126,6 +128,7 @@ class OperationDispatcher:
         providers_config: Dict[str, Any],
         operation_rules: Dict[str, Dict[str, Any]],
         http_client: httpx.AsyncClient,
+        model_rules: Dict[str, Any] | None = None,
     ):
         """
         Initialize the dispatcher with providers, operation rules, and shared HTTP client.
@@ -139,6 +142,7 @@ class OperationDispatcher:
         self._providers_config = providers_config
         self._operation_rules = operation_rules
         self._http_client = http_client
+        self._model_rules = model_rules or {}
 
     def lookup_route(self, operation: str, gateway_model: str) -> Optional[OperationRoute]:
         """
@@ -174,8 +178,13 @@ class OperationDispatcher:
         if not section:
             return []
 
+        try:
+            model_resolution = resolve_model_name(gateway_model, self._model_rules)
+        except ValueError:
+            return []
+
         # Get routes for the gateway model
-        model_config = section.get(gateway_model)
+        model_config = section.get(model_resolution.effective_model)
         if not model_config:
             return []
 
@@ -198,12 +207,19 @@ class OperationDispatcher:
             return route.target_path
         return f"{provider_config.baseUrl.rstrip('/')}/{route.target_path.lstrip('/')}"
 
-    def build_headers(self, route: OperationRoute, provider_api_key: str | None) -> Dict[str, Any]:
+    def build_headers(
+        self,
+        route: OperationRoute,
+        provider_api_key: str | None = None,
+        auth_headers: dict[str, str] | None = None,
+    ) -> Dict[str, Any]:
         """Build downstream headers for an operation request."""
         headers: Dict[str, Any] = {
             "Content-Type": "application/json",
         }
-        if provider_api_key:
+        if auth_headers:
+            headers.update(auth_headers)
+        elif provider_api_key:
             headers["Authorization"] = f"Bearer {provider_api_key}"
 
         headers.update(route.custom_headers)
@@ -238,7 +254,7 @@ class OperationDispatcher:
                 continue
             merged_payload[param_name] = param_value
 
-        return merged_payload
+        return apply_payload_transforms(merged_payload, route.payload_transforms)
 
     def merge_all_non_reserved_custom_params(self, base_payload: dict, route: OperationRoute) -> dict:
         """Merge route custom body params while only blocking reserved keys."""
@@ -254,7 +270,7 @@ class OperationDispatcher:
                 continue
             merged_payload[param_name] = param_value
 
-        return merged_payload
+        return apply_payload_transforms(merged_payload, route.payload_transforms)
 
     def build_payload(self, request_body: dict, route: OperationRoute, operation: str) -> dict:
         """Build downstream payload by replacing model and merging only allowed custom params."""
@@ -542,7 +558,7 @@ async def _make_streaming_request(
         if error_in_stream:
             return None, error_detail
 
-        if not prefetched_chunks:
+        if not prefetched_chunks or not saw_real_data_chunk:
             return None, "Stream ended before any content chunks were received."
 
         async def combined_generator():

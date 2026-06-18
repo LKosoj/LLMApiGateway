@@ -16,7 +16,8 @@ from typing import Any
 
 import httpx
 
-from ..config.loader import ProviderDetails
+from ..config.loader import ProviderDetails, provider_auth_is_managed_oauth
+from .managed_oauth import ManagedOAuthService
 from .provider_models import ProviderModelsService
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ async def _check_single_provider(
     providers_config: Mapping[str, ProviderDetails],
     service: ProviderModelsService,
     http_client: httpx.AsyncClient,
+    managed_oauth_service: ManagedOAuthService | None = None,
 ) -> ProviderCheckResult:
     provider_config = providers_config.get(provider_name)
     if provider_config is None:
@@ -101,7 +103,11 @@ async def _check_single_provider(
         )
 
     try:
-        available = await service.get_models(provider_name, provider_config, http_client)
+        auth_headers = await _startup_auth_headers(provider_name, provider_config, managed_oauth_service)
+        if auth_headers is None:
+            available = await service.get_models(provider_name, provider_config, http_client)
+        else:
+            available = await service.get_models(provider_name, provider_config, http_client, auth_headers=auth_headers)
     except ValueError as exc:
         return ProviderCheckResult(provider=provider_name, error=str(exc))
     except Exception as exc:  # defensive — asyncio/timeouts/etc.
@@ -118,6 +124,23 @@ async def _check_single_provider(
     )
 
 
+async def _startup_auth_headers(
+    provider_name: str,
+    provider_config: ProviderDetails,
+    managed_oauth_service: ManagedOAuthService | None,
+) -> dict[str, str] | None:
+    auth_config = getattr(provider_config, "auth", None)
+    if not provider_auth_is_managed_oauth(auth_config):
+        return None
+    if managed_oauth_service is None:
+        raise ValueError("Managed OAuth service is not available.")
+    token = await managed_oauth_service.get_access_token(
+        provider_name=provider_name,
+        auth_config=auth_config,
+    )
+    return {"Authorization": f"Bearer {token.access_token}"}
+
+
 async def verify_configured_models(
     *,
     providers_config: Mapping[str, ProviderDetails],
@@ -125,6 +148,7 @@ async def verify_configured_models(
     operation_rules: Mapping[str, Mapping[str, Mapping[str, Any]]] | None,
     provider_models_service: ProviderModelsService,
     http_client: httpx.AsyncClient,
+    managed_oauth_service: ManagedOAuthService | None = None,
 ) -> ModelAvailabilityReport:
     """Fetch /models from every referenced provider and diff against config."""
     pairs = _collect_provider_model_pairs(fallback_rules, operation_rules)
@@ -138,6 +162,7 @@ async def verify_configured_models(
             providers_config=providers_config,
             service=provider_models_service,
             http_client=http_client,
+            managed_oauth_service=managed_oauth_service,
         )
         for name, models in pairs.items()
     ]
@@ -177,6 +202,7 @@ async def run_startup_model_verification(
     operation_rules: Mapping[str, Mapping[str, Mapping[str, Any]]] | None,
     provider_models_service: ProviderModelsService,
     http_client: httpx.AsyncClient,
+    managed_oauth_service: ManagedOAuthService | None = None,
 ) -> ModelAvailabilityReport | None:
     """Run verification according to ``mode``.
 
@@ -204,6 +230,7 @@ async def run_startup_model_verification(
         operation_rules=operation_rules,
         provider_models_service=provider_models_service,
         http_client=http_client,
+        managed_oauth_service=managed_oauth_service,
     )
     log_availability_report(report)
 

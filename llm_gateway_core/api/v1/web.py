@@ -21,11 +21,12 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ...agents.deep_research import DeepResearchManager, DeepResearchUnavailableError
 from ...agents.web_research import WebResearchClient, _extract_text_with_selectolax
-from ...config.loader import ConfigLoader, OperationRoute, resolve_provider_api_key
+from ...config.loader import ConfigLoader, OperationRoute
 from ...config.settings import settings
 from ...services.access_control import enforce_virtual_key_access
 from ...services.active_requests import update_active_request_from_state
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
+from ...services.provider_auth import resolve_provider_auth_headers
 from ...utils.api_keys import has_api_key, select_next_api_key
 from ...utils.usage_tracking import extract_tokens_usage, initialize_tokens_usage
 from ...utils.zai_mcp import detect_zai_search_location, zai_mcp_tool_call
@@ -2173,9 +2174,13 @@ async def _rerank_articles(
                     detail="Internal server error: Provider configuration not available.",
                 )
 
-            provider_api_key = resolve_provider_api_key(provider_config.apikey)
             target_url = dispatcher.build_target_url(route, provider_config)
-            headers = dispatcher.build_headers(route, provider_api_key)
+            auth_headers = await resolve_provider_auth_headers(
+                request,
+                provider_name=route.provider,
+                provider_config=provider_config,
+            )
+            headers = dispatcher.build_headers(route, auth_headers=auth_headers)
             payload = map_rerank_payload(query, documents, route)
             retry_count, retry_delay = normalize_retry_settings(route.retry_count, route.retry_delay)
 

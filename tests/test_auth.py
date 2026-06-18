@@ -15,6 +15,14 @@ def build_test_app() -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    @app.get("/healthz")
+    async def healthz():
+        return {"status": "ok"}
+
+    @app.head("/healthz")
+    async def healthz_head():
+        return None
+
     @app.post("/v1/chat/completions")
     async def chat():
         return {"status": "protected-chat"}
@@ -80,6 +88,8 @@ class AuthMiddlewareEndpointTests(unittest.TestCase):
     @patch("llm_gateway_core.middleware.auth.settings.gateway_api_key", "test-gateway-key")
     def test_health_endpoint_stays_public_for_all_token_states(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+        self.assertEqual(self.client.get("/healthz").status_code, 200)
+        self.assertEqual(self.client.head("/healthz").status_code, 200)
         self.assertEqual(
             self.client.get(
                 "/health",
@@ -88,8 +98,22 @@ class AuthMiddlewareEndpointTests(unittest.TestCase):
             200,
         )
         self.assertEqual(
+            self.client.head(
+                "/healthz",
+                headers={"Authorization": "Bearer wrong-key"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
             self.client.get(
                 "/health",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.head(
+                "/healthz",
                 headers={"Authorization": "Bearer test-gateway-key"},
             ).status_code,
             200,

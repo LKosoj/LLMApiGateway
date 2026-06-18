@@ -79,7 +79,8 @@ Use it with code agents like Cline, RooCode, or even with your applications as a
 
 ### Edit providers and fallback rules
 Before starting to use LLMGateway, you need to fill in your providers and models with their fallback rules by accessing the configuration page with your web browser at http://localhost:9000/v1/ui/rules-editor. Refer to the following sections to learn how to structure these rules.
-Browser sign-in now goes through a dedicated `/auth/login` page. Opening `/` without authentication redirects to `/auth/login`; opening `/` with valid authentication redirects to `/v1/ui/usage-stats`. After a successful login the server creates a persistent signed HttpOnly cookie, so the browser UI uses that cookie instead of `sessionStorage`; the cookie survives browser restarts and gateway restarts until you explicitly log out or change `GATEWAY_API_KEY`. SDK clients and direct API calls can still use the header `Authorization: Bearer <GATEWAY_API_KEY>`, and `/v1/messages` also accepts `X-Api-Key: <GATEWAY_API_KEY>` together with the standard `anthropic-version` header used by the official SDK. The gateway parses the Bearer header strictly as `scheme + token` separated by whitespace, accepts `Bearer` case-insensitively, returns `401` for malformed headers or missing authentication, and returns `403` only when the header format is correct but the token value is wrong. The only public paths are `/health`, `/auth/login`, `/` as a redirect entrypoint, and static assets under `/static/`. HTML pages without a valid cookie or Bearer token are redirected to login, while API endpoints without valid authentication continue to return `401/403`. Unregistered routes still return the standard `404`.
+Browser sign-in now goes through a dedicated `/auth/login` page. Opening `/` without authentication redirects to `/auth/login`; opening `/` with valid authentication redirects to `/v1/ui/usage-stats`. After a successful login the server creates a persistent signed HttpOnly cookie, so the browser UI uses that cookie instead of `sessionStorage`; the cookie survives browser restarts and gateway restarts until you explicitly log out or change `GATEWAY_API_KEY`. SDK clients and direct API calls can still use the header `Authorization: Bearer <GATEWAY_API_KEY>`, and `/v1/messages` also accepts `X-Api-Key: <GATEWAY_API_KEY>` together with the standard `anthropic-version` header used by the official SDK. The gateway parses the Bearer header strictly as `scheme + token` separated by whitespace, accepts `Bearer` case-insensitively, returns `401` for malformed headers or missing authentication, and returns `403` only when the header format is correct but the token value is wrong. The only public paths are `/health`, `/healthz`, `/auth/login`, `/` as a redirect entrypoint, and static assets under `/static/`. HTML pages without a valid cookie or Bearer token are redirected to login, while API endpoints without valid authentication continue to return `401/403`. Unregistered routes still return the standard `404`.
+`GET /health` keeps the compatible `{"status": "ok"}` body. For container and load-balancer checks the gateway also exposes `GET`/`HEAD /healthz`; both health endpoints add the `X-LLMGateway-Build-Version`, `X-LLMGateway-Build-Sha`, `X-LLMGateway-Build-Date`, and `X-LLMGateway-Build-Ref` build headers when the matching build variables are set.
 The Configuration Editor includes the main tabs:
 - **Fallback Rules**: A structured form for managing chat model fallback chains.
 - **Embeddings**: A structured form for managing `/v1/embeddings` routes.
@@ -87,12 +88,13 @@ The Configuration Editor includes the main tabs:
 - **Images**: A structured form for managing `/v1/images`, `/v1/images/generations`, and `/v1/images/edits` routes.
 - **Audio**: A structured form for managing `/v1/audio/speech` and `/v1/audio/transcriptions` routes; the `pdf_conversions` section is preserved by the structured API but is still edited through JSON.
 - **Web**: A structured form for managing `/v1/web/search`, `/v1/web/read`, `/v1/web/research`, and `/v1/web/deep-research` services.
+- **Model Rules**: A raw JSON editor for `models_model_rules.json`, used for model alias/prefix/exclude/pool policy.
 - **OpenRouter Free**: A read-only ranking of free OpenRouter text models. Lite eval checks instruction following, tool-call JSON, Python code with unit tests, parameterized arithmetic, and factual QA. The tab is shown only if the official `openrouter` provider and its API key are configured; it does not automatically change routing rules. The `Run Full Eval` button triggers a background full re-evaluation (`POST /v1/openrouter/free-models/run`) without waiting for the next scheduled cycle.
 - **Fallback Eval**: A read-only manual eval for unique fallback targets from `models_fallback_rules.json`. It runs by button, shows health/latency/lite-eval score, and does not save configuration.
-- **Providers**: A structured form for managing providers: name, `baseUrl`, `apikey`, API type (`openai`/`anthropic`), optional `proxy`, and the JSON `models` field.
+- **Providers**: A structured form for managing providers: name, `baseUrl`, `apikey`, API type (`openai`/`anthropic`), optional `proxy`, and the JSON `models`, `auth`, `routing`, and `upstream_key_pools` fields.
 - **Fusion**: A structured form for managing Fusion ensembles (`models_fusion_rules.json`): the gateway model name, the main model, an optional judge model, and a panel of 1–8 models. Each role is selected as a `provider/model` pair; for each you can additionally set `temperature`, `max_completion_tokens`, and `reasoning` (JSON). An optional **Web tools** block gives panel models `web_search`/`web_fetch` tools with tool-call and iteration budgets.
 
-The Fallback Rules, Embeddings, Rerank, Images, Audio, Web, Providers, and Fusion tabs use a structured form instead of raw JSON. The OpenRouter Free and Fallback Eval tabs only show current snapshots and do not save configuration.
+The Fallback Rules, Embeddings, Rerank, Images, Audio, Web, Providers, and Fusion tabs use a structured form instead of raw JSON. The Model Rules tab edits raw JSON with validation before write. The OpenRouter Free and Fallback Eval tabs only show current snapshots and do not save configuration.
 The Fallback Rules tab includes read-only `Preview Changes` and `Suggest Eval Order` actions: they show the diff or the eval-based suggested order, but do not save or reorder routes automatically. Each chat rule can opt in to `dynamic_penalty`, allowing the gateway to temporarily prefer less-penalized keys/routes after transient upstream errors.
 The model list for a selected provider is loaded lazily, sorted alphabetically with natural numeric order, and cached for 15 minutes. In the Fallback Rules tab, manual model entry is not allowed. In the Embeddings, Rerank, Images, and Audio tabs, you can either choose a model from the list or enter it manually if needed.
 **Configured fallback-model scoring** lives in the **Fallback Eval** tab. It runs only when you press `Run Eval`, reads every `fallback_models` entry and `context_overflow_fallback` from `models_fallback_rules.json`, collapses duplicates into unique `provider/model` pairs, and shows which gateway models reference each target. If the official `openrouter` provider and API key are configured, the eval loads `{openrouter.baseUrl}/models` once, takes the OpenRouter card by model basename without the provider prefix and without the suffix after `:`, for example `openai/gpt-oss-120b:free` -> `gpt-oss-120b`, and copies `metadataScore`, context, max completion tokens, pricing, and support flags from it. If a target has no OpenRouter metadata match but other fallback targets in the same run have known metadata scores, the missing `metadataScore` is estimated as the median of those known scores; detailed OpenRouter fields such as context and pricing stay empty for that target. For OpenAI-compatible providers, the eval calls `{baseUrl}/chat/completions` directly and respects `custom_headers` except security headers, `custom_body_params`, `providers_order`, provider-specific proxy clients, and round-robin API-key selection when `apikey` contains comma-separated keys. For providers with `type: "anthropic"`, the eval sends native requests to `{baseUrl}/v1/messages` with `x-api-key` and `anthropic-version`, then converts the response into the internal shape used by the same checks.
@@ -117,7 +119,7 @@ If one of the already saved fallback models is no longer returned by its provide
 The Fallback Rules tab uses the Structured API `/v1/config/models-rules/structured`. Each gateway model there also exposes a `Strip <think> tags from replies` toggle that controls literal `<think>...</think>` stripping for regular and streaming chat responses. The Embeddings, Rerank, Images, Audio, and Web tabs use the Structured API `/v1/config/model-operations/structured`, which reads and saves the `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research`, and `web_deep_research` sections without restarting the server. The UI edits Embeddings, Rerank, Images, Audio Speech, Audio Transcriptions, and Web sections; `pdf_conversions` is preserved during those saves but remains JSON-only. The Providers tab uses the Structured API `/v1/config/providers/structured`; on save it still validates `${VAR}` references, rejects provider deletes/renames that would break fallback or operation rules, refreshes runtime provider config, and clears the provider model-list cache. The Web tab configures four services: search, page reading, research, and deep research with GPT Researcher, embedding, and image-generation models. When saving a single operation tab, the editor reloads the latest operation config and replaces only the section being saved so changes in other sections are not overwritten. `retry_delay` is preserved as a fractional number when you enter a value such as `0.5`.
 After loading saved data, Embeddings, Rerank, Images, Audio, Web, and Providers cards are shown as collapsed accordions by default; newly added cards are expanded automatically for editing.
 
-If you run the gateway with `docker-compose.yml`, the mounted `providers.json`, `models_fallback_rules.json`, and `models_operation_rules.json` files are now writable inside the container. Changes made in the web editor are persisted directly back to the host files.
+If you run the gateway with `docker-compose.yml`, the mounted `providers.json`, `models_fallback_rules.json`, `models_operation_rules.json`, and `models_model_rules.json` files are now writable inside the container. Changes made in the web editor are persisted directly back to the host files.
 
 ![Config example](./images/config-example.png)
 
@@ -443,6 +445,10 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `GATEWAY_API_KEY` | Fixed API key clients must use to access this gateway | *required* |
+| `LLMGATEWAY_BUILD_VERSION` | Build version, exposed in health response headers and set by the `LLMGATEWAY_BUILD_VERSION` Docker build arg | `dev` |
+| `LLMGATEWAY_BUILD_SHA` | Git SHA or other revision id, exposed in health response headers and OCI label | empty |
+| `LLMGATEWAY_BUILD_DATE` | Build timestamp, exposed in health response headers and OCI label | empty |
+| `LLMGATEWAY_BUILD_REF` | Git ref or release name, exposed in health response headers and OCI label | empty |
 | `LOG_FILE_LIMIT` | Maximum number of chat log files to keep | `15` |
 | `LOG_CHAT_ENABLED` | Enable detailed chat log files in the `logs/` directory. It does not affect usage-statistics collection. | `false` |
 | `LOG_FALLBACK_FULL_MESSAGES` | Temporary debug flag for fallback investigations. When enabled, warning logs keep `messages` for failed fallback attempts instead of redacting them. Use it only temporarily because full prompt/history will be written to logs. | `false` |
@@ -455,15 +461,21 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | `JINA_API_KEY` | API key for Jina AI, used by the built-in `/v1/web/search` (Jina Search) and `/v1/web/read` (Jina Reader at `r.jina.ai`) adapters. You can provide multiple keys separated by commas; on each Jina call the gateway selects the next non-empty key by round-robin. When unset, the Jina adapter is skipped. | disabled |
 | `ZAI_API_KEY` | API key for Z.AI, used by the built-in `/v1/web/search` and `/v1/web/read` adapters. The adapter talks to Z.AI's Streamable HTTP MCP servers — `web_search_prime` for search and `web_reader` for page extraction (requires the GLM Coding Plan subscription). The search region (`cn`/`us`) is auto-detected from the query. You can provide multiple keys separated by commas; on each Z.AI call the gateway selects the next non-empty key by round-robin. When unset, the Z.AI adapter is skipped. | disabled |
 | `APIKEY_PROVIDERNAME` | API key for a specific provider (e.g., `APIKEY_OPENROUTER`). In `providers.json`, reference it explicitly as `${APIKEY_PROVIDERNAME}`. You can provide multiple keys separated by commas; on each downstream provider call the gateway selects the next non-empty key by round-robin. OpenRouter Free scoring and manual Fallback Eval use the same rule and select a key separately for each provider request. | *required for providers in providers.json* |
+| `OAUTH_CREDENTIAL_ENCRYPTION_KEY` | Fernet key for the encrypted-at-rest managed OAuth credential store. Required when any provider uses `auth.credential_id`. You can generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. | disabled |
+| `OAUTH_REFRESH_SKEW_SECONDS` | Number of seconds before `expires_at` when a managed OAuth credential is considered due for refresh. | `300` |
 
 ## Providers Example (`providers.json`)
 Here, you must define your providers. By default each provider is treated as OpenAI-compatible, but the optional `type` field lets you declare the native wire format: `"openai"` (default) or `"anthropic"`. Anthropic providers are called at `{baseUrl}/v1/messages` with `x-api-key` and `anthropic-version` headers, and their model catalog is fetched from `{baseUrl}/v1/models`. The gateway converts requests and responses in both directions automatically: an OpenAI client that falls back to an Anthropic provider still receives an OpenAI-shaped response (including streaming SSE chunks and `tool_calls`), and an Anthropic client that falls back to an OpenAI provider still receives a native Anthropic response. For Anthropic providers the gateway injects `max_tokens=32768` when the client request does not set it explicitly. For OpenAI providers the `type` field can be omitted — existing `providers.json` files keep working unchanged.
-The `apikey` and `proxy` fields are treated as literals by default. To read a value from an environment variable, use the explicit `${VAR_NAME}` syntax, for example `"apikey": "${APIKEY_OPENROUTER}"`. The value `"APIKEY_OPENROUTER"` without `${...}` is not resolved from the environment; if such an environment variable exists, the gateway logs a warning and still uses the string as a literal.
+The `apikey` and `proxy` fields are treated as literals by default. To read a value from an environment variable, use the explicit `${VAR_NAME}` syntax, for example `"apikey": "${APIKEY_OPENROUTER}"`. The value `"APIKEY_OPENROUTER"` without `${...}` is not resolved from the environment; if such an environment variable exists, the gateway logs a warning and still uses the string as a literal. Known template values such as `your-secure-api-key` and `your-openrouter-api-key` are rejected for `GATEWAY_API_KEY` and provider `apikey`: the app fails startup or rejects the config instead of running with a demo secret.
 Provider names must be unique in `providers.json`. Duplicate provider entries are rejected during startup, and the web editor returns `400` instead of silently overwriting the previous entry.
 When saving `providers.json` through the UI, the gateway switches to strict `${VAR}` resolution: if the payload references an environment variable that is not present in the process or `.env`, the gateway responds with `400` and the message `env var X referenced but missing for provider 'Y' field 'Z'` and does not write the file. Saving also re-validates `provider` references from the already loaded `models_fallback_rules.json` and `models_operation_rules.json`: if renaming or removing a provider leaves dangling references in those rules, the gateway responds with `400` listing the broken routes instead of silently writing an inconsistent state.
 When `apikey` contains several comma-separated keys, chat fallback chooses the concrete upstream key with per-key cooldown and upstream-limit awareness. Limits are configured under `models.<model>.upstream_limits` as `rpm`, `rpd`, `tpm`, and `tpd`; this is a separate upstream-provider ledger and does not replace client virtual-key limits.
 The editor UI (`Providers` → `Advanced options` → `Upstream Limits per Model`) exposes these limits as explicit `Model`, `RPM`, `RPD`, `TPM`, `TPD` fields per model, with an `ⓘ` tooltip next to each variable explaining what it does. The `Models Metadata (JSON)` textarea stays available for any other free-form metadata (e.g. `pricing`); on save the gateway merges the structural limits back into that JSON, so the two representations never go out of sync.
 A separate `available_models` field declares an explicit list of the provider's model ids as a JSON array of strings (e.g. `"available_models": ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]`). When such a list is set, the gateway uses it verbatim and does not query the provider's `/models` endpoint — useful for proxies without a working `/models` endpoint. The list is applied everywhere a provider model catalog is needed: the model picker in the fallback-rules editor, rule validation on save, and the public `/v1/models` endpoint (when the provider is selected as `FALLBACK_PROVIDER`). When `available_models` is absent, behaviour is unchanged — the catalog is fetched from the provider API. This field is independent of `models`, so an explicit list can be combined with `models` metadata/`upstream_limits`. In the editor UI (`Providers` → `Advanced options`) the list is entered in the `Available Models` field — one id per line (commas are also accepted).
+The `auth` field lets a provider read a Bearer token from the environment, a file, or the managed OAuth store instead of storing it in `apikey`. Supported OAuth types are `codex_oauth`, `claude_oauth`, and `xai_oauth`; each OAuth type must define exactly one source: `token_env`, `token_file`, or `credential_id`. OAuth `auth` cannot be mixed with `apikey` or `upstream_key_pools`: that configuration is rejected during load.
+For `credential_id`, define `oauth_client`: `client_id` or `client_id_env`, `token_endpoint`, and optionally `device_authorization_endpoint`, `authorization_endpoint`, `redirect_uri`, `client_secret_env`, and `scopes`. The gateway implements standard BYO OAuth/OIDC flows: device-code login, authorization-code PKCE login, refresh-token lifecycle, manual access/refresh token import, and encrypted-at-rest storage in `db/oauth_tokens.db`. Master admins can manage these credentials in the Providers UI or through `/v1/admin/oauth/*`; API responses and the DOM never return raw access/refresh tokens. If the managed credential is missing, refresh fails, or the stored token cannot be decrypted with the current `OAUTH_CREDENTIAL_ENCRYPTION_KEY`, the request fails explicitly with no hidden fallback.
+The gateway does not add cloak mode, spoofed identity headers, hard-coded official CLI client IDs, prompt/cache remapping, or any behavior intended to look like an official CLI. For OpenAI/Codex and xAI, use your own OAuth/OIDC client config or import an already issued access/refresh token; xAI API-key usage remains configured with the regular `apikey` field.
+The `routing` field defines the default upstream-key choice behavior: `strategy` (`round-robin`, `fill-first`, `priority`), `session_affinity`, `session_affinity_header`, and `session_affinity_ttl_seconds`. `upstream_key_pools` lets you define several named key pools with their own strategy and affinity settings. A fallback row selects a pool with `upstream_key_pool`. If a provider is configured only with `upstream_key_pools` and no legacy `apikey`, `upstream_key_pool` is required — the gateway fails configuration validation instead of falling back to an arbitrary key or another pool.
 The free-tier provider reference catalog lives in [`examples/free-tier-providers.md`](examples/free-tier-providers.md). It is not applied automatically: free-tier terms change often, so providers and limits must be enabled manually.
 
 ```json
@@ -499,6 +511,56 @@ The free-tier provider reference catalog lives in [`examples/free-tier-providers
             "apikey" : "${APIKEY_CUSTOMPROXY}",
             // explicit model list: the gateway will not query the provider's /models
             "available_models" : ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]
+        }
+    },
+    {
+        "codex_oauth_proxy":
+        {
+            "baseUrl" : "https://codex.example/v1",
+            "auth" : {
+                "type" : "codex_oauth",
+                "token_env" : "CODEX_OAUTH_TOKEN"
+            }
+        }
+    },
+    {
+        "codex_managed_oauth_proxy":
+        {
+            "baseUrl" : "https://codex.example/v1",
+            "auth" : {
+                "type" : "codex_oauth",
+                "credential_id" : "codex-main",
+                "oauth_client" : {
+                    "client_id_env" : "CODEX_OAUTH_CLIENT_ID",
+                    "token_endpoint" : "https://issuer.example/oauth/token",
+                    "device_authorization_endpoint" : "https://issuer.example/oauth/device/code",
+                    "authorization_endpoint" : "https://issuer.example/oauth/authorize",
+                    "redirect_uri" : "https://gateway.example/v1/auth/oauth/callback/codex_managed_oauth_proxy",
+                    "scopes" : ["openid", "profile"]
+                }
+            }
+        }
+    },
+    {
+        "pooled_proxy":
+        {
+            "baseUrl" : "https://proxy.example/v1",
+            "type" : "openai",
+            "routing" : {
+                "strategy" : "fill-first",
+                "session_affinity" : true,
+                "session_affinity_header" : "X-Workspace-Session",
+                "session_affinity_ttl_seconds" : 3600
+            },
+            "upstream_key_pools" : {
+                "primary" : {
+                    "strategy" : "priority",
+                    "keys" : [
+                        { "id" : "team-a", "apikey" : "${APIKEY_POOL_A}", "priority" : 100 },
+                        { "id" : "team-b", "apikey" : "${APIKEY_POOL_B}", "priority" : 10 }
+                    ]
+                }
+            }
         }
     },
     {
@@ -618,6 +680,20 @@ Custom headers are also available if needed.
 ]    
 ```
 
+For limited top-level payload edits, fallback rows and operation routes can define `payload_transforms`. It is applied after the base payload and `custom_body_params`: `defaults` adds a value only when the field is still absent, `overrides` explicitly replaces a field, and `filters` removes a field before the downstream call. The transform engine is fail-closed and only supports top-level fields; reserved or auth-sensitive fields (`model`, `messages`, `stream`, `tools`, `tool_choice`, `authorization`, `api_key`, `x-api-key`, `cookie`) cannot be changed.
+
+```json
+{
+    "provider": "xAI",
+    "model": "grok-3-mini-beta",
+    "payload_transforms": {
+        "defaults": { "top_p": 0.9 },
+        "overrides": { "parallel_tool_calls": false },
+        "filters": ["seed"]
+    }
+}
+```
+
 #### Dedicated fallback model for context overflow errors
 If the primary model has a smaller context window than a backup model, you can explicitly configure a dedicated model for context overflow failures.
 ```json
@@ -696,15 +772,17 @@ The gateway supports compressing tool-result content before sending it to the LL
 
 When a request comes to `/v1/chat/completions`:
 
-1.  The gateway finds the rule matching the requested `model` in the models_fallback_rules.json file.
-2.  If the model is not found in the rules, the gateway routes the request to the fallback provider defined by the `FALLBACK_PROVIDER` environment variable (default: `openrouter`). The same fallback provider is also used by `/v1/models`. Startup fails with a validation error if the configured fallback provider is missing from `providers.json`. The name of the model will be the same as received.
-3.  If model rotation is enabled (`"rotate_models": true`), the gateway selects the next model in the sequence for each request.
-4.  If model rotation is disabled (`"rotate_models": false` or ommited), the gateway always starts with the first model in the sequence and only falls back to the next ones in case of failure.
-5.  (OpenRouter only) If the current model has the parameter `use_provider_order_as_fallback=true` and has a list of `providers_order`, the gateway will use only the first provider in the list and fall back to the next ones only in case of failures. This way, the fallback is treated by this gateway and not OpenRouter.
-6.  If the selected model fails because of a context overflow and the rule defines `context_overflow_fallback`, the gateway tries that dedicated model first.
-7.  If the selected model hits a temporary availability failure (`429`, `5xx`, timeout/connect, `overloaded`, `rate_limit`, `try again later`), the gateway puts the concrete upstream key for that `provider/model` pair into an in-memory cooldown for 10 minutes. If the provider has several keys, later requests may use another available key for the same model.
-8.  If the selected model fails for another reason, or if `context_overflow_fallback` also fails, the gateway continues with the next models in the regular fallback sequence until one succeeds. Keys with active cooldown or exhausted upstream ledger are skipped without a downstream call; `dynamic_penalty` changes ordering only for rules where it is explicitly enabled.
-9.  Return an HTTP 503 error if none of the called models succeed.
+1.  The gateway first applies `models_model_rules.json`: alias/prefix rules can map the public model name to an internal route name, while `excluded_models` rejects blocked names.
+2.  The gateway finds the rule matching the resolved `model` in the models_fallback_rules.json file.
+3.  If the model is not found in the rules, the gateway routes the request to the fallback provider defined by the `FALLBACK_PROVIDER` environment variable (default: `openrouter`). The same fallback provider is also used by `/v1/models`. Startup fails with a validation error if the configured fallback provider is missing from `providers.json`. The model name is kept as received.
+4.  If model rotation is enabled (`"rotate_models": true`), the gateway selects the next model in the sequence for each request.
+5.  If model rotation is disabled (`"rotate_models": false` or omitted), the gateway always starts with the first model in the sequence and only falls back to the next ones in case of failure.
+6.  (OpenRouter only) If the current model has the parameter `use_provider_order_as_fallback=true` and has a list of `providers_order`, the gateway will use only the first provider in the list and fall back to the next ones only in case of failures. This way, the fallback is treated by this gateway and not OpenRouter.
+7.  If the selected model fails because of a context overflow and the rule defines `context_overflow_fallback`, the gateway tries that dedicated model first.
+8.  If the selected model hits a temporary availability failure (`429`, `5xx`, timeout/connect, `overloaded`, `rate_limit`, `try again later`), the gateway puts the concrete upstream key for that `provider/model` pair into an in-memory cooldown for 10 minutes. If the provider has several keys, later requests may use another available key for the same model.
+9.  For streaming requests, the gateway can safely move to the next retry/fallback only before the first real payload chunk is sent to the client. Keepalive/comment chunks do not count as a successful stream start. After the first payload chunk, the stream is committed to the selected upstream.
+10.  If the selected model fails for another reason, or if `context_overflow_fallback` also fails, the gateway continues with the next models in the regular fallback sequence until one succeeds. Keys with active cooldown or exhausted upstream ledger are skipped without a downstream call; `dynamic_penalty` changes ordering only for rules where it is explicitly enabled.
+11.  Return an HTTP 503 error if none of the called models succeed.
 
 **Model Rotation:**
 
@@ -715,6 +793,34 @@ The model rotation feature allows you to distribute requests across multiple pro
 - Reducing costs by distributing usage
 
 The rotation state is tracked per API key and gateway model combination, ensuring consistent behavior for each client.
+
+### Model policy (`models_model_rules.json`)
+The optional `models_model_rules.json` file is selected with `MODEL_RULES_FILENAME`. It is applied on top of chat rules and operation routes before the downstream route is selected:
+
+- `aliases` publishes an additional model name and resolves it to an existing gateway model. The alias is exposed in `/v1/models` as a separate entry with `aliases_to`.
+- `prefixes` rewrites model names by prefix: either to a fixed `target`, or by replacing `prefix` with `target_prefix`.
+- `excluded_models` hides and rejects models. Exact names and simple trailing wildcards (`"legacy/*"`) are supported.
+- `upstream_model_pools` creates synthetic fallback rules with the same fields as `models_fallback_rules.json`. This is useful for separate upstream pools without duplicating them in the main file.
+
+```json
+{
+    "aliases": {
+        "public-fast": "pool-fast"
+    },
+    "prefixes": [
+        { "prefix": "openai/", "target_prefix": "gateway/openai/" }
+    ],
+    "excluded_models": ["legacy/*"],
+    "upstream_model_pools": {
+        "pool-fast": {
+            "fallback_models": [
+                { "provider": "pooled_proxy", "model": "fast-model", "upstream_key_pool": "primary" }
+            ],
+            "rotate_models": false
+        }
+    }
+}
+```
 
 ### Operation routes configuration (`models_operation_rules.json`)
 The gateway can also load a separate operation routes config for the `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research`, and `web_deep_research` sections. This file is optional: if `models_operation_rules.json` is missing or empty, the application starts with empty sections for all these operation types. The `/v1/models` endpoint merges these sections with the chat rules and returns a `capabilities` list for gateway models, for example `["chat", "embeddings"]`, `["images"]`, `["audio_speech"]`, `["audio_transcription"]`, `["pdf_conversion"]`, `["web_research"]`, or `["web_deep_research"]`.
@@ -736,7 +842,7 @@ Image mappings also include built-in generic transforms: `size_width`, `size_hei
 For mapping-based image routes the gateway does not silently drop unsupported client fields: if a field is not allowed by the configured mapping, the endpoint returns an explicit `400`. If a client field should be accepted for compatibility but the downstream API does not support it, map it to the empty target key `""`; the field is then allowed but omitted from the downstream JSON. NVIDIA `flux.2-klein-4b` generation uses this for the OpenAI `n` parameter.
 For OpenAI-compatible image routes where the downstream is almost compatible with the OpenAI Images API but rejects specific client fields, set `request_mapping.omit_client_fields`, for example `["response_format", "seed"]`. The gateway accepts those fields from the client but does not send them in the downstream JSON.
 
-The `models_operation_rules.json` structure consists of `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research`, and `web_deep_research` sections. Route-based section entries (`embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`) contain `gateway_model_name` and a `routes` list where each route can define `provider`, `model`, `target_path`, `custom_headers`, `custom_body_params`, `retry_count`, and `retry_delay`; `audio_speech` routes can also define `voices_target_path` when the voice list is not available at `"/voices"`. For `embeddings`, `rerank`, `images_generations`, `images_edits`, and `audio_transcriptions`, the route order defines the fallback chain; for `audio_speech` and `pdf_conversions`, the first route is used. Image routes can also define `request_format`, `response_format`, `request_mapping`, and `response_mapping`; rerank routes can define the optional `request_format`, `response_format`, and `response_output_format` fields; and audio transcription routes can define `request_format`. The `web_search` and `web_read` sections do not contain downstream routes at all: an entry holds just `gateway_model_name` (and optionally `query_model` for `web_search`), while the actual search/reader providers are built into the gateway and enabled by the presence of the env vars `PROXY_URL` / `TAVILY_API_KEY` / `JINA_API_KEY` / `ZAI_API_KEY`. Legacy `routes` fields are no longer accepted under `web_search`/`web_read`: if they are still present in `models_operation_rules.json`, the gateway refuses to start and returns an explicit validation error — you must remove the `routes` block from these sections manually. A `web_research` entry defines the service model, gateway search/read references (`search_model`, `read_model`), the ranking model (`rerank_model`), and the analysis chat model (`analysis_model`). A `web_deep_research` entry has no downstream routes either: it defines the service model, gateway search/read references (`search_model`, `read_model`), GPT Researcher models (`fast_model`, `smart_model`, `strategic_model`, `embedding_model`), and image settings (`image_generation_model`, `image_generation_size`). `image_generation_model` always references a gateway model from `images_generations`. When operation routes are saved, the gateway additionally validates cross-section references: `analysis_model`, `fast_model`, `smart_model`, `strategic_model` must be declared in fallback rules, `rerank_model` in `rerank`, `embedding_model` in `embeddings`, `image_generation_model` in `images_generations`, and `search_model` / `read_model` in `web_search` / `web_read`. In the rules editor Web tab all these fields are backed by dropdowns that refresh automatically as the related sections change.
+The `models_operation_rules.json` structure consists of `embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research`, and `web_deep_research` sections. Route-based section entries (`embeddings`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `pdf_conversions`) contain `gateway_model_name` and a `routes` list where each route can define `provider`, `model`, `target_path`, `custom_headers`, `custom_body_params`, `payload_transforms`, `retry_count`, and `retry_delay`; `audio_speech` routes can also define `voices_target_path` when the voice list is not available at `"/voices"`. For `embeddings`, `rerank`, `images_generations`, `images_edits`, and `audio_transcriptions`, the route order defines the fallback chain; for `audio_speech` and `pdf_conversions`, the first route is used. Image routes can also define `request_format`, `response_format`, `request_mapping`, and `response_mapping`; rerank routes can define the optional `request_format`, `response_format`, and `response_output_format` fields; and audio transcription routes can define `request_format`. The `web_search` and `web_read` sections do not contain downstream routes at all: an entry holds just `gateway_model_name` (and optionally `query_model` for `web_search`), while the actual search/reader providers are built into the gateway and enabled by the presence of the env vars `PROXY_URL` / `TAVILY_API_KEY` / `JINA_API_KEY` / `ZAI_API_KEY`. Legacy `routes` fields are no longer accepted under `web_search`/`web_read`: if they are still present in `models_operation_rules.json`, the gateway refuses to start and returns an explicit validation error — you must remove the `routes` block from these sections manually. A `web_research` entry defines the service model, gateway search/read references (`search_model`, `read_model`), the ranking model (`rerank_model`), and the analysis chat model (`analysis_model`). A `web_deep_research` entry has no downstream routes either: it defines the service model, gateway search/read references (`search_model`, `read_model`), GPT Researcher models (`fast_model`, `smart_model`, `strategic_model`, `embedding_model`), and image settings (`image_generation_model`, `image_generation_size`). `image_generation_model` always references a gateway model from `images_generations`. When operation routes are saved, the gateway additionally validates cross-section references: `analysis_model`, `fast_model`, `smart_model`, `strategic_model` must be declared in fallback rules, `rerank_model` in `rerank`, `embedding_model` in `embeddings`, `image_generation_model` in `images_generations`, and `search_model` / `read_model` in `web_search` / `web_read`. In the rules editor Web tab all these fields are backed by dropdowns that refresh automatically as the related sections change.
 Each `gateway_model_name` must be unique within its section. Each `provider` must exist in `providers.json`. For `rerank`, the `target_path` field defaults to `"/score"` when omitted, for `images_edits` to `"/images/edits"`, for `audio_speech` to `"/audio/speech"`, for `audio_transcriptions` to `"/audio/transcriptions"`, and for `pdf_conversions` to `"/api"`. `target_path` may be either a relative path starting with `/` or an absolute `http(s)` URL. For audio routes with `request_format: "nvidia_riva_grpc"`, keep `target_path` at the default `"/audio/transcriptions"` because the real downstream uses gRPC transport rather than an HTTP path. The same `gateway_model_name` is allowed in both chat rules and operation rules because they are separate configuration namespaces.
 
 ```json
@@ -905,8 +1011,9 @@ pip install -r requirements-dev.txt
 if you prefer docker deployment see [this guide](/docker/README.md) (Thanks  [canadaduane](https://github.com/canadaduane)!👍)
 
 The Docker image is built on `python:3.12-slim` and installs dependencies from `requirements.txt`, so dependency updates are included when you rebuild the image.
+You can stamp the image with build metadata through the `LLMGATEWAY_BUILD_VERSION`, `LLMGATEWAY_BUILD_SHA`, `LLMGATEWAY_BUILD_DATE`, and `LLMGATEWAY_BUILD_REF` build args; the values are exposed as OCI labels and health headers. The Docker healthcheck uses `HEAD /healthz`.
 
-When using the provided `docker-compose.yml`, the config files `providers.json`, `models_fallback_rules.json`, and `models_operation_rules.json` are mounted read-write so the web editor can save changes directly from inside the container.
+When using the provided `docker-compose.yml`, the config files `providers.json`, `models_fallback_rules.json`, `models_operation_rules.json`, and `models_model_rules.json` are mounted read-write so the web editor can save changes directly from inside the container.
 
 ### With a systemd service
 If you want a local systemd service for running the gateway outside Docker, use the deployment helper:

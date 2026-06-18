@@ -1,12 +1,23 @@
+import copy
 import logging
 import httpx
 import time
 from fastapi import APIRouter, HTTPException, Request
 
 # Relative imports from the new structure
-from ...config.loader import ANTHROPIC_API_VERSION, ConfigLoader, ProviderDetails, resolve_provider_api_key
+from ...config.loader import (
+    ANTHROPIC_API_VERSION,
+    ConfigLoader,
+    ProviderDetails,
+)
 from ...config.settings import settings
+from ...services.model_policy import (
+    filter_excluded_models,
+    is_model_excluded,
+    public_alias_entries,
+)
 from ...services.provider_models import provider_explicit_models
+from ...services.provider_auth import resolve_provider_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -69,25 +80,31 @@ IMAGE_OPERATION_ORDER = ("generation", "edit")
 WEB_OPERATION_ORDER = ("search", "read", "research", "deep_research")
 
 
-def _build_provider_models_request(
+async def _build_provider_models_request(
+    request: Request,
+    provider_name: str,
     provider_config: ProviderDetails,
     *,
     model_id: str | None = None,
 ) -> tuple[str, dict[str, str]]:
     provider_base_url = provider_config.baseUrl.rstrip("/")
-    provider_api_key = resolve_provider_api_key(provider_config.apikey)
+    auth_headers = await resolve_provider_auth_headers(
+        request,
+        provider_name=provider_name,
+        provider_config=provider_config,
+    )
     if getattr(provider_config, "type", "openai") == "anthropic":
         target_url = f"{provider_base_url}/v1/models"
         headers = {
             "Content-Type": "application/json",
             "anthropic-version": ANTHROPIC_API_VERSION,
-            **({"x-api-key": provider_api_key} if provider_api_key else {}),
+            **auth_headers,
         }
     else:
         target_url = f"{provider_base_url}/models"
         headers = {
             "Content-Type": "application/json",
-            **({"Authorization": f"Bearer {provider_api_key}"} if provider_api_key else {}),
+            **auth_headers,
         }
 
     if model_id is not None:
@@ -243,6 +260,18 @@ def _add_gateway_operation_models(gateway_models: dict, operation_rules: dict) -
         _add_capability(gateway_models, model_name, "web_deep_research")
         _add_web_operation(gateway_models, model_name, "deep_research")
 
+
+def _apply_model_rules_to_gateway_models(gateway_models: dict, model_rules: dict | None) -> dict:
+    for alias, target in public_alias_entries(model_rules).items():
+        if alias in gateway_models or target not in gateway_models:
+            continue
+        alias_entry = copy.deepcopy(gateway_models[target])
+        alias_entry["id"] = alias
+        alias_entry["aliases_to"] = target
+        alias_entry["owned_by"] = "llmgateway"
+        gateway_models[alias] = alias_entry
+    return filter_excluded_models(gateway_models, model_rules)
+
 def _is_anthropic_request(request: Request) -> bool:
     """Check if request is from Anthropic SDK or Claude Code."""
     # Official SDK uses x-api-key
@@ -394,7 +423,11 @@ async def get_models(request: Request):
                         f"for fallback provider '{fallback_provider_name}'."
                     )
                 else:
-                    target_url, headers = _build_provider_models_request(fallback_provider_config)
+                    target_url, headers = await _build_provider_models_request(
+                        request,
+                        fallback_provider_name,
+                        fallback_provider_config,
+                    )
 
                     try:
                         logger.info(f"Fetching models list from fallback provider '{fallback_provider_name}' at {target_url}")
@@ -429,6 +462,11 @@ async def get_models(request: Request):
                     except Exception as e:
                         logger.error(f"Unexpected error fetching models from fallback provider {target_url}: {e}", exc_info=True)
 
+
+    gateway_models = _apply_model_rules_to_gateway_models(
+        gateway_models,
+        getattr(config_loader_instance, "model_rules", None),
+    )
 
     # 3. Restrict to models allowed for the caller's virtual key, if any.
     # Master/legacy callers have ``api_key_record is None`` and see the full list.
@@ -511,6 +549,10 @@ async def get_model(model_id: str, request: Request):
     for model_name in fallback_rules.keys():
         _add_capability(gateway_models, model_name, "chat")
     _add_gateway_operation_models(gateway_models, operation_rules)
+    gateway_models = _apply_model_rules_to_gateway_models(
+        gateway_models,
+        getattr(config_loader_instance, "model_rules", None),
+    )
 
     # 2. Check if requested model is in gateway models
     if model_id in gateway_models:
@@ -519,6 +561,9 @@ async def get_model(model_id: str, request: Request):
             return _format_model_for_anthropic(model_entry)
         else:
             return model_entry
+
+    if is_model_excluded(model_id, getattr(config_loader_instance, "model_rules", None)):
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' is excluded by model_rules.")
 
     # 3. If not found in gateway models, try to fetch from fallback provider
     fallback_provider_name = settings.fallback_provider
@@ -542,7 +587,9 @@ async def get_model(model_id: str, request: Request):
                 return model_entry
             # Pinned model list without this id → fall through to 404, no live lookup.
         elif fallback_provider_config and fallback_provider_config.baseUrl:
-            target_url, headers = _build_provider_models_request(
+            target_url, headers = await _build_provider_models_request(
+                request,
+                fallback_provider_name,
                 fallback_provider_config,
                 model_id=model_id,
             )

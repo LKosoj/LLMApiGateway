@@ -10,6 +10,16 @@ import pytest
 _temp_log_dir = tempfile.mkdtemp(prefix="llmgateway_test_logs_")
 os.environ.setdefault("LLMGATEWAY_LOG_DIR", _temp_log_dir)
 
+# Keep tests independent from optional config files that may exist in the
+# checkout and reference providers absent from a test's temp providers.json.
+_temp_config_dir = Path(tempfile.mkdtemp(prefix="llmgateway_test_config_"))
+_empty_fusion_rules = _temp_config_dir / "models_fusion_rules.json"
+_empty_model_rules = _temp_config_dir / "models_model_rules.json"
+_empty_fusion_rules.write_text("[]\n", encoding="utf-8")
+_empty_model_rules.write_text("{}\n", encoding="utf-8")
+os.environ["FUSION_RULES_FILENAME"] = str(_empty_fusion_rules)
+os.environ["MODEL_RULES_FILENAME"] = str(_empty_model_rules)
+
 
 @pytest.fixture(autouse=True)
 def _cleanup_orphan_sqlite_journals():

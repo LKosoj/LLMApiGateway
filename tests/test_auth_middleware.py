@@ -24,6 +24,14 @@ def build_test_app() -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    @app.get("/healthz")
+    async def healthz():
+        return {"status": "ok"}
+
+    @app.head("/healthz")
+    async def healthz_head():
+        return None
+
     @app.get("/static/test.js")
     async def static_asset():
         return {"status": "public"}
@@ -86,6 +94,8 @@ class AuthMiddlewareTests(unittest.TestCase):
 
     def test_public_paths_and_root_redirect_without_session(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+        self.assertEqual(self.client.get("/healthz").status_code, 200)
+        self.assertEqual(self.client.head("/healthz").status_code, 200)
         self.assertEqual(self.client.get("/static/test.js").status_code, 200)
 
         response = self.client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)

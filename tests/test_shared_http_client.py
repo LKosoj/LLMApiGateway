@@ -160,6 +160,8 @@ class SharedHttpClientTests(unittest.TestCase):
 
     @patch.object(main.ConfigLoader, "load_providers")
     @patch.object(main.ConfigLoader, "load_fallback_rules")
+    @patch.object(main.ConfigLoader, "load_model_rules")
+    @patch.object(main.ConfigLoader, "load_fusion_rules")
     @patch.object(main.ConfigLoader, "load_operation_rules")
     @patch("main.start_usage_stats_cleanup_task")
     @patch("main.TokensUsageDB")
@@ -170,6 +172,8 @@ class SharedHttpClientTests(unittest.TestCase):
         _tokens_usage_db,
         start_usage_stats_cleanup_task,
         _load_operation_rules,
+        _load_fusion_rules,
+        _load_model_rules,
         _load_fallback_rules,
         _load_providers,
     ):
@@ -221,6 +225,8 @@ class SharedHttpClientTests(unittest.TestCase):
                 call_args = start_usage_stats_cleanup_task.call_args
                 self.assertIs(call_args[0][0], _tokens_usage_db.return_value)
                 _load_operation_rules.assert_called_once()
+                _load_fusion_rules.assert_called_once()
+                _load_model_rules.assert_called_once()
 
         self.assertTrue(fake_cleanup_task.cancel_called)
         fake_http_client.aclose.assert_awaited_once()
@@ -384,6 +390,23 @@ class SharedHttpClientTests(unittest.TestCase):
         self.assertIsNone(error_detail)
         self.assertTrue(collected.startswith(b": ping\n\n"))
         self.assertIn(b'"content":"hello"', collected)
+
+    def test_make_llm_request_stream_with_only_keepalive_returns_error(self):
+        fake_client = Mock(spec=httpx.AsyncClient)
+        stream_response = _FakeStreamResponse([b": ping\n\n"])
+        stream_context = _FakeStreamContextManager(stream_response)
+        fake_client.stream = Mock(return_value=stream_context)
+
+        response_data, error_detail, _ = run_async(
+            _make_stream_request_and_collect(
+                fake_client,
+                {"model": "demo-model", "messages": [{"role": "user", "content": "hello"}]},
+            )
+        )
+
+        self.assertIsNone(response_data)
+        self.assertEqual(error_detail, "Stream ended before any content chunks were received.")
+        self.assertTrue(stream_context.exited)
 
     def test_make_llm_request_stream_stops_after_error_chunk_without_code(self):
         fake_client = Mock(spec=httpx.AsyncClient)

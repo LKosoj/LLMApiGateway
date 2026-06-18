@@ -64,6 +64,7 @@
             <button id="tabAudio" class="tab-button" data-tab="audio">Audio</button>
             <button id="tabWeb" class="tab-button" data-tab="web">Web</button>
             <button id="tabFusion" class="tab-button" data-tab="fusion">Fusion</button>
+            <button id="tabModelRules" class="tab-button" data-tab="model-rules">Model Rules</button>
             <button id="tabOpenRouterFree" class="tab-button" data-tab="openrouter-free" hidden>OpenRouter Free</button>
             <button id="tabFallbackEval" class="tab-button" data-tab="fallback-eval">Fallback Eval</button>
             <button id="tabProviders" class="tab-button" data-tab="providers">Providers</button>
@@ -371,10 +372,32 @@
                         </div>
                         <button id="addProviderButton" type="button" class="secondary-button">Add Provider</button>
                     </div>
+                    <div id="oauthCredentialsPanel" class="oauth-panel">
+                        <div class="oauth-panel-header">
+                            <div>
+                                <strong>Managed OAuth</strong>
+                                <span>Login and refresh status for providers using auth.credential_id.</span>
+                            </div>
+                            <button id="refreshOauthButton" type="button" class="secondary-button">Refresh OAuth Status</button>
+                        </div>
+                        <div id="oauthCredentialsList" class="oauth-list"></div>
+                    </div>
                     <div id="providersList" class="rules-list"></div>
                     <div id="providersEmptyState" class="rules-empty-state" hidden>
                         No providers yet. Add the first provider to begin.
                     </div>
+                </div>
+            </div>
+            <div id="editor-container-model-rules" class="editor-tab-content" style="display: none;">
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Model Rules</strong>
+                            <span>Configure aliases, prefixes, excluded models, and upstream model pools in models_model_rules.json.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Format: JSON5 object. Unknown alias targets and invalid pools fail closed on save.</span>
+                        </div>
+                    </div>
+                    <textarea id="modelRulesRawInput" class="raw-json-editor" spellcheck="false"></textarea>
                 </div>
             </div>
         </div>

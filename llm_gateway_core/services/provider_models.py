@@ -5,7 +5,12 @@ from dataclasses import dataclass
 
 import httpx
 
-from ..config.loader import ANTHROPIC_API_VERSION, ProviderDetails, resolve_provider_api_key
+from ..config.loader import (
+    ANTHROPIC_API_VERSION,
+    ProviderDetails,
+    resolve_provider_config_api_key,
+    resolve_provider_config_auth_headers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +68,7 @@ class ProviderModelsService:
         provider_name: str,
         provider_config: ProviderDetails,
         http_client: httpx.AsyncClient,
+        auth_headers: dict[str, str] | None = None,
     ) -> list[str]:
         explicit_models = provider_explicit_models(provider_config)
         if explicit_models is not None:
@@ -85,7 +91,7 @@ class ProviderModelsService:
             if cached_entry and now - cached_entry.fetched_at < self.ttl_seconds:
                 return cached_entry.models
 
-            models = await self._fetch_models(provider_name, provider_config, http_client)
+            models = await self._fetch_models(provider_name, provider_config, http_client, auth_headers)
             if models:
                 self._cache[provider_name] = ProviderModelsCacheEntry(models=models, fetched_at=now)
             else:
@@ -101,20 +107,21 @@ class ProviderModelsService:
         provider_name: str,
         provider_config: ProviderDetails,
         http_client: httpx.AsyncClient,
+        auth_headers: dict[str, str] | None = None,
     ) -> list[str]:
         provider_base_url = provider_config.baseUrl.rstrip("/")
-        provider_api_key = resolve_provider_api_key(provider_config.apikey)
+        provider_api_key = None if auth_headers is not None else resolve_provider_config_api_key(provider_config)
         if getattr(provider_config, "type", "openai") == "anthropic":
             headers = {
                 "Content-Type": "application/json",
                 "anthropic-version": ANTHROPIC_API_VERSION,
-                **({"x-api-key": provider_api_key} if provider_api_key else {}),
+                **(auth_headers or resolve_provider_config_auth_headers(provider_config, provider_api_key)),
             }
             target_url = f"{provider_base_url}/v1/models"
         else:
             headers = {
                 "Content-Type": "application/json",
-                **({"Authorization": f"Bearer {provider_api_key}"} if provider_api_key else {}),
+                **(auth_headers or resolve_provider_config_auth_headers(provider_config, provider_api_key)),
             }
             target_url = f"{provider_base_url}/models"
 

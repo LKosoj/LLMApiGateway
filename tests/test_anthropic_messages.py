@@ -1110,6 +1110,68 @@ class AnthropicMessagesTests(unittest.TestCase):
                 )
                 self.assertEqual(response2.json()["input_tokens"], response_data["input_tokens"])
 
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_messages_count_tokens_rejects_excluded_model(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+    ):
+        fake_config_loader = _build_fake_config_loader()
+        fake_config_loader.model_rules = {"excluded_models": ["blocked/*"]}
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/messages/count_tokens",
+                    json={
+                        "model": "blocked/model",
+                        "messages": [{"role": "user", "content": "Count these tokens"}],
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("excluded", response.json()["detail"])
+
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_messages_count_tokens_rejects_alias_without_chat_route(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+    ):
+        fake_config_loader = _build_fake_config_loader()
+        fake_config_loader.model_rules = {"aliases": {"public-model": "missing-route"}}
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/messages/count_tokens",
+                    json={
+                        "model": "public-model",
+                        "messages": [{"role": "user", "content": "Count these tokens"}],
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("no chat route", response.json()["detail"])
+
     def test_official_anthropic_sdk_messages_count_tokens_works_with_x_api_key(self):
         async def scenario():
             fake_config_loader = _build_fake_config_loader()

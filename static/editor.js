@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const tabOpenRouterFree = document.getElementById('tabOpenRouterFree');
     const tabFallbackEval = document.getElementById('tabFallbackEval');
     const tabProviders = document.getElementById('tabProviders');
+    const tabModelRules = document.getElementById('tabModelRules');
     const editorContainerRules = document.getElementById('editor-container-rules');
     const editorContainerEmbeddings = document.getElementById('editor-container-embeddings');
     const editorContainerRerank = document.getElementById('editor-container-rerank');
@@ -28,6 +29,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const editorContainerOpenRouterFree = document.getElementById('editor-container-openrouter-free');
     const editorContainerFallbackEval = document.getElementById('editor-container-fallback-eval');
     const editorContainerProviders = document.getElementById('editor-container-providers');
+    const editorContainerModelRules = document.getElementById('editor-container-model-rules');
     const tabFusion = document.getElementById('tabFusion');
     const editorContainerFusion = document.getElementById('editor-container-fusion');
     const addFusionButton = document.getElementById('addFusionButton');
@@ -36,6 +38,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const addProviderButton = document.getElementById('addProviderButton');
     const providersList = document.getElementById('providersList');
     const providersEmptyState = document.getElementById('providersEmptyState');
+    const refreshOauthButton = document.getElementById('refreshOauthButton');
+    const oauthCredentialsList = document.getElementById('oauthCredentialsList');
     const addEmbeddingButton = document.getElementById('addEmbeddingButton');
     const embeddingsList = document.getElementById('embeddingsList');
     const embeddingsEmptyState = document.getElementById('embeddingsEmptyState');
@@ -74,6 +78,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const fallbackEvalStatus = document.getElementById('fallbackEvalStatus');
     const fallbackEvalModels = document.getElementById('fallbackEvalModels');
     const fallbackEvalEmptyState = document.getElementById('fallbackEvalEmptyState');
+    const modelRulesRawInput = document.getElementById('modelRulesRawInput');
 
     const MODELS_CACHE_TTL_MS = 15 * 60 * 1000;
     const MODEL_ID_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -90,6 +95,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let originalWebContent = null;
     let originalProvidersContent = null;
     let originalFusionContent = null;
+    let originalModelRulesContent = null;
     let availableProviders = [];
     let embeddingRules = [];
     let rerankRules = [];
@@ -425,6 +431,8 @@ document.addEventListener('DOMContentLoaded', function () {
             saveButton.textContent = 'Save Web Services';
         } else if (activeEditor === 'fusion') {
             saveButton.textContent = 'Save Fusion Models';
+        } else if (activeEditor === 'model-rules') {
+            saveButton.textContent = 'Save Model Rules';
         } else if (activeEditor === 'openrouter-free') {
             saveButton.textContent = '';
         } else if (activeEditor === 'fallback-eval') {
@@ -656,10 +664,12 @@ document.addEventListener('DOMContentLoaded', function () {
         const modelStatus = fallbackRow.querySelector('.model-status');
         const useProviderOrderCheckbox = fallbackRow.querySelector('.use-provider-order-checkbox');
         const providersOrderInput = fallbackRow.querySelector('.providers-order-input');
+        const upstreamKeyPoolInput = fallbackRow.querySelector('.upstream-key-pool-input');
         const retryDelayInput = fallbackRow.querySelector('.retry-delay-input');
         const retryCountInput = fallbackRow.querySelector('.retry-count-input');
         const customBodyParamsInput = fallbackRow.querySelector('.custom-body-params-input');
         const customHeadersInput = fallbackRow.querySelector('.custom-headers-input');
+        const payloadTransformsInput = fallbackRow.querySelector('.payload-transforms-input');
 
         const provider = providerSelect.value.trim();
         const model = modelSelect.value.trim();
@@ -692,10 +702,18 @@ document.addEventListener('DOMContentLoaded', function () {
             custom_body_params: parseObjectTextarea(customBodyParamsInput.value, 'Custom body params'),
             custom_headers: parseObjectTextarea(customHeadersInput.value, 'Custom headers'),
         };
+        const payloadTransforms = parseObjectTextarea(payloadTransformsInput ? payloadTransformsInput.value : '', 'Payload transforms');
+        if (Object.keys(payloadTransforms).length > 0) {
+            fallbackModel.payload_transforms = payloadTransforms;
+        }
 
         const providersOrder = parseProvidersOrder(providersOrderInput.value);
         if (providersOrder) {
             fallbackModel.providers_order = providersOrder;
+        }
+        const upstreamKeyPool = upstreamKeyPoolInput ? upstreamKeyPoolInput.value.trim() : '';
+        if (upstreamKeyPool) {
+            fallbackModel.upstream_key_pool = upstreamKeyPool;
         }
 
         applyRetrySettingsToPayload(fallbackModel, retryDelayInput, retryCountInput);
@@ -764,10 +782,12 @@ document.addEventListener('DOMContentLoaded', function () {
         const modelSelect = fallbackRow.querySelector('.model-select');
         const useProviderOrderCheckbox = fallbackRow.querySelector('.use-provider-order-checkbox');
         const providersOrderInput = fallbackRow.querySelector('.providers-order-input');
+        const upstreamKeyPoolInput = fallbackRow.querySelector('.upstream-key-pool-input');
         const retryDelayInput = fallbackRow.querySelector('.retry-delay-input');
         const retryCountInput = fallbackRow.querySelector('.retry-count-input');
         const customBodyParamsInput = fallbackRow.querySelector('.custom-body-params-input');
         const customHeadersInput = fallbackRow.querySelector('.custom-headers-input');
+        const payloadTransformsInput = fallbackRow.querySelector('.payload-transforms-input');
         const unavailableFallbackModel = getUnavailableFallbackModelDetails(fallbackRow);
 
         const fallbackModel = {
@@ -777,10 +797,18 @@ document.addEventListener('DOMContentLoaded', function () {
             custom_body_params: parseObjectTextarea(customBodyParamsInput.value, 'Custom body params'),
             custom_headers: parseObjectTextarea(customHeadersInput.value, 'Custom headers'),
         };
+        const payloadTransforms = parseObjectTextarea(payloadTransformsInput ? payloadTransformsInput.value : '', 'Payload transforms');
+        if (Object.keys(payloadTransforms).length > 0) {
+            fallbackModel.payload_transforms = payloadTransforms;
+        }
 
         const providersOrder = parseProvidersOrder(providersOrderInput.value);
         if (providersOrder) {
             fallbackModel.providers_order = providersOrder;
+        }
+        const upstreamKeyPool = upstreamKeyPoolInput ? upstreamKeyPoolInput.value.trim() : '';
+        if (upstreamKeyPool) {
+            fallbackModel.upstream_key_pool = upstreamKeyPool;
         }
 
         applyRetrySettingsToPayload(fallbackModel, retryDelayInput, retryCountInput);
@@ -1022,6 +1050,9 @@ document.addEventListener('DOMContentLoaded', function () {
         const providersOrderInput = createTextInput('providers-order-input', 'provider-a, provider-b');
         providersOrderInput.value = Array.isArray(initialData.providers_order) ? initialData.providers_order.join(', ') : '';
 
+        const upstreamKeyPoolInput = createTextInput('upstream-key-pool-input', 'main');
+        upstreamKeyPoolInput.value = initialData.upstream_key_pool || '';
+
         const retryDelayInput = createNumberInput('retry-delay-input', 'Retry delay (seconds)');
         retryDelayInput.value = initialData.retry_delay ?? '';
 
@@ -1034,9 +1065,13 @@ document.addEventListener('DOMContentLoaded', function () {
         const customHeadersInput = createTextarea('custom-headers-input', '{"X-Provider": "value"}');
         customHeadersInput.value = normalizeObjectTextarea(initialData.custom_headers);
 
+        const payloadTransformsInput = createTextarea('payload-transforms-input', '{"defaults": {"top_p": 0.9}, "overrides": {}, "filters": ["seed"]}');
+        payloadTransformsInput.value = normalizeObjectTextarea(initialData.payload_transforms);
+
         fieldsGrid.appendChild(createFieldGroup('Provider', providerSelect, 'provider-field'));
         fieldsGrid.appendChild(createFieldGroup('Model', modelSelect, 'model-field'));
         fieldsGrid.appendChild(createFieldGroup('Provider Order', providersOrderInput));
+        fieldsGrid.appendChild(createFieldGroup('Upstream Key Pool', upstreamKeyPoolInput));
         fieldsGrid.appendChild(createFieldGroup('Retry Delay', retryDelayInput));
         fieldsGrid.appendChild(createFieldGroup('Retry Count', retryCountInput));
 
@@ -1055,6 +1090,7 @@ document.addEventListener('DOMContentLoaded', function () {
         advancedGrid.appendChild(createFieldGroup('', rotateToggle, 'toggle-group'));
         advancedGrid.appendChild(createFieldGroup('Custom Body Params', customBodyParamsInput, 'textarea-group'));
         advancedGrid.appendChild(createFieldGroup('Custom Headers', customHeadersInput, 'textarea-group'));
+        advancedGrid.appendChild(createFieldGroup('Payload Transforms', payloadTransformsInput, 'textarea-group'));
         advancedDetails.appendChild(advancedGrid);
 
         const removeButton = document.createElement('button');
@@ -3977,6 +4013,35 @@ document.addEventListener('DOMContentLoaded', function () {
         return JSON.stringify(value, null, 2);
     }
 
+    function parseProviderJsonObject(value, label) {
+        const trimmedValue = value.trim();
+        if (!trimmedValue) {
+            return undefined;
+        }
+
+        let parsedValue;
+        try {
+            parsedValue = JSON.parse(trimmedValue);
+        } catch (error) {
+            throw new Error(`${label} must be valid JSON.`);
+        }
+
+        if (parsedValue === null) {
+            return undefined;
+        }
+        if (typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
+            throw new Error(`${label} must be a JSON object.`);
+        }
+        return parsedValue;
+    }
+
+    function normalizeProviderJsonObject(value) {
+        if (value === undefined || value === null) {
+            return '';
+        }
+        return JSON.stringify(value, null, 2);
+    }
+
     function parseAvailableModels(value) {
         const items = String(value || '')
             .split(/[\n,]/)
@@ -4006,6 +4071,9 @@ document.addEventListener('DOMContentLoaded', function () {
         proxy: 'Optional outbound proxy. Reference via ${PROXY_VAR} or a literal http(s):// URL. Leave empty to call the upstream directly.',
         modelsMetadata: 'Free-form per-model metadata stored under providers.json -> models. Use for pricing or other custom fields. upstream_limits is managed structurally above and merged in on save.',
         availableModels: 'Optional explicit list of model ids this provider serves, one per line (commas also accepted). When set, the gateway uses this list instead of querying the provider /models endpoint — useful for proxies without a working /models. Leave empty to keep querying the provider.',
+        routing: 'Optional upstream key routing policy. strategy supports round-robin, fill-first, and priority. session_affinity is opt-in and uses an explicit request header.',
+        upstreamKeyPools: 'Optional named upstream key pools. Use env refs such as ${PROVIDER_KEY_1}; each pool can set strategy, session affinity, key ids, priority, and enabled flags.',
+        auth: 'Optional provider auth config for OAuth token sources. Example: {"type":"codex_oauth","token_env":"CODEX_OAUTH_TOKEN"}.',
         upstreamLimits: 'Per-model upstream quota ledger (separate from client virtual-key limits). Gateway tracks per-key rpm/rpd/tpm/tpd and skips upstream keys that would breach these caps.',
         modelId: 'Upstream model id exactly as the provider expects it. Example: deepseek/deepseek-r1:free',
         rpm: 'Requests per minute allowed per upstream key. Leave empty to disable the per-minute request cap.',
@@ -4180,6 +4248,9 @@ document.addEventListener('DOMContentLoaded', function () {
         const typeSelect = providerCard.querySelector('.provider-type-select');
         const proxyInput = providerCard.querySelector('.provider-proxy-input');
         const modelsInput = providerCard.querySelector('.provider-models-input');
+        const routingInput = providerCard.querySelector('.provider-routing-input');
+        const upstreamKeyPoolsInput = providerCard.querySelector('.provider-upstream-key-pools-input');
+        const authInput = providerCard.querySelector('.provider-auth-input');
 
         const name = nameInput.value.trim();
         const baseUrl = baseUrlInput.value.trim();
@@ -4196,21 +4267,38 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!/^https?:\/\//i.test(baseUrl)) {
             throw new Error(`Provider '${name}' base URL must start with http:// or https://.`);
         }
-        if (!apikey) {
-            throw new Error(`Provider '${name}' must have an API key or environment reference.`);
-        }
         if (!['openai', 'anthropic'].includes(type)) {
             throw new Error(`Provider '${name}' must use API type openai or anthropic.`);
+        }
+        const routing = parseProviderJsonObject(routingInput ? routingInput.value : '', 'Provider routing');
+        const upstreamKeyPools = parseProviderJsonObject(
+            upstreamKeyPoolsInput ? upstreamKeyPoolsInput.value : '',
+            'Provider upstream key pools',
+        );
+        const auth = parseProviderJsonObject(authInput ? authInput.value : '', 'Provider auth');
+        if (!apikey && !upstreamKeyPools && !auth) {
+            throw new Error(`Provider '${name}' must have an API key, environment reference, upstream key pool, or auth config.`);
         }
 
         const providerPayload = {
             name,
             baseUrl,
-            apikey,
             type,
         };
+        if (apikey) {
+            providerPayload.apikey = apikey;
+        }
         if (proxy) {
             providerPayload.proxy = proxy;
+        }
+        if (routing) {
+            providerPayload.routing = routing;
+        }
+        if (upstreamKeyPools) {
+            providerPayload.upstream_key_pools = upstreamKeyPools;
+        }
+        if (auth) {
+            providerPayload.auth = auth;
         }
         const extraModels = parseProviderModelsMetadata(modelsInput.value);
         const upstreamRows = providerCard._getUpstreamLimitsRows ? providerCard._getUpstreamLimitsRows() : [];
@@ -4337,6 +4425,36 @@ document.addEventListener('DOMContentLoaded', function () {
         appendFieldHint(availableModelsField, 'One model id per line (commas also work). If set, the gateway uses this exact list instead of calling the provider /models endpoint.');
         advancedGrid.appendChild(availableModelsField);
 
+        const routingInput = createTextarea(
+            'provider-routing-input',
+            '{"strategy": "round-robin", "session_affinity": false}',
+        );
+        routingInput.value = normalizeProviderJsonObject(initialData.routing);
+        const routingField = createFieldGroup('Routing Policy (JSON)', routingInput, 'textarea-group');
+        attachFieldTooltip(routingField, PROVIDER_FIELD_TOOLTIPS.routing);
+        appendFieldHint(routingField, 'Leave empty for default round-robin without session affinity. Session affinity requires an explicit request header such as X-Session-Id.');
+        advancedGrid.appendChild(routingField);
+
+        const upstreamKeyPoolsInput = createTextarea(
+            'provider-upstream-key-pools-input',
+            '{"main": {"strategy": "priority", "keys": [{"id": "primary", "apikey": "${PROVIDER_KEY_1}", "priority": 100}]}}',
+        );
+        upstreamKeyPoolsInput.value = normalizeProviderJsonObject(initialData.upstream_key_pools);
+        const upstreamKeyPoolsField = createFieldGroup('Upstream Key Pools (JSON)', upstreamKeyPoolsInput, 'textarea-group');
+        attachFieldTooltip(upstreamKeyPoolsField, PROVIDER_FIELD_TOOLTIPS.upstreamKeyPools);
+        appendFieldHint(upstreamKeyPoolsField, 'When a fallback row references upstream_key_pool, the provider can route across this named pool. Raw secrets are not shown or generated by the UI.');
+        advancedGrid.appendChild(upstreamKeyPoolsField);
+
+        const authInput = createTextarea(
+            'provider-auth-input',
+            '{"type": "codex_oauth", "credential_id": "codex-main", "oauth_client": {"client_id_env": "CODEX_OAUTH_CLIENT_ID", "token_endpoint": "https://issuer.example/oauth/token", "device_authorization_endpoint": "https://issuer.example/oauth/device/code", "scopes": ["openid"]}}',
+        );
+        authInput.value = normalizeProviderJsonObject(initialData.auth);
+        const authField = createFieldGroup('Auth (JSON)', authInput, 'textarea-group');
+        attachFieldTooltip(authField, PROVIDER_FIELD_TOOLTIPS.auth);
+        appendFieldHint(authField, 'OAuth auth supports token_env/token_file or managed credential_id with BYO OAuth/OIDC client config. It does not spoof official CLI headers.');
+        advancedGrid.appendChild(authField);
+
         advancedDetails.appendChild(advancedGrid);
 
         cardBody.appendChild(fieldsGrid);
@@ -4362,6 +4480,223 @@ document.addEventListener('DOMContentLoaded', function () {
         refreshProvidersEmptyState();
     }
 
+    function formatOAuthExpiry(expiresAt) {
+        if (!expiresAt) {
+            return 'expiry unknown';
+        }
+        const date = new Date(Number(expiresAt) * 1000);
+        if (Number.isNaN(date.getTime())) {
+            return 'expiry unknown';
+        }
+        return `expires ${date.toLocaleString()}`;
+    }
+
+    function oauthStatusText(provider) {
+        const status = provider.token_status;
+        if (!status) {
+            return 'missing';
+        }
+        return status.status || 'unknown';
+    }
+
+    function renderOAuthProviders(providers) {
+        if (!oauthCredentialsList) {
+            return;
+        }
+        oauthCredentialsList.textContent = '';
+        if (!Array.isArray(providers) || providers.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'rules-empty-state';
+            empty.textContent = 'No managed OAuth providers configured.';
+            oauthCredentialsList.appendChild(empty);
+            return;
+        }
+        providers.forEach(provider => {
+            const row = document.createElement('div');
+            row.className = 'oauth-row';
+
+            const title = document.createElement('div');
+            title.className = 'oauth-row-title';
+            const name = document.createElement('strong');
+            name.textContent = provider.provider_name || 'unknown provider';
+            const credential = document.createElement('span');
+            credential.className = 'oauth-meta';
+            credential.textContent = `${provider.auth_type || 'oauth'} / ${provider.credential_id || 'credential'}`;
+            title.appendChild(name);
+            title.appendChild(credential);
+
+            const meta = document.createElement('div');
+            meta.className = 'oauth-row-title';
+            const badge = document.createElement('span');
+            const statusText = oauthStatusText(provider);
+            badge.className = 'oauth-status-badge';
+            badge.dataset.status = statusText;
+            badge.textContent = statusText;
+            const expiry = document.createElement('span');
+            expiry.className = 'oauth-meta';
+            expiry.textContent = provider.token_status ? formatOAuthExpiry(provider.token_status.expires_at) : 'login required';
+            const methods = document.createElement('span');
+            methods.className = 'oauth-meta';
+            methods.textContent = `methods: ${(provider.login_methods || []).join(', ') || 'none configured'}`;
+            meta.appendChild(badge);
+            meta.appendChild(expiry);
+            meta.appendChild(methods);
+
+            const actions = document.createElement('div');
+            actions.className = 'oauth-actions';
+            actions.appendChild(oauthActionButton('Device', () => startOAuthDeviceLogin(provider.provider_name)));
+            actions.appendChild(oauthActionButton('Browser', () => startOAuthAuthorizationLogin(provider.provider_name)));
+            actions.appendChild(oauthActionButton('Import', () => importOAuthToken(provider.provider_name)));
+            actions.appendChild(oauthActionButton('Refresh', () => refreshOAuthCredential(provider.provider_name)));
+            actions.appendChild(oauthActionButton('Delete', () => deleteOAuthCredential(provider.credential_id)));
+
+            row.appendChild(title);
+            row.appendChild(meta);
+            row.appendChild(actions);
+            oauthCredentialsList.appendChild(row);
+        });
+    }
+
+    function oauthActionButton(label, handler) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = label === 'Delete' ? 'secondary-button danger-button' : 'secondary-button';
+        button.textContent = label;
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                await handler();
+            } finally {
+                button.disabled = false;
+            }
+        });
+        return button;
+    }
+
+    async function loadOAuthProviders() {
+        if (!oauthCredentialsList) {
+            return;
+        }
+        oauthCredentialsList.textContent = 'Loading OAuth status...';
+        try {
+            const response = await apiFetch('/v1/admin/oauth/providers');
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.detail || `HTTP ${response.status}`);
+            }
+            renderOAuthProviders(payload.providers || []);
+        } catch (error) {
+            oauthCredentialsList.textContent = `OAuth status unavailable: ${error.message}`;
+        }
+    }
+
+    async function startOAuthDeviceLogin(providerName) {
+        const response = await apiFetch(`/v1/admin/oauth/${encodeURIComponent(providerName)}/login/device`, {
+            method: 'POST',
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.detail || `HTTP ${response.status}`);
+        }
+        const verification = payload.verification_uri_complete || payload.verification_uri;
+        window.alert(`Open ${verification}\nUser code: ${payload.user_code}`);
+        renderMessage('info', 'OAuth device flow pending. Complete the browser login to continue.');
+        const pollPayload = await pollOAuthDeviceLogin(providerName, payload);
+        renderMessage('info', `OAuth device flow status: ${pollPayload.status}`);
+        await loadOAuthProviders();
+    }
+
+    async function pollOAuthDeviceLogin(providerName, loginPayload) {
+        const expiresAtMs = Number(loginPayload.expires_at || 0) * 1000;
+        const deadlineMs = expiresAtMs > Date.now() ? expiresAtMs : Date.now() + 600000;
+        let intervalSeconds = Math.max(Number(loginPayload.interval_seconds || 5), 1);
+        while (Date.now() <= deadlineMs) {
+            await sleep(intervalSeconds * 1000);
+            const poll = await apiFetch(
+                `/v1/admin/oauth/${encodeURIComponent(providerName)}/login/device/${encodeURIComponent(loginPayload.state)}/poll`,
+                { method: 'POST' },
+            );
+            const pollPayload = await poll.json();
+            if (!poll.ok) {
+                throw new Error(pollPayload.detail || `HTTP ${poll.status}`);
+            }
+            if (pollPayload.status === 'complete') {
+                return pollPayload;
+            }
+            if (pollPayload.status === 'expired_token' || pollPayload.status === 'access_denied') {
+                throw new Error(pollPayload.detail || `OAuth device flow ${pollPayload.status}`);
+            }
+            intervalSeconds = Math.max(Number(pollPayload.interval_seconds || intervalSeconds), 1);
+            renderMessage('info', 'OAuth device flow still pending.');
+        }
+        throw new Error('OAuth device flow timed out before completion.');
+    }
+
+    function sleep(ms) {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
+    }
+
+    async function startOAuthAuthorizationLogin(providerName) {
+        const response = await apiFetch(`/v1/admin/oauth/${encodeURIComponent(providerName)}/login/authorization`, {
+            method: 'POST',
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.detail || `HTTP ${response.status}`);
+        }
+        window.open(payload.authorization_url, '_blank', 'noopener,noreferrer');
+        renderMessage('info', 'OAuth authorization opened in a new tab. Refresh OAuth status after the callback completes.');
+    }
+
+    async function importOAuthToken(providerName) {
+        const accessToken = window.prompt('Access token');
+        if (!accessToken) {
+            return;
+        }
+        const refreshToken = window.prompt('Refresh token (optional)') || null;
+        const expiresInRaw = window.prompt('Expires in seconds (optional)') || '';
+        const expiresIn = expiresInRaw.trim() ? Number(expiresInRaw.trim()) : null;
+        const response = await apiFetch(`/v1/admin/oauth/${encodeURIComponent(providerName)}/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+                expires_in: Number.isFinite(expiresIn) ? expiresIn : null,
+            }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.detail || `HTTP ${response.status}`);
+        }
+        await loadOAuthProviders();
+    }
+
+    async function refreshOAuthCredential(providerName) {
+        const response = await apiFetch(`/v1/admin/oauth/${encodeURIComponent(providerName)}/refresh`, {
+            method: 'POST',
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.detail || `HTTP ${response.status}`);
+        }
+        await loadOAuthProviders();
+    }
+
+    async function deleteOAuthCredential(credentialId) {
+        if (!credentialId || !window.confirm(`Delete OAuth credential '${credentialId}'?`)) {
+            return;
+        }
+        const response = await apiFetch(`/v1/admin/oauth/credentials/${encodeURIComponent(credentialId)}`, {
+            method: 'DELETE',
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.detail || `HTTP ${response.status}`);
+        }
+        await loadOAuthProviders();
+    }
+
     async function loadProvidersEditor() {
         renderMessage('info', 'Loading Providers...');
         try {
@@ -4376,6 +4711,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 .map(provider => typeof provider.name === 'string' ? provider.name.trim() : '')
                 .filter(Boolean);
             originalProvidersContent = getProvidersSnapshotContent();
+            await loadOAuthProviders();
             renderMessage('success', 'Providers loaded successfully.');
         } catch (error) {
             console.error('Error fetching Providers:', error);
@@ -4812,6 +5148,51 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    async function loadModelRulesEditor() {
+        renderMessage('info', 'Loading Model Rules...');
+        try {
+            const response = await apiFetch('/v1/config/model-rules');
+            const content = await response.text();
+            if (!response.ok) {
+                throw new Error(content || `HTTP ${response.status}`);
+            }
+            modelRulesRawInput.value = content;
+            originalModelRulesContent = content;
+            renderMessage('success', 'Model Rules loaded successfully.');
+        } catch (error) {
+            console.error('Error fetching Model Rules:', error);
+            renderErrorWithDetails('Error loading Model Rules:', error.message);
+            originalModelRulesContent = null;
+        }
+    }
+
+    async function saveModelRules() {
+        saveButton.disabled = true;
+        renderMessage('info', 'Saving Model Rules...');
+        try {
+            const response = await apiFetch('/v1/config/model-rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: modelRulesRawInput.value,
+            });
+            const body = await response.json().catch(() => ({}));
+            if (response.ok) {
+                originalModelRulesContent = modelRulesRawInput.value;
+                renderMessage('success', body.message || 'Model Rules saved successfully.');
+            } else {
+                renderErrorWithDetails(
+                    `Error saving Model Rules (HTTP ${response.status}):`,
+                    body.detail || stableSerialize(body)
+                );
+            }
+        } catch (error) {
+            console.error('Error saving Model Rules:', error);
+            renderMessage('error', `Error saving Model Rules: ${error.message}`);
+        } finally {
+            saveButton.disabled = false;
+        }
+    }
+
     function switchTab(tabName) {
         if (
             activeEditor === tabName
@@ -4824,6 +5205,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 || originalWebContent !== null
                 || originalProvidersContent !== null
                 || originalFusionContent !== null
+                || originalModelRulesContent !== null
             )
         ) {
             return;
@@ -4894,6 +5276,10 @@ document.addEventListener('DOMContentLoaded', function () {
             } catch (error) {
                 hasUnsavedChanges = true;
             }
+        } else if (activeEditor === 'model-rules' && originalModelRulesContent !== null) {
+            if (modelRulesRawInput.value !== originalModelRulesContent) {
+                hasUnsavedChanges = true;
+            }
         }
 
         if (hasUnsavedChanges) {
@@ -4913,6 +5299,9 @@ document.addEventListener('DOMContentLoaded', function () {
         tabFusion.classList.remove('active');
         editorContainerFusion.classList.remove('active');
         editorContainerFusion.style.display = 'none';
+        tabModelRules.classList.remove('active');
+        editorContainerModelRules.classList.remove('active');
+        editorContainerModelRules.style.display = 'none';
 
         if (tabName === 'rules') {
             tabRules.classList.add('active');
@@ -5175,6 +5564,38 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerFusion.classList.add('active');
             editorContainerFusion.style.display = 'flex';
             loadFusionEditor();
+        } else if (tabName === 'model-rules') {
+            tabRules.classList.remove('active');
+            tabEmbeddings.classList.remove('active');
+            tabRerank.classList.remove('active');
+            tabImages.classList.remove('active');
+            tabAudio.classList.remove('active');
+            tabWeb.classList.remove('active');
+            tabFallbackEval.classList.remove('active');
+            tabProviders.classList.remove('active');
+            tabFusion.classList.remove('active');
+            tabModelRules.classList.add('active');
+            editorContainerRules.classList.remove('active');
+            editorContainerRules.style.display = 'none';
+            editorContainerEmbeddings.classList.remove('active');
+            editorContainerEmbeddings.style.display = 'none';
+            editorContainerRerank.classList.remove('active');
+            editorContainerRerank.style.display = 'none';
+            editorContainerImages.classList.remove('active');
+            editorContainerImages.style.display = 'none';
+            editorContainerAudio.classList.remove('active');
+            editorContainerAudio.style.display = 'none';
+            editorContainerWeb.classList.remove('active');
+            editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
+            editorContainerProviders.classList.remove('active');
+            editorContainerProviders.style.display = 'none';
+            editorContainerFusion.classList.remove('active');
+            editorContainerFusion.style.display = 'none';
+            editorContainerModelRules.classList.add('active');
+            editorContainerModelRules.style.display = 'flex';
+            loadModelRulesEditor();
         }
     }
 
@@ -5188,6 +5609,7 @@ document.addEventListener('DOMContentLoaded', function () {
     tabFallbackEval.addEventListener('click', () => switchTab('fallback-eval'));
     tabProviders.addEventListener('click', () => switchTab('providers'));
     tabFusion.addEventListener('click', () => switchTab('fusion'));
+    tabModelRules.addEventListener('click', () => switchTab('model-rules'));
     addProviderButton.addEventListener('click', () => {
         const providerCard = buildProviderCard({});
         providerCard.classList.remove('collapsed');
@@ -5292,6 +5714,12 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    if (refreshOauthButton) {
+        refreshOauthButton.addEventListener('click', () => {
+            void loadOAuthProviders();
+        });
+    }
+
     saveButton.addEventListener('click', function () {
         if (activeEditor === 'rules') {
             saveRules();
@@ -5330,6 +5758,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (activeEditor === 'fusion') {
             saveFusion();
+            return;
+        }
+
+        if (activeEditor === 'model-rules') {
+            saveModelRules();
             return;
         }
 

@@ -8,13 +8,12 @@ Exit code 0 means the service is healthy, non-zero means unhealthy.
 import os
 import sys
 import http.client
-import json
 import socket
 import time
 
 def check_health():
     """
-    Check if the LLM Gateway is healthy by making a request to the /health endpoint.
+    Check if the LLM Gateway is healthy by making a HEAD request to /healthz.
     """
     host = "localhost"
     port = int(os.environ.get("GATEWAY_PORT", 9000))
@@ -24,16 +23,11 @@ def check_health():
     while retries > 0:
         try:
             conn = http.client.HTTPConnection(host, port, timeout=5)
-            conn.request("GET", "/health")
+            conn.request("HEAD", "/healthz")
             response = conn.getresponse()
 
             if response.status != 200:
                 print(f"Unhealthy: Received status code {response.status}")
-                return False
-
-            data = json.loads(response.read().decode())
-            if data.get("status") != "ok":
-                print(f"Unhealthy: Unexpected response: {data}")
                 return False
 
             print("Service is healthy")

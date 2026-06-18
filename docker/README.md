@@ -21,6 +21,7 @@ This directory contains the Docker implementation for the LLM Gateway project.
    - Edit `providers.json` with your provider details
    - Edit `models_fallback_rules.json` with your fallback rules
    - Edit `models_operation_rules.json` with operation routes, or let the container create a minimal default file on first start
+   - Edit `models_model_rules.json` with model aliases, excludes, and upstream model pools, or leave it as `{}`
 
 3. Deploy using Docker Compose:
    ```bash
@@ -44,9 +45,10 @@ This directory contains the Docker implementation for the LLM Gateway project.
 1. **providers.json**: `-v ./providers.json:/app/providers.json`
 2. **models_fallback_rules.json**: `-v ./models_fallback_rules.json:/app/models_fallback_rules.json`
 3. **models_operation_rules.json**: `-v ./models_operation_rules.json:/app/models_operation_rules.json`
-4. **Database**: `-v ./data/db:/app/db`
+4. **models_model_rules.json**: `-v ./models_model_rules.json:/app/models_model_rules.json`
+5. **Database**: `-v ./data/db:/app/db`
 
-The three config files are mounted read-write on purpose. This allows the web editor at `/v1/ui/rules-editor` to save changes from inside the container and persist them back to the host copies of `providers.json`, `models_fallback_rules.json`, and `models_operation_rules.json`.
+The four config files are mounted read-write on purpose. This allows the web editor at `/v1/ui/rules-editor` to save changes from inside the container and persist them back to the host copies of `providers.json`, `models_fallback_rules.json`, `models_operation_rules.json`, and `models_model_rules.json`.
 
 ## Documentation
 

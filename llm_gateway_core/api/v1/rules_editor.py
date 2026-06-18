@@ -4,6 +4,7 @@ import logging
 import os
 import tempfile
 import json
+from collections.abc import Mapping
 from typing import Any, Literal
 import httpx
 from fastapi import APIRouter, Request, HTTPException, Body
@@ -19,6 +20,7 @@ from ...services.openrouter_free_models import OpenRouterFreeModelsNotConfigured
 from ...config.paths import PROJECT_ROOT, STATIC_DIR
 from ...services.request_handler import OperationDispatcher, SUPPORTED_OPERATION_TYPES
 from ...services.provider_models import ProviderModelsService
+from ...services.provider_auth import resolve_provider_auth_headers
 from ...utils.html_cache import get_template
 
 editor_router = APIRouter()
@@ -27,6 +29,16 @@ editor_router = APIRouter()
 def _get_config_paths(request: Request):
     config_loader = _get_config_loader(request)
     return config_loader.providers_path, config_loader.fallback_rules_path, config_loader.operation_rules_path
+
+
+def _get_model_rules_path(request: Request) -> Path:
+    config_loader = _get_config_loader(request)
+    return config_loader.model_rules_path
+
+
+def _runtime_model_rules(config_loader) -> Mapping[str, Any]:
+    model_rules = getattr(config_loader, "model_rules", None)
+    return model_rules if isinstance(model_rules, Mapping) else {}
 
 HTML_DIR = STATIC_DIR
 FREE_TIER_PROVIDERS_DOC_PATH = PROJECT_ROOT / "examples" / "free-tier-providers.md"
@@ -78,11 +90,14 @@ class StructuredRulesPayload(BaseModel):
 class StructuredProviderItem(BaseModel):
     name: str
     baseUrl: str
-    apikey: str
+    apikey: str | None = None
     type: Literal["openai", "anthropic"] = "openai"
     proxy: str | None = None
     models: Any | None = None
     available_models: list[str] | None = None
+    routing: dict[str, Any] | None = None
+    upstream_key_pools: dict[str, Any] | None = None
+    auth: dict[str, Any] | None = None
 
     @field_validator("name")
     @classmethod
@@ -95,6 +110,13 @@ class StructuredProviderItem(BaseModel):
     @field_validator("proxy", mode="before")
     @classmethod
     def normalize_blank_proxy(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("apikey", mode="before")
+    @classmethod
+    def normalize_blank_apikey(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():
             return None
         return value
@@ -266,8 +288,9 @@ def _serialize_structured_providers(providers: list[StructuredProviderItem]) -> 
     for provider in providers:
         provider_payload: dict[str, Any] = {
             "baseUrl": provider.baseUrl,
-            "apikey": provider.apikey,
         }
+        if provider.apikey is not None:
+            provider_payload["apikey"] = provider.apikey
         if provider.type != "openai":
             provider_payload["type"] = provider.type
         if provider.proxy is not None:
@@ -276,6 +299,12 @@ def _serialize_structured_providers(providers: list[StructuredProviderItem]) -> 
             provider_payload["models"] = provider.models
         if provider.available_models is not None:
             provider_payload["available_models"] = provider.available_models
+        if provider.routing is not None:
+            provider_payload["routing"] = provider.routing
+        if provider.upstream_key_pools is not None:
+            provider_payload["upstream_key_pools"] = provider.upstream_key_pools
+        if provider.auth is not None:
+            provider_payload["auth"] = provider.auth
         payload.append({provider.name: provider_payload})
 
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
@@ -294,7 +323,8 @@ def _build_structured_providers_response(config_loader) -> dict:
 
 def _build_structured_rules_response(config_loader) -> dict:
     rules: list[dict] = []
-    for gateway_model_name, config in config_loader.fallback_rules.items():
+    fallback_rules = getattr(config_loader, "_fallback_rules_base", None) or config_loader.fallback_rules
+    for gateway_model_name, config in fallback_rules.items():
         rule_payload = {
             "gateway_model_name": gateway_model_name,
             "fallback_models": config.get("fallback_models", []),
@@ -315,6 +345,28 @@ def _build_structured_rules_response(config_loader) -> dict:
         "rules": rules,
         "providers": list(config_loader.providers_config.keys()),
     }
+
+
+def _set_fallback_rules_and_reapply_model_rules(config_loader, validated_rules: dict[str, Any]) -> None:
+    config_loader._fallback_rules_base = validated_rules
+    config_loader.fallback_rules = validated_rules
+    if config_loader.model_rules_path.exists():
+        config_loader.load_model_rules()
+
+
+def _validate_existing_model_rules_against_fallback_rules(
+    config_loader,
+    validated_rules: dict[str, Any],
+) -> None:
+    model_rules_path = getattr(config_loader, "model_rules_path", None)
+    if model_rules_path is None or not model_rules_path.exists():
+        return
+    model_rules_text = model_rules_path.read_text(encoding="utf-8")
+    config_loader.parse_and_validate_model_rules_payload(
+        model_rules_text,
+        providers_config=config_loader.providers_config,
+        fallback_rules=validated_rules,
+    )
 
 
 def _append_unique(values: list[str], value: str) -> None:
@@ -513,6 +565,7 @@ def _refresh_operation_runtime_state(request: Request, config_loader) -> None:
         config_loader.providers_config,
         config_loader.operation_rules,
         http_client,
+        model_rules=_runtime_model_rules(config_loader),
     )
 
 
@@ -589,6 +642,7 @@ def _refresh_providers_runtime_state(request: Request, config_loader) -> None:
         config_loader.providers_config,
         config_loader.operation_rules,
         shared_http_client,
+        model_rules=_runtime_model_rules(config_loader),
     )
 
     if old_proxy_clients:
@@ -622,10 +676,16 @@ async def _validate_provider_models(
                 )
 
             try:
+                auth_headers = await resolve_provider_auth_headers(
+                    request,
+                    provider_name=provider_name,
+                    provider_config=provider_config,
+                )
                 provider_models = await provider_models_service.get_models(
                     provider_name,
                     provider_config,
                     http_client,
+                    auth_headers=auth_headers,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -811,6 +871,7 @@ async def save_models_rules(request: Request, payload_text: str = Body(..., medi
             payload_text,
             providers_config=config_loader.providers_config,
         )
+        _validate_existing_model_rules_against_fallback_rules(config_loader, validated_rules)
     except ValidationError as ve:
         logging.error(f"Validation error saving {fallback_rules_path.name}: {ve.errors()}", exc_info=False)
         return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
@@ -820,12 +881,64 @@ async def save_models_rules(request: Request, payload_text: str = Body(..., medi
 
     try:
         _write_text_atomically(fallback_rules_path, payload_text)
-        config_loader.fallback_rules = validated_rules
+        _set_fallback_rules_and_reapply_model_rules(config_loader, validated_rules)
         logging.info(f"Successfully saved validated configuration to {fallback_rules_path.name}.")
         return {"message": f"{fallback_rules_path.name} updated successfully."}
     except Exception as e:
         logging.error(f"Error saving {fallback_rules_path.name}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Could not save {fallback_rules_path.name}.")
+
+
+@editor_router.get("/config/model-rules", response_class=PlainTextResponse, tags=["Config Editor API"])
+async def get_model_rules_text(request: Request):
+    model_rules_path = _get_model_rules_path(request)
+    if not model_rules_path.exists():
+        return PlainTextResponse(content="{\n}\n")
+    try:
+        return PlainTextResponse(content=model_rules_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logging.error(f"Error reading {model_rules_path.name}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Could not read {model_rules_path.name}.")
+
+
+@editor_router.post("/config/model-rules", tags=["Config Editor API"])
+async def save_model_rules(request: Request, payload_text: str = Body(..., media_type="text/plain")):
+    config_loader = _get_config_loader(request)
+    model_rules_path = _get_model_rules_path(request)
+    base_fallback_rules = getattr(config_loader, "_fallback_rules_base", None) or config_loader.fallback_rules
+
+    try:
+        config_loader.parse_and_validate_model_rules_payload(
+            payload_text,
+            providers_config=config_loader.providers_config,
+            fallback_rules=base_fallback_rules,
+        )
+    except ValidationError as ve:
+        logging.error(f"Validation error saving {model_rules_path.name}: {ve.errors()}", exc_info=False)
+        return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
+    except ValueError as exc:
+        logging.error(f"Validation error saving {model_rules_path.name}: {exc}", exc_info=False)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        model_rules_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path = _backup_if_has_comments(model_rules_path)
+        _write_text_atomically(model_rules_path, payload_text)
+        config_loader.load_model_rules()
+        shared_http_client = _get_shared_http_client(request)
+        request.app.state.operation_dispatcher = OperationDispatcher(
+            config_loader.providers_config,
+            config_loader.operation_rules,
+            shared_http_client,
+            model_rules=_runtime_model_rules(config_loader),
+        )
+        response_body = {"message": f"{model_rules_path.name} updated successfully."}
+        if backup_path is not None:
+            response_body["comments_backup"] = backup_path.name
+        return response_body
+    except Exception as exc:
+        logging.error(f"Error saving {model_rules_path.name}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Could not save {model_rules_path.name}.")
 
 
 @editor_router.get("/config/models-rules/structured", tags=["Config Editor API"])
@@ -846,6 +959,7 @@ async def save_models_rules_structured(request: Request, payload: StructuredRule
             providers_config=config_loader.providers_config,
         )
         await _validate_provider_models(request, config_loader, validated_rules)
+        _validate_existing_model_rules_against_fallback_rules(config_loader, validated_rules)
     except ValidationError as ve:
         logging.error(f"Validation error saving {fallback_rules_path.name}: {ve.errors()}", exc_info=False)
         return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
@@ -858,7 +972,7 @@ async def save_models_rules_structured(request: Request, payload: StructuredRule
     try:
         backup_path = _backup_if_has_comments(fallback_rules_path)
         _write_text_atomically(fallback_rules_path, payload_text)
-        config_loader.fallback_rules = validated_rules
+        _set_fallback_rules_and_reapply_model_rules(config_loader, validated_rules)
         logging.info(f"Successfully saved structured fallback rules to {fallback_rules_path.name}.")
         response_body = {
             "message": f"{fallback_rules_path.name} updated successfully.",
@@ -1117,7 +1231,17 @@ async def get_provider_models(request: Request, provider_name: str):
     proxy_http_clients = getattr(request.app.state, "proxy_http_clients", {})
     http_client = proxy_http_clients.get(provider_name, _get_shared_http_client(request))
     try:
-        models = await provider_models_service.get_models(provider_name, provider_config, http_client)
+        auth_headers = await resolve_provider_auth_headers(
+            request,
+            provider_name=provider_name,
+            provider_config=provider_config,
+        )
+        models = await provider_models_service.get_models(
+            provider_name,
+            provider_config,
+            http_client,
+            auth_headers=auth_headers,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
