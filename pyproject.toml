@@ -18,7 +18,6 @@ dependencies = [
     "anthropic>=0.84.0",
     "tiktoken>=0.9.0",
     "aiosqlite>=0.20.0",
-    "cryptography>=48.0.0",
     "socksio>=1.0.0",
     "nvidia-riva-client>=2.25.1",
     "cloakbrowser>=0.3.25",

@@ -648,7 +648,7 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.assertIn('"upstream_key_pools"', persisted)
         self.assertIn('"session_affinity_header": "X-Workspace-Session"', persisted)
 
-    def test_structured_save_persists_provider_auth(self):
+    def test_structured_save_rejects_provider_auth(self):
         payload = {
             "providers": [
                 {"name": "openrouter", "baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY"},
@@ -667,22 +667,15 @@ class RulesEditorStructuredTests(unittest.TestCase):
             ]
         }
 
-        with patch.dict("os.environ", {"CODEX_OAUTH_TOKEN": "codex-access-token"}):
-            with self._client() as (client, _):
-                save_response = client.post(
-                    "/v1/config/providers/structured",
-                    json=payload,
-                    headers={"Authorization": "Bearer test-gateway-key"},
-                )
-                get_response = client.get(
-                    "/v1/config/providers/structured",
-                    headers={"Authorization": "Bearer test-gateway-key"},
-                )
+        with self._client() as (client, _):
+            save_response = client.post(
+                "/v1/config/providers/structured",
+                json=payload,
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
 
-        self.assertEqual(save_response.status_code, 200, save_response.text)
-        codex = next(provider for provider in get_response.json()["providers"] if provider["name"] == "codex")
-        self.assertEqual(codex["auth"]["type"], "codex_oauth")
-        self.assertIn('"auth"', self.providers_path.read_text(encoding="utf-8"))
+        self.assertEqual(save_response.status_code, 400, save_response.text)
+        self.assertIn("codex_oauth", save_response.text)
 
     def test_structured_save_persists_payload_transforms_on_fallback_rows(self):
         fake_http_client = Mock()

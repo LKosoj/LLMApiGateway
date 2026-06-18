@@ -108,7 +108,6 @@ courlan==1.4.0
 cryptography==48.0.0
     # via
     #   gpt-researcher
-    #   llmapigateway (pyproject.toml)
     #   pyjwt
     #   unstructured-client
 cssselect2==0.9.0

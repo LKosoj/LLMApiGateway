@@ -461,8 +461,6 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | `JINA_API_KEY` | API key for Jina AI, used by the built-in `/v1/web/search` (Jina Search) and `/v1/web/read` (Jina Reader at `r.jina.ai`) adapters. You can provide multiple keys separated by commas; on each Jina call the gateway selects the next non-empty key by round-robin. When unset, the Jina adapter is skipped. | disabled |
 | `ZAI_API_KEY` | API key for Z.AI, used by the built-in `/v1/web/search` and `/v1/web/read` adapters. The adapter talks to Z.AI's Streamable HTTP MCP servers — `web_search_prime` for search and `web_reader` for page extraction (requires the GLM Coding Plan subscription). The search region (`cn`/`us`) is auto-detected from the query. You can provide multiple keys separated by commas; on each Z.AI call the gateway selects the next non-empty key by round-robin. When unset, the Z.AI adapter is skipped. | disabled |
 | `APIKEY_PROVIDERNAME` | API key for a specific provider (e.g., `APIKEY_OPENROUTER`). In `providers.json`, reference it explicitly as `${APIKEY_PROVIDERNAME}`. You can provide multiple keys separated by commas; on each downstream provider call the gateway selects the next non-empty key by round-robin. OpenRouter Free scoring and manual Fallback Eval use the same rule and select a key separately for each provider request. | *required for providers in providers.json* |
-| `OAUTH_CREDENTIAL_ENCRYPTION_KEY` | Fernet key for the encrypted-at-rest managed OAuth credential store. Required when any provider uses `auth.credential_id`. You can generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. | disabled |
-| `OAUTH_REFRESH_SKEW_SECONDS` | Number of seconds before `expires_at` when a managed OAuth credential is considered due for refresh. | `300` |
 
 ## Providers Example (`providers.json`)
 Here, you must define your providers. By default each provider is treated as OpenAI-compatible, but the optional `type` field lets you declare the native wire format: `"openai"` (default) or `"anthropic"`. Anthropic providers are called at `{baseUrl}/v1/messages` with `x-api-key` and `anthropic-version` headers, and their model catalog is fetched from `{baseUrl}/v1/models`. The gateway converts requests and responses in both directions automatically: an OpenAI client that falls back to an Anthropic provider still receives an OpenAI-shaped response (including streaming SSE chunks and `tool_calls`), and an Anthropic client that falls back to an OpenAI provider still receives a native Anthropic response. For Anthropic providers the gateway injects `max_tokens=32768` when the client request does not set it explicitly. For OpenAI providers the `type` field can be omitted — existing `providers.json` files keep working unchanged.
@@ -472,9 +470,6 @@ When saving `providers.json` through the UI, the gateway switches to strict `${V
 When `apikey` contains several comma-separated keys, chat fallback chooses the concrete upstream key with per-key cooldown and upstream-limit awareness. Limits are configured under `models.<model>.upstream_limits` as `rpm`, `rpd`, `tpm`, and `tpd`; this is a separate upstream-provider ledger and does not replace client virtual-key limits.
 The editor UI (`Providers` → `Advanced options` → `Upstream Limits per Model`) exposes these limits as explicit `Model`, `RPM`, `RPD`, `TPM`, `TPD` fields per model, with an `ⓘ` tooltip next to each variable explaining what it does. The `Models Metadata (JSON)` textarea stays available for any other free-form metadata (e.g. `pricing`); on save the gateway merges the structural limits back into that JSON, so the two representations never go out of sync.
 A separate `available_models` field declares an explicit list of the provider's model ids as a JSON array of strings (e.g. `"available_models": ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]`). When such a list is set, the gateway uses it verbatim and does not query the provider's `/models` endpoint — useful for proxies without a working `/models` endpoint. The list is applied everywhere a provider model catalog is needed: the model picker in the fallback-rules editor, rule validation on save, and the public `/v1/models` endpoint (when the provider is selected as `FALLBACK_PROVIDER`). When `available_models` is absent, behaviour is unchanged — the catalog is fetched from the provider API. This field is independent of `models`, so an explicit list can be combined with `models` metadata/`upstream_limits`. In the editor UI (`Providers` → `Advanced options`) the list is entered in the `Available Models` field — one id per line (commas are also accepted).
-The `auth` field lets a provider read a Bearer token from the environment, a file, or the managed OAuth store instead of storing it in `apikey`. Supported OAuth types are `codex_oauth`, `claude_oauth`, and `xai_oauth`; each OAuth type must define exactly one source: `token_env`, `token_file`, or `credential_id`. OAuth `auth` cannot be mixed with `apikey` or `upstream_key_pools`: that configuration is rejected during load.
-For `credential_id`, define `oauth_client`: `client_id` or `client_id_env`, `token_endpoint`, and optionally `device_authorization_endpoint`, `authorization_endpoint`, `redirect_uri`, `client_secret_env`, and `scopes`. The gateway implements standard BYO OAuth/OIDC flows: device-code login, authorization-code PKCE login, refresh-token lifecycle, manual access/refresh token import, and encrypted-at-rest storage in `db/oauth_tokens.db`. Master admins can manage these credentials in the Providers UI or through `/v1/admin/oauth/*`; API responses and the DOM never return raw access/refresh tokens. If the managed credential is missing, refresh fails, or the stored token cannot be decrypted with the current `OAUTH_CREDENTIAL_ENCRYPTION_KEY`, the request fails explicitly with no hidden fallback.
-The gateway does not add cloak mode, spoofed identity headers, hard-coded official CLI client IDs, prompt/cache remapping, or any behavior intended to look like an official CLI. For OpenAI/Codex and xAI, use your own OAuth/OIDC client config or import an already issued access/refresh token; xAI API-key usage remains configured with the regular `apikey` field.
 The `routing` field defines the default upstream-key choice behavior: `strategy` (`round-robin`, `fill-first`, `priority`), `session_affinity`, `session_affinity_header`, and `session_affinity_ttl_seconds`. `upstream_key_pools` lets you define several named key pools with their own strategy and affinity settings. A fallback row selects a pool with `upstream_key_pool`. If a provider is configured only with `upstream_key_pools` and no legacy `apikey`, `upstream_key_pool` is required — the gateway fails configuration validation instead of falling back to an arbitrary key or another pool.
 The free-tier provider reference catalog lives in [`examples/free-tier-providers.md`](examples/free-tier-providers.md). It is not applied automatically: free-tier terms change often, so providers and limits must be enabled manually.
 
@@ -511,34 +506,6 @@ The free-tier provider reference catalog lives in [`examples/free-tier-providers
             "apikey" : "${APIKEY_CUSTOMPROXY}",
             // explicit model list: the gateway will not query the provider's /models
             "available_models" : ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]
-        }
-    },
-    {
-        "codex_oauth_proxy":
-        {
-            "baseUrl" : "https://codex.example/v1",
-            "auth" : {
-                "type" : "codex_oauth",
-                "token_env" : "CODEX_OAUTH_TOKEN"
-            }
-        }
-    },
-    {
-        "codex_managed_oauth_proxy":
-        {
-            "baseUrl" : "https://codex.example/v1",
-            "auth" : {
-                "type" : "codex_oauth",
-                "credential_id" : "codex-main",
-                "oauth_client" : {
-                    "client_id_env" : "CODEX_OAUTH_CLIENT_ID",
-                    "token_endpoint" : "https://issuer.example/oauth/token",
-                    "device_authorization_endpoint" : "https://issuer.example/oauth/device/code",
-                    "authorization_endpoint" : "https://issuer.example/oauth/authorize",
-                    "redirect_uri" : "https://gateway.example/v1/auth/oauth/callback/codex_managed_oauth_proxy",
-                    "scopes" : ["openid", "profile"]
-                }
-            }
         }
     },
     {

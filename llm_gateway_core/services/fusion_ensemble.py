@@ -35,7 +35,6 @@ from fastapi import HTTPException, Request
 
 from ..config.loader import (
     ANTHROPIC_API_VERSION,
-    provider_auth_is_managed_oauth,
     resolve_provider_config_api_key,
     resolve_provider_config_auth_headers,
 )
@@ -360,8 +359,6 @@ class FusionEnsembleService:
 
         client = proxy_http_clients.get(provider_name, http_client)
         if request is None:
-            if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None)):
-                raise HTTPException(status_code=500, detail="Managed OAuth Fusion calls require request state.")
             api_key = resolve_provider_config_api_key(provider_config)
             auth_headers = resolve_provider_config_auth_headers(provider_config, api_key)
         else:

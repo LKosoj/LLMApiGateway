@@ -9,9 +9,7 @@ from threading import Lock
 from typing import Any, Iterable, Literal, Mapping
 
 from llm_gateway_core.config.loader import (
-    provider_auth_is_managed_oauth,
     resolve_provider_api_key_value,
-    resolve_provider_oauth_token,
 )
 from llm_gateway_core.utils.api_keys import split_api_keys
 
@@ -26,19 +24,6 @@ def fingerprint_api_key(api_key: str | None) -> str:
     if not api_key:
         return KEYLESS_FINGERPRINT
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
-
-
-def managed_oauth_key_material(provider_name: str, provider_config: object) -> str | None:
-    auth_config = getattr(provider_config, "auth", None)
-    credential_id = getattr(auth_config, "credential_id", None)
-    if not provider_name or not credential_id:
-        return None
-    return f"managed-oauth:{provider_name}:{credential_id}"
-
-
-def managed_oauth_fingerprint(provider_name: str, provider_config: object) -> str | None:
-    key_material = managed_oauth_key_material(provider_name, provider_config)
-    return fingerprint_api_key(key_material) if key_material else None
 
 
 @dataclass(frozen=True)
@@ -338,14 +323,6 @@ class UpstreamRoutingState:
             if isinstance(pool_name, str) and pool_name.strip():
                 pool_fingerprints = self._fingerprints_for_provider_key_pool(provider_config, pool_name.strip())
                 return pool_fingerprints
-
-            auth_config = getattr(provider_config, "auth", None)
-            if provider_auth_is_managed_oauth(auth_config):
-                provider_name = str(rule.get("provider") or "")
-                fingerprint = managed_oauth_fingerprint(provider_name, provider_config)
-                return [fingerprint or KEYLESS_FINGERPRINT]
-            if getattr(auth_config, "type", "api_key") in {"codex_oauth", "claude_oauth", "xai_oauth"}:
-                return [fingerprint_api_key(resolve_provider_oauth_token(auth_config))]
 
             resolved = resolve_provider_api_key_value(getattr(provider_config, "apikey", None))
         except Exception:

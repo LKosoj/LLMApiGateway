@@ -19,11 +19,9 @@ from fastapi.responses import StreamingResponse
 from ...config.loader import (
     ANTHROPIC_API_VERSION,
     ConfigLoader,
-    provider_auth_is_managed_oauth,
     resolve_provider_api_keys,
     resolve_provider_config_api_key,
     resolve_provider_api_key_value,
-    resolve_provider_oauth_token,
 )
 from ...config.settings import settings
 from ...db.model_rotation_db import ModelRotationDB
@@ -45,16 +43,11 @@ from ...services.request_handler import (
     normalize_retry_settings,
 )
 from ...services.payload_transform import apply_payload_transforms
-from ...services.provider_auth import (
-    managed_oauth_fingerprint,
-    provider_uses_managed_oauth,
-    resolve_provider_auth_material,
-)
+from ...services.provider_auth import resolve_provider_auth_material
 from ...services.upstream_routing_state import (
     UpstreamKeyCandidate,
     UpstreamRoutingState,
     fingerprint_api_key,
-    managed_oauth_key_material,
     upstream_limits_for_model,
 )
 from ...utils.api_keys import split_api_keys
@@ -122,20 +115,6 @@ def _upstream_key_candidates_for_provider(
     pool_name: str | None,
 ) -> tuple[list[UpstreamKeyCandidate], object | None, str]:
     if not pool_name:
-        auth_config = getattr(provider_config, "auth", None)
-        if provider_auth_is_managed_oauth(auth_config):
-            key_material = managed_oauth_key_material(provider_name, provider_config)
-            return (
-                [UpstreamKeyCandidate(api_key=key_material, order=0)],
-                None,
-                str(getattr(auth_config, "type", "oauth")),
-            )
-        if getattr(auth_config, "type", "api_key") in {"codex_oauth", "claude_oauth", "xai_oauth"}:
-            return (
-                [UpstreamKeyCandidate(api_key=resolve_provider_oauth_token(auth_config), order=0)],
-                None,
-                str(getattr(auth_config, "type", "oauth")),
-            )
         if not getattr(provider_config, "apikey", None) and getattr(provider_config, "upstream_key_pools", None):
             raise ValueError("fallback rule must specify upstream_key_pool for this pool-only provider.")
         api_keys = resolve_provider_api_keys(getattr(provider_config, "apikey", None))
@@ -3282,15 +3261,11 @@ async def _attempt_model_fallback_rule(
             logging.warning(error_detail)
             _record_event(False, error_detail, 0, upstream_key_fingerprint=selected_key.fingerprint)
             return None, error_detail, attempt_number
-        provider_api_key = None if provider_uses_managed_oauth(provider_config) else selected_key.api_key
+        provider_api_key = selected_key.api_key
         upstream_key_fingerprint = selected_key.fingerprint
     else:
-        if provider_uses_managed_oauth(provider_config):
-            provider_api_key = None
-            upstream_key_fingerprint = managed_oauth_fingerprint(provider_name or "unknown", provider_config)
-        else:
-            provider_api_key = resolve_provider_config_api_key(provider_config)
-            upstream_key_fingerprint = fingerprint_api_key(provider_api_key)
+        provider_api_key = resolve_provider_config_api_key(provider_config)
+        upstream_key_fingerprint = fingerprint_api_key(provider_api_key)
     auth_material = await resolve_provider_auth_material(
         request,
         provider_name=provider_name or "unknown",

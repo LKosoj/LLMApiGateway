@@ -1,11 +1,9 @@
 import json5
-import ipaddress
 import logging
 import os
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Literal, Optional, Mapping
-from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, RootModel, model_validator
 
 # Import settings using relative path within the package
@@ -101,10 +99,6 @@ def resolve_provider_config_api_keys(provider_config: object) -> list[str]:
     if legacy_api_key:
         return resolve_provider_api_keys(legacy_api_key)
 
-    auth_config = getattr(provider_config, "auth", None)
-    if _provider_auth_is_oauth(auth_config):
-        return [resolve_provider_oauth_token(auth_config)]
-
     pools = getattr(provider_config, "upstream_key_pools", None)
     if not isinstance(pools, Mapping):
         return []
@@ -122,53 +116,12 @@ def resolve_provider_config_api_keys(provider_config: object) -> list[str]:
 
 
 def resolve_provider_config_auth_headers(provider_config: object, api_key: str | None = None) -> dict[str, str]:
-    auth_config = getattr(provider_config, "auth", None)
-    if _provider_auth_is_oauth(auth_config):
-        return {"Authorization": f"Bearer {resolve_provider_oauth_token(auth_config)}"}
-
     resolved_api_key = api_key or resolve_provider_config_api_key(provider_config)
     if not resolved_api_key:
         return {}
     if getattr(provider_config, "type", "openai") == "anthropic":
         return {"x-api-key": resolved_api_key}
     return {"Authorization": f"Bearer {resolved_api_key}"}
-
-
-def resolve_provider_oauth_token(auth_config: object) -> str:
-    if provider_auth_is_managed_oauth(auth_config):
-        raise ConfigError("Managed OAuth auth must be resolved through the async provider auth service.")
-
-    token_env = getattr(auth_config, "token_env", None)
-    if token_env:
-        token = os.getenv(str(token_env), "").strip()
-        if not token:
-            raise ConfigError(f"env var {token_env} referenced but missing or empty for provider OAuth token")
-        if is_placeholder_secret(token):
-            raise ConfigError(placeholder_secret_error(str(token_env), token))
-        return token
-
-    token_file = getattr(auth_config, "token_file", None)
-    if token_file:
-        path = Path(str(token_file)).expanduser()
-        try:
-            token = path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise ConfigError(f"OAuth token file '{path}' could not be read: {exc}") from exc
-        if not token:
-            raise ConfigError(f"OAuth token file '{path}' is empty")
-        if is_placeholder_secret(token):
-            raise ConfigError(placeholder_secret_error(str(path), token))
-        return token
-
-    raise ConfigError("OAuth auth config must define token_env or token_file")
-
-
-def _provider_auth_is_oauth(auth_config: object) -> bool:
-    return getattr(auth_config, "type", "api_key") in {"codex_oauth", "claude_oauth", "xai_oauth"}
-
-
-def provider_auth_is_managed_oauth(auth_config: object) -> bool:
-    return _provider_auth_is_oauth(auth_config) and bool(getattr(auth_config, "credential_id", None))
 
 
 def resolve_provider_api_key_value(api_key_reference_or_literal: str | None) -> str | None:
@@ -483,148 +436,6 @@ class UpstreamKeyPoolConfig(BaseModel):
         return value
 
 
-class ProviderAuthConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["api_key", "codex_oauth", "claude_oauth", "xai_oauth"] = "api_key"
-    token_env: str | None = None
-    token_file: str | None = None
-    credential_id: str | None = None
-    oauth_client: "OAuthClientConfig | None" = None
-
-    @field_validator("token_env", mode="before")
-    @classmethod
-    def validate_token_env(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        normalized_value = _validate_non_empty_string(value, "token_env")
-        if not ENV_REFERENCE_NAME_RE.fullmatch(normalized_value):
-            raise ValueError("'token_env' must be an environment variable name like CODEX_OAUTH_TOKEN.")
-        return normalized_value
-
-    @field_validator("token_file", mode="before")
-    @classmethod
-    def validate_token_file(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        return _validate_non_empty_string(value, "token_file")
-
-    @field_validator("credential_id", mode="before")
-    @classmethod
-    def validate_credential_id(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        return _validate_non_empty_string(value, "credential_id")
-
-    @model_validator(mode="after")
-    def validate_token_source(self) -> "ProviderAuthConfig":
-        if self.type == "api_key":
-            if self.token_env or self.token_file or self.credential_id or self.oauth_client:
-                raise ValueError("'api_key' auth must not define token_env, token_file, credential_id, or oauth_client.")
-            return self
-        source_count = sum(bool(value) for value in (self.token_env, self.token_file, self.credential_id))
-        if source_count != 1:
-            raise ValueError("OAuth auth must define exactly one of token_env, token_file, or credential_id.")
-        if self.credential_id:
-            if self.oauth_client is None:
-                raise ValueError("OAuth auth with credential_id must define oauth_client.")
-        elif self.oauth_client is not None:
-            raise ValueError("OAuth auth with token_env or token_file must not define oauth_client.")
-        return self
-
-
-class OAuthClientConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    client_id: str | None = None
-    client_id_env: str | None = None
-    client_secret_env: str | None = None
-    authorization_endpoint: str | None = None
-    device_authorization_endpoint: str | None = None
-    token_endpoint: str
-    redirect_uri: str | None = None
-    scopes: list[str] = Field(default_factory=list)
-
-    @field_validator("client_id", "token_endpoint", "authorization_endpoint", "device_authorization_endpoint", "redirect_uri", mode="before")
-    @classmethod
-    def validate_optional_string_fields(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        return _validate_non_empty_string(value, "oauth_client field")
-
-    @field_validator("client_id_env", "client_secret_env", mode="before")
-    @classmethod
-    def validate_oauth_env_name(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        normalized_value = _validate_non_empty_string(value, "oauth_client env field")
-        if not ENV_REFERENCE_NAME_RE.fullmatch(normalized_value):
-            raise ValueError("OAuth client env fields must be environment variable names like OAUTH_CLIENT_ID.")
-        return normalized_value
-
-    @field_validator("scopes", mode="before")
-    @classmethod
-    def normalize_scopes(cls, value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            value = value.split()
-        if not isinstance(value, list):
-            raise ValueError("'scopes' must be a list of strings or a space-separated string.")
-        scopes: list[str] = []
-        for item in value:
-            scope = _validate_non_empty_string(item, "oauth scope")
-            if _contains_forbidden_oauth_marker(scope):
-                raise ValueError("OAuth scopes must not contain official CLI spoofing markers.")
-            scopes.append(scope)
-        return scopes
-
-    @field_validator("token_endpoint", "authorization_endpoint", "device_authorization_endpoint", "redirect_uri")
-    @classmethod
-    def validate_oauth_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        parsed = urlparse(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("OAuth endpoints and redirect_uri must be absolute HTTP(S) URLs.")
-        if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
-            raise ValueError("OAuth endpoints and redirect_uri must use HTTPS unless they target localhost/loopback.")
-        if _contains_forbidden_oauth_marker(value):
-            raise ValueError("OAuth endpoints and redirect_uri must not contain official CLI spoofing markers.")
-        return value
-
-    @model_validator(mode="after")
-    def validate_client_identity(self) -> "OAuthClientConfig":
-        if bool(self.client_id) == bool(self.client_id_env):
-            raise ValueError("oauth_client must define exactly one of client_id or client_id_env.")
-        return self
-
-
-def _contains_forbidden_oauth_marker(value: str) -> bool:
-    lowered = value.lower()
-    return any(
-        marker in lowered
-        for marker in (
-            "codex_cli_simplified_flow",
-            "grok-cli:access",
-            "referrer=cli",
-            "referrer=cli-proxy-api",
-        )
-    )
-
-
-def _is_loopback_host(hostname: str | None) -> bool:
-    if not hostname:
-        return False
-    normalized = hostname.strip("[]").lower()
-    if normalized == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(normalized).is_loopback
-    except ValueError:
-        return False
-
-
 class ProviderDetails(BaseModel):
     baseUrl: str
     apikey: str | None = None
@@ -641,7 +452,19 @@ class ProviderDetails(BaseModel):
     subscription_quota: Optional[SubscriptionQuotaConfig] = None
     routing: UpstreamRoutingConfig = Field(default_factory=UpstreamRoutingConfig)
     upstream_key_pools: Dict[str, UpstreamKeyPoolConfig] = Field(default_factory=dict)
-    auth: ProviderAuthConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_provider_auth_config(cls, value: Any) -> Any:
+        if isinstance(value, Mapping) and "auth" in value:
+            auth_value = value.get("auth")
+            auth_type = auth_value.get("type") if isinstance(auth_value, Mapping) else None
+            suffix = f" (type: {auth_type})" if auth_type else ""
+            raise ValueError(
+                f"provider 'auth' config is no longer supported{suffix}; "
+                "use 'apikey' or 'upstream_key_pools'."
+            )
+        return value
 
     @field_validator("baseUrl", mode="before")
     @classmethod
@@ -679,13 +502,9 @@ class ProviderDetails(BaseModel):
 
     @model_validator(mode="after")
     def validate_auth_material(self) -> "ProviderDetails":
-        if self.auth and self.auth.type != "api_key":
-            if self.apikey or self.upstream_key_pools:
-                raise ValueError("OAuth 'auth' must not be combined with 'apikey' or 'upstream_key_pools'.")
-            return self
         if self.apikey or self.upstream_key_pools:
             return self
-        raise ValueError("provider must define either 'apikey', 'upstream_key_pools', or OAuth 'auth'.")
+        raise ValueError("provider must define either 'apikey' or 'upstream_key_pools'.")
 
 class ProviderConfig(RootModel[Dict[str, ProviderDetails]]):
     """
@@ -1953,28 +1772,6 @@ class ConfigLoader:
                 raise ConfigError(message)
             all_valid = False # Mark as invalid but continue checking other things if not raising
 
-        credential_owners: dict[str, str] = {}
-        credential_errors: list[str] = []
-        for provider_name, config in providers_to_validate.items():
-            if not provider_auth_is_managed_oauth(config.auth):
-                continue
-            credential_id = str(getattr(config.auth, "credential_id", "")).strip()
-            existing_provider = credential_owners.get(credential_id)
-            if existing_provider is not None:
-                credential_errors.append(
-                    f"OAuth credential_id '{credential_id}' is reused by providers "
-                    f"'{existing_provider}' and '{provider_name}'. credential_id values must be unique."
-                )
-                continue
-            credential_owners[credential_id] = provider_name
-
-        if credential_errors:
-            for message in credential_errors:
-                logging.error(message)
-            if raise_on_error:
-                raise ConfigError("; ".join(credential_errors))
-            all_valid = False
-
         env_errors: list[str] = []
         for provider_name, config in providers_to_validate.items():
             for field_name, field_value in (("apikey", config.apikey), ("proxy", config.proxy)):
@@ -2043,30 +1840,6 @@ class ConfigLoader:
                         continue
 
                     message = _provider_env_reference_error(provider_name, field_name, env_name)
-                    logging.error(message)
-                    env_errors.append(message)
-
-            if provider_auth_is_managed_oauth(config.auth):
-                oauth_client = getattr(config.auth, "oauth_client", None)
-                for field_name in ("client_id_env", "client_secret_env"):
-                    env_name = getattr(oauth_client, field_name, None)
-                    if not env_name:
-                        continue
-                    resolved_env_value = os.getenv(env_name)
-                    if resolved_env_value:
-                        if is_placeholder_secret(resolved_env_value):
-                            message = placeholder_secret_error(env_name, resolved_env_value)
-                            logging.error(message)
-                            env_errors.append(message)
-                        continue
-                    message = _provider_env_reference_error(provider_name, f"auth.oauth_client.{field_name}", env_name)
-                    logging.error(message)
-                    env_errors.append(message)
-            elif _provider_auth_is_oauth(config.auth):
-                try:
-                    resolve_provider_oauth_token(config.auth)
-                except ConfigError as exc:
-                    message = f"Provider '{provider_name}' OAuth auth is invalid: {exc}"
                     logging.error(message)
                     env_errors.append(message)
 

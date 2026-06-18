@@ -15,7 +15,7 @@ from pathlib import Path, PurePath
 # Import components from the new core structure
 from llm_gateway_core.config.settings import settings
 from llm_gateway_core.config.paths import OUTPUTS_IMAGES_DIR, PROJECT_ROOT, STATIC_DIR
-from llm_gateway_core.config.loader import ConfigLoader, provider_auth_is_managed_oauth, resolve_provider_proxy
+from llm_gateway_core.config.loader import ConfigLoader, resolve_provider_proxy
 from llm_gateway_core.config.placeholder_secrets import is_placeholder_secret
 from llm_gateway_core.build_info import build_headers
 from llm_gateway_core.services.image_retention import cleanup_old_images
@@ -33,7 +33,6 @@ from llm_gateway_core.db.fallback_events_db import FallbackEventsDB
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
-from llm_gateway_core.db.oauth_tokens_db import OAuthTokensDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
 from llm_gateway_core.api.v1 import chat as _chat_router_module
 from llm_gateway_core.services.provider_models import ProviderModelsService
@@ -48,7 +47,6 @@ from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 from llm_gateway_core.services.upstream_subscription_quota import UpstreamSubscriptionQuotaService
-from llm_gateway_core.services.managed_oauth import ManagedOAuthService
 from llm_gateway_core.utils.html_cache import preload_templates
 
 # --- Application Setup ---
@@ -130,15 +128,6 @@ def create_proxy_http_clients(
             )
             logger.info("Created proxy HTTP client for provider '%s'.", provider_name)
     return clients
-
-
-def _providers_use_managed_oauth(providers_config: Mapping[str, object]) -> bool:
-    if not isinstance(providers_config, Mapping):
-        return False
-    return any(
-        provider_auth_is_managed_oauth(getattr(provider_config, "auth", None))
-        for provider_config in providers_config.values()
-    )
 
 
 def resolve_write_batcher_db_path(tokens_usage_db: object) -> Path:
@@ -378,21 +367,6 @@ async def lifespan(app: FastAPI):
     app.state.http_client = http_client
     logger.info("Shared httpx.AsyncClient initialized and attached to app.state.")
 
-    oauth_tokens_db = OAuthTokensDB(
-        encryption_key=settings.oauth_credential_encryption_key,
-    )
-    if _providers_use_managed_oauth(config_loader.providers_config) and not oauth_tokens_db.has_encryption_key():
-        raise RuntimeError(
-            "OAUTH_CREDENTIAL_ENCRYPTION_KEY must be set when providers use managed OAuth credential_id."
-        )
-    app.state.oauth_tokens_db = oauth_tokens_db
-    app.state.managed_oauth_service = ManagedOAuthService(
-        tokens_db=oauth_tokens_db,
-        http_client=http_client,
-        refresh_skew_seconds=settings.oauth_refresh_skew_seconds,
-    )
-    logger.info("ManagedOAuthService initialized and attached to app.state.")
-
     upstream_subscription_quota_service = UpstreamSubscriptionQuotaService(
         http_client=http_client
     )
@@ -432,7 +406,6 @@ async def lifespan(app: FastAPI):
     )
 
     fallback_model_eval_service = FallbackModelEvalService()
-    fallback_model_eval_service.set_managed_oauth_service(app.state.managed_oauth_service)
     app.state.fallback_model_eval_service = fallback_model_eval_service
     logger.info("FallbackModelEvalService initialized and attached to app.state.")
 
@@ -443,7 +416,6 @@ async def lifespan(app: FastAPI):
         operation_rules=config_loader.operation_rules,
         provider_models_service=provider_models_service,
         http_client=http_client,
-        managed_oauth_service=app.state.managed_oauth_service,
     )
 
     usage_stats_cleanup_task = start_usage_stats_cleanup_task(tokens_usage_db, fallback_events_db, rejections_db)

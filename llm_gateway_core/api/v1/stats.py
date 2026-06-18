@@ -8,7 +8,6 @@ from fastapi.responses import HTMLResponse, JSONResponse
 # Import the TokensUsageDB
 from llm_gateway_core.config.loader import (
     ANTHROPIC_API_VERSION,
-    provider_auth_is_managed_oauth,
     resolve_provider_api_key_value,
     resolve_provider_config_auth_headers,
     resolve_provider_config_api_keys,
@@ -20,10 +19,7 @@ from llm_gateway_core.db.fallback_events_db import FallbackEventsDB, validate_fa
 from llm_gateway_core.db.rejections_db import RejectionsDB, VALID_CATEGORIES
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.active_requests import get_active_requests_registry
-from llm_gateway_core.services.provider_auth import (
-    managed_oauth_fingerprint,
-    resolve_provider_auth_headers,
-)
+from llm_gateway_core.services.provider_auth import resolve_provider_auth_headers
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState, fingerprint_api_key
 from llm_gateway_core.utils.api_keys import split_api_keys
 from llm_gateway_core.utils.html_cache import get_template
@@ -703,8 +699,6 @@ async def _build_health_probe_request_async(
 
 def _resolve_health_probe_api_keys(provider_config, pool_name: str | None) -> list[str | None]:
     if not pool_name:
-        if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None)):
-            return [None]
         return resolve_provider_config_api_keys(provider_config) or [None]
 
     pools = getattr(provider_config, "upstream_key_pools", None)
@@ -826,11 +820,7 @@ async def run_upstream_health_checks(request: Request):
         api_keys = _resolve_health_probe_api_keys(provider_config, rule.get("upstream_key_pool"))
         effective_client = proxy_http_clients.get(provider_name, http_client)
         for api_key in api_keys:
-            key_fingerprint = (
-                managed_oauth_fingerprint(provider_name, provider_config) or fingerprint_api_key(api_key)
-                if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None))
-                else fingerprint_api_key(api_key)
-            )
+            key_fingerprint = fingerprint_api_key(api_key)
             target_key = (provider_name, provider_model, key_fingerprint)
             if target_key in seen_targets:
                 continue

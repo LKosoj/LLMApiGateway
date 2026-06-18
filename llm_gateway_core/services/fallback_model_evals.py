@@ -15,12 +15,10 @@ from ..config.loader import (
     ANTHROPIC_API_VERSION,
     ProviderDetails,
     SECURITY_HEADERS,
-    provider_auth_is_managed_oauth,
     resolve_provider_config_auth_headers,
     resolve_provider_config_api_key,
     resolve_provider_config_api_keys,
 )
-from .managed_oauth import ManagedOAuthService
 from .payload_transform import apply_payload_transforms
 from .openrouter_free_models import (
     EVAL_SCORE_WEIGHT,
@@ -177,10 +175,6 @@ class FallbackModelEvalService:
         self._last_checked_at: str | None = None
         self._snapshot: FallbackModelEvalSnapshot | None = None
         self._task: asyncio.Task | None = None
-        self._managed_oauth_service: ManagedOAuthService | None = None
-
-    def set_managed_oauth_service(self, service: ManagedOAuthService | None) -> None:
-        self._managed_oauth_service = service
 
     async def get_status(self) -> dict[str, Any]:
         async with self._lock:
@@ -355,11 +349,7 @@ class FallbackModelEvalService:
         if provider_config is None or not _is_official_openrouter_url(provider_config.baseUrl):
             return {}
         try:
-            provider_api_keys = (
-                [None]
-                if provider_auth_is_managed_oauth(getattr(provider_config, "auth", None))
-                else resolve_provider_config_api_keys(provider_config)
-            )
+            provider_api_keys = resolve_provider_config_api_keys(provider_config)
         except Exception:
             return {}
         if not provider_api_keys:
@@ -397,15 +387,6 @@ class FallbackModelEvalService:
         return metadata_by_name
 
     async def _auth_headers(self, provider_name: str, provider_config: ProviderDetails) -> dict[str, str]:
-        auth_config = getattr(provider_config, "auth", None)
-        if provider_auth_is_managed_oauth(auth_config):
-            if self._managed_oauth_service is None:
-                raise ValueError("Managed OAuth service is not available for fallback model eval.")
-            token = await self._managed_oauth_service.get_access_token(
-                provider_name=provider_name,
-                auth_config=auth_config,
-            )
-            return {"Authorization": f"Bearer {token.access_token}"}
         api_key = resolve_provider_config_api_key(provider_config)
         return resolve_provider_config_auth_headers(provider_config, api_key)
 

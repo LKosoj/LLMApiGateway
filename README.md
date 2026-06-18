@@ -462,8 +462,6 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | `JINA_API_KEY` | API-ключ Jina AI для встроенных адаптеров `/v1/web/search` (Jina Search) и `/v1/web/read` (Jina Reader `r.jina.ai`). Можно указать несколько ключей через запятую: при каждом вызове Jina gateway выбирает следующий непустой ключ по round-robin. Если не задан, адаптер Jina пропускается. | disabled |
 | `ZAI_API_KEY` | API-ключ Z.AI для встроенных адаптеров `/v1/web/search` и `/v1/web/read`. Адаптер использует MCP-серверы Z.AI по Streamable HTTP — `web_search_prime` для поиска и `web_reader` для извлечения содержимого страниц (требуется подписка GLM Coding Plan). Регион поиска (`cn`/`us`) выбирается автоматически по запросу. Можно указать несколько ключей через запятую: при каждом вызове Z.AI gateway выбирает следующий непустой ключ по round-robin. Если не задан, адаптер Z.AI пропускается. | disabled |
 | `APIKEY_PROVIDERNAME` | API-ключ конкретного провайдера, например `APIKEY_OPENROUTER`. В `providers.json` ссылка на env задаётся явно как `${APIKEY_PROVIDERNAME}`. Можно указать несколько ключей через запятую: при каждом downstream-вызове провайдера gateway выбирает следующий непустой ключ по round-robin. OpenRouter Free scoring и ручной Fallback Eval используют то же правило и выбирают ключ отдельно для каждого запроса к провайдеру. | *required for providers in providers.json* |
-| `OAUTH_CREDENTIAL_ENCRYPTION_KEY` | Fernet key для encrypted-at-rest хранилища managed OAuth credentials. Обязателен, если хотя бы один провайдер использует `auth.credential_id`. Сгенерировать можно командой `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. | disabled |
-| `OAUTH_REFRESH_SKEW_SECONDS` | За сколько секунд до `expires_at` managed OAuth credential считается требующим refresh. | `300` |
 
 ## Пример провайдеров (`providers.json`)
 Здесь нужно определить ваших провайдеров. По умолчанию провайдер считается OpenAI-совместимым, но опциональное поле `type` позволяет указать native-формат: `"openai"` (по умолчанию) или `"anthropic"`. Anthropic-провайдеры вызываются по адресу `{baseUrl}/v1/messages` с заголовками `x-api-key` и `anthropic-version`, а их список моделей запрашивается с `{baseUrl}/v1/models`. Gateway автоматически конвертирует запросы и ответы в обе стороны: OpenAI-клиент, попавший в Anthropic-провайдера по fallback, получит OpenAI-совместимый ответ (включая streaming SSE chunks и `tool_calls`), а Anthropic-клиент, попавший в OpenAI-провайдера, получит нативный Anthropic-ответ. Для Anthropic-провайдеров gateway подставляет `max_tokens=32768`, если запрос клиента не указал его явно. Для OpenAI-провайдеров `type` можно опустить — поведение старых `providers.json` остаётся прежним.
@@ -473,9 +471,6 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 Если `apikey` содержит несколько ключей через запятую, chat fallback выбирает конкретный upstream-ключ с учётом per-key cooldown и upstream-лимитов. Лимиты задаются в `models.<model>.upstream_limits` как `rpm`, `rpd`, `tpm`, `tpd`; это отдельный ledger upstream-провайдера и он не заменяет лимиты virtual API keys клиентов.
 В UI редактора (`Providers` → `Advanced options` → `Upstream Limits per Model`) эти лимиты доступны как отдельные поля `Model`, `RPM`, `RPD`, `TPM`, `TPD` для каждой модели; рядом с каждой переменной — иконка `ⓘ` со всплывающей подсказкой о значении параметра. Поле `Models Metadata (JSON)` используется для остальной произвольной метаданных (например, `pricing`); при сохранении gateway сливает структурные лимиты с этим JSON, поэтому два представления не конфликтуют.
 Отдельное поле `available_models` задаёт явный список id моделей провайдера в виде JSON-массива строк (например `"available_models": ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]`). Если список задан, gateway использует именно его и не запрашивает `/models` у провайдера — это полезно для прокси без рабочего эндпоинта `/models`. Список применяется везде, где нужен перечень моделей провайдера: dropdown выбора модели в редакторе fallback-правил, валидация правил при сохранении и публичный `/v1/models` (когда провайдер выбран как `FALLBACK_PROVIDER`). Если `available_models` не задан, поведение прежнее — список берётся из API провайдера. Это поле независимо от `models`, поэтому явный список можно сочетать с метаданными/`upstream_limits` в `models`. В UI редактора (`Providers` → `Advanced options`) список вводится в поле `Available Models` — по одному id в строке (запятые тоже допускаются).
-Поле `auth` позволяет провайдеру брать Bearer-токен из окружения, файла или managed OAuth хранилища без хранения его в `apikey`. Поддерживаются типы `codex_oauth`, `claude_oauth` и `xai_oauth`; для каждого OAuth-типа нужно указать ровно один источник: `token_env`, `token_file` или `credential_id`. OAuth `auth` нельзя смешивать с `apikey` или `upstream_key_pools`: такая конфигурация отклоняется при загрузке.
-Для `credential_id` нужно задать `oauth_client`: `client_id` или `client_id_env`, `token_endpoint`, опционально `device_authorization_endpoint`, `authorization_endpoint`, `redirect_uri`, `client_secret_env` и `scopes`. Gateway реализует стандартные BYO OAuth/OIDC flows: device-code login, authorization-code PKCE login, refresh-token lifecycle, ручной import access/refresh token и encrypted-at-rest хранение в `db/oauth_tokens.db`. Управление доступно master-админу в Providers UI и через `/v1/admin/oauth/*`; ответы API и DOM не возвращают raw access/refresh tokens. Если managed credential отсутствует, refresh невозможен или токен не расшифровывается текущим `OAUTH_CREDENTIAL_ENCRYPTION_KEY`, запрос падает явно, без скрытого fallback.
-Gateway не добавляет cloak mode, spoofed identity headers, hard-coded official CLI client IDs, prompt/cache remapping и не пытается выглядеть как официальный CLI. Для OpenAI/Codex и xAI используйте собственный OAuth/OIDC client config или импортируйте уже выданный access/refresh token; xAI API-key сценарий по-прежнему настраивается через обычный `apikey`.
 Поле `routing` задаёт поведение выбора upstream-ключа по умолчанию: `strategy` (`round-robin`, `fill-first`, `priority`), `session_affinity`, `session_affinity_header` и `session_affinity_ttl_seconds`. `upstream_key_pools` позволяет завести несколько именованных пулов ключей с собственными стратегиями и параметрами affinity. Fallback-строка выбирает пул через `upstream_key_pool`. Если провайдер настроен только через `upstream_key_pools` и без legacy `apikey`, ссылка `upstream_key_pool` обязательна — gateway падает с ошибкой конфигурации, а не откатывается на случайный ключ или другой пул.
 Справочный каталог free-tier провайдеров лежит в [`examples/free-tier-providers.md`](examples/free-tier-providers.md). Он не применяется автоматически: free-tier условия часто меняются, поэтому провайдеры и лимиты нужно включать вручную.
 
@@ -512,34 +507,6 @@ Gateway не добавляет cloak mode, spoofed identity headers, hard-coded
             "apikey" : "${APIKEY_CUSTOMPROXY}",
             // явный список моделей: gateway не будет запрашивать /models у провайдера
             "available_models" : ["deepseek/deepseek-r1:free", "qwen/qwen3-max"]
-        }
-    },
-    {
-        "codex_oauth_proxy":
-        {
-            "baseUrl" : "https://codex.example/v1",
-            "auth" : {
-                "type" : "codex_oauth",
-                "token_env" : "CODEX_OAUTH_TOKEN"
-            }
-        }
-    },
-    {
-        "codex_managed_oauth_proxy":
-        {
-            "baseUrl" : "https://codex.example/v1",
-            "auth" : {
-                "type" : "codex_oauth",
-                "credential_id" : "codex-main",
-                "oauth_client" : {
-                    "client_id_env" : "CODEX_OAUTH_CLIENT_ID",
-                    "token_endpoint" : "https://issuer.example/oauth/token",
-                    "device_authorization_endpoint" : "https://issuer.example/oauth/device/code",
-                    "authorization_endpoint" : "https://issuer.example/oauth/authorize",
-                    "redirect_uri" : "https://gateway.example/v1/auth/oauth/callback/codex_managed_oauth_proxy",
-                    "scopes" : ["openid", "profile"]
-                }
-            }
         }
     },
     {

@@ -60,10 +60,8 @@ def test_editor_js_exposes_provider_field_tooltips_and_upstream_limits_editor():
     assert "Requests per minute allowed per upstream key" in content
     assert "provider-routing-input" in content
     assert "provider-upstream-key-pools-input" in content
-    assert "provider-auth-input" in content
     assert "Routing Policy (JSON)" in content
     assert "Upstream Key Pools (JSON)" in content
-    assert "Auth (JSON)" in content
     assert "session_affinity" in content
     assert "payload-transforms-input" in content
     assert "Payload Transforms" in content

@@ -153,51 +153,6 @@ class FusionServiceTests(unittest.TestCase):
         self.assertEqual(request.state.llmgateway_provider, "p1")
         self.assertEqual(request.state.llmgateway_provider_model, "main")
 
-    def test_anthropic_oauth_member_uses_bearer_header(self):
-        config_loader = SimpleNamespace(
-            providers_config={
-                "anthropic": ProviderDetails(
-                    baseUrl="https://anthropic.example",
-                    type="anthropic",
-                    auth={"type": "claude_oauth", "token_env": "CLAUDE_OAUTH_TOKEN"},
-                )
-            }
-        )
-        service = FusionEnsembleService(config_loader)
-        captured_headers = []
-
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
-            captured_headers.append(headers)
-            return (
-                {
-                    "id": "msg-1",
-                    "type": "message",
-                    "role": "assistant",
-                    "model": "claude-model",
-                    "content": [{"type": "text", "text": "ok"}],
-                    "stop_reason": "end_turn",
-                    "usage": {"input_tokens": 1, "output_tokens": 1},
-                },
-                None,
-            )
-
-        with patch.dict("os.environ", {"CLAUDE_OAUTH_TOKEN": "oauth-token"}), patch(
-            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
-            side_effect=fake_make_llm_request,
-        ):
-            result = run_async(
-                service._raw_chat_call(
-                    {"provider": "anthropic", "model": "claude-model"},
-                    [{"role": "user", "content": "hi"}],
-                    http_client=None,
-                    proxy_http_clients={},
-                )
-            )
-
-        self.assertEqual(result["choices"][0]["message"]["content"], "ok")
-        self.assertEqual(captured_headers[0]["Authorization"], "Bearer oauth-token")
-        self.assertNotIn("x-api-key", captured_headers[0])
-
     def test_all_panel_members_failing_raises_502(self):
         service = self._service()
         request = SimpleNamespace(state=SimpleNamespace())

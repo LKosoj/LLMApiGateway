@@ -1143,8 +1143,9 @@ async def save_providers_structured(request: Request, payload: StructuredProvide
             config_loader.operation_rules,
         )
     except ValidationError as ve:
-        logging.error(f"Validation error saving {providers_path.name}: {ve.errors()}", exc_info=False)
-        return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
+        errors = ve.errors(include_context=False)
+        logging.error(f"Validation error saving {providers_path.name}: {errors}", exc_info=False)
+        return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": errors})
     except ValueError as e:
         logging.error(f"Validation error saving {providers_path.name}: {e}", exc_info=False)
         raise HTTPException(status_code=400, detail=str(e))

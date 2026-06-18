@@ -12,7 +12,6 @@ from llm_gateway_core.services.upstream_routing_state import (
     UpstreamQuotaLimits,
     UpstreamRoutingState,
     fingerprint_api_key,
-    managed_oauth_fingerprint,
 )
 
 
@@ -167,45 +166,6 @@ def _build_affinity_chat_config_loader() -> Mock:
         SimpleNamespace(id="a", apikey="POOL_SECRET_A", priority=0, enabled=True),
         SimpleNamespace(id="b", apikey="POOL_SECRET_B", priority=0, enabled=True),
     ]
-    return loader
-
-
-def _build_oauth_chat_config_loader() -> Mock:
-    loader = Mock()
-    loader.providers_config = {
-        "codex-provider": SimpleNamespace(
-            baseUrl="https://codex.example",
-            apikey=None,
-            type="openai",
-            auth=SimpleNamespace(
-                type="codex_oauth",
-                token_env="CODEX_OAUTH_TOKEN",
-                token_file=None,
-            ),
-            upstream_key_pools={},
-            models=None,
-        )
-    }
-    loader.fallback_rules = {
-        "gateway-model": {
-            "fallback_models": [
-                {
-                    "provider": "codex-provider",
-                    "model": "codex-model",
-                    "use_provider_order_as_fallback": False,
-                },
-            ],
-            "rotate_models": False,
-            "dynamic_penalty": False,
-        }
-    }
-    loader.operation_rules = {}
-    loader.model_rules = {}
-    loader.load_providers.return_value = loader.providers_config
-    loader.load_fallback_rules.return_value = loader.fallback_rules
-    loader.load_model_rules.return_value = loader.model_rules
-    loader.load_operation_rules.return_value = loader.operation_rules
-    loader.validate_fallback_operation_consistency.return_value = None
     return loader
 
 
@@ -372,37 +332,6 @@ class UpstreamRoutingStateTests(unittest.TestCase):
                 ("healthy", "cheap-model"),
             ],
         )
-
-    def test_order_rules_by_penalty_uses_managed_oauth_fingerprint(self):
-        clock = _Clock()
-        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
-        codex_provider = SimpleNamespace(
-            auth=SimpleNamespace(type="codex_oauth", credential_id="codex-main"),
-            upstream_key_pools={},
-            apikey=None,
-        )
-        providers_config = {
-            "codex": codex_provider,
-            "healthy": _provider_config("sk-healthy-secret"),
-        }
-        rules = [
-            {"provider": "codex", "model": "expensive-model"},
-            {"provider": "healthy", "model": "cheap-model"},
-        ]
-
-        state.record_failure(
-            "codex",
-            "expensive-model",
-            managed_oauth_fingerprint("codex", codex_provider),
-            _UpstreamError(),
-            temporary=True,
-            apply_penalty=True,
-        )
-
-        ordered = state.order_rules_by_penalty(rules, providers_config)
-
-        self.assertEqual(ordered[0]["provider"], "healthy")
-        self.assertEqual(ordered[1]["provider"], "codex")
 
     def test_order_rules_by_penalty_uses_rule_upstream_key_pool_only(self):
         clock = _Clock()
@@ -712,16 +641,6 @@ class UpstreamRoutingStateTests(unittest.TestCase):
         self.assertEqual(make_llm_request.await_args_list[0].args[1], "https://first.example/chat/completions")
         downstream_payload = make_llm_request.await_args_list[0].args[3]
         self.assertEqual(downstream_payload["model"], "first-model")
-
-    def test_chat_uses_codex_oauth_bearer_token(self):
-        with patch.dict("os.environ", {"CODEX_OAUTH_TOKEN": "codex-access-token"}):
-            _response, make_llm_request = _post_chat_with_loader(_build_oauth_chat_config_loader())
-
-        headers = make_llm_request.await_args_list[0].args[2]
-        self.assertEqual(headers["Authorization"], "Bearer codex-access-token")
-        downstream_payload = make_llm_request.await_args_list[0].args[3]
-        self.assertEqual(downstream_payload["model"], "codex-model")
-
 
 if __name__ == "__main__":
     unittest.main()

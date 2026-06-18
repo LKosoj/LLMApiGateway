@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 
@@ -111,31 +111,6 @@ class ProviderModelsServiceTests(unittest.TestCase):
 
         self.assertEqual(models, ["model-a"])
         self.assertEqual(http_client.get.await_count, 1)
-
-    def test_anthropic_oauth_uses_bearer_header_when_fetching_models(self):
-        http_client = Mock()
-        http_client.get = AsyncMock(
-            return_value=httpx.Response(
-                200,
-                json={"data": [{"id": "claude-model"}]},
-                request=httpx.Request("GET", "https://anthropic.example/v1/models"),
-            )
-        )
-        service = ProviderModelsService(ttl_seconds=900, time_func=lambda: 0.0)
-        provider_config = ProviderDetails(
-            baseUrl="https://anthropic.example",
-            type="anthropic",
-            auth={"type": "claude_oauth", "token_env": "CLAUDE_OAUTH_TOKEN"},
-        )
-
-        with patch.dict("os.environ", {"CLAUDE_OAUTH_TOKEN": "oauth-token"}):
-            models = run_async(service.get_models("anthropic", provider_config, http_client))
-
-        self.assertEqual(models, ["claude-model"])
-        headers = http_client.get.await_args.kwargs["headers"]
-        self.assertEqual(headers["Authorization"], "Bearer oauth-token")
-        self.assertNotIn("x-api-key", headers)
-
 
 class ProviderExplicitModelsTests(unittest.TestCase):
     def _config(self, available_models):

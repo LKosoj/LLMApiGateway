@@ -53,8 +53,6 @@ class Settings(BaseSettings):
     log_chat_messages: bool = os.getenv("LOG_CHAT_ENABLED", "false").lower() == "true"
     log_fallback_full_messages: bool = os.getenv("LOG_FALLBACK_FULL_MESSAGES", "false").lower() == "true"
     routing_diagnostic_headers: bool = _get_bool_env("ROUTING_DIAGNOSTIC_HEADERS", False)
-    oauth_credential_encryption_key: str | None = os.getenv("OAUTH_CREDENTIAL_ENCRYPTION_KEY") or None
-    oauth_refresh_skew_seconds: int = _get_positive_int_env("OAUTH_REFRESH_SKEW_SECONDS", 300)
 
     # Brute-force protection: block a client IP after repeated failed
     # authentications (key guessing). Counts consecutive auth_invalid rejections
