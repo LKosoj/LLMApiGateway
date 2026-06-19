@@ -27,6 +27,7 @@ DEFAULT_TOKENS_USAGE = {
 TOKEN_RATE_SCALE = 1_000_000
 FALLBACK_USAGE_SOURCE = "estimate_fallback"
 REQUEST_TITLE_HEADER = "x-title"
+UPSTREAM_COST_PRESENT_KEY = "_upstream_cost_present"
 
 
 @dataclass(frozen=True)
@@ -182,6 +183,49 @@ def _model_cost_rates_from_registry(
     return _coerce_model_cost_rates(registry.get((provider, model)))
 
 
+def calculate_model_cost_usd(
+    *,
+    prompt_tokens: int,
+    completion_tokens: int,
+    rates: ModelCostRates | tuple[float, float] | Mapping[str, Any] | None,
+) -> float | None:
+    model_rates = _coerce_model_cost_rates(rates)
+    if model_rates is None:
+        return None
+
+    prompt = _as_non_negative_int(prompt_tokens)
+    completion = _as_non_negative_int(completion_tokens)
+    return (
+        prompt * model_rates.input_rate
+        + completion * model_rates.output_rate
+    ) / TOKEN_RATE_SCALE
+
+
+def apply_rate_based_cost(
+    tokens_usage: dict[str, Any],
+    cost_rate_registry: Mapping[tuple[str, str], Any] | None,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> None:
+    if tokens_usage.get(UPSTREAM_COST_PRESENT_KEY):
+        return
+
+    target_provider = provider or _string_value(tokens_usage.get("provider"))
+    target_model = model or _string_value(tokens_usage.get("model"))
+    estimated_cost = calculate_model_cost_usd(
+        prompt_tokens=tokens_usage.get("prompt_tokens") or 0,
+        completion_tokens=tokens_usage.get("completion_tokens") or 0,
+        rates=_model_cost_rates_from_registry(
+            cost_rate_registry,
+            target_provider,
+            target_model,
+        ),
+    )
+    if estimated_cost is not None:
+        tokens_usage["cost"] = estimated_cost
+
+
 def _estimate_cost_saved(
     *,
     prompt_tokens: int,
@@ -190,21 +234,18 @@ def _estimate_cost_saved(
     fallback_rate: ModelCostRates | tuple[float, float] | Mapping[str, Any] | None,
 ) -> float | None:
     """Estimate fallback savings using separate input/output per-million rates."""
-    primary_rates = _coerce_model_cost_rates(primary_rate)
-    fallback_rates = _coerce_model_cost_rates(fallback_rate)
-    if primary_rates is None or fallback_rates is None:
+    primary_cost = calculate_model_cost_usd(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        rates=primary_rate,
+    )
+    fallback_cost = calculate_model_cost_usd(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        rates=fallback_rate,
+    )
+    if primary_cost is None or fallback_cost is None:
         return None
-
-    prompt = _as_non_negative_int(prompt_tokens)
-    completion = _as_non_negative_int(completion_tokens)
-    primary_cost = (
-        prompt * primary_rates.input_rate
-        + completion * primary_rates.output_rate
-    ) / TOKEN_RATE_SCALE
-    fallback_cost = (
-        prompt * fallback_rates.input_rate
-        + completion * fallback_rates.output_rate
-    ) / TOKEN_RATE_SCALE
     return primary_cost - fallback_cost
 
 
@@ -350,6 +391,7 @@ def extract_tokens_usage(
                 cost_value = _as_non_negative_finite_float(usage["cost"])
                 if cost_value is not None:
                     tokens_usage["cost"] = cost_value
+                    tokens_usage[UPSTREAM_COST_PRESENT_KEY] = True
             if "reasoning_tokens" in completion_tokens_details:
                 tokens_usage["reasoning_tokens"] = _as_non_negative_int(
                     completion_tokens_details["reasoning_tokens"]

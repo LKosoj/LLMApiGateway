@@ -309,6 +309,13 @@
     "gateway_model_name": "llmgateway/text",
     "fallback_models": [
       {
+        "provider": "openai_codex",
+        "model": "gpt-5.5",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "minimax",
         "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
@@ -331,13 +338,6 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
-      },
-      {
-        "provider": "gemini",
-        "model": "models/gemini-3.5-flash",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
       },
       {
         "provider": "nvidia",

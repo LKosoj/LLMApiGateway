@@ -5,6 +5,8 @@ import unittest
 
 from llm_gateway_core.utils.usage_tracking import (
     ModelCostRates,
+    apply_rate_based_cost,
+    calculate_model_cost_usd,
     _estimate_cost_saved,
     _split_response_text,
     backfill_zero_token_counts,
@@ -349,6 +351,63 @@ class BackfillZeroTokenCountsTests(unittest.TestCase):
 
 
 class CostSavedTests(unittest.TestCase):
+    def test_calculate_model_cost_usd_uses_per_million_rates(self):
+        cost = calculate_model_cost_usd(
+            prompt_tokens=1_000_000,
+            completion_tokens=500_000,
+            rates=ModelCostRates(input_rate=1, output_rate=2),
+        )
+
+        self.assertEqual(cost, 2.0)
+
+    def test_apply_rate_based_cost_when_upstream_cost_is_missing(self):
+        registry = build_model_cost_rate_registry({
+            "provider": {
+                "models": {
+                    "model": {
+                        "input_rate": 10,
+                        "output_rate": 30,
+                    },
+                },
+            },
+        })
+        tokens_usage = {
+            "prompt_tokens": 100,
+            "completion_tokens": 1000,
+            "provider": "provider",
+            "model": "model",
+            "cost": 0,
+        }
+
+        apply_rate_based_cost(tokens_usage, registry)
+
+        self.assertAlmostEqual(tokens_usage["cost"], 0.031, places=6)
+
+    def test_apply_rate_based_cost_preserves_explicit_upstream_zero(self):
+        registry = build_model_cost_rate_registry({
+            "provider": {
+                "models": {
+                    "model": {
+                        "input_rate": 10,
+                        "output_rate": 30,
+                    },
+                },
+            },
+        })
+        tokens_usage = extract_tokens_usage({
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 1000,
+                "cost": 0,
+            },
+            "provider": "provider",
+            "model": "model",
+        })
+
+        apply_rate_based_cost(tokens_usage, registry)
+
+        self.assertEqual(tokens_usage["cost"], 0)
+
     def test_estimate_cost_saved_with_separate_input_output_rates(self):
         saved = _estimate_cost_saved(
             prompt_tokens=100,

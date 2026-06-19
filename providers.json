@@ -8,7 +8,17 @@
   {
     "openai_codex": {
       "baseUrl": "http://185.159.108.56:3001/openai-codex-oauth/v1",
-      "apikey": "${APIKEY_OPENAI_CODEX}"
+      "apikey": "${APIKEY_OPENAI_CODEX}",
+      "models": {
+        "gpt-5.3-codex-spark": {
+          "input_rate": 1.75,
+          "output_rate": 14.0
+        },
+        "gpt-5.5": {
+          "input_rate": 5.0,
+          "output_rate": 30.0
+        }
+      }
     }
   },
   {
@@ -26,13 +36,29 @@
   {
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api/v1",
-      "apikey": "${APIKEY_OPENROUTER}"
+      "apikey": "${APIKEY_OPENROUTER}",
+      "models": {
+        "openai/gpt-oss-120b:free": {
+          "input_rate": 0.039,
+          "output_rate": 0.18
+        }
+      }
     }
   },
   {
     "nvidia": {
       "baseUrl": "https://integrate.api.nvidia.com/v1",
-      "apikey": "${APIKEY_NVIDIA}"
+      "apikey": "${APIKEY_NVIDIA}",
+      "models": {
+        "nvidia/nemotron-3-ultra-550b-a55b": {
+          "input_rate": 0.5,
+          "output_rate": 2.2
+        },
+        "z-ai/glm-5.1": {
+          "input_rate": 0.98,
+          "output_rate": 3.08
+        }
+      }
     }
   },
   {
@@ -48,7 +74,17 @@
       "available_models": [
         "glm-5.2",
         "glm-5-turbo"
-      ]
+      ],
+      "models": {
+        "glm-5-turbo": {
+          "input_rate": 1.2,
+          "output_rate": 4.0
+        },
+        "glm-5.2": {
+          "input_rate": 1.2,
+          "output_rate": 4.1
+        }
+      }
     }
   },
   {
@@ -67,13 +103,37 @@
     "kimicode": {
       "baseUrl": "https://agent-gw.kimi.com/coding",
       "apikey": "${APIKEY_KIMI_CODE}",
-      "type": "anthropic"
+      "type": "anthropic",
+      "models": {
+        "kimi-for-coding": {
+          "input_rate": 0.74,
+          "output_rate": 3.5
+        }
+      }
     }
   },
   {
     "aitunnel": {
       "baseUrl": "https://api.aitunnel.ru/v1/",
-      "apikey": "${APIKEY_AITUNNEL}"
+      "apikey": "${APIKEY_AITUNNEL}",
+      "models": {
+        "deepseek-v4-flash": {
+          "input_rate": 0.09,
+          "output_rate": 0.18
+        },
+        "deepseek-v4-pro": {
+          "input_rate": 0.435,
+          "output_rate": 0.87
+        },
+        "gemini-3.1-flash-image-preview": {
+          "input_rate": 0.5,
+          "output_rate": 3.0
+        },
+        "qwen3-235b-a22b-2507": {
+          "input_rate": 0.09,
+          "output_rate": 0.1
+        }
+      }
     }
   },
   {
@@ -92,13 +152,29 @@
   {
     "alibaba": {
       "baseUrl": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
-      "apikey": "${APIKEY_ALIBABA}"
+      "apikey": "${APIKEY_ALIBABA}",
+      "models": {
+        "qwen3.7-max": {
+          "input_rate": 1.25,
+          "output_rate": 3.75
+        }
+      }
     }
   },
   {
     "freemodel": {
       "baseUrl": "https://vip-sg.freemodel.dev/v1",
-      "apikey": "${APIKEY_FREEMODEL}"
+      "apikey": "${APIKEY_FREEMODEL}",
+      "models": {
+        "gpt-5.4-mini": {
+          "input_rate": 0.75,
+          "output_rate": 4.5
+        },
+        "gpt-5.5": {
+          "input_rate": 5.0,
+          "output_rate": 30.0
+        }
+      }
     }
   },
   {
@@ -111,13 +187,29 @@
   {
     "gem": {
       "baseUrl": "http://localhost:8081/v1",
-      "apikey": "${APIKEY_GEM}"
+      "apikey": "${APIKEY_GEM}",
+      "models": {
+        "gemini-3.5-flash": {
+          "input_rate": 1.5,
+          "output_rate": 9.0
+        },
+        "gemini-3.5-flash-thinking": {
+          "input_rate": 1.5,
+          "output_rate": 9.0
+        }
+      }
     }
   },
   {
     "minimax": {
       "baseUrl": "https://api.minimax.io/v1",
-      "apikey": "${APIKEY_MINIMAX}"
+      "apikey": "${APIKEY_MINIMAX}",
+      "models": {
+        "MiniMax-M3": {
+          "input_rate": 0.3,
+          "output_rate": 1.2
+        }
+      }
     }
   }
 ]

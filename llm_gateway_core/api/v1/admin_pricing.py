@@ -18,7 +18,11 @@ from pydantic import BaseModel, Field
 from ...config.paths import STATIC_DIR
 from ...middleware.auth import ROLE_MASTER
 from ...utils.html_cache import get_template
-from ...utils.usage_tracking import ModelCostRates, build_model_cost_rate_registry
+from ...utils.usage_tracking import (
+    ModelCostRates,
+    build_model_cost_rate_registry,
+    calculate_model_cost_usd,
+)
 
 # Re-use the atomic write and JSON5 comment helpers from the rules editor.
 from .rules_editor import _backup_if_has_comments, _write_text_atomically
@@ -246,10 +250,16 @@ async def calculate_cost(
             detail=f"Model '{payload.model}' for provider '{payload.provider}' not found in pricing registry",
         )
 
-    cost = (
-        payload.prompt_tokens * rates.input_rate
-        + payload.completion_tokens * rates.output_rate
-    ) / 1_000_000
+    cost = calculate_model_cost_usd(
+        prompt_tokens=payload.prompt_tokens,
+        completion_tokens=payload.completion_tokens,
+        rates=rates,
+    )
+    if cost is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Invalid pricing for model '{payload.model}' and provider '{payload.provider}'",
+        )
 
     return CalculateResponse(
         cost_usd=cost,

@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fastapi import FastAPI, Request
@@ -297,6 +298,95 @@ class ChatUsageTrackingTests(unittest.TestCase):
         self.assertEqual(call_args["provider"], "openai")
         self.assertEqual(call_args["model"], "gpt-4")
         self.assertGreaterEqual(call_args["duration_ms"], 0)
+
+    def test_usage_stats_calculate_cost_from_local_rates_when_upstream_omits_cost(self):
+        app = FastAPI()
+        app.state.config_loader = SimpleNamespace(
+            providers_config={
+                "openai": {
+                    "models": {
+                        "gpt-4": {
+                            "input_rate": 1000,
+                            "output_rate": 2000,
+                        },
+                    },
+                },
+            }
+        )
+        app.middleware("http")(chat_logging.log_chat_completions)
+
+        @app.post("/v1/chat/completions")
+        async def completions(request: Request):
+            request.state.llmgateway_provider = "openai"
+            request.state.llmgateway_provider_model = "gpt-4"
+            return JSONResponse(
+                content={
+                    "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 4,
+                        "total_tokens": 7,
+                    },
+                    "model": "gpt-4",
+                }
+            )
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with patch.object(chat_logging, "write_log") as write_log_mock:
+                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                    with TestClient(app) as client:
+                        response = client.post("/v1/chat/completions", json={"model": "demo-model"})
+
+        self.assertEqual(response.status_code, 200)
+        write_log_mock.assert_not_called()
+        insert_usage_mock.assert_called_once()
+        call_args = insert_usage_mock.call_args[0][0]
+        self.assertAlmostEqual(call_args["cost"], 0.011, places=6)
+
+    def test_usage_stats_preserve_explicit_upstream_zero_cost(self):
+        app = FastAPI()
+        app.state.config_loader = SimpleNamespace(
+            providers_config={
+                "openai": {
+                    "models": {
+                        "gpt-4": {
+                            "input_rate": 1000,
+                            "output_rate": 2000,
+                        },
+                    },
+                },
+            }
+        )
+        app.middleware("http")(chat_logging.log_chat_completions)
+
+        @app.post("/v1/chat/completions")
+        async def completions(request: Request):
+            request.state.llmgateway_provider = "openai"
+            request.state.llmgateway_provider_model = "gpt-4"
+            return JSONResponse(
+                content={
+                    "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 4,
+                        "total_tokens": 7,
+                        "cost": 0,
+                    },
+                    "model": "gpt-4",
+                }
+            )
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with patch.object(chat_logging, "write_log") as write_log_mock:
+                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                    with TestClient(app) as client:
+                        response = client.post("/v1/chat/completions", json={"model": "demo-model"})
+
+        self.assertEqual(response.status_code, 200)
+        write_log_mock.assert_not_called()
+        insert_usage_mock.assert_called_once()
+        call_args = insert_usage_mock.call_args[0][0]
+        self.assertEqual(call_args["cost"], 0)
 
     def test_usage_stats_are_recorded_for_responses_endpoint(self):
         app = FastAPI()

@@ -281,7 +281,7 @@ Rates are stored under the `models` key of each provider in `providers.json`:
 ]
 ```
 
-Units are **USD per 1 million tokens**. After saving, the configuration is hot-reloaded without restarting the server.
+Units are **USD per 1 million tokens**. After saving, the configuration is hot-reloaded without restarting the server. If the upstream response does not include `usage.cost`, the gateway calculates `cost` locally from the current model rates and the actual prompt/completion token counts; if upstream explicitly returns `usage.cost`, that value remains the source of truth.
 
 API endpoints (master-only):
 - `GET /v1/admin/pricing` — list all (provider, model) pairs with rates.

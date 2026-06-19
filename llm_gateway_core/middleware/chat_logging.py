@@ -23,7 +23,10 @@ from ..services.active_requests import update_active_request
 from ..services.upstream_routing_state import UpstreamRoutingState
 from ..utils.log_redaction import redact_headers_for_log, redact_request_body_text
 from ..utils.usage_tracking import (
+    UPSTREAM_COST_PRESENT_KEY,
+    apply_rate_based_cost,
     backfill_zero_token_counts,
+    build_model_cost_rate_registry,
     enrich_tokens_usage as enrich_usage_metadata,
     extract_request_x_title,
     extract_tokens_usage,
@@ -111,6 +114,7 @@ def _decode_body(body_bytes: bytes, headers: dict) -> str:
 
 def record_tokens_usage(tokens_usage):
     try:
+        tokens_usage.pop(UPSTREAM_COST_PRESENT_KEY, None)
         usd_budget_reserved = bool(tokens_usage.pop("_usd_budget_reserved", False))
         key_tpm_limit = tokens_usage.pop("_key_tpm_limit", None)
         # Ensure total_tokens is recalculated before saving
@@ -199,7 +203,13 @@ def write_log(req_headers, req_body_str, llm_response_accum, tokens_usage):
         logger.error(f"Failed to write chat log: {e}", exc_info=True)
 
 
-def record_chat_observability(req_headers, req_body_str, llm_response_accum, tokens_usage):
+def record_chat_observability(
+    req_headers,
+    req_body_str,
+    llm_response_accum,
+    tokens_usage,
+    cost_rate_registry=None,
+):
     if backfill_zero_token_counts(tokens_usage, req_body_str, llm_response_accum):
         logger.warning(
             "Upstream did not return usage (possibly interrupted stream); "
@@ -212,10 +222,35 @@ def record_chat_observability(req_headers, req_body_str, llm_response_accum, tok
             tokens_usage.get("total_tokens", 0),
         )
 
+    apply_rate_based_cost(tokens_usage, cost_rate_registry)
     record_tokens_usage(tokens_usage)
 
     if settings.log_chat_messages:
         write_log(req_headers, req_body_str, llm_response_accum, tokens_usage)
+
+
+def _record_chat_observability_with_rates(
+    req_headers,
+    req_body_str,
+    llm_response_accum,
+    tokens_usage,
+    cost_rate_registry,
+) -> None:
+    if cost_rate_registry is None:
+        record_chat_observability(
+            req_headers,
+            req_body_str,
+            llm_response_accum,
+            tokens_usage,
+        )
+        return
+    record_chat_observability(
+        req_headers,
+        req_body_str,
+        llm_response_accum,
+        tokens_usage,
+        cost_rate_registry,
+    )
 
 
 def _log_rtk_compression_stats(request: Request | None) -> None:
@@ -379,6 +414,20 @@ def _record_upstream_tokens_for_request(request: Request | None, tokens_usage: d
     )
 
 
+def _cost_rate_registry_from_request(request: Request | None):
+    if request is None:
+        return None
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    if app_state is None:
+        return None
+    registry = getattr(app_state, "cost_rate_registry", None)
+    if isinstance(registry, dict):
+        return registry or None
+    config_loader = getattr(app_state, "config_loader", None)
+    registry = build_model_cost_rate_registry(getattr(config_loader, "providers_config", None))
+    return registry or None
+
+
 class ChunkProcessor:
     """Asyncio-based stream chunk processor.
 
@@ -454,11 +503,12 @@ class ChunkProcessor:
         _merge_request_usage_tracker(self.tokens_usage, self.request)
         _record_upstream_tokens_for_request(self.request, self.tokens_usage)
         _log_rtk_compression_stats(self.request)
-        record_chat_observability(
+        _record_chat_observability_with_rates(
             self.req_headers,
             self.req_body_str,
             self.llm_response_accum,
             self.tokens_usage,
+            _cost_rate_registry_from_request(self.request),
         )
         self._log_written = True
 
@@ -691,7 +741,7 @@ class ChunkProcessor:
                         usage_payload = {"usage": usage_candidate}
                 
                 if usage_candidate:
-                    new_usage = get_token_usage(usage_payload)
+                    new_usage = get_token_usage(usage_payload, include_internal=True)
                     for key, value in new_usage.items():
                         # Only update if the new value is non-zero
                         # This prevents zeroing out cumulative counts in multi-event streams (Anthropic)
@@ -912,7 +962,7 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
                     response_data = json.loads(response.body.decode("utf-8"))
                     if isinstance(response_data, dict):
                         llm_response_accum = _extract_response_text_for_log(response_data)
-                        tokens_usage = get_token_usage(response_data)
+                        tokens_usage = get_token_usage(response_data, include_internal=True)
                     tokens_usage = enrich_tokens_usage(tokens_usage, request, requested_gateway_model, operation)
                 except Exception as ex:
                     logger.error(f"ChatLogging: error processing non-streaming body: {ex}", exc_info=True)
@@ -929,11 +979,12 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
             # Write log file immediately for non-streaming responses
             # Run observability tasks in a thread to avoid blocking the event loop
             await anyio.to_thread.run_sync(
-                record_chat_observability,
+                _record_chat_observability_with_rates,
                 req_headers,
                 req_body_str,
                 llm_response_accum,
-                tokens_usage
+                tokens_usage,
+                _cost_rate_registry_from_request(request),
             )
             _mark_usd_budget_reservation_finalized(request)
 
@@ -943,8 +994,11 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
 
     return response
 
-def get_token_usage(chunk_data):
+def get_token_usage(chunk_data, *, include_internal: bool = False):
     """
     Extracts token usage information from the chunk data.
     """
-    return extract_tokens_usage(chunk_data)
+    tokens_usage = extract_tokens_usage(chunk_data)
+    if not include_internal:
+        tokens_usage.pop(UPSTREAM_COST_PRESENT_KEY, None)
+    return tokens_usage
