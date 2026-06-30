@@ -15,10 +15,13 @@ os.environ.setdefault("LLMGATEWAY_LOG_DIR", _temp_log_dir)
 _temp_config_dir = Path(tempfile.mkdtemp(prefix="llmgateway_test_config_"))
 _empty_fusion_rules = _temp_config_dir / "models_fusion_rules.json"
 _empty_model_rules = _temp_config_dir / "models_model_rules.json"
+_empty_router_rules = _temp_config_dir / "models_router_rules.json"
 _empty_fusion_rules.write_text("[]\n", encoding="utf-8")
 _empty_model_rules.write_text("{}\n", encoding="utf-8")
+_empty_router_rules.write_text("[]\n", encoding="utf-8")
 os.environ["FUSION_RULES_FILENAME"] = str(_empty_fusion_rules)
 os.environ["MODEL_RULES_FILENAME"] = str(_empty_model_rules)
+os.environ["ROUTER_RULES_FILENAME"] = str(_empty_router_rules)
 
 
 @pytest.fixture(autouse=True)

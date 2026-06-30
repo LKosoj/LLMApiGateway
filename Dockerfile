@@ -67,7 +67,7 @@ COPY . /app/
 RUN rm -rf /app/docker && \
     rm -f /app/.env /app/providers.json /app/models_fallback_rules.json \
     /app/models_operation_rules.json /app/models_fusion_rules.json \
-    /app/models_model_rules.json
+    /app/models_router_rules.json /app/models_model_rules.json
 
 # Copy the healthcheck and entrypoint scripts
 COPY docker/healthcheck.py /app/

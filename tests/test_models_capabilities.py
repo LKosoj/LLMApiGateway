@@ -230,6 +230,13 @@ class ModelsCapabilitiesTests(unittest.TestCase):
         fake_http_client.get = AsyncMock(return_value=_FallbackModelsResponse())
         fake_http_client.aclose = AsyncMock()
         self.config_loader.load_fusion_rules = Mock(return_value={})
+        self.config_loader.router_rules = {
+            "gateway/router": {
+                "selector_model": "gateway/chat-only",
+                "targets": [{"type": "gateway_model", "model": "gateway/chat-only"}],
+            }
+        }
+        self.config_loader.load_router_rules = Mock(return_value=self.config_loader.router_rules)
 
         with ExitStack() as stack:
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
@@ -255,6 +262,8 @@ class ModelsCapabilitiesTests(unittest.TestCase):
         models_by_id = {item["id"]: item for item in response_json["data"]}
         self.assertEqual(models_by_id["gateway/chat-only"]["capabilities"], ["chat"])
         self.assertEqual(models_by_id["gateway/chat-only"]["type"], "text")
+        self.assertEqual(models_by_id["gateway/router"]["capabilities"], ["chat"])
+        self.assertEqual(models_by_id["gateway/router"]["type"], "text")
         self.assertEqual(
             models_by_id["gateway/chat-only"]["architecture"],
             {
@@ -386,6 +395,8 @@ class ModelsCapabilitiesTests(unittest.TestCase):
         )
         self.assertEqual(models_by_id["gateway/chat-only"]["gateway_type"], "text")
         self.assertEqual(models_by_id["gateway/chat-only"]["capabilities"], ["chat"])
+        self.assertEqual(models_by_id["gateway/router"]["gateway_type"], "text")
+        self.assertEqual(models_by_id["gateway/router"]["capabilities"], ["chat"])
         self.assertEqual(models_by_id["gateway/image-edit-only"]["gateway_type"], "image")
         self.assertEqual(models_by_id["gateway/image-edit-only"]["capabilities"], ["images"])
         self.assertEqual(models_by_id["gateway/image-edit-only"]["image_operations"], ["edit"])

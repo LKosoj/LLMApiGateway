@@ -11,10 +11,12 @@ class DockerComposeEditorMountsTests(unittest.TestCase):
         self.assertIn("./providers.json:/app/providers.json", compose_text)
         self.assertIn("./models_fallback_rules.json:/app/models_fallback_rules.json", compose_text)
         self.assertIn("./models_operation_rules.json:/app/models_operation_rules.json", compose_text)
+        self.assertIn("./models_router_rules.json:/app/models_router_rules.json", compose_text)
         self.assertIn("./models_model_rules.json:/app/models_model_rules.json", compose_text)
         self.assertNotIn("./providers.json:/app/providers.json:ro", compose_text)
         self.assertNotIn("./models_fallback_rules.json:/app/models_fallback_rules.json:ro", compose_text)
         self.assertNotIn("./models_operation_rules.json:/app/models_operation_rules.json:ro", compose_text)
+        self.assertNotIn("./models_router_rules.json:/app/models_router_rules.json:ro", compose_text)
         self.assertNotIn("./models_model_rules.json:/app/models_model_rules.json:ro", compose_text)
 
     def test_environment_example_values_are_clean_and_documented_with_yaml_comments(self):
@@ -36,6 +38,12 @@ class DockerComposeEditorMountsTests(unittest.TestCase):
 
         self.assertIn('/app/models_model_rules.json', entrypoint_text)
         self.assertIn("echo '{}'", entrypoint_text)
+
+    def test_entrypoint_creates_empty_router_rules_file_when_missing(self):
+        entrypoint_text = ENTRYPOINT.read_text(encoding="utf-8")
+
+        self.assertIn('/app/models_router_rules.json', entrypoint_text)
+        self.assertIn("echo '[]'", entrypoint_text)
 
 
 if __name__ == "__main__":

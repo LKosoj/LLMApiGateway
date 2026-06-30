@@ -226,7 +226,7 @@
       "gateway_model_name": "llmgateway/flux.image-generation",
       "routes": [
         {
-          "provider": "aitunnel",
+          "provider": "openai_codex",
           "model": "gpt-image-2",
           "target_path": "/images/edits",
           "custom_headers": {},
@@ -242,7 +242,7 @@
       "gateway_model_name": "llmgateway/flux.image-edit",
       "routes": [
         {
-          "provider": "aitunnel",
+          "provider": "openai_codex",
           "model": "gpt-image-2",
           "target_path": "/images/edits",
           "custom_headers": {},
@@ -309,7 +309,7 @@
       "gateway_model_name": "llmgateway/gpt-image-2",
       "routes": [
         {
-          "provider": "aitunnel",
+          "provider": "openai_codex",
           "model": "gpt-image-2",
           "target_path": "/images/edits",
           "custom_headers": {},
@@ -318,7 +318,7 @@
           }
         },
         {
-          "provider": "openai_codex",
+          "provider": "aitunnel",
           "model": "gpt-image-2",
           "target_path": "/images/edits",
           "custom_headers": {},

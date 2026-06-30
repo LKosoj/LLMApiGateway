@@ -35,6 +35,11 @@ document.addEventListener('DOMContentLoaded', function () {
     const addFusionButton = document.getElementById('addFusionButton');
     const fusionList = document.getElementById('fusionList');
     const fusionEmptyState = document.getElementById('fusionEmptyState');
+    const tabRouter = document.getElementById('tabRouter');
+    const editorContainerRouter = document.getElementById('editor-container-router');
+    const addRouterButton = document.getElementById('addRouterButton');
+    const routerList = document.getElementById('routerList');
+    const routerEmptyState = document.getElementById('routerEmptyState');
     const addProviderButton = document.getElementById('addProviderButton');
     const providersList = document.getElementById('providersList');
     const providersEmptyState = document.getElementById('providersEmptyState');
@@ -93,6 +98,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let originalWebContent = null;
     let originalProvidersContent = null;
     let originalFusionContent = null;
+    let originalRouterContent = null;
     let originalModelRulesContent = null;
     let availableProviders = [];
     let embeddingRules = [];
@@ -113,6 +119,7 @@ document.addEventListener('DOMContentLoaded', function () {
         web_search: [],
         web_read: [],
     };
+    let routerFallbackChains = {};
     const providerModelsCache = new Map();
     const providerModelsRequests = new Map();
     let fallbackEvalPollTimer = null;
@@ -429,6 +436,8 @@ document.addEventListener('DOMContentLoaded', function () {
             saveButton.textContent = 'Save Web Services';
         } else if (activeEditor === 'fusion') {
             saveButton.textContent = 'Save Fusion Models';
+        } else if (activeEditor === 'router') {
+            saveButton.textContent = 'Save Router Models';
         } else if (activeEditor === 'model-rules') {
             saveButton.textContent = 'Save Model Rules';
         } else if (activeEditor === 'openrouter-free') {
@@ -490,6 +499,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function refreshFusionEmptyState() {
         fusionEmptyState.hidden = fusionList.children.length !== 0;
+    }
+
+    function refreshRouterEmptyState() {
+        routerEmptyState.hidden = routerList.children.length !== 0;
     }
 
     function createFieldGroup(labelText, inputElement, className) {
@@ -2703,6 +2716,298 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (error) {
             console.error('Error saving Fusion:', error);
             renderMessage('error', `Error saving Fusion: ${error.message}`);
+        } finally {
+            saveButton.disabled = false;
+        }
+    }
+
+    function setRouterFallbackIndexOptions(select, gatewayModel, selectedIndex) {
+        const chain = Array.isArray(routerFallbackChains[gatewayModel]) ? routerFallbackChains[gatewayModel] : [];
+        const currentValue = selectedIndex !== undefined && selectedIndex !== null ? String(selectedIndex) : '';
+        select.textContent = '';
+        const placeholderOption = document.createElement('option');
+        placeholderOption.value = '';
+        placeholderOption.textContent = 'Select fallback entry';
+        select.appendChild(placeholderOption);
+
+        chain.forEach(entry => {
+            const option = document.createElement('option');
+            option.value = String(entry.index);
+            option.textContent = `${entry.index} · ${entry.provider || 'unknown'}/${entry.model || 'unknown'}`;
+            select.appendChild(option);
+        });
+
+        if (currentValue && !chain.some(entry => String(entry.index) === currentValue)) {
+            const staleOption = document.createElement('option');
+            staleOption.value = currentValue;
+            staleOption.textContent = `${currentValue} (not configured)`;
+            staleOption.dataset.stale = 'true';
+            select.appendChild(staleOption);
+        }
+        select.value = currentValue;
+    }
+
+    function buildRouterTargetRow(initialData) {
+        const data = initialData || {};
+        const row = document.createElement('div');
+        row.className = 'fallback-row router-target-row';
+
+        const fieldsGrid = document.createElement('div');
+        fieldsGrid.className = 'fallback-row-grid router-target-grid';
+
+        const typeSelect = createSelect('router-target-type-select');
+        setSelectOptions(typeSelect, ['gateway_model', 'fallback_entry'], 'Choose target type', data.type || 'gateway_model');
+
+        const gatewayTargetSelect = createSelect('router-gateway-target-select');
+        setModelSelectOptions(gatewayTargetSelect, gatewayModelCatalog.chat, data.model || '');
+        const gatewayTargetGroup = createFieldGroup('Gateway Target', gatewayTargetSelect, 'router-gateway-target-field');
+        appendFieldHint(gatewayTargetGroup, 'Use the selected gateway model with its full fallback chain.');
+
+        const fallbackGatewaySelect = createSelect('router-fallback-gateway-select');
+        setModelSelectOptions(fallbackGatewaySelect, gatewayModelCatalog.chat, data.gateway_model || '');
+        const fallbackGatewayGroup = createFieldGroup('Fallback Gateway', fallbackGatewaySelect, 'router-fallback-gateway-field');
+        appendFieldHint(fallbackGatewayGroup, 'Choose which gateway fallback chain to start inside.');
+
+        const fallbackIndexSelect = createSelect('router-fallback-index-select');
+        setRouterFallbackIndexOptions(fallbackIndexSelect, data.gateway_model || '', data.index);
+        const fallbackIndexGroup = createFieldGroup('Start At Entry', fallbackIndexSelect, 'router-fallback-index-field');
+        appendFieldHint(fallbackIndexGroup, 'The selected entry is tried first, then the remaining fallback entries are tried in order.');
+
+        fieldsGrid.appendChild(createFieldGroup('Target Type', typeSelect, 'router-target-type-field'));
+        fieldsGrid.appendChild(gatewayTargetGroup);
+        fieldsGrid.appendChild(fallbackGatewayGroup);
+        fieldsGrid.appendChild(fallbackIndexGroup);
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'icon-button danger-button';
+        removeButton.textContent = 'Remove Target';
+        removeButton.addEventListener('click', () => {
+            row.remove();
+        });
+        const rowActions = document.createElement('div');
+        rowActions.className = 'fallback-row-actions';
+        rowActions.appendChild(removeButton);
+
+        const syncVisibility = () => {
+            const isFallbackEntry = typeSelect.value === 'fallback_entry';
+            gatewayTargetGroup.style.display = isFallbackEntry ? 'none' : '';
+            fallbackGatewayGroup.style.display = isFallbackEntry ? '' : 'none';
+            fallbackIndexGroup.style.display = isFallbackEntry ? '' : 'none';
+        };
+        typeSelect.addEventListener('change', syncVisibility);
+        fallbackGatewaySelect.addEventListener('change', () => {
+            setRouterFallbackIndexOptions(fallbackIndexSelect, fallbackGatewaySelect.value, '');
+        });
+        syncVisibility();
+
+        row.appendChild(fieldsGrid);
+        row.appendChild(rowActions);
+        return row;
+    }
+
+    function buildRouterCard(initialData) {
+        const data = initialData || {};
+        const card = document.createElement('section');
+        card.className = 'rule-card router-card collapsed';
+
+        const cardHeader = document.createElement('div');
+        cardHeader.className = 'rule-card-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'rule-card-title';
+        const gatewayModelInput = createTextInput('gateway-model-input', 'llmgateway/router');
+        gatewayModelInput.value = data.gateway_model_name || '';
+        titleWrap.appendChild(createFieldGroup('Gateway Model Name', gatewayModelInput, 'gateway-model-field'));
+
+        const selectorSelect = createSelect('router-selector-model-select');
+        setModelSelectOptions(selectorSelect, gatewayModelCatalog.chat, data.selector_model || '');
+        const selectorField = createFieldGroup('Selector Model', selectorSelect, 'router-selector-model-field');
+        appendFieldHint(selectorField, 'Gateway chat model that decides which configured target should handle the request.');
+        titleWrap.appendChild(selectorField);
+
+        const headerLeft = document.createElement('div');
+        headerLeft.className = 'rule-card-header-left';
+        headerLeft.appendChild(createAccordionToggle(card));
+        headerLeft.appendChild(titleWrap);
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'icon-button danger-button';
+        removeButton.textContent = 'Remove Model';
+        removeButton.addEventListener('click', () => {
+            card.remove();
+            refreshRouterEmptyState();
+        });
+
+        cardHeader.appendChild(headerLeft);
+        cardHeader.appendChild(removeButton);
+
+        const cardBody = document.createElement('div');
+        cardBody.className = 'rule-card-body';
+
+        const targetsList = document.createElement('div');
+        targetsList.className = 'fallback-list router-target-list';
+
+        const addTargetButton = document.createElement('button');
+        addTargetButton.type = 'button';
+        addTargetButton.className = 'secondary-button add-fallback-button';
+        addTargetButton.textContent = 'Add Target';
+        addTargetButton.addEventListener('click', () => {
+            targetsList.appendChild(buildRouterTargetRow({ type: 'gateway_model' }));
+        });
+
+        const targets = Array.isArray(data.targets) ? data.targets : [];
+        targets.forEach(target => {
+            targetsList.appendChild(buildRouterTargetRow(target));
+        });
+        if (targets.length === 0) {
+            targetsList.appendChild(buildRouterTargetRow({ type: 'gateway_model' }));
+        }
+
+        cardBody.appendChild(buildFusionSectionHeading('Routing targets'));
+        cardBody.appendChild(targetsList);
+        cardBody.appendChild(addTargetButton);
+        card.appendChild(cardHeader);
+        card.appendChild(cardBody);
+        return card;
+    }
+
+    function normalizeRouterTargetRow(row, gatewayModelName) {
+        const type = row.querySelector('.router-target-type-select').value.trim();
+        if (type === 'gateway_model') {
+            const model = row.querySelector('.router-gateway-target-select').value.trim();
+            if (!model) {
+                throw new Error(`Router model '${gatewayModelName}' has a gateway target without a model.`);
+            }
+            return { type, model };
+        }
+        if (type === 'fallback_entry') {
+            const gatewayModel = row.querySelector('.router-fallback-gateway-select').value.trim();
+            const indexRaw = row.querySelector('.router-fallback-index-select').value.trim();
+            if (!gatewayModel) {
+                throw new Error(`Router model '${gatewayModelName}' has a fallback-entry target without a gateway model.`);
+            }
+            if (indexRaw === '') {
+                throw new Error(`Router model '${gatewayModelName}' has a fallback-entry target without an entry index.`);
+            }
+            const index = Number.parseInt(indexRaw, 10);
+            if (!Number.isFinite(index) || index < 0) {
+                throw new Error(`Router model '${gatewayModelName}' has an invalid fallback-entry index.`);
+            }
+            return { type, gateway_model: gatewayModel, index };
+        }
+        throw new Error(`Router model '${gatewayModelName}' has unsupported target type '${type}'.`);
+    }
+
+    function normalizeRouterCardForSave(card) {
+        const gatewayModelName = card.querySelector('.gateway-model-input').value.trim();
+        if (!gatewayModelName) {
+            throw new Error('Each router model must have a gateway model name.');
+        }
+
+        const selectorModel = card.querySelector('.router-selector-model-select').value.trim();
+        if (!selectorModel) {
+            throw new Error(`Router model '${gatewayModelName}' must have a selector model.`);
+        }
+
+        const targetRows = Array.from(card.querySelectorAll('.router-target-list > .router-target-row'));
+        const targets = targetRows.map(row => normalizeRouterTargetRow(row, gatewayModelName));
+        if (targets.length === 0) {
+            throw new Error(`Router model '${gatewayModelName}' must have at least one target.`);
+        }
+        return {
+            gateway_model_name: gatewayModelName,
+            selector_model: selectorModel,
+            targets,
+        };
+    }
+
+    function getRouterPayloadForSave() {
+        const rules = Array.from(routerList.querySelectorAll('.router-card')).map(normalizeRouterCardForSave);
+        return { rules };
+    }
+
+    function getNormalizedRouterContent() {
+        return stableSerialize(getRouterPayloadForSave());
+    }
+
+    async function renderRouter(rules) {
+        routerList.textContent = '';
+        if (Array.isArray(rules)) {
+            rules.forEach(rule => {
+                routerList.appendChild(buildRouterCard(rule));
+            });
+        }
+        refreshRouterEmptyState();
+    }
+
+    async function loadRouterEditor() {
+        try {
+            const response = await apiFetch('/v1/config/router-rules/structured');
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.detail || `HTTP ${response.status}`);
+            }
+            gatewayModelCatalog.chat = Array.isArray(payload.chat_models) ? payload.chat_models : [];
+            routerFallbackChains = payload.fallback_chains && typeof payload.fallback_chains === 'object'
+                ? payload.fallback_chains
+                : {};
+            await renderRouter(payload.rules || []);
+            originalRouterContent = getNormalizedRouterContent();
+            renderMessage('success', 'Router Models loaded successfully.');
+        } catch (error) {
+            console.error('Error fetching Router Models:', error);
+            renderErrorWithDetails('Error loading Router Models:', error.message);
+            routerList.textContent = '';
+            refreshRouterEmptyState();
+            originalRouterContent = stableSerialize({ rules: [] });
+        }
+    }
+
+    async function saveRouter() {
+        let payload;
+        saveButton.disabled = true;
+        renderMessage('info', 'Saving Router Models...');
+        try {
+            payload = getRouterPayloadForSave();
+            const response = await apiFetch('/v1/config/router-rules/structured', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                if (body.detail && Array.isArray(body.errors)) {
+                    const errorDetails = body.errors.map(err => {
+                        const loc = err.loc ? err.loc.join(' -> ') : 'N/A';
+                        return `- Location: ${loc}, Message: ${err.msg}, Type: ${err.type}`;
+                    }).join('\n');
+                    renderErrorWithDetails(
+                        `Validation Error for Router (HTTP ${response.status}):`,
+                        `${body.detail}\n${errorDetails}`
+                    );
+                } else {
+                    renderErrorWithDetails(
+                        `Error saving Router (HTTP ${response.status}):`,
+                        body.detail || 'Unknown error'
+                    );
+                }
+                return;
+            }
+            if (Array.isArray(body.chat_models)) {
+                gatewayModelCatalog.chat = body.chat_models;
+            }
+            if (body.fallback_chains && typeof body.fallback_chains === 'object') {
+                routerFallbackChains = body.fallback_chains;
+            }
+            originalRouterContent = stableSerialize(payload);
+            renderMessage('success', body.message || 'Router Models updated successfully.');
+        } catch (error) {
+            console.error('Error saving Router:', error);
+            renderMessage('error', `Error saving Router: ${error.message}`);
         } finally {
             saveButton.disabled = false;
         }
@@ -4969,6 +5274,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 || originalWebContent !== null
                 || originalProvidersContent !== null
                 || originalFusionContent !== null
+                || originalRouterContent !== null
                 || originalModelRulesContent !== null
             )
         ) {
@@ -5040,6 +5346,14 @@ document.addEventListener('DOMContentLoaded', function () {
             } catch (error) {
                 hasUnsavedChanges = true;
             }
+        } else if (activeEditor === 'router' && originalRouterContent !== null) {
+            try {
+                if (getNormalizedRouterContent() !== originalRouterContent) {
+                    hasUnsavedChanges = true;
+                }
+            } catch (error) {
+                hasUnsavedChanges = true;
+            }
         } else if (activeEditor === 'model-rules' && originalModelRulesContent !== null) {
             if (modelRulesRawInput.value !== originalModelRulesContent) {
                 hasUnsavedChanges = true;
@@ -5063,6 +5377,9 @@ document.addEventListener('DOMContentLoaded', function () {
         tabFusion.classList.remove('active');
         editorContainerFusion.classList.remove('active');
         editorContainerFusion.style.display = 'none';
+        tabRouter.classList.remove('active');
+        editorContainerRouter.classList.remove('active');
+        editorContainerRouter.style.display = 'none';
         tabModelRules.classList.remove('active');
         editorContainerModelRules.classList.remove('active');
         editorContainerModelRules.style.display = 'none';
@@ -5328,6 +5645,38 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerFusion.classList.add('active');
             editorContainerFusion.style.display = 'flex';
             loadFusionEditor();
+        } else if (tabName === 'router') {
+            tabRules.classList.remove('active');
+            tabEmbeddings.classList.remove('active');
+            tabRerank.classList.remove('active');
+            tabImages.classList.remove('active');
+            tabAudio.classList.remove('active');
+            tabWeb.classList.remove('active');
+            tabFallbackEval.classList.remove('active');
+            tabProviders.classList.remove('active');
+            tabFusion.classList.remove('active');
+            tabRouter.classList.add('active');
+            editorContainerRules.classList.remove('active');
+            editorContainerRules.style.display = 'none';
+            editorContainerEmbeddings.classList.remove('active');
+            editorContainerEmbeddings.style.display = 'none';
+            editorContainerRerank.classList.remove('active');
+            editorContainerRerank.style.display = 'none';
+            editorContainerImages.classList.remove('active');
+            editorContainerImages.style.display = 'none';
+            editorContainerAudio.classList.remove('active');
+            editorContainerAudio.style.display = 'none';
+            editorContainerWeb.classList.remove('active');
+            editorContainerWeb.style.display = 'none';
+            editorContainerFallbackEval.classList.remove('active');
+            editorContainerFallbackEval.style.display = 'none';
+            editorContainerProviders.classList.remove('active');
+            editorContainerProviders.style.display = 'none';
+            editorContainerFusion.classList.remove('active');
+            editorContainerFusion.style.display = 'none';
+            editorContainerRouter.classList.add('active');
+            editorContainerRouter.style.display = 'flex';
+            loadRouterEditor();
         } else if (tabName === 'model-rules') {
             tabRules.classList.remove('active');
             tabEmbeddings.classList.remove('active');
@@ -5338,6 +5687,7 @@ document.addEventListener('DOMContentLoaded', function () {
             tabFallbackEval.classList.remove('active');
             tabProviders.classList.remove('active');
             tabFusion.classList.remove('active');
+            tabRouter.classList.remove('active');
             tabModelRules.classList.add('active');
             editorContainerRules.classList.remove('active');
             editorContainerRules.style.display = 'none';
@@ -5357,6 +5707,8 @@ document.addEventListener('DOMContentLoaded', function () {
             editorContainerProviders.style.display = 'none';
             editorContainerFusion.classList.remove('active');
             editorContainerFusion.style.display = 'none';
+            editorContainerRouter.classList.remove('active');
+            editorContainerRouter.style.display = 'none';
             editorContainerModelRules.classList.add('active');
             editorContainerModelRules.style.display = 'flex';
             loadModelRulesEditor();
@@ -5373,6 +5725,7 @@ document.addEventListener('DOMContentLoaded', function () {
     tabFallbackEval.addEventListener('click', () => switchTab('fallback-eval'));
     tabProviders.addEventListener('click', () => switchTab('providers'));
     tabFusion.addEventListener('click', () => switchTab('fusion'));
+    tabRouter.addEventListener('click', () => switchTab('router'));
     tabModelRules.addEventListener('click', () => switchTab('model-rules'));
     addProviderButton.addEventListener('click', () => {
         const providerCard = buildProviderCard({});
@@ -5385,6 +5738,12 @@ document.addEventListener('DOMContentLoaded', function () {
         fusionCard.classList.remove('collapsed');
         fusionList.appendChild(fusionCard);
         refreshFusionEmptyState();
+    });
+    addRouterButton.addEventListener('click', () => {
+        const routerCard = buildRouterCard({});
+        routerCard.classList.remove('collapsed');
+        routerList.appendChild(routerCard);
+        refreshRouterEmptyState();
     });
     addRuleButton.addEventListener('click', () => {
         const ruleCard = buildRuleCard({});
@@ -5516,6 +5875,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (activeEditor === 'fusion') {
             saveFusion();
+            return;
+        }
+
+        if (activeEditor === 'router') {
+            saveRouter();
             return;
         }
 

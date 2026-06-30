@@ -260,14 +260,10 @@ class OperationRulesLoadingTests(unittest.TestCase):
             operation_rules["images_generations"]["llmgateway/flux.image-generation"]["routes"][0]["model"],
             "gpt-image-2",
         )
-        self.assertEqual(
-            operation_rules["images_edits"]["llmgateway/flux.image-edit"]["routes"][0]["provider"],
-            "aitunnel",
-        )
-        self.assertEqual(
-            operation_rules["images_edits"]["llmgateway/flux.image-edit"]["routes"][0]["target_path"],
-            "/images/edits",
-        )
+        flux_edit_route = operation_rules["images_edits"]["llmgateway/flux.image-edit"]["routes"][0]
+        self.assertIn(flux_edit_route["provider"], config_loader.providers_config)
+        self.assertEqual(flux_edit_route["model"], "gpt-image-2")
+        self.assertEqual(flux_edit_route["target_path"], "/images/edits")
         self.assertEqual(
             operation_rules["audio_speech"]["llmgateway/silero-tts"]["routes"][0]["target_path"],
             "/silero/audio/speech",

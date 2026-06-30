@@ -10,6 +10,7 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "sortProviderModelIds(models)" in content
     assert "models: sortedModels" in content
     assert "/v1/config/models-rules/structured" in content
+    assert "/v1/config/router-rules/structured" in content
     assert "/v1/config/providers/${encodeURIComponent(providerName)}/models" in content
     assert "Choose an available model for provider" in content
     assert "Unavailable fallback models —" in content
@@ -41,6 +42,10 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "OpenRouter free model ranking" in content
     assert "runFallbackModelEval" in content
     assert "reasonParts.push(`Gateway models:" in content
+    assert "buildRouterCard" in content
+    assert "router-selector-model-select" in content
+    assert "router-target-type-select" in content
+    assert "fallback_entry" in content
     assert "Configured fallback model; metadata score is 0" not in content
 
 
@@ -74,6 +79,18 @@ def test_rules_editor_html_contains_model_rules_tab():
     assert "tabModelRules" in content
     assert "editor-container-model-rules" in content
     assert "models_model_rules.json" in content
+
+
+def test_rules_editor_html_contains_router_tab():
+    content = Path("static/rules-editor.html").read_text(encoding="utf-8")
+
+    assert 'id="tabRouter"' in content
+    assert 'data-tab="router"' in content
+    assert 'id="editor-container-router"' in content
+    assert 'id="addRouterButton"' in content
+    assert 'id="routerList"' in content
+    assert "Router Models" in content
+    assert "models_router_rules.json" not in content
 
 
 def test_editor_css_includes_tooltip_and_upstream_limits_styles():

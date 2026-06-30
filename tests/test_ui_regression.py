@@ -85,6 +85,7 @@ def _serve_gateway(provider_mock, fallback_rules_content="[]"):
         fallback_rules_path = temp_path / "models_fallback_rules.json"
         operation_rules_path = temp_path / "models_operation_rules.json"
         fusion_rules_path = temp_path / "models_fusion_rules.json"
+        router_rules_path = temp_path / "models_router_rules.json"
         
         provider_config = json.dumps([{"openai": {"baseUrl": provider_mock, "apikey": "key"}}])
         providers_path.write_text(provider_config, encoding="utf-8")
@@ -94,6 +95,7 @@ def _serve_gateway(provider_mock, fallback_rules_content="[]"):
             encoding="utf-8",
         )
         fusion_rules_path.write_text("[]", encoding="utf-8")
+        router_rules_path.write_text("[]", encoding="utf-8")
         
         env = os.environ.copy()
         env["GATEWAY_API_KEY"] = "test-key"
@@ -102,6 +104,7 @@ def _serve_gateway(provider_mock, fallback_rules_content="[]"):
         env["FALLBACK_RULES_FILENAME"] = str(fallback_rules_path)
         env["OPERATION_RULES_FILENAME"] = str(operation_rules_path)
         env["FUSION_RULES_FILENAME"] = str(fusion_rules_path)
+        env["ROUTER_RULES_FILENAME"] = str(router_rules_path)
         port = get_free_port()
         env["GATEWAY_PORT"] = str(port)
         env["LOG_LEVEL"] = "DEBUG"
@@ -137,6 +140,7 @@ def test_rules_editor_tabs_display(page: Page, server):
     expect(page.locator("#tabRerank")).to_be_visible()
     expect(page.locator("#tabImages")).to_be_visible()
     expect(page.locator("#tabAudio")).to_be_visible()
+    expect(page.locator("#tabRouter")).to_be_visible()
     expect(page.locator("#tabProviders")).to_be_visible()
 
 def test_fallback_rules_still_work(page: Page, server):
@@ -799,7 +803,18 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 2. Embeddings
+    # 2. Router
+    page.click("#tabRouter")
+    expect(page.locator("#messageArea")).to_contain_text("Router Models loaded successfully")
+    page.click("#addRouterButton")
+    page.fill("#editor-container-router .gateway-model-input", "model-router")
+    page.select_option("#editor-container-router .router-selector-model-select", "model-chat")
+    page.select_option("#editor-container-router .router-target-type-select", "gateway_model")
+    page.select_option("#editor-container-router .router-gateway-target-select", "model-chat")
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+    # 3. Embeddings
     page.click("#tabEmbeddings")
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
     page.click("#addEmbeddingButton")
@@ -809,7 +824,7 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 3. Rerank
+    # 4. Rerank
     page.click("#tabRerank")
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
     page.click("#addRerankButton")
@@ -819,7 +834,7 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 4. Images
+    # 5. Images
     page.click("#tabImages")
     expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
     page.click("#addImageGenerationButton")
@@ -833,7 +848,7 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 5. Providers
+    # 6. Providers
     page.click("#tabProviders")
     expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
     
@@ -842,6 +857,12 @@ def test_editor_save_and_reload(page: Page, server):
     
     # Check Fallback
     expect(page.locator("#editor-container-rules .gateway-model-input")).to_have_value("model-chat")
+
+    # Check Router
+    page.click("#tabRouter")
+    expect(page.locator("#editor-container-router .gateway-model-input")).to_have_value("model-router")
+    expect(page.locator("#editor-container-router .router-selector-model-select")).to_have_value("model-chat")
+    expect(page.locator("#editor-container-router .router-gateway-target-select")).to_have_value("model-chat")
     
     # Check Embeddings
     page.click("#tabEmbeddings")

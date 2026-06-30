@@ -64,6 +64,7 @@
             <button id="tabAudio" class="tab-button" data-tab="audio">Audio</button>
             <button id="tabWeb" class="tab-button" data-tab="web">Web</button>
             <button id="tabFusion" class="tab-button" data-tab="fusion">Fusion</button>
+            <button id="tabRouter" class="tab-button" data-tab="router">Router</button>
             <button id="tabModelRules" class="tab-button" data-tab="model-rules">Model Rules</button>
             <button id="tabOpenRouterFree" class="tab-button" data-tab="openrouter-free" hidden>OpenRouter Free</button>
             <button id="tabFallbackEval" class="tab-button" data-tab="fallback-eval">Fallback Eval</button>
@@ -135,6 +136,22 @@
                     <div id="fusionList" class="rules-list"></div>
                     <div id="fusionEmptyState" class="rules-empty-state" hidden>
                         No fusion models yet. Add the first fusion model to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-router" class="editor-tab-content" style="display: none;">
+                <div id="routerBuilder" class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong>Router Models</strong>
+                            <span>Each Router model calls a selector gateway model, then routes the original request to one explicit target.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Selector and targets are chosen only from chat models configured in Fallback Rules. A target can use a full gateway fallback chain or start at a specific fallback entry and continue from there.</span>
+                        </div>
+                        <button id="addRouterButton" type="button" class="secondary-button">Add Router Model</button>
+                    </div>
+                    <div id="routerList" class="rules-list"></div>
+                    <div id="routerEmptyState" class="rules-empty-state" hidden>
+                        No router models yet. Add the first router model to begin.
                     </div>
                 </div>
             </div>

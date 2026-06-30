@@ -390,6 +390,11 @@ async def get_models(request: Request):
     if isinstance(fusion_rules, dict):
         for model_name in fusion_rules.keys():
             _add_capability(gateway_models, model_name, "chat")
+    # Router models are callable as regular chat models.
+    router_rules = getattr(config_loader_instance, "router_rules", None)
+    if isinstance(router_rules, dict):
+        for model_name in router_rules.keys():
+            _add_capability(gateway_models, model_name, "chat")
     _add_gateway_operation_models(gateway_models, operation_rules)
 
     # 2. Fetch and add models from the fallback provider
@@ -548,6 +553,14 @@ async def get_model(model_id: str, request: Request):
     # 1. Check gateway models first
     for model_name in fallback_rules.keys():
         _add_capability(gateway_models, model_name, "chat")
+    fusion_rules = getattr(config_loader_instance, "fusion_rules", None)
+    if isinstance(fusion_rules, dict):
+        for model_name in fusion_rules.keys():
+            _add_capability(gateway_models, model_name, "chat")
+    router_rules = getattr(config_loader_instance, "router_rules", None)
+    if isinstance(router_rules, dict):
+        for model_name in router_rules.keys():
+            _add_capability(gateway_models, model_name, "chat")
     _add_gateway_operation_models(gateway_models, operation_rules)
     gateway_models = _apply_model_rules_to_gateway_models(
         gateway_models,

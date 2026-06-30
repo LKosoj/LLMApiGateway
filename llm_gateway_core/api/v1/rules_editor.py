@@ -14,7 +14,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from threading import Lock
 
-from ...config.loader import ConfigError, FusionModelConfig, ModelFallbackConfig, ModelsOperationConfig, resolve_provider_proxy
+from ...config.loader import (
+    ConfigError,
+    FusionModelConfig,
+    ModelFallbackConfig,
+    ModelsOperationConfig,
+    RouterModelConfig,
+    resolve_provider_proxy,
+)
 from ...services.fallback_model_evals import FallbackModelEvalAlreadyRunning
 from ...services.openrouter_free_models import OpenRouterFreeModelsNotConfigured
 from ...config.paths import PROJECT_ROOT, STATIC_DIR
@@ -128,6 +135,10 @@ class StructuredProvidersPayload(BaseModel):
 
 class StructuredFusionPayload(BaseModel):
     rules: list[FusionModelConfig] = Field(default_factory=list)
+
+
+class StructuredRouterPayload(BaseModel):
+    rules: list[RouterModelConfig] = Field(default_factory=list)
 
 
 def _write_text_atomically(file_path: Path, content: str) -> None:
@@ -272,6 +283,11 @@ def _serialize_structured_fusion(rules: list[FusionModelConfig]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
+def _serialize_structured_router(rules: list[RouterModelConfig]) -> str:
+    payload = [rule.model_dump(exclude_none=True) for rule in rules]
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
 def _build_structured_fusion_response(config_loader) -> dict:
     rules: list[dict] = []
     for gateway_model_name, config in config_loader.fusion_rules.items():
@@ -280,6 +296,33 @@ def _build_structured_fusion_response(config_loader) -> dict:
     return {
         "rules": rules,
         "providers": list(config_loader.providers_config.keys()),
+    }
+
+
+def _build_structured_router_response(config_loader) -> dict:
+    fallback_rules = config_loader.fallback_rules or {}
+    rules: list[dict] = []
+    for gateway_model_name, config in (getattr(config_loader, "router_rules", None) or {}).items():
+        rule_payload = {"gateway_model_name": gateway_model_name, **config}
+        rules.append(rule_payload)
+
+    fallback_chains: dict[str, list[dict[str, Any]]] = {}
+    for gateway_model_name, config in fallback_rules.items():
+        chain: list[dict[str, Any]] = []
+        for index, fallback_model in enumerate(config.get("fallback_models", []) or []):
+            chain.append(
+                {
+                    "index": index,
+                    "provider": fallback_model.get("provider"),
+                    "model": fallback_model.get("model"),
+                }
+            )
+        fallback_chains[gateway_model_name] = chain
+
+    return {
+        "rules": rules,
+        "chat_models": sorted(fallback_rules.keys()),
+        "fallback_chains": fallback_chains,
     }
 
 
@@ -369,6 +412,22 @@ def _validate_existing_model_rules_against_fallback_rules(
     )
 
 
+def _validate_existing_router_rules(
+    config_loader,
+    *,
+    fallback_rules: dict[str, Any] | None = None,
+    fusion_rules: dict[str, Any] | None = None,
+) -> None:
+    router_rules = getattr(config_loader, "router_rules", None) or {}
+    if not router_rules:
+        return
+    config_loader.validate_router_rules_mapping(
+        router_rules,
+        fallback_rules=fallback_rules,
+        fusion_rules=fusion_rules,
+    )
+
+
 def _append_unique(values: list[str], value: str) -> None:
     if value not in values:
         values.append(value)
@@ -395,6 +454,10 @@ def _build_gateway_docs_catalog(config_loader, allowed_models: set[str] | None =
     operation_rules = config_loader.operation_rules or {}
 
     for model_name in config_loader.fallback_rules.keys():
+        _add_docs_capability(catalog, model_name, "chat")
+    for model_name in (getattr(config_loader, "fusion_rules", None) or {}).keys():
+        _add_docs_capability(catalog, model_name, "chat")
+    for model_name in (getattr(config_loader, "router_rules", None) or {}).keys():
         _add_docs_capability(catalog, model_name, "chat")
 
     for section, capability in DOCS_CAPABILITY_SECTIONS.items():
@@ -801,15 +864,16 @@ def _build_playground_models(config_loader) -> dict[str, list[str]]:
     rules = config_loader.operation_rules or {}
     fallback_rules = config_loader.fallback_rules or {}
     fusion_rules = getattr(config_loader, "fusion_rules", None) or {}
+    router_rules = getattr(config_loader, "router_rules", None) or {}
 
     def _names(section: str) -> list[str]:
         return sorted((rules.get(section) or {}).keys())
 
-    # Fusion ensemble models are callable as regular chat models, so they belong
-    # in the chat selector. ``fusion`` is also returned separately so the UI can
-    # mark them and enable Fusion-specific controls.
+    # Fusion and Router models are callable as regular chat models, so they
+    # belong in the chat selector. ``fusion`` is also returned separately so the
+    # UI can mark them and enable Fusion-specific controls.
     return {
-        "chat": sorted(set(fallback_rules.keys()) | set(fusion_rules.keys())),
+        "chat": sorted(set(fallback_rules.keys()) | set(fusion_rules.keys()) | set(router_rules.keys())),
         "fusion": sorted(fusion_rules.keys()),
         "web_search": _names("web_search"),
         "web_read": _names("web_read"),
@@ -872,6 +936,11 @@ async def save_models_rules(request: Request, payload_text: str = Body(..., medi
             providers_config=config_loader.providers_config,
         )
         _validate_existing_model_rules_against_fallback_rules(config_loader, validated_rules)
+        _validate_existing_router_rules(
+            config_loader,
+            fallback_rules=validated_rules,
+            fusion_rules=config_loader.fusion_rules,
+        )
     except ValidationError as ve:
         logging.error(f"Validation error saving {fallback_rules_path.name}: {ve.errors()}", exc_info=False)
         return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
@@ -960,6 +1029,11 @@ async def save_models_rules_structured(request: Request, payload: StructuredRule
         )
         await _validate_provider_models(request, config_loader, validated_rules)
         _validate_existing_model_rules_against_fallback_rules(config_loader, validated_rules)
+        _validate_existing_router_rules(
+            config_loader,
+            fallback_rules=validated_rules,
+            fusion_rules=config_loader.fusion_rules,
+        )
     except ValidationError as ve:
         logging.error(f"Validation error saving {fallback_rules_path.name}: {ve.errors()}", exc_info=False)
         return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
@@ -1003,6 +1077,11 @@ async def save_fusion_rules_structured(request: Request, payload: StructuredFusi
             payload_text,
             providers_config=config_loader.providers_config,
         )
+        _validate_existing_router_rules(
+            config_loader,
+            fallback_rules=config_loader.fallback_rules,
+            fusion_rules=validated_rules,
+        )
     except ValidationError as ve:
         logging.error(f"Validation error saving {fusion_rules_path.name}: {ve.errors()}", exc_info=False)
         return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
@@ -1027,6 +1106,50 @@ async def save_fusion_rules_structured(request: Request, payload: StructuredFusi
     except Exception as exc:
         logging.error(f"Error saving {fusion_rules_path.name}: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Could not save {fusion_rules_path.name}.")
+
+
+@editor_router.get("/config/router-rules/structured", tags=["Config Editor API"])
+async def get_router_rules_structured(request: Request):
+    config_loader = _get_config_loader(request)
+    return _build_structured_router_response(config_loader)
+
+
+@editor_router.post("/config/router-rules/structured", tags=["Config Editor API"])
+async def save_router_rules_structured(request: Request, payload: StructuredRouterPayload):
+    config_loader = _get_config_loader(request)
+    router_rules_path = config_loader.router_rules_path
+    payload_text = _serialize_structured_router(payload.rules)
+
+    try:
+        validated_rules = config_loader.parse_and_validate_router_rules_payload(
+            payload_text,
+            fallback_rules=config_loader.fallback_rules,
+            fusion_rules=config_loader.fusion_rules,
+        )
+    except ValidationError as ve:
+        logging.error(f"Validation error saving {router_rules_path.name}: {ve.errors()}", exc_info=False)
+        return JSONResponse(status_code=400, content={"detail": "Validation Error", "errors": ve.errors()})
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        logging.error(f"Validation error saving {router_rules_path.name}: {exc}", exc_info=False)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        backup_path = _backup_if_has_comments(router_rules_path)
+        _write_text_atomically(router_rules_path, payload_text)
+        config_loader.router_rules = validated_rules
+        logging.info(f"Successfully saved structured router rules to {router_rules_path.name}.")
+        response_body = {
+            "message": f"{router_rules_path.name} updated successfully.",
+            **_build_structured_router_response(config_loader),
+        }
+        if backup_path is not None:
+            response_body["comments_backup"] = backup_path.name
+        return response_body
+    except Exception as exc:
+        logging.error(f"Error saving {router_rules_path.name}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Could not save {router_rules_path.name}.")
 
 
 @editor_router.get("/config/model-operations/structured", tags=["Config Editor API"])

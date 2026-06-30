@@ -499,12 +499,14 @@ class FusionPlaygroundModelsTests(unittest.TestCase):
             operation_rules={},
             fallback_rules={"llmgateway/light": {}},
             fusion_rules={"llmgateway/fusion-quality": {}, "llmgateway/fusion-fast": {}},
+            router_rules={"llmgateway/router": {}},
         )
         models = _build_playground_models(config_loader)
         # Fusion models are callable as chat models, so they appear in the chat list...
         self.assertIn("llmgateway/fusion-quality", models["chat"])
         self.assertIn("llmgateway/fusion-fast", models["chat"])
         self.assertIn("llmgateway/light", models["chat"])
+        self.assertIn("llmgateway/router", models["chat"])
         # ...and are also exposed separately so the UI can mark them.
         self.assertEqual(
             models["fusion"], ["llmgateway/fusion-fast", "llmgateway/fusion-quality"]
@@ -517,6 +519,7 @@ class FusionPlaygroundModelsTests(unittest.TestCase):
             operation_rules={},
             fallback_rules={"llmgateway/light": {}},
             fusion_rules={},
+            router_rules={},
         )
         models = _build_playground_models(config_loader)
         self.assertEqual(models["fusion"], [])

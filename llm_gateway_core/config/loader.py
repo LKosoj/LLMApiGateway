@@ -834,6 +834,77 @@ class FusionModelConfig(BaseModel):
         return value
 
 
+class RouterTargetConfig(BaseModel):
+    """One explicit destination a Router gateway model is allowed to choose."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["gateway_model", "fallback_entry"]
+    model: str | None = None
+    gateway_model: str | None = None
+    index: int | None = None
+
+    @field_validator("model", "gateway_model", mode="before")
+    @classmethod
+    def _validate_optional_non_empty(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("target model fields must be non-empty strings when provided.")
+        return value.strip()
+
+    @field_validator("index")
+    @classmethod
+    def _validate_index(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        parsed = int(value)
+        if parsed < 0:
+            raise ValueError("'index' must be greater than or equal to 0.")
+        return parsed
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> "RouterTargetConfig":
+        if self.type == "gateway_model":
+            if not self.model:
+                raise ValueError("gateway_model target requires 'model'.")
+            if self.gateway_model is not None or self.index is not None:
+                raise ValueError("gateway_model target must not set 'gateway_model' or 'index'.")
+            return self
+
+        if not self.gateway_model:
+            raise ValueError("fallback_entry target requires 'gateway_model'.")
+        if self.index is None:
+            raise ValueError("fallback_entry target requires 'index'.")
+        if self.model is not None:
+            raise ValueError("fallback_entry target must not set 'model'.")
+        return self
+
+
+class RouterModelConfig(BaseModel):
+    """A Router gateway model that asks a selector model to choose a target."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gateway_model_name: str
+    selector_model: str
+    targets: List[RouterTargetConfig]
+
+    @field_validator("gateway_model_name", "selector_model", mode="before")
+    @classmethod
+    def _validate_non_empty(cls, value: Any, info) -> Any:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"'{info.field_name}' must be a non-empty string.")
+        return value.strip()
+
+    @field_validator("targets")
+    @classmethod
+    def _validate_targets(cls, value: List[RouterTargetConfig]) -> List[RouterTargetConfig]:
+        if not value:
+            raise ValueError("Router 'targets' must contain at least one target.")
+        return value
+
+
 class OperationRoute(BaseModel):
     provider: str
     model: str
@@ -1168,6 +1239,7 @@ class ConfigLoader:
         operation_rules_filename: str | None = None,
         fusion_rules_filename: str | None = None,
         model_rules_filename: str | None = None,
+        router_rules_filename: str | None = None,
     ):
         from .paths import PROJECT_ROOT
         self.project_root = PROJECT_ROOT
@@ -1178,12 +1250,14 @@ class ConfigLoader:
         o_file = operation_rules_filename or os.getenv("OPERATION_RULES_FILENAME", "models_operation_rules.json")
         fusion_file = fusion_rules_filename or os.getenv("FUSION_RULES_FILENAME", "models_fusion_rules.json")
         model_file = model_rules_filename or os.getenv("MODEL_RULES_FILENAME", "models_model_rules.json")
+        router_file = router_rules_filename or os.getenv("ROUTER_RULES_FILENAME", "models_router_rules.json")
 
         self.providers_path = Path(p_file) if os.path.isabs(p_file) else self.project_root / p_file
         self.fallback_rules_path = Path(f_file) if os.path.isabs(f_file) else self.project_root / f_file
         self.operation_rules_path = Path(o_file) if os.path.isabs(o_file) else self.project_root / o_file
         self.fusion_rules_path = Path(fusion_file) if os.path.isabs(fusion_file) else self.project_root / fusion_file
         self.model_rules_path = Path(model_file) if os.path.isabs(model_file) else self.project_root / model_file
+        self.router_rules_path = Path(router_file) if os.path.isabs(router_file) else self.project_root / router_file
 
         self.providers_config: Dict[str, ProviderDetails] = {}
         self.fallback_rules: Dict[str, Dict[str, Any]] = {} # Store validated rules as dicts
@@ -1191,6 +1265,7 @@ class ConfigLoader:
         self.operation_rules: Dict[str, Dict[str, Any]] = _empty_operation_rules()
         self.fusion_rules: Dict[str, Dict[str, Any]] = {} # Store validated fusion configs as dicts
         self.model_rules: Dict[str, Any] = {}
+        self.router_rules: Dict[str, Dict[str, Any]] = {} # Store validated router configs as dicts
 
     def _build_providers_config(self, raw_provider_list: Any) -> Dict[str, ProviderDetails]:
         if not isinstance(raw_provider_list, list):
@@ -1335,6 +1410,29 @@ class ConfigLoader:
             fusion_rules_temp[config.gateway_model_name] = data
 
         return fusion_rules_temp
+
+    def _build_router_rules_config(self, raw_rules: Any) -> Dict[str, Dict[str, Any]]:
+        if raw_rules in (None, ""):
+            raw_rules = []
+        if not isinstance(raw_rules, list):
+            raise ValueError("Invalid format: Expected a list of router model objects.")
+
+        router_rules_temp: Dict[str, Dict[str, Any]] = {}
+        seen_gateway_model_names: set[str] = set()
+        for item in raw_rules:
+            config = RouterModelConfig(**item)
+            if config.gateway_model_name in seen_gateway_model_names:
+                raise ValueError(
+                    "Duplicate gateway_model_name "
+                    f"'{config.gateway_model_name}' found in models_router_rules.json. "
+                    "Gateway model names must be unique."
+                )
+            seen_gateway_model_names.add(config.gateway_model_name)
+            data = config.model_dump(exclude_none=True)
+            data.pop("gateway_model_name", None)
+            router_rules_temp[config.gateway_model_name] = data
+
+        return router_rules_temp
 
     def _build_operation_config(self, raw_rules: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
         operation_rules = ModelsOperationConfig.model_validate(raw_rules)
@@ -1494,6 +1592,76 @@ class ConfigLoader:
                         f"Invalid provider '{provider}' used in {role_label} for fusion model "
                         f"'{gateway_model_name}'. Provider not found in configuration."
                     )
+
+    def validate_router_rules_mapping(
+        self,
+        router_rules_to_validate: Dict[str, Dict[str, Any]],
+        fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+        fusion_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> None:
+        if not router_rules_to_validate:
+            return
+
+        effective_fallback_rules = self.fallback_rules if fallback_rules is None else fallback_rules
+        effective_fusion_rules = self.fusion_rules if fusion_rules is None else fusion_rules
+        if not effective_fallback_rules:
+            raise ValueError("Fallback rules must be loaded before validating router rules.")
+
+        for router_model_name, config in router_rules_to_validate.items():
+            if router_model_name in effective_fallback_rules:
+                raise ValueError(
+                    f"Router model '{router_model_name}' conflicts with an existing fallback rule."
+                )
+            if router_model_name in effective_fusion_rules:
+                raise ValueError(
+                    f"Router model '{router_model_name}' conflicts with an existing Fusion rule."
+                )
+
+            selector_model = config.get("selector_model")
+            if selector_model not in effective_fallback_rules:
+                raise ValueError(
+                    f"Router model '{router_model_name}' references unknown selector_model "
+                    f"'{selector_model}' (must be a gateway chat model in fallback rules)."
+                )
+
+            seen_target_ids: set[str] = set()
+            for target in config.get("targets", []):
+                target_type = target.get("type")
+                if target_type == "gateway_model":
+                    target_model = target.get("model")
+                    target_id = f"gateway:{target_model}"
+                    if target_model not in effective_fallback_rules:
+                        raise ValueError(
+                            f"Router model '{router_model_name}' references unknown target model "
+                            f"'{target_model}' (must be a gateway chat model in fallback rules)."
+                        )
+                elif target_type == "fallback_entry":
+                    target_gateway_model = target.get("gateway_model")
+                    target_index = target.get("index")
+                    target_id = f"fallback_entry:{target_gateway_model}:{target_index}"
+                    target_rule = effective_fallback_rules.get(target_gateway_model)
+                    if target_rule is None:
+                        raise ValueError(
+                            f"Router model '{router_model_name}' references unknown fallback_entry "
+                            f"gateway_model '{target_gateway_model}'."
+                        )
+                    fallback_models = target_rule.get("fallback_models") or []
+                    if not isinstance(target_index, int) or target_index >= len(fallback_models):
+                        raise ValueError(
+                            f"Router model '{router_model_name}' references fallback_entry "
+                            f"'{target_gateway_model}' index {target_index}, but the fallback chain "
+                            f"has {len(fallback_models)} entries."
+                        )
+                else:
+                    raise ValueError(
+                        f"Router model '{router_model_name}' has unsupported target type '{target_type}'."
+                    )
+
+                if target_id in seen_target_ids:
+                    raise ValueError(
+                        f"Router model '{router_model_name}' contains duplicate target '{target_id}'."
+                    )
+                seen_target_ids.add(target_id)
 
     def validate_operation_routes(
         self,
@@ -1703,6 +1871,21 @@ class ConfigLoader:
             fallback_rules=fallback_rules,
         )
         return operation_routes
+
+    def parse_and_validate_router_rules_payload(
+        self,
+        payload_text: str,
+        fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+        fusion_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        raw_rules = json5.loads(payload_text)
+        router_rules = self._build_router_rules_config(raw_rules)
+        self.validate_router_rules_mapping(
+            router_rules,
+            fallback_rules=fallback_rules,
+            fusion_rules=fusion_rules,
+        )
+        return router_rules
 
     def _resolve_operation_rules_path(self, filename: str = "models_operation_rules.json") -> Path:
         if filename == "models_operation_rules.json":
@@ -2021,6 +2204,69 @@ class ConfigLoader:
         fusion_rules = self._build_fusion_rules_config(raw_rules)
         self.validate_fusion_rules_mapping(fusion_rules, providers_config=providers_config)
         return fusion_rules
+
+    def load_router_rules(self) -> Dict[str, Dict[str, Any]]:
+        """Loads and validates Router model configs from the JSON file."""
+        if not self.router_rules_path.exists():
+            logging.info(
+                f"Router rules file not found at {self.router_rules_path}. Proceeding without router models."
+            )
+            self.router_rules = {}
+            return {}
+
+        try:
+            with open(self.router_rules_path, 'r', encoding='utf-8') as f:
+                payload_text = f.read()
+
+            if not payload_text.strip():
+                payload_text = "[]"
+
+            router_rules_temp = self.parse_and_validate_router_rules_payload(
+                payload_text,
+                fallback_rules=self.fallback_rules,
+                fusion_rules=self.fusion_rules,
+            )
+            self.router_rules = router_rules_temp
+            logging.info(f"Successfully loaded and validated router rules from {self.router_rules_path}")
+            logging.info(f"Loaded router models for: {list(self.router_rules.keys())}")
+            return self.router_rules
+
+        except ConfigError:
+            raise
+        except Exception as e:
+            logging.error(f"Failed to load or validate '{self.router_rules_path.name}': {str(e)}", exc_info=True)
+            raise ConfigError(f"Failed to load or validate '{self.router_rules_path.name}': {e}") from e
+
+    def reload_router_rules(self) -> bool:
+        """Reloads and validates Router model configs from the JSON file.
+        Returns True on success, False on failure."""
+        if not self.router_rules_path.exists():
+            self.router_rules = {}
+            return True
+
+        try:
+            with open(self.router_rules_path, 'r', encoding='utf-8') as f:
+                payload_text = f.read()
+
+            if not payload_text.strip():
+                payload_text = "[]"
+
+            router_rules_temp = self.parse_and_validate_router_rules_payload(
+                payload_text,
+                fallback_rules=self.fallback_rules,
+                fusion_rules=self.fusion_rules,
+            )
+            self.router_rules = router_rules_temp
+            logging.info(f"Successfully reloaded and validated router rules from {self.router_rules_path}")
+            logging.info(f"Reloaded router models for: {list(self.router_rules.keys())}")
+            return True
+
+        except ValidationError as ve:
+            logging.error(f"Validation error during reload of '{self.router_rules_path.name}': {ve.errors()}", exc_info=False)
+            return False
+        except Exception as e:
+            logging.error(f"Failed to reload or validate '{self.router_rules_path.name}': {str(e)}", exc_info=True)
+            return False
 
     def reload_providers_config(self) -> bool:
         """

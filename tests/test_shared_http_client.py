@@ -162,6 +162,7 @@ class SharedHttpClientTests(unittest.TestCase):
     @patch.object(main.ConfigLoader, "load_fallback_rules")
     @patch.object(main.ConfigLoader, "load_model_rules")
     @patch.object(main.ConfigLoader, "load_fusion_rules")
+    @patch.object(main.ConfigLoader, "load_router_rules")
     @patch.object(main.ConfigLoader, "load_operation_rules")
     @patch("main.start_usage_stats_cleanup_task")
     @patch("main.TokensUsageDB")
@@ -172,6 +173,7 @@ class SharedHttpClientTests(unittest.TestCase):
         _tokens_usage_db,
         start_usage_stats_cleanup_task,
         _load_operation_rules,
+        _load_router_rules,
         _load_fusion_rules,
         _load_model_rules,
         _load_fallback_rules,
@@ -226,6 +228,7 @@ class SharedHttpClientTests(unittest.TestCase):
                 self.assertIs(call_args[0][0], _tokens_usage_db.return_value)
                 _load_operation_rules.assert_called_once()
                 _load_fusion_rules.assert_called_once()
+                _load_router_rules.assert_called_once()
                 _load_model_rules.assert_called_once()
 
         self.assertTrue(fake_cleanup_task.cancel_called)

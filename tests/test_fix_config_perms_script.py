@@ -10,6 +10,7 @@ CONFIG_FILES = [
     "models_fallback_rules.json",
     "models_operation_rules.json",
     "models_fusion_rules.json",
+    "models_router_rules.json",
     "models_model_rules.json",
 ]
 

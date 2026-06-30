@@ -45,6 +45,20 @@
         "custom_headers": {}
       },
       {
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b:free",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "z.ai",
         "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
@@ -53,15 +67,6 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
-      },
-      {
-        "provider": "openrouter",
-        "model": "openai/gpt-oss-120b:free",
-        "use_provider_order_as_fallback": false,
-        "retry_delay": 1,
-        "retry_count": 1,
-        "custom_body_params": {},
-        "custom_headers": {}
       },
       {
         "provider": "freemodel",
@@ -219,6 +224,8 @@
         "provider": "z.ai",
         "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
+        "retry_delay": 1,
+        "retry_count": 3,
         "custom_body_params": {},
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
@@ -323,13 +330,6 @@
         "custom_headers": {}
       },
       {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {}
-      },
-      {
         "provider": "z.ai",
         "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
@@ -338,6 +338,13 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         }
+      },
+      {
+        "provider": "kimicode",
+        "model": "kimi-for-coding",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
       },
       {
         "provider": "nvidia",

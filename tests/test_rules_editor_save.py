@@ -50,10 +50,12 @@ class RulesEditorSaveTests(unittest.TestCase):
         self.rules_path = Path(self.temp_dir.name) / "models_fallback_rules.json"
         self.operation_rules_path = Path(self.temp_dir.name) / "models_operation_rules.json"
         self.fusion_rules_path = Path(self.temp_dir.name) / "models_fusion_rules.json"
+        self.router_rules_path = Path(self.temp_dir.name) / "models_router_rules.json"
         self.providers_path.write_text(VALID_PROVIDERS_TEXT, encoding="utf-8")
         self.rules_path.write_text(VALID_RULES_TEXT, encoding="utf-8")
         self.operation_rules_path.write_text("{}", encoding="utf-8")
         self.fusion_rules_path.write_text("[]", encoding="utf-8")
+        self.router_rules_path.write_text("[]", encoding="utf-8")
         self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
         self.fallback_provider_patcher.start()
 
@@ -62,9 +64,12 @@ class RulesEditorSaveTests(unittest.TestCase):
             fallback_rules_filename=str(self.rules_path),
             operation_rules_filename=str(self.operation_rules_path),
             fusion_rules_filename=str(self.fusion_rules_path),
+            router_rules_filename=str(self.router_rules_path),
         )
         self.config_loader.load_providers()
         self.config_loader.load_fallback_rules()
+        self.config_loader.load_fusion_rules()
+        self.config_loader.load_router_rules()
 
     def tearDown(self):
         self.fallback_provider_patcher.stop()
@@ -175,6 +180,86 @@ class RulesEditorSaveTests(unittest.TestCase):
         self.assertIn('"devbox"', saved_text)
         self.assertIn('"proxy": "http://proxy.example:8080"', saved_text)
         self.assertIn('"pricing"', saved_text)
+
+    def test_get_router_rules_structured_returns_current_router_config(self):
+        self.router_rules_path.write_text(
+            """
+[
+  {
+    "gateway_model_name": "gateway/router",
+    "selector_model": "gateway-model",
+    "targets": [
+      {"type": "gateway_model", "model": "gateway-model"}
+    ]
+  }
+]
+""".strip(),
+            encoding="utf-8",
+        )
+        self.config_loader.load_router_rules()
+
+        with self._client() as client:
+            response = client.get(
+                "/v1/config/router-rules/structured",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["chat_models"], ["gateway-model"])
+        self.assertEqual(payload["fallback_chains"]["gateway-model"][0]["provider"], "devbox")
+        self.assertEqual(payload["rules"][0]["gateway_model_name"], "gateway/router")
+        self.assertEqual(payload["rules"][0]["selector_model"], "gateway-model")
+
+    def test_save_router_rules_structured_updates_file_and_runtime_config(self):
+        payload = {
+            "rules": [
+                {
+                    "gateway_model_name": "gateway/router",
+                    "selector_model": "gateway-model",
+                    "targets": [
+                        {"type": "gateway_model", "model": "gateway-model"},
+                        {"type": "fallback_entry", "gateway_model": "gateway-model", "index": 0},
+                    ],
+                }
+            ]
+        }
+
+        with self._client() as client:
+            response = client.post(
+                "/v1/config/router-rules/structured",
+                json=payload,
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("gateway/router", self.config_loader.router_rules)
+        saved_text = self.router_rules_path.read_text(encoding="utf-8")
+        self.assertIn('"gateway_model_name": "gateway/router"', saved_text)
+        self.assertIn('"type": "fallback_entry"', saved_text)
+
+    def test_save_router_rules_structured_rejects_unknown_selector(self):
+        original_file_content = self.router_rules_path.read_text(encoding="utf-8")
+        payload = {
+            "rules": [
+                {
+                    "gateway_model_name": "gateway/router",
+                    "selector_model": "gateway/missing",
+                    "targets": [{"type": "gateway_model", "model": "gateway-model"}],
+                }
+            ]
+        }
+
+        with self._client() as client:
+            response = client.post(
+                "/v1/config/router-rules/structured",
+                json=payload,
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("unknown selector_model", response.json()["detail"])
+        self.assertEqual(self.router_rules_path.read_text(encoding="utf-8"), original_file_content)
 
     def test_save_models_rules_does_not_overwrite_file_when_replace_fails(self):
         updated_rules_text = VALID_RULES_TEXT.replace("provider-model", "provider-model-v2")

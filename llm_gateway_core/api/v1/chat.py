@@ -3643,7 +3643,12 @@ def _compute_retry_sleep_seconds(retry_delay: float, error_detail: object) -> fl
     return 0.0
 
 
-async def _dispatch_chat_request(request: Request, request_body_json: dict):
+async def _dispatch_chat_request(
+    request: Request,
+    request_body_json: dict,
+    *,
+    enforce_model_access: bool = True,
+):
     config_loader_instance: ConfigLoader = request.app.state.config_loader
     if not config_loader_instance:
         logging.error("ConfigLoader not found in application state within chat_completions.")
@@ -3673,7 +3678,8 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
     if not requested_model:
         raise HTTPException(status_code=400, detail="Missing 'model' in request body")
 
-    enforce_virtual_key_access(request, requested_model)
+    if enforce_model_access:
+        enforce_virtual_key_access(request, requested_model)
 
     try:
         model_resolution = resolve_model_name(
@@ -3731,6 +3737,19 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
             proxy_http_clients=proxy_http_clients,
         )
 
+    router_rules = getattr(config_loader_instance, "router_rules", None)
+    router_config = router_rules.get(routing_model) if isinstance(router_rules, dict) else None
+    if router_config is not None:
+        router_service = getattr(request.app.state, "router_model_service", None)
+        if router_service is None:
+            raise HTTPException(status_code=500, detail="Router model service is not available.")
+        return await router_service.run(
+            request=request,
+            gateway_model_name=routing_model,
+            router_config=router_config,
+            request_body=request_body_json,
+        )
+
     model_config = fallback_rules.get(routing_model)
     context_overflow_fallback = None
     strip_think_tags = False
@@ -3765,6 +3784,25 @@ async def _dispatch_chat_request(request: Request, request_body_json: dict):
             logging.info("Literal <think> tag stripping is enabled for gateway model '%s'.", requested_model)
         if dynamic_penalty_enabled:
             logging.info("Dynamic upstream penalty ordering is enabled for gateway model '%s'.", requested_model)
+
+    forced_owner_model = getattr(request.state, "llmgateway_forced_fallback_owner_model", None)
+    forced_start_index = getattr(request.state, "llmgateway_forced_fallback_start_index", None)
+    if model_config and forced_owner_model == routing_model and isinstance(forced_start_index, int):
+        if forced_start_index < 0 or forced_start_index >= len(model_fallbacks_sequence):
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Invalid forced fallback start index {forced_start_index} "
+                    f"for model '{routing_model}'."
+                ),
+            )
+        model_fallbacks_sequence = model_fallbacks_sequence[forced_start_index:]
+        rotate_models = False
+        logging.info(
+            "Router selected fallback entry %s for model '%s'; starting chain from that entry.",
+            forced_start_index,
+            routing_model,
+        )
 
     compress_tool_results = bool(model_config.get("compress_tool_results", False)) if model_config else False
     if compress_tool_results:

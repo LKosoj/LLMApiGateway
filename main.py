@@ -45,6 +45,7 @@ from llm_gateway_core.services.rate_limiter import RateLimiter
 from llm_gateway_core.services.ip_blocklist import IpBlockGuard
 from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
+from llm_gateway_core.services.router_model import RouterModelService
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 from llm_gateway_core.services.upstream_subscription_quota import UpstreamSubscriptionQuotaService
 from llm_gateway_core.utils.html_cache import preload_templates
@@ -297,6 +298,7 @@ async def lifespan(app: FastAPI):
     config_loader.load_model_rules()
     config_loader.load_operation_rules()
     config_loader.load_fusion_rules()
+    config_loader.load_router_rules()
     config_loader.validate_fallback_operation_consistency()
     app.state.config_loader = config_loader
     app.state.operation_rules = config_loader.operation_rules
@@ -392,6 +394,10 @@ async def lifespan(app: FastAPI):
     fusion_service = FusionEnsembleService(config_loader)
     app.state.fusion_service = fusion_service
     logger.info("FusionEnsembleService initialized and attached to app.state.")
+
+    router_model_service = RouterModelService(config_loader)
+    app.state.router_model_service = router_model_service
+    logger.info("RouterModelService initialized and attached to app.state.")
 
     provider_models_service = ProviderModelsService()
     app.state.provider_models_service = provider_models_service

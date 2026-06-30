@@ -111,6 +111,12 @@ if [ ! -f "/app/models_operation_rules.json" ]; then
 }' > /app/models_operation_rules.json
 fi
 
+# If models_router_rules.json doesn't exist, create empty router rules
+if [ ! -f "/app/models_router_rules.json" ]; then
+    echo "models_router_rules.json not found, creating empty router rules."
+    echo '[]' > /app/models_router_rules.json
+fi
+
 # If models_model_rules.json doesn't exist, create an empty model policy file
 if [ ! -f "/app/models_model_rules.json" ]; then
     echo "models_model_rules.json not found, creating empty model policy."
