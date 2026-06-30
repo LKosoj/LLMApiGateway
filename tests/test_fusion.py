@@ -318,6 +318,21 @@ class FusionBaseContextTests(unittest.TestCase):
             self.assertIn("Current date and time:", system)
             self.assertNotIn("use web_search before answering", system)
 
+    def test_main_prompt_requires_compilation_instead_of_winner_selection(self):
+        records = self._run_capturing(self._fusion_config())
+        main_systems = [
+            payload["messages"][0]["content"]
+            for payload in records
+            if "lead model of a Fusion" in payload["messages"][0]["content"]
+        ]
+
+        self.assertEqual(len(main_systems), 1)
+        main_prompt = main_systems[0]
+        self.assertIn("Compile a single final answer", main_prompt)
+        self.assertIn("Do not select one panel answer as the winner", main_prompt)
+        self.assertIn("Combine all useful, non-conflicting contributions", main_prompt)
+        self.assertIn("preserve unique correct details", main_prompt)
+
 
 class FusionWebToolsConfigTests(unittest.TestCase):
     def test_web_tools_defaults(self):

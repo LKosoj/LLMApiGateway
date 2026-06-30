@@ -8,7 +8,8 @@ upstream call:
 2. **Fan-in (judge)** — a judge model compares the panel answers and returns a
    *structured* analysis (agreements, disputes, per-model insights, blind
    spots).
-3. **Main model** — writes the final answer, informed by the judge analysis.
+3. **Main model** — compiles the final answer from the panel answers and
+   judge analysis.
 
 Each panel/judge/main member is addressed as a ``{provider, model}`` pair, the
 same shape as a fallback target, so the gateway itself can be registered as a
@@ -65,11 +66,13 @@ _JUDGE_SYSTEM_PROMPT = (
 
 _MAIN_SYSTEM_PROMPT = (
     "You are the lead model of a Fusion ensemble. Several models answered the "
-    "user request and a judge analysed their answers. Using the user request, "
-    "the panel answers and the judge analysis, write the single best final "
-    "answer for the user. Resolve disagreements on the merits, incorporate the "
-    "strongest insights and cover the blind spots. Reply in the user's language "
-    "and do not mention this internal process unless asked."
+    "user request and a judge analysed their answers. Compile a single final "
+    "answer for the user from the panel answers and the judge analysis. Do not "
+    "select one panel answer as the winner or merely restate the strongest "
+    "answer. Combine all useful, non-conflicting contributions, preserve unique "
+    "correct details, resolve disagreements on the merits, and cover the blind "
+    "spots. Reply in the user's language and do not mention this internal "
+    "process unless asked."
 )
 
 # Appended to a panel member's base context when the Fusion model enables web
