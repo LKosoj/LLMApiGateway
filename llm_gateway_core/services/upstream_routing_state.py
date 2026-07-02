@@ -241,7 +241,14 @@ class UpstreamRoutingState:
             state.last_checked_at = self._utc_now_iso()
             state.last_error = str(error_detail)[:500] if error_detail else None
             if temporary:
-                cooldown_seconds = max(DEFAULT_COOLDOWN_SECONDS, float(retry_after or 0.0))
+                cooldown_seconds = DEFAULT_COOLDOWN_SECONDS
+                if retry_after is not None:
+                    try:
+                        retry_after_seconds = float(retry_after)
+                    except (TypeError, ValueError):
+                        retry_after_seconds = 0.0
+                    if retry_after_seconds > 0:
+                        cooldown_seconds = retry_after_seconds
                 state.cooldown_until = now + cooldown_seconds
             if apply_penalty and temporary:
                 state.penalty_score = min(100.0, self._decayed_penalty(state, now) + 25.0)

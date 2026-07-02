@@ -203,6 +203,20 @@ class AdminApiKeysHttpTests(unittest.TestCase):
         self.assertEqual(resp.json()["spent_usd"], 0.0)
         self.assertTrue(ledger.reserve(record.id, 5.0))
 
+    def test_delete_api_key_discards_usd_budget_ledger_entry(self):
+        record = self.db.create(name="team-delete", budget_usd=10.0)
+        ledger = self.app.state.usd_budget_ledger
+        ledger.sync_record(record.id, budget_usd=10.0, spent_usd=0.0)
+        self.assertTrue(ledger.reserve(record.id, 5.0))
+
+        resp = self.client.delete(
+            f"/v1/admin/api-keys/{record.id}",
+            headers=self._master_headers(),
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(ledger.reserved_for(record.id), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

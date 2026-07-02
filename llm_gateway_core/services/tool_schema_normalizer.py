@@ -29,7 +29,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-_META_KEYS = ("$schema", "$id", "$comment", "definitions", "$defs")
+_META_KEYS = ("$schema", "$id", "$comment")
+_DEFINITION_KEYS = ("definitions", "$defs")
 
 # Guard against deeply nested or recursive schemas: a pathological
 # ``$ref``-expanded schema (or a hand-crafted hostile tool definition) could
@@ -93,21 +94,54 @@ def _coerce_exclusive_bounds(schema: dict[str, Any]) -> None:
                 schema.pop(bool_key, None)
 
 
-def _strip_meta(schema: dict[str, Any]) -> None:
+def _schema_contains_ref(schema: Any) -> bool:
+    stack: list[tuple[Any, int]] = [(schema, 0)]
+    seen: set[int] = set()
+
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MAX_SCHEMA_DEPTH:
+            continue
+        if isinstance(node, dict):
+            node_id = id(node)
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            if "$ref" in node:
+                return True
+            stack.extend((value, depth + 1) for value in node.values())
+            continue
+
+        if isinstance(node, list):
+            node_id = id(node)
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            stack.extend((item, depth + 1) for item in node)
+
+    return False
+
+
+def _strip_meta(schema: dict[str, Any], *, preserve_definitions: bool) -> None:
     for meta in _META_KEYS:
         schema.pop(meta, None)
+    if not preserve_definitions:
+        for definition_key in _DEFINITION_KEYS:
+            schema.pop(definition_key, None)
 
 
-def _normalize_schema(schema: Any, depth: int = 0) -> Any:
+def _normalize_schema(schema: Any, depth: int = 0, preserve_definitions: bool | None = None) -> Any:
     """Recursively normalize a JSON Schema node in-place and return it."""
+    if preserve_definitions is None:
+        preserve_definitions = _schema_contains_ref(schema)
     if depth > _MAX_SCHEMA_DEPTH:
         return schema
     if isinstance(schema, list):
-        return [_normalize_schema(item, depth + 1) for item in schema]
+        return [_normalize_schema(item, depth + 1, preserve_definitions) for item in schema]
     if not isinstance(schema, dict):
         return schema
 
-    _strip_meta(schema)
+    _strip_meta(schema, preserve_definitions=preserve_definitions)
     _collapse_nullable_any_of(schema)
     _flatten_type_union(schema)
     _coerce_exclusive_bounds(schema)
@@ -116,20 +150,23 @@ def _normalize_schema(schema: Any, depth: int = 0) -> Any:
         sub = schema.get(sub_key)
         if isinstance(sub, dict):
             for name, child in list(sub.items()):
-                sub[name] = _normalize_schema(child, depth + 1)
+                sub[name] = _normalize_schema(child, depth + 1, preserve_definitions)
 
     items = schema.get("items")
     if isinstance(items, (dict, list)):
-        schema["items"] = _normalize_schema(items, depth + 1)
+        schema["items"] = _normalize_schema(items, depth + 1, preserve_definitions)
 
     for combinator in ("allOf", "anyOf", "oneOf"):
         combined = schema.get(combinator)
         if isinstance(combined, list):
-            schema[combinator] = [_normalize_schema(item, depth + 1) for item in combined]
+            schema[combinator] = [
+                _normalize_schema(item, depth + 1, preserve_definitions)
+                for item in combined
+            ]
 
     additional = schema.get("additionalProperties")
     if isinstance(additional, dict):
-        schema["additionalProperties"] = _normalize_schema(additional, depth + 1)
+        schema["additionalProperties"] = _normalize_schema(additional, depth + 1, preserve_definitions)
 
     return schema
 

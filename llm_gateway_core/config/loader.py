@@ -9,6 +9,39 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 # Import settings using relative path within the package
 from .settings import settings
 from .placeholder_secrets import is_placeholder_secret, placeholder_secret_error
+from .schema_validation import (  # noqa: F401
+    AUDIO_SPEECH_DEFAULT_TARGET_PATH,
+    AUDIO_TRANSCRIPTIONS_DEFAULT_TARGET_PATH,
+    FORBIDDEN_OPERATION_BODY_PARAMS,
+    IMAGES_EDITS_DEFAULT_TARGET_PATH,
+    PDF_CONVERSIONS_DEFAULT_TARGET_PATH,
+    RERANK_DEFAULT_TARGET_PATH,
+    REQUEST_FORMAT_NVIDIA_GENAI_JSON,
+    REQUEST_FORMAT_NVIDIA_RIVA_GRPC,
+    REQUEST_FORMAT_OPENAI_IMAGES,
+    REQUEST_FORMAT_OPENAI_IMAGES_MULTIPART,
+    REQUEST_FORMAT_QUERY_PASSAGES,
+    REQUEST_FORMAT_QUERY_TEXTS,
+    RESPONSE_FORMAT_NVIDIA_ARTIFACTS,
+    RESPONSE_FORMAT_OPENAI_IMAGES,
+    RESPONSE_FORMAT_RANKINGS_LOGIT,
+    RESPONSE_FORMAT_SCORES,
+    RESPONSE_OUTPUT_FORMAT_JINA_RESULTS,
+    SECURITY_HEADERS,
+    SUPPORTED_REQUEST_FORMATS,
+    SUPPORTED_RESPONSE_FORMATS,
+    SUPPORTED_RESPONSE_OUTPUT_FORMATS,
+    empty_operation_rules as _empty_operation_rules,
+    validate_custom_body_params as _validate_custom_body_params,
+    validate_custom_headers as _validate_custom_headers,
+    validate_header_name as _validate_header_name,
+    validate_json_object as _validate_json_object,
+    validate_non_empty_string as _validate_non_empty_string,
+    validate_non_negative_number as _validate_non_negative_number,
+    validate_provider_name_list as _validate_provider_name_list,
+    validate_route_format as _validate_route_format,
+    validate_target_path as _validate_target_path,
+)
 from ..services.payload_transform import (
     validate_payload_transform_filters,
     validate_payload_transform_object,
@@ -26,46 +59,9 @@ class ConfigError(RuntimeError):
     """
 
 
-SECURITY_HEADERS = frozenset({"authorization", "cookie", "x-api-key"})
-FORBIDDEN_OPERATION_BODY_PARAMS = frozenset({"stream", "messages", "tool_choice", "tools", "model"})
-RERANK_DEFAULT_TARGET_PATH = "/score"
-IMAGES_EDITS_DEFAULT_TARGET_PATH = "/images/edits"
-AUDIO_SPEECH_DEFAULT_TARGET_PATH = "/audio/speech"
-AUDIO_TRANSCRIPTIONS_DEFAULT_TARGET_PATH = "/audio/transcriptions"
-PDF_CONVERSIONS_DEFAULT_TARGET_PATH = "/api"
-REQUEST_FORMAT_QUERY_PASSAGES = "query_passages"
-REQUEST_FORMAT_QUERY_TEXTS = "query_texts"
-REQUEST_FORMAT_OPENAI_IMAGES = "openai_images"
-REQUEST_FORMAT_OPENAI_IMAGES_MULTIPART = "openai_images_multipart"
-REQUEST_FORMAT_NVIDIA_GENAI_JSON = "nvidia_genai_json"
-REQUEST_FORMAT_NVIDIA_RIVA_GRPC = "nvidia_riva_grpc"
 # Pinned anthropic-version header used for every outbound call to a provider
 # of type "anthropic" (/v1/messages and /v1/models).
 ANTHROPIC_API_VERSION = "2023-06-01"
-RESPONSE_FORMAT_RANKINGS_LOGIT = "rankings_logit"
-RESPONSE_FORMAT_SCORES = "scores"
-RESPONSE_FORMAT_OPENAI_IMAGES = "openai_images"
-RESPONSE_FORMAT_NVIDIA_ARTIFACTS = "nvidia_artifacts"
-RESPONSE_OUTPUT_FORMAT_JINA_RESULTS = "jina_results"
-SUPPORTED_REQUEST_FORMATS = frozenset(
-    {
-        REQUEST_FORMAT_QUERY_PASSAGES,
-        REQUEST_FORMAT_QUERY_TEXTS,
-        REQUEST_FORMAT_OPENAI_IMAGES,
-        REQUEST_FORMAT_OPENAI_IMAGES_MULTIPART,
-        REQUEST_FORMAT_NVIDIA_GENAI_JSON,
-        REQUEST_FORMAT_NVIDIA_RIVA_GRPC,
-    }
-)
-SUPPORTED_RESPONSE_FORMATS = frozenset(
-    {
-        RESPONSE_FORMAT_RANKINGS_LOGIT,
-        RESPONSE_FORMAT_SCORES,
-        RESPONSE_FORMAT_OPENAI_IMAGES,
-        RESPONSE_FORMAT_NVIDIA_ARTIFACTS,
-    }
-)
-SUPPORTED_RESPONSE_OUTPUT_FORMATS = frozenset({RESPONSE_OUTPUT_FORMAT_JINA_RESULTS})
 ENV_REFERENCE_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 ENV_REFERENCE_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 KNOWN_PROVIDER_ENV_NAMES = frozenset(
@@ -213,126 +209,6 @@ def _provider_env_reference_error(provider_name: str, field_name: str, env_name:
         f"env var {env_name} referenced but missing for provider "
         f"'{provider_name}' field '{field_name}'"
     )
-
-
-def _validate_non_empty_string(value: str, field_name: str) -> str:
-    normalized_value = value.strip()
-    if not normalized_value:
-        raise ValueError(f"'{field_name}' must not be empty.")
-    return normalized_value
-
-
-def _validate_target_path(value: str) -> str:
-    normalized_value = value.strip()
-    if normalized_value.startswith(("http://", "https://")):
-        return normalized_value
-    if not normalized_value.startswith("/"):
-        raise ValueError("'target_path' must start with '/' or be an absolute http(s) URL.")
-    return normalized_value
-
-
-def _validate_route_format(value: str | None, field_name: str, allowed_values: frozenset[str]) -> str | None:
-    if value is None:
-        return None
-
-    normalized_value = value.strip()
-    if not normalized_value:
-        return None
-
-    if normalized_value not in allowed_values:
-        allowed_values_text = ", ".join(sorted(allowed_values))
-        raise ValueError(f"'{field_name}' must be one of: {allowed_values_text}.")
-
-    return normalized_value
-
-
-def _validate_non_negative_number(value: int | float | None, field_name: str) -> int | float | None:
-    if value is None:
-        return None
-
-    if value < 0:
-        raise ValueError(f"'{field_name}' must be greater than or equal to 0.")
-
-    return value
-
-
-def _validate_custom_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
-    blocked_headers = sorted(header for header in headers if header.lower() in SECURITY_HEADERS)
-    if blocked_headers:
-        raise ValueError(
-            "custom_headers must not contain protected headers: Authorization, Cookie, X-Api-Key."
-        )
-    return headers
-
-
-def _validate_custom_body_params(body_params: Dict[str, Any]) -> Dict[str, Any]:
-    blocked_keys = sorted(param for param in body_params if param.lower() in FORBIDDEN_OPERATION_BODY_PARAMS)
-    if blocked_keys:
-        raise ValueError(
-            "custom_body_params must not contain reserved keys: stream, messages, tool_choice, tools, model."
-        )
-    return body_params
-
-
-def _validate_json_object(value: Dict[str, Any] | None, field_name: str) -> Dict[str, Any] | None:
-    if value is None:
-        return None
-
-    if not isinstance(value, dict):
-        raise ValueError(f"'{field_name}' must be a JSON object.")
-
-    return value
-
-
-def _validate_provider_name_list(value: Any, field_name: str) -> List[str] | None:
-    if value is None:
-        return None
-
-    if not isinstance(value, list):
-        raise ValueError(f"'{field_name}' must be a list of provider names.")
-
-    if not value:
-        raise ValueError(f"'{field_name}' must not be empty when provided.")
-
-    normalized_values: list[str] = []
-    seen_values: set[str] = set()
-    for provider_name in value:
-        if not isinstance(provider_name, str):
-            raise ValueError(f"'{field_name}' must contain only provider name strings.")
-        normalized_provider_name = provider_name.strip()
-        if not normalized_provider_name:
-            raise ValueError(f"'{field_name}' must not contain empty provider names.")
-        if normalized_provider_name in seen_values:
-            raise ValueError(f"'{field_name}' must not contain duplicate provider names.")
-        seen_values.add(normalized_provider_name)
-        normalized_values.append(normalized_provider_name)
-
-    return normalized_values
-
-
-def _validate_header_name(value: str | None, field_name: str) -> str | None:
-    if value is None:
-        return None
-    normalized_value = _validate_non_empty_string(value, field_name)
-    if not re.fullmatch(r"[A-Za-z0-9-]+", normalized_value):
-        raise ValueError(f"'{field_name}' must contain only letters, digits, and hyphens.")
-    return normalized_value
-
-
-def _empty_operation_rules() -> Dict[str, Dict[str, Any]]:
-    return {
-        "embeddings": {},
-        "rerank": {},
-        "images_generations": {},
-        "images_edits": {},
-        "audio_speech": {},
-        "audio_transcriptions": {},
-        "web_search": {},
-        "web_read": {},
-        "web_research": {},
-        "web_deep_research": {},
-        "pdf_conversions": {},
-    }
 
 
 # Note: Pydantic models defined here. Consider moving them to llm_gateway_core/models/config.py
@@ -1787,8 +1663,8 @@ class ConfigLoader:
         chain and is only used by operations — which could leave it unreachable
         for direct chat routing.
         """
-        effective_fallback = fallback_rules or self.fallback_rules
-        effective_operation = operation_rules or self.operation_rules
+        effective_fallback = self.fallback_rules if fallback_rules is None else fallback_rules
+        effective_operation = self.operation_rules if operation_rules is None else operation_rules
 
         chat_models = set(effective_fallback.keys())
 
@@ -1839,23 +1715,44 @@ class ConfigLoader:
         providers_config: Optional[Dict[str, ProviderDetails]] = None,
         fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
+        model_rules, _combined_fallback_rules = self.parse_and_validate_model_rules_payload_with_fallbacks(
+            payload_text,
+            providers_config=providers_config,
+            fallback_rules=fallback_rules,
+        )
+        return model_rules
+
+    def parse_and_validate_model_rules_payload_with_fallbacks(
+        self,
+        payload_text: str,
+        providers_config: Optional[Dict[str, ProviderDetails]] = None,
+        fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
         raw_rules = json5.loads(payload_text)
         model_rules = self._build_model_rules_config(raw_rules)
-        original_fallback_rules = self.fallback_rules
-        try:
-            if fallback_rules is not None:
-                self.fallback_rules = fallback_rules
-            base_fallback_rules = self.fallback_rules
-            pool_rules = self._model_pool_fallback_rules(model_rules, base_fallback_rules)
-            combined_fallback_rules = {**base_fallback_rules, **pool_rules}
-            self.validate_fallback_rules_mapping(
-                combined_fallback_rules,
-                providers_config=providers_config,
-            )
-            self._validate_model_rules_mapping(model_rules, combined_fallback_rules)
-            return model_rules
-        finally:
-            self.fallback_rules = original_fallback_rules
+        base_fallback_rules = self.fallback_rules if fallback_rules is None else fallback_rules
+        combined_fallback_rules = self._combine_fallback_rules_with_model_rules(
+            model_rules,
+            base_fallback_rules,
+            providers_config=providers_config,
+        )
+        return model_rules, combined_fallback_rules
+
+    def _combine_fallback_rules_with_model_rules(
+        self,
+        model_rules: Dict[str, Any],
+        base_fallback_rules: Dict[str, Dict[str, Any]],
+        *,
+        providers_config: Optional[Dict[str, ProviderDetails]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        pool_rules = self._model_pool_fallback_rules(model_rules, base_fallback_rules)
+        combined_fallback_rules = {**base_fallback_rules, **pool_rules}
+        self.validate_fallback_rules_mapping(
+            combined_fallback_rules,
+            providers_config=providers_config,
+        )
+        self._validate_model_rules_mapping(model_rules, combined_fallback_rules)
+        return combined_fallback_rules
 
     def parse_and_validate_operation_routes_payload(
         self,
@@ -2053,14 +1950,16 @@ class ConfigLoader:
                 raw_rules = json5.load(f)
 
             model_rules_temp = self._build_model_rules_config(raw_rules)
-            base_fallback_rules = self._fallback_rules_base or self.fallback_rules
-            pool_rules = self._model_pool_fallback_rules(model_rules_temp, base_fallback_rules)
-            combined_fallback_rules = {**base_fallback_rules, **pool_rules}
-            self.validate_fallback_rules_mapping(
-                combined_fallback_rules,
+            base_fallback_rules = (
+                self._fallback_rules_base
+                if self._fallback_rules_base is not None
+                else self.fallback_rules
+            )
+            combined_fallback_rules = self._combine_fallback_rules_with_model_rules(
+                model_rules_temp,
+                base_fallback_rules,
                 providers_config=self.providers_config,
             )
-            self._validate_model_rules_mapping(model_rules_temp, combined_fallback_rules)
             self.fallback_rules = combined_fallback_rules
             self.model_rules = model_rules_temp
             logging.info(f"Successfully loaded model rules from {self.model_rules_path}")
@@ -2117,11 +2016,27 @@ class ConfigLoader:
 
             self.validate_fallback_rules_mapping(fallback_rules_temp, providers_config=self.providers_config)
 
-            # If all validations pass, update the actual instance rules
-            self.fallback_rules = fallback_rules_temp
-            self._fallback_rules_base = fallback_rules_temp
+            candidate_fallback_rules = fallback_rules_temp
+            candidate_model_rules = self.model_rules
             if self.model_rules_path.exists():
-                self.load_model_rules()
+                with open(self.model_rules_path, 'r', encoding='utf-8') as f:
+                    model_rules_payload = f.read()
+                candidate_model_rules, candidate_fallback_rules = (
+                    self.parse_and_validate_model_rules_payload_with_fallbacks(
+                        model_rules_payload,
+                        providers_config=self.providers_config,
+                        fallback_rules=fallback_rules_temp,
+                    )
+                )
+            self.validate_fallback_operation_consistency(
+                fallback_rules=candidate_fallback_rules,
+                operation_rules=self.operation_rules,
+            )
+
+            # If all validations pass, update the actual instance rules.
+            self._fallback_rules_base = fallback_rules_temp
+            self.model_rules = candidate_model_rules
+            self.fallback_rules = candidate_fallback_rules
             logging.info(f"Successfully reloaded and validated model fallback rules from {self.fallback_rules_path}")
             logging.info(f"Reloaded model rules for: {list(self.fallback_rules.keys())}")
             return True
@@ -2363,6 +2278,10 @@ class ConfigLoader:
                 self.load_providers()
 
             self.validate_operation_routes(operation_rules_temp, providers_config=self.providers_config)
+            self.validate_fallback_operation_consistency(
+                fallback_rules=self.fallback_rules,
+                operation_rules=operation_rules_temp,
+            )
 
             self.operation_rules = operation_rules_temp
             logging.info(

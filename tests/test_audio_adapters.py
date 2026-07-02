@@ -1,5 +1,7 @@
 import io
 import shutil
+import sys
+import types
 import unittest
 import wave
 from pathlib import Path
@@ -10,6 +12,8 @@ from fastapi import HTTPException
 from llm_gateway_core.api.v1.audio_adapters import (
     _NvidiaRivaCapabilities,
     _build_nvidia_riva_recognition_config,
+    _call_nvidia_riva_grpc_sync,
+    _clear_nvidia_riva_grpc_client_cache,
     _extract_raw_pcm_audio_from_wav,
     _iter_wav_audio_chunks,
     _resolve_nvidia_api_catalog_request_payload,
@@ -88,6 +92,19 @@ class _FakeRivaClient:
     @staticmethod
     def add_custom_configuration_to_config(config, custom_configuration) -> None:
         return None
+
+
+def _install_fake_riva_client_module(fake_auth_class, fake_asr_service_class):
+    riva_package = types.ModuleType("riva")
+    riva_client_module = types.ModuleType("riva.client")
+    riva_client_module.Auth = fake_auth_class
+    riva_client_module.ASRService = fake_asr_service_class
+    riva_client_module.RecognitionConfig = _FakeRecognitionConfig
+    riva_client_module.add_word_boosting_to_config = _FakeRivaClient.add_word_boosting_to_config
+    riva_client_module.add_speaker_diarization_to_config = _FakeRivaClient.add_speaker_diarization_to_config
+    riva_client_module.add_custom_configuration_to_config = _FakeRivaClient.add_custom_configuration_to_config
+    riva_package.client = riva_client_module
+    return patch.dict(sys.modules, {"riva": riva_package, "riva.client": riva_client_module})
 
 
 class AudioAdaptersTests(unittest.TestCase):
@@ -212,6 +229,59 @@ class AudioAdaptersTests(unittest.TestCase):
 
         self.assertEqual(raw_audio, b"\x00\x00" * 160)
         self.assertFalse(raw_audio.startswith(b"RIFF"))
+
+    def test_nvidia_riva_grpc_client_is_cached_by_route_auth_tuple(self):
+        _clear_nvidia_riva_grpc_client_cache()
+        wav_bytes = self._build_wav_bytes()
+
+        class FakeAuth:
+            created: list[object] = []
+
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+                self.__class__.created.append(self)
+
+            def get_auth_metadata(self):
+                return self.kwargs["metadata_args"]
+
+        class FakeASRService:
+            created: list[object] = []
+
+            def __init__(self, auth) -> None:
+                self.auth = auth
+                self.__class__.created.append(self)
+
+            def offline_recognize(self, _raw_audio_bytes, _config):
+                return _FakeResponse([_FakeResult(_FakeAlternative("cached"), audio_processed=1.0)])
+
+        call_kwargs = {
+            "grpc_uri": "speech.example:50051",
+            "use_ssl": True,
+            "metadata": [["authorization", "Bearer first-key"]],
+            "request_payload": {"model": "nvidia/parakeet-1_1b-rnnt-multilingual-asr"},
+            "audio_bytes": wav_bytes,
+            "include_model": True,
+            "use_streaming": False,
+        }
+
+        try:
+            with _install_fake_riva_client_module(FakeAuth, FakeASRService):
+                first_response = _call_nvidia_riva_grpc_sync(**call_kwargs)
+                second_response = _call_nvidia_riva_grpc_sync(**call_kwargs)
+                _call_nvidia_riva_grpc_sync(
+                    **{
+                        **call_kwargs,
+                        "metadata": [["authorization", "Bearer second-key"]],
+                    }
+                )
+        finally:
+            _clear_nvidia_riva_grpc_client_cache()
+
+        self.assertEqual(first_response.results[0].alternatives[0].transcript, "cached")
+        self.assertEqual(second_response.results[0].alternatives[0].transcript, "cached")
+        self.assertEqual(len(FakeAuth.created), 2)
+        self.assertEqual(len(FakeASRService.created), 2)
+        self.assertIs(FakeASRService.created[0].auth, FakeAuth.created[0])
 
     def test_resolve_nvidia_api_catalog_request_payload_defaults_to_multi_when_upstream_supports_it(self):
         resolved_payload = _resolve_nvidia_api_catalog_request_payload(

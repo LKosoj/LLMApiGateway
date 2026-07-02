@@ -483,5 +483,35 @@
     "dynamic_penalty": false,
     "strip_think_tags": true,
     "compress_tool_results": true
+  },
+  {
+    "gateway_model_name": "llmgateway/small",
+    "fallback_models": [
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b:free",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      }
+    ],
+    "rotate_models": false,
+    "dynamic_penalty": false,
+    "strip_think_tags": false,
+    "compress_tool_results": false
   }
 ]

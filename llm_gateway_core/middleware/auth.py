@@ -12,11 +12,14 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response, Streamin
 from fastapi.security import APIKeyHeader
 from starlette.routing import Match
 
+from ..api.error_envelope import error_response
 from ..config.settings import settings
 from ..db.api_keys_db import ApiKeyRecord, ApiKeysDB
 from ..db.rejections_db import record_rejection
+from ..middleware.content_size import contains_request_body_too_large
 from ..services.access_control import UsdBudgetLedger
 from ..services.active_requests import get_active_requests_registry
+from ..utils.client_ip import get_client_ip
 
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 ANTHROPIC_API_KEY_HEADER_NAME = "x-api-key"
@@ -79,8 +82,10 @@ MASTER_ONLY_PREFIXES = (
     "/v1/ui/translator-debug",
     "/v1/ui/pricing",
     "/v1/ui/rejections",
+    "/v1/ui/providers-config",
     "/v1/config/",
     "/v1/openrouter/free-models",
+    "/v1/fallback-model-evals",
     "/v1/admin/",
 )
 
@@ -214,13 +219,20 @@ def set_authenticated_session_cookie(response: Response, session_id: str) -> Non
         value=session_id,
         max_age=SESSION_TTL_SECONDS,
         httponly=True,
+        secure=settings.session_cookie_secure,
         samesite="lax",
         path="/",
     )
 
 
 def clear_authenticated_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def normalize_next_path(next_path: str | None) -> str:
@@ -386,8 +398,9 @@ def _release_usd_budget_reservation(request: Request) -> None:
 
     ledger = _get_usd_budget_ledger(request)
     key_id = getattr(request.state, "usd_budget_reserved_key_id", None)
+    reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
     if ledger is not None and key_id is not None:
-        ledger.release(int(key_id))
+        ledger.release(int(key_id), reserved_estimate)
     request.state.usd_budget_finalized = True
 
 
@@ -557,11 +570,6 @@ def _category_from_exc(exc: HTTPException) -> str:
     return "unauthorized"
 
 
-def _client_ip(request: Request) -> str | None:
-    client = getattr(request, "client", None)
-    return client.host if client is not None else None
-
-
 def _ip_blocked_response(retry_after: int) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -577,7 +585,7 @@ def _note_auth_failure(request: Request) -> None:
     guard = getattr(request.app.state, "ip_block_guard", None)
     if guard is None:
         return
-    ip = _client_ip(request)
+    ip = get_client_ip(request)
     if not ip:
         return
     blocked_seconds = guard.register_failure(ip)
@@ -603,7 +611,7 @@ def _note_auth_success(request: Request) -> None:
     guard = getattr(request.app.state, "ip_block_guard", None)
     if guard is None:
         return
-    ip = _client_ip(request)
+    ip = get_client_ip(request)
     if ip:
         guard.register_success(ip)
 
@@ -638,7 +646,7 @@ async def api_key_auth(request: Request, call_next):
 
         guard = getattr(request.app.state, "ip_block_guard", None)
         if guard is not None:
-            client_ip = _client_ip(request)
+            client_ip = get_client_ip(request)
             if client_ip:
                 retry_after = guard.check_blocked(client_ip)
                 if retry_after is not None:
@@ -713,10 +721,14 @@ async def api_key_auth(request: Request, call_next):
             return _api_key_disabled_response(request)
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     except Exception as exc:
+        if contains_request_body_too_large(exc):
+            raise
         _finish_active_request(request, getattr(request.state, "llmgateway_active_request_id", None))
         _release_usd_budget_reservation(request)
         logging.error(f"Internal server error: {exc}", exc_info=True)
-        return JSONResponse(
+        return error_response(
+            request,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": f"Internal server error. Error: {exc}"},
+            detail="Internal server error",
+            error_type="internal_error",
         )

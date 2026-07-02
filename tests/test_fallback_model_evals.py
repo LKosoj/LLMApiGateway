@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ProviderDetails
+from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.fallback_model_evals import (
     FallbackModelEvalService,
     HEALTH_PROBE_MAX_TOKENS,
@@ -408,14 +409,35 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
 
 
 class FallbackModelEvalApiTests(unittest.TestCase):
-    def test_status_endpoint_returns_disabled_payload_without_service(self):
+    def _app_with_role(self, role: str) -> FastAPI:
         app = FastAPI()
+
+        @app.middleware("http")
+        async def set_role(request, call_next):
+            request.state.api_key_role = role
+            return await call_next(request)
+
         app.include_router(editor_router, prefix="/v1")
+        return app
+
+    def test_status_endpoint_returns_disabled_payload_without_service(self):
+        app = self._app_with_role(ROLE_MASTER)
 
         response = TestClient(app).get("/v1/fallback-model-evals")
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["configured"])
+
+    def test_status_endpoint_rejects_non_master_role(self):
+        app = self._app_with_role(ROLE_USER)
+
+        response = TestClient(app).get("/v1/fallback-model-evals")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )
 
     def test_run_endpoint_starts_service_with_current_config(self):
         class FakeService:
@@ -444,12 +466,11 @@ class FallbackModelEvalApiTests(unittest.TestCase):
         shared_http_client = object()
         proxy_client = object()
 
-        app = FastAPI()
+        app = self._app_with_role(ROLE_MASTER)
         app.state.fallback_model_eval_service = service
         app.state.config_loader = config_loader
         app.state.http_client = shared_http_client
         app.state.proxy_http_clients = {"provider-a": proxy_client}
-        app.include_router(editor_router, prefix="/v1")
 
         response = TestClient(app).post("/v1/fallback-model-evals/run")
 
@@ -460,3 +481,15 @@ class FallbackModelEvalApiTests(unittest.TestCase):
         self.assertIs(service.fallback_rules, config_loader.fallback_rules)
         self.assertIs(service.http_client, shared_http_client)
         self.assertEqual(service.proxy_http_clients, {"provider-a": proxy_client})
+
+    def test_run_endpoint_rejects_non_master_role(self):
+        app = self._app_with_role(ROLE_USER)
+        app.state.fallback_model_eval_service = object()
+
+        response = TestClient(app).post("/v1/fallback-model-evals/run")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )

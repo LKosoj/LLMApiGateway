@@ -43,72 +43,16 @@ if [ ! -f "/app/models_fallback_rules.json" ]; then
     fi
 fi
 
-# If models_operation_rules.json doesn't exist, create a default one with embeddings, rerank, and images sections
+# If models_operation_rules.json doesn't exist, create an empty operation rules file.
 if [ ! -f "/app/models_operation_rules.json" ]; then
-    echo "models_operation_rules.json not found, creating with default content for embeddings, rerank, and images routes."
-    echo '{
-  "embeddings": [
-    {
-      "gateway_model_name": "llmgateway/embeddings-multilingual",
-      "routes": [
-        {
-          "provider": "openrouter",
-          "model": "openai/text-embedding-3-large",
-          "target_path": "/embeddings",
-          "custom_headers": {},
-          "custom_body_params": {"dimensions": 1024}
-        }
-      ]
-    }
-  ],
-  "rerank": [
-    {
-      "gateway_model_name": "llmgateway/rerank-multilingual",
-      "routes": [
-        {
-          "provider": "cohere",
-          "model": "rerank-multilingual-v3",
-          "target_path": "/rerank",
-          "custom_headers": {},
-          "custom_body_params": {}
-        }
-      ]
-    }
-  ],
-  "images_generations": [
-    {
-      "gateway_model_name": "llmgateway/image-generation",
-      "routes": [
-        {
-          "provider": "openrouter",
-          "model": "openai/gpt-image-1",
-          "target_path": "/images/generations",
-          "custom_headers": {},
-          "custom_body_params": {
-            "size": "1024x1024",
-            "quality": "high"
-          }
-        }
-      ]
-    }
-  ],
-  "images_edits": [
-    {
-      "gateway_model_name": "llmgateway/image-edit",
-      "routes": [
-        {
-          "provider": "openrouter",
-          "model": "openai/gpt-image-1",
-          "target_path": "/images/edits",
-          "custom_headers": {},
-          "custom_body_params": {
-            "input_fidelity": "high"
-          }
-        }
-      ]
-    }
-  ]
-}' > /app/models_operation_rules.json
+    echo "models_operation_rules.json not found, creating empty operation rules."
+    echo '{}' > /app/models_operation_rules.json
+fi
+
+# If models_fusion_rules.json doesn't exist, create empty Fusion rules.
+if [ ! -f "/app/models_fusion_rules.json" ]; then
+    echo "models_fusion_rules.json not found, creating empty Fusion rules."
+    echo '[]' > /app/models_fusion_rules.json
 fi
 
 # If models_router_rules.json doesn't exist, create empty router rules
@@ -128,12 +72,4 @@ echo "Gateway configured to listen on ${GATEWAY_HOST:-0.0.0.0}:${GATEWAY_PORT:-9
 echo "Default fallback provider: ${FALLBACK_PROVIDER:-openrouter}"
 echo "Log chat enabled: ${LOG_CHAT_ENABLED:-false}"
 
-# Forward signals to the child process
-trap 'kill -TERM $child' SIGTERM SIGINT
-
-# Execute the command
-exec "$@" &
-child=$!
-
-# Wait for the child process to terminate
-wait $child
+exec "$@"

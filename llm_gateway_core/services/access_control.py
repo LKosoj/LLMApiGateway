@@ -100,29 +100,49 @@ class UsdBudgetLedger:
             return True
 
     def commit(self, key_id: int, actual: float) -> None:
+        self.commit_reserved(key_id, actual, reserved=None)
+
+    def commit_reserved(self, key_id: int, actual: float, *, reserved: float | None) -> None:
         actual_value = max(0.0, float(actual or 0.0))
         with self._lock:
             entry = self._entries.get(key_id)
             if entry is None:
                 return
 
-            reserved_value = entry.reservations.pop(0) if entry.reservations else 0.0
+            reserved_value = self._pop_reserved_value(entry, reserved)
             entry.reserved_usd = max(0.0, entry.reserved_usd - reserved_value)
             entry.spent_usd += actual_value
 
-    def release(self, key_id: int) -> None:
+    def release(self, key_id: int, reserved: float | None = None) -> None:
         with self._lock:
             entry = self._entries.get(key_id)
             if entry is None:
                 return
 
-            reserved_value = entry.reservations.pop(0) if entry.reservations else 0.0
+            reserved_value = self._pop_reserved_value(entry, reserved)
             entry.reserved_usd = max(0.0, entry.reserved_usd - reserved_value)
+
+    def discard_record(self, key_id: int) -> None:
+        with self._lock:
+            self._entries.pop(key_id, None)
 
     def reserved_for(self, key_id: int) -> float:
         with self._lock:
             entry = self._entries.get(key_id)
             return 0.0 if entry is None else entry.reserved_usd
+
+    @staticmethod
+    def _pop_reserved_value(entry: _UsdBudgetLedgerEntry, reserved: float | None) -> float:
+        if not entry.reservations:
+            return 0.0
+        if reserved is None:
+            return entry.reservations.pop(0)
+
+        reserved_value = max(0.0, float(reserved or 0.0))
+        for index, value in enumerate(entry.reservations):
+            if abs(value - reserved_value) <= _USD_EPSILON:
+                return entry.reservations.pop(index)
+        return 0.0
 
 
 def enforce_virtual_key_access(request: Request, requested_model: str | None) -> None:

@@ -370,6 +370,32 @@ def test_admin_navigation_is_consistent_across_ui_pages(page: Page, server):
         expect(nav_buttons).to_have_count(len(expected_labels))
         assert [" ".join(label.split()) for label in nav_buttons.all_text_contents()] == expected_labels
         expect(page.locator(".top-nav-content .nav-button.active")).to_have_text(active_label)
+        current_page_button = page.locator('.top-nav-content .nav-button[aria-current="page"]')
+        expect(current_page_button).to_have_count(1)
+        expect(current_page_button).to_have_text(active_label)
+
+
+def test_playground_does_not_load_audio_voices_on_web_bootstrap(page: Page, server):
+    add_session(page, server)
+    voice_requests = []
+
+    def handle_voices(route):
+        voice_requests.append(route.request.url)
+        route.fulfill(status=200, json={"data": []})
+
+    page.route(f"{server}/v1/audio/voices*", handle_voices)
+    page.goto(f"{server}/v1/ui/playground")
+
+    expect(page.locator('[data-playground-section-panel="web"]')).to_be_visible()
+    page.wait_for_timeout(300)
+    assert voice_requests == []
+
+    page.get_by_role("tab", name="Text to Speech").click()
+    expect(page.locator('[data-playground-section-panel="audio-speech"]')).to_be_visible()
+    deadline = time.time() + 3
+    while len(voice_requests) < 1 and time.time() < deadline:
+        page.wait_for_timeout(100)
+    assert len(voice_requests) == 1
 
 
 def test_create_and_save_web_services(page: Page, server):

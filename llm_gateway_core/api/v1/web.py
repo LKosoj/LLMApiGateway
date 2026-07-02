@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import functools
 import ipaddress
-import json
 import logging
-import re
 import socket
 import threading
 import time
 import urllib.parse
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from typing import Any, TypeVar
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
+import httpcore
 import httpx
+from httpcore._backends.auto import AutoBackend
 from fastapi import APIRouter, HTTPException, Request
 
 from ...agents.deep_research import DeepResearchManager, DeepResearchUnavailableError
@@ -51,6 +51,15 @@ from .web_evidence import (
     normalize_evidence_extraction,
     normalize_evidence_plan,
     parse_json_object,
+)
+from .web_content import (
+    append_images_to_markdown as _append_images_to_markdown,
+    clean_read_url as _clean_read_url,
+    content_with_images as _content_with_images,
+    extract_article_images_from_html as _extract_article_images_from_html,
+    extract_images_from_markdown as _extract_images_from_markdown,
+    markdown_to_plain_text as _markdown_to_plain_text,
+    merge_image_items as _merge_image_items,
 )
 
 logger = logging.getLogger(__name__)
@@ -296,19 +305,6 @@ def _normalize_output_format(value: object) -> str:
     raise HTTPException(status_code=400, detail="'format' must be 'markdown' or 'text'.")
 
 
-def _markdown_to_plain_text(value: str) -> str:
-    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", value)
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    text = re.sub(r"`{1,3}", "", text)
-    text = re.sub(r"^[ \t]{0,3}#{1,6}[ \t]+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^[ \t]{0,3}>[ \t]?", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^[ \t]*[-*+][ \t]+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^[ \t]*\d+\.[ \t]+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"[*_~]+", "", text)
-    lines = [line.strip() for line in text.splitlines()]
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
-
-
 def _format_read_result(result: dict[str, Any], output_format: str) -> dict[str, Any]:
     normalized_format = _normalize_output_format(output_format)
     if normalized_format == "markdown":
@@ -318,15 +314,86 @@ def _format_read_result(result: dict[str, Any], output_format: str) -> dict[str,
     return formatted
 
 
+@dataclass(frozen=True)
+class _ValidatedFetchUrl:
+    url: str
+    host: str
+    port: int
+    addresses: tuple[str, ...]
+    connect_ip: str
+
+
+class _PinnedHostNetworkBackend(httpcore.AsyncNetworkBackend):
+    def __init__(self, *, pinned_host: str, pinned_port: int, connect_ip: str):
+        self._pinned_host = pinned_host.lower()
+        self._pinned_port = pinned_port
+        self._connect_ip = connect_ip
+        self._backend = AutoBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[Any] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        if host.lower() != self._pinned_host or port != self._pinned_port:
+            raise httpcore.ConnectError("Unexpected outbound host for pinned public fetch.")
+        return await self._backend.connect_tcp(
+            self._connect_ip,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Iterable[Any] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        raise httpcore.ConnectError("Unix sockets are not allowed for public fetch.")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
+
+
+class _PinnedHostAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    def __init__(self, *, pinned_host: str, pinned_port: int, connect_ip: str):
+        super().__init__(trust_env=False, http2=False)
+        self._pool._network_backend = _PinnedHostNetworkBackend(
+            pinned_host=pinned_host,
+            pinned_port=pinned_port,
+            connect_ip=connect_ip,
+        )
+
+
 def _validate_http_url(raw_url: str) -> str:
+    return _validated_fetch_url(raw_url).url
+
+
+def _validated_fetch_url(raw_url: str) -> _ValidatedFetchUrl:
     url = raw_url.strip()
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         raise HTTPException(status_code=400, detail="'url' must be an absolute http(s) URL")
     if parsed.username or parsed.password:
         raise HTTPException(status_code=400, detail="'url' must not contain credentials")
-    _validate_public_fetch_host(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
-    return url
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    addresses = _validate_public_fetch_host(parsed.hostname, port)
+    if addresses is None:
+        # Some older tests patch the validator as a no-op. Production validator
+        # always returns resolved public addresses.
+        addresses = (parsed.hostname,)
+    return _ValidatedFetchUrl(
+        url=url,
+        host=parsed.hostname,
+        port=port,
+        addresses=addresses,
+        connect_ip=addresses[0],
+    )
 
 
 def _is_blocked_fetch_ip(address: str) -> bool:
@@ -342,11 +409,11 @@ def _is_blocked_fetch_ip(address: str) -> bool:
             ip.is_multicast,
             ip.is_reserved,
             ip.is_unspecified,
+            not ip.is_global,
         )
     )
 
 
-@functools.lru_cache(maxsize=1024)
 def _resolve_fetch_host(hostname: str, port: int) -> tuple[str, ...]:
     try:
         return tuple(
@@ -360,7 +427,7 @@ def _resolve_fetch_host(hostname: str, port: int) -> tuple[str, ...]:
         raise HTTPException(status_code=400, detail=f"'url' host could not be resolved: {hostname}") from exc
 
 
-def _validate_public_fetch_host(hostname: str, port: int) -> None:
+def _validate_public_fetch_host(hostname: str, port: int) -> tuple[str, ...] | None:
     normalized_hostname = hostname.strip("[]").lower()
     if normalized_hostname == "localhost" or normalized_hostname.endswith(".localhost"):
         raise HTTPException(status_code=400, detail=WEB_FETCH_BLOCKED_HOST_DETAIL)
@@ -374,26 +441,48 @@ def _validate_public_fetch_host(hostname: str, port: int) -> None:
 
     if not addresses or any(_is_blocked_fetch_ip(address) for address in addresses):
         raise HTTPException(status_code=400, detail=WEB_FETCH_BLOCKED_HOST_DETAIL)
+    return addresses
 
 
 async def _get_with_public_redirects(client: httpx.AsyncClient, url: str) -> tuple[httpx.Response, str]:
-    current_url = _validate_http_url(url)
+    current_fetch_url = _validated_fetch_url(url)
     for _ in range(WEB_FETCH_MAX_REDIRECTS + 1):
-        response = await client.get(
-            current_url,
+        response = await _get_pinned_public_url(client, current_fetch_url)
+        if response.status_code not in _WEB_FETCH_REDIRECT_STATUS_CODES:
+            return response, current_fetch_url.url
+
+        location = response.headers.get("location")
+        if not location:
+            return response, current_fetch_url.url
+        current_fetch_url = _validated_fetch_url(urllib.parse.urljoin(str(response.url), location))
+
+    raise HTTPException(status_code=400, detail="Too many redirects while reading URL")
+
+
+async def _get_pinned_public_url(
+    client: httpx.AsyncClient,
+    fetch_url: _ValidatedFetchUrl,
+) -> httpx.Response:
+    if not isinstance(client, httpx.AsyncClient):
+        return await client.get(
+            fetch_url.url,
             headers=_DIRECT_FETCH_HEADERS,
             timeout=20.0,
             follow_redirects=False,
         )
-        if response.status_code not in _WEB_FETCH_REDIRECT_STATUS_CODES:
-            return response, current_url
 
-        location = response.headers.get("location")
-        if not location:
-            return response, current_url
-        current_url = _validate_http_url(urllib.parse.urljoin(str(response.url), location))
-
-    raise HTTPException(status_code=400, detail="Too many redirects while reading URL")
+    transport = _PinnedHostAsyncHTTPTransport(
+        pinned_host=fetch_url.host,
+        pinned_port=fetch_url.port,
+        connect_ip=fetch_url.connect_ip,
+    )
+    async with httpx.AsyncClient(transport=transport) as pinned_client:
+        return await pinned_client.get(
+            fetch_url.url,
+            headers=_DIRECT_FETCH_HEADERS,
+            timeout=20.0,
+            follow_redirects=False,
+        )
 
 
 def _validate_image_size(value: str, service_model: str) -> str:
@@ -504,289 +593,6 @@ _DIRECT_FETCH_HEADERS = {
 }
 
 FREEDIUM_MIRROR_PREFIX = "https://freedium-mirror.cfd/"
-NON_ARTICLE_IMAGE_PATTERNS = (
-    "/img/avatars/",
-    "avatar",
-    "gravatar",
-    "profile-picture",
-    "favicon",
-)
-SMALL_IMAGE_DIMENSIONS_REGEX = re.compile(
-    r"w_(?:16|24|32|36|40|48|64),h_(?:16|24|32|36|40|48|64)"
-)
-MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
-ARTICLE_IMAGE_SELECTORS = (
-    "article img",
-    "main img",
-    ".body.markup img",
-    ".available-content img",
-    ".captioned-image-container img",
-)
-
-
-def _clean_read_url(url: str) -> str:
-    return url.strip().strip("()").strip('"').strip("'").strip()
-
-
-def _clean_image_description(value: Any) -> str:
-    return " ".join(str(value or "").split())[:300]
-
-
-def _is_non_article_image(url: str, description: str = "") -> bool:
-    lower_url = (url or "").lower()
-    lower_description = (description or "").lower()
-    if not lower_url:
-        return True
-    if any(pattern in lower_url for pattern in NON_ARTICLE_IMAGE_PATTERNS):
-        return True
-    if "avatar" in lower_description:
-        return True
-    if SMALL_IMAGE_DIMENSIONS_REGEX.search(lower_url):
-        return True
-    return False
-
-
-def _normalize_image_url(value: Any, base_url: str = "") -> str | None:
-    if not isinstance(value, str):
-        return None
-    candidate = value.strip().strip('"').strip("'")
-    if not candidate:
-        return None
-    if candidate.startswith(("data:", "blob:", "javascript:")):
-        return None
-    resolved = urljoin(base_url, candidate)
-    parsed = urlsplit(resolved)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None
-    return resolved
-
-
-def _add_image_item(
-    images: list[dict[str, str]],
-    seen: set[str],
-    value: Any,
-    *,
-    base_url: str = "",
-    description: Any = "",
-    filter_non_article: bool = True,
-) -> None:
-    image_url = _normalize_image_url(value, base_url)
-    if image_url is None or image_url in seen:
-        return
-    clean_description = _clean_image_description(description)
-    if filter_non_article and _is_non_article_image(image_url, clean_description):
-        return
-    seen.add(image_url)
-    images.append({"url": image_url, "description": clean_description})
-
-
-def _best_srcset_url(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    best_url: str | None = None
-    best_width = -1
-    for candidate in value.split(","):
-        parts = candidate.strip().split()
-        if not parts:
-            continue
-        width = 0
-        if len(parts) > 1 and parts[1].endswith("w"):
-            try:
-                width = int(parts[1][:-1])
-            except ValueError:
-                width = 0
-        if best_url is None or width > best_width:
-            best_url = parts[0]
-            best_width = width
-    return best_url
-
-
-def _extract_jsonld_images(raw_html: Any, base_url: str) -> list[dict[str, str]]:
-    images: list[dict[str, str]] = []
-    seen: set[str] = set()
-
-    def add_candidate(candidate: Any, description: Any = "") -> None:
-        if isinstance(candidate, str):
-            _add_image_item(images, seen, candidate, base_url=base_url, description=description)
-        elif isinstance(candidate, dict):
-            add_candidate(
-                candidate.get("url")
-                or candidate.get("contentUrl")
-                or candidate.get("thumbnailUrl"),
-                candidate.get("caption") or candidate.get("name") or description,
-            )
-        elif isinstance(candidate, list):
-            for item in candidate:
-                add_candidate(item, description)
-
-    try:
-        from bs4 import BeautifulSoup
-
-        html_text = raw_html.decode("utf-8", errors="ignore") if isinstance(raw_html, bytes) else str(raw_html or "")
-        if not html_text.strip():
-            return images
-
-        soup = BeautifulSoup(html_text, "lxml")
-        for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
-            payload = (script.string or script.text or "").strip()
-            if not payload:
-                continue
-            try:
-                data = json.loads(payload)
-            except Exception:
-                continue
-
-            stack: list[Any] = [data]
-            while stack:
-                current = stack.pop()
-                if isinstance(current, dict):
-                    current_type = current.get("@type")
-                    types = (
-                        [current_type]
-                        if isinstance(current_type, str)
-                        else current_type
-                        if isinstance(current_type, list)
-                        else []
-                    )
-                    normalized_types = {str(item).lower() for item in types}
-                    if normalized_types & {"article", "newsarticle", "blogposting"}:
-                        description = current.get("headline") or current.get("name") or ""
-                        add_candidate(current.get("image"), description)
-                        add_candidate(current.get("thumbnailUrl"), description)
-                        add_candidate(current.get("primaryImageOfPage"), description)
-                    stack.extend(current.values())
-                elif isinstance(current, list):
-                    stack.extend(current)
-    except Exception as exc:
-        logger.debug("Failed to extract images from JSON-LD: %s", exc)
-    return images
-
-
-def _extract_article_images_from_html(raw_html: Any, base_url: str) -> list[dict[str, str]]:
-    images: list[dict[str, str]] = []
-    seen: set[str] = set()
-
-    def add_candidate(value: Any, description: Any = "") -> None:
-        _add_image_item(images, seen, value, base_url=base_url, description=description)
-
-    def add_img_tag(img_tag: Any) -> None:
-        description = img_tag.get("alt") or img_tag.get("title") or ""
-        add_candidate(
-            img_tag.get("src")
-            or img_tag.get("data-src")
-            or img_tag.get("data-original")
-            or img_tag.get("data-lazy-src")
-            or _best_srcset_url(img_tag.get("srcset") or img_tag.get("data-srcset")),
-            description,
-        )
-
-    try:
-        from bs4 import BeautifulSoup
-
-        html_text = raw_html.decode("utf-8", errors="ignore") if isinstance(raw_html, bytes) else str(raw_html or "")
-        if not html_text.strip():
-            return images
-
-        soup = BeautifulSoup(html_text, "lxml")
-        for selector in ARTICLE_IMAGE_SELECTORS:
-            for img_tag in soup.select(selector):
-                add_img_tag(img_tag)
-
-        if not images:
-            for img_tag in soup.find_all("img"):
-                add_img_tag(img_tag)
-
-        for meta_name in ("og:image", "og:image:url", "twitter:image", "twitter:image:src"):
-            for meta in soup.find_all("meta", attrs={"property": meta_name}):
-                add_candidate(meta.get("content"))
-            for meta in soup.find_all("meta", attrs={"name": meta_name}):
-                add_candidate(meta.get("content"))
-        for link in soup.find_all("link", rel=lambda value: value and "image_src" in value):
-            add_candidate(link.get("href"))
-    except Exception as exc:
-        logger.debug("Failed to extract article images from HTML: %s", exc)
-
-    for item in _extract_jsonld_images(raw_html, base_url):
-        _add_image_item(images, seen, item.get("url"), base_url=base_url, description=item.get("description"))
-    return images
-
-
-def _extract_images_from_markdown(content: Any, base_url: str = "") -> list[dict[str, str]]:
-    images: list[dict[str, str]] = []
-    seen: set[str] = set()
-    text = str(content or "")
-    for description, image_url in MARKDOWN_IMAGE_RE.findall(text):
-        _add_image_item(
-            images,
-            seen,
-            image_url,
-            base_url=base_url,
-            description=description,
-            filter_non_article=False,
-        )
-    return images
-
-
-def _merge_image_items(*groups: Any, base_url: str = "") -> list[dict[str, str]]:
-    images: list[dict[str, str]] = []
-    seen: set[str] = set()
-
-    def add_group(group: Any) -> None:
-        if group is None:
-            return
-        if isinstance(group, str):
-            _add_image_item(images, seen, group, base_url=base_url, filter_non_article=False)
-            return
-        if isinstance(group, dict):
-            _add_image_item(
-                images,
-                seen,
-                group.get("url") or group.get("src") or group.get("image_url") or group.get("contentUrl"),
-                base_url=base_url,
-                description=group.get("description") or group.get("alt") or group.get("caption") or group.get("title"),
-                filter_non_article=False,
-            )
-            return
-        if isinstance(group, list):
-            for item in group:
-                add_group(item)
-
-    for group in groups:
-        add_group(group)
-    return images
-
-
-def _content_with_images(content: Any, images: Any, base_url: str = "") -> tuple[str, list[dict[str, str]]]:
-    content_text = str(content or "").strip()
-    merged_images = _merge_image_items(
-        images,
-        _extract_images_from_markdown(content_text, base_url),
-        base_url=base_url,
-    )
-    return content_text, merged_images
-
-
-def _append_images_to_markdown(content: str, images: list[dict[str, str]]) -> str:
-    """Append image links that are not already present in the markdown content.
-
-    Used for read adapters (e.g. Tavily) that return images as a separate list instead of
-    inlining them. Idempotent: an image whose URL is already referenced in the content is
-    skipped, so adapters that already inline images keep their original positions without
-    producing duplicates.
-    """
-    text = content or ""
-    additions: list[str] = []
-    for image in images:
-        url = str(image.get("url") or "").strip()
-        if not url or url in text:
-            continue
-        description = str(image.get("description") or "").strip()
-        additions.append(f"![{description}]({url})")
-    if not additions:
-        return text
-    block = "\n\n".join(additions)
-    prefix = text.rstrip()
-    return f"{prefix}\n\n{block}" if prefix else block
 
 
 def _is_medium_url(url: str) -> bool:
@@ -998,6 +804,13 @@ def _abort_blocked_cloakbrowser_request(route: Any) -> None:
     route.continue_()
 
 
+def _cloakbrowser_launch_args() -> list[str]:
+    browser_args = ["--disable-dev-shm-usage"]
+    if settings.web_read_cloakbrowser_no_sandbox:
+        browser_args.append("--no-sandbox")
+    return browser_args
+
+
 def _cloakbrowser_render_sync(url: str) -> tuple[str, str, str]:
     from contextlib import redirect_stderr, redirect_stdout
     from io import StringIO
@@ -1009,7 +822,7 @@ def _cloakbrowser_render_sync(url: str) -> tuple[str, str, str]:
             headless=True,
             locale="ru-RU",
             humanize=False,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=_cloakbrowser_launch_args(),
         )
         try:
             page = browser.new_page()
@@ -1027,6 +840,9 @@ def _cloakbrowser_render_sync(url: str) -> tuple[str, str, str]:
 async def _cloakbrowser_fetch(url: str) -> dict[str, Any] | None:
     cleaned = _clean_read_url(url)
     if not cleaned.startswith(("http://", "https://")):
+        return None
+    if not settings.web_read_cloakbrowser_enabled:
+        logger.info("CloakBrowser rendered fetch is disabled; skipping local browser render for %s", cleaned)
         return None
 
     try:

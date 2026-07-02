@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1.rules_editor import _write_text_atomically
 from llm_gateway_core.config.loader import ConfigLoader
 
 
@@ -240,6 +242,31 @@ class RulesEditorValidationTests(unittest.TestCase):
             self.config_loader.fallback_rules["gateway-model"]["fallback_models"][0]["model"],
             original_runtime_rule,
         )
+
+
+class RulesEditorAtomicWriteTests(unittest.TestCase):
+    def test_write_text_atomically_preserves_existing_file_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_path = Path(temp_dir) / "providers.json"
+            target_path.write_text('[{"old": true}]\n', encoding="utf-8")
+            os.chmod(target_path, 0o640)
+
+            _write_text_atomically(target_path, '[{"new": true}]\n')
+
+            self.assertEqual(target_path.read_text(encoding="utf-8"), '[{"new": true}]\n')
+            self.assertEqual(target_path.stat().st_mode & 0o777, 0o640)
+
+    def test_write_text_atomically_removes_temp_file_after_fsync_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_path = Path(temp_dir) / "providers.json"
+            target_path.write_text('[{"old": true}]\n', encoding="utf-8")
+
+            with patch("llm_gateway_core.api.v1.rules_editor.os.fsync", side_effect=OSError("boom")):
+                with self.assertRaises(OSError):
+                    _write_text_atomically(target_path, '[{"new": true}]\n')
+
+            self.assertEqual(target_path.read_text(encoding="utf-8"), '[{"old": true}]\n')
+            self.assertEqual([path.name for path in Path(temp_dir).iterdir()], ["providers.json"])
 
 
 if __name__ == "__main__":

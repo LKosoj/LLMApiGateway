@@ -13,6 +13,8 @@ import main
 from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.config.loader import ConfigLoader
 
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+MASK_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
 
 VALID_PROVIDERS_TEXT = """
 [
@@ -479,7 +481,7 @@ class ImagesEndpointTests(unittest.TestCase):
                     "prompt": "Add a red border",
                 },
                 files={
-                    "image": ("source.png", io.BytesIO(b"source-image"), "image/png"),
+                    "image": ("source.png", io.BytesIO(PNG_BYTES), "image/png"),
                 },
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
@@ -510,13 +512,13 @@ class ImagesEndpointTests(unittest.TestCase):
                     "images": [
                         {
                             "filename": "source.png",
-                            "b64_json": "c291cmNlLWltYWdl",
+                            "b64_json": "iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAA",
                             "content_type": "image/png",
                         }
                     ],
                     "mask": {
                         "filename": "mask.png",
-                        "data_url": "data:image/png;base64,bWFzay1pbWFnZQ==",
+                        "data_url": "data:image/png;base64,iVBORw0KGgoBAQEBAQEBAQEBAQEBAQEB",
                     },
                     "size": "1024x1024",
                 },
@@ -540,8 +542,8 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual([field_name for field_name, _ in post_kwargs["files"]], ["image[]", "mask"])
         image_file = post_kwargs["files"][0][1]
         mask_file = post_kwargs["files"][1][1]
-        self.assertEqual(image_file, ("source.png", b"source-image", "image/png"))
-        self.assertEqual(mask_file, ("mask.png", b"mask-image", "image/png"))
+        self.assertEqual(image_file, ("source.png", PNG_BYTES, "image/png"))
+        self.assertEqual(mask_file, ("mask.png", MASK_PNG_BYTES, "image/png"))
 
     def test_post_images_edits_json_multipart_rejects_http_image_url(self):
         with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
@@ -576,8 +578,8 @@ class ImagesEndpointTests(unittest.TestCase):
                     "prompt": "Add a red border",
                 },
                 files={
-                    "image": ("source.png", io.BytesIO(b"source-image"), "image/png"),
-                    "mask": ("mask.png", io.BytesIO(b"mask-image"), "image/png"),
+                    "image": ("source.png", io.BytesIO(PNG_BYTES), "image/png"),
+                    "mask": ("mask.png", io.BytesIO(MASK_PNG_BYTES), "image/png"),
                 },
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
@@ -601,6 +603,24 @@ class ImagesEndpointTests(unittest.TestCase):
             client.app.state.tokens_usage_db.insert_usage.call_args[0][0]["operation"],
             "images_edit",
         )
+
+    def test_post_images_edits_multipart_rejects_invalid_image_upload(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
+            response = client.post(
+                "/v1/images/edits",
+                data={
+                    "model": "gateway/image-edit",
+                    "prompt": "Add a red border",
+                },
+                files={
+                    "image": ("source.png", io.BytesIO(b"not-image"), "image/png"),
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Invalid image file content.")
+        fake_http_client.post.assert_not_awaited()
 
     def test_post_images_edits_multipart_works_with_real_async_httpx_client(self):
         captured_request: dict[str, object] = {}
@@ -636,7 +656,7 @@ class ImagesEndpointTests(unittest.TestCase):
                         "prompt": "Replace the sky with sunset clouds",
                     },
                     files={
-                        "image": ("source.png", io.BytesIO(b"source-image"), "image/png"),
+                        "image": ("source.png", io.BytesIO(PNG_BYTES), "image/png"),
                     },
                     headers={"Authorization": "Bearer test-gateway-key"},
                 )
@@ -761,7 +781,7 @@ class ImagesEndpointTests(unittest.TestCase):
                     "prompt": "Replace the sky with aurora",
                 },
                 files={
-                    "image": ("source.png", io.BytesIO(b"source-image"), "image/png"),
+                    "image": ("source.png", io.BytesIO(PNG_BYTES), "image/png"),
                 },
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
@@ -798,8 +818,8 @@ class ImagesEndpointTests(unittest.TestCase):
                     "prompt": "Replace the sky with aurora",
                 },
                 files={
-                    "image": ("source.png", io.BytesIO(b"source-image"), "image/png"),
-                    "mask": ("mask.png", io.BytesIO(b"mask-image"), "image/png"),
+                    "image": ("source.png", io.BytesIO(PNG_BYTES), "image/png"),
+                    "mask": ("mask.png", io.BytesIO(MASK_PNG_BYTES), "image/png"),
                 },
                 headers={"Authorization": "Bearer test-gateway-key"},
             )

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import aiosqlite
 
 from ..config.paths import resolve_db_dir
+from ..utils.client_ip import get_client_ip
 from ..utils.usage_tracking import extract_request_x_title
 from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher
 
@@ -490,11 +491,7 @@ def record_rejection(
         api_key_id = getattr(request.state, "api_key_id", None)
         auth_source = getattr(request.state, "gateway_auth_source", None)
         x_title = extract_request_x_title(request)
-        client_ip = (
-            request.client.host
-            if getattr(request, "client", None) is not None
-            else None
-        )
+        client_ip = get_client_ip(request)
         db.insert_rejection(
             request_id=request_id,
             api_key_id=api_key_id,

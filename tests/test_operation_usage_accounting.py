@@ -40,10 +40,10 @@ class _RateLimiter:
 
 class _Ledger:
     def __init__(self) -> None:
-        self.commits: list[tuple[int, float]] = []
+        self.commits: list[tuple[int, float, float | None]] = []
 
-    def commit(self, key_id: int, actual: float) -> None:
-        self.commits.append((key_id, actual))
+    def commit_reserved(self, key_id: int, actual: float, *, reserved: float | None) -> None:
+        self.commits.append((key_id, actual, reserved))
 
 
 class OperationUsageAccountingTests(unittest.TestCase):
@@ -111,6 +111,7 @@ class OperationUsageAccountingTests(unittest.TestCase):
                 usd_budget_reserved=True,
                 usd_budget_finalized=False,
                 usd_budget_reserved_key_id=7,
+                usd_budget_reserved_estimate=1.5,
             ),
         )
 
@@ -131,7 +132,7 @@ class OperationUsageAccountingTests(unittest.TestCase):
         )
 
         self.assertEqual(api_keys_db.spent, [(7, 0.25)])
-        self.assertEqual(ledger.commits, [(7, 0.25)])
+        self.assertEqual(ledger.commits, [(7, 0.25, 1.5)])
         self.assertTrue(request.state.usd_budget_finalized)
         self.assertEqual(rate_limiter.tokens, [(7, 5)])
 

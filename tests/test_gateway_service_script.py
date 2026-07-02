@@ -51,6 +51,7 @@ def test_service_script_creates_unit_and_enables_it(tmp_path: Path):
     assert f"WorkingDirectory={PROJECT_ROOT}" in service_text
     assert f"ExecStart={PROJECT_ROOT / '.venv' / 'bin' / 'python'} {PROJECT_ROOT / 'main.py'}" in service_text
     assert "Restart=always" in service_text
+    assert "UMask=0007" in service_text
     assert "Created systemd unit:" in result.stdout
     assert "Service restarted: test-gateway.service" in result.stdout
 

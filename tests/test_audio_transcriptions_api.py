@@ -13,6 +13,7 @@ from llm_gateway_core.api.v1.audio_adapters import AudioAdapterResponse
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.services.request_handler import OperationDispatcher
 
+WAV_BYTES = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
 
 VALID_PROVIDERS_TEXT = """
 [
@@ -168,7 +169,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             response = client.post(
                 "/v1/audio/transcriptions",
                 files=[
-                    ("file", ("sample.wav", b"wave-bytes", "audio/wav")),
+                    ("file", ("sample.wav", WAV_BYTES, "audio/wav")),
                     ("model", (None, "gateway/audio-transcribe")),
                     ("response_format", (None, "json")),
                     ("timestamp_granularities[]", (None, "word")),
@@ -206,6 +207,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         client.app.state.tokens_usage_db.insert_usage.assert_called_once()
         call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
         self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
+        self.assertIsInstance(call_args.pop("request_id"), str)
         self.assertEqual(
             call_args,
             {
@@ -234,7 +236,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             response = client.post(
                 "/v1/audio/transcriptions",
                 data={"model": "gateway/audio-transcribe", "response_format": "text"},
-                files={"file": ("sample.wav", b"wave-bytes", "audio/wav")},
+                files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 
@@ -277,7 +279,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             response = client.post(
                 "/v1/audio/transcriptions",
                 files=[
-                    ("file", ("sample.wav", b"wave-bytes", "audio/wav")),
+                    ("file", ("sample.wav", WAV_BYTES, "audio/wav")),
                     ("model", (None, "gateway/audio-transcribe")),
                     ("response_format", (None, "json")),
                 ],
@@ -309,7 +311,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         )
         self.assertEqual(
             fake_http_client.post.await_args_list[1].kwargs["files"][0],
-            ("file", ("sample.wav", b"wave-bytes", "audio/wav")),
+            ("file", ("sample.wav", WAV_BYTES, "audio/wav")),
         )
         client.app.state.tokens_usage_db.insert_usage.assert_called_once()
         call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
@@ -358,7 +360,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
                 response = client.post(
                     "/v1/audio/transcriptions",
                     files=[
-                        ("file", ("sample.wav", b"wave-bytes", "audio/wav")),
+                        ("file", ("sample.wav", WAV_BYTES, "audio/wav")),
                         ("model", (None, "gateway/audio-transcribe")),
                         ("response_format", (None, "json")),
                         ("temperature", (None, "0")),
@@ -415,7 +417,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
                 response = client.post(
                     "/v1/audio/transcriptions",
                     files=[
-                        ("file", ("sample.wav", b"wave-bytes", "audio/wav")),
+                        ("file", ("sample.wav", WAV_BYTES, "audio/wav")),
                         ("model", (None, "gateway/audio-transcribe")),
                         ("response_format", (None, "json")),
                         ("timestamp_granularities[]", (None, "word")),
@@ -440,13 +442,13 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         self.assertIn(b'name=\"language\"', body)
         self.assertIn(b'en', body)
         self.assertIn(b'name=\"file\"', body)
-        self.assertIn(b'wave-bytes', body)
+        self.assertIn(WAV_BYTES, body)
 
     def test_audio_transcriptions_rejects_missing_model(self):
         with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
             response = client.post(
                 "/v1/audio/transcriptions",
-                files={"file": ("sample.wav", b"wave-bytes", "audio/wav")},
+                files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 
@@ -464,14 +466,15 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             response = client.post(
                 "/v1/audio/transcriptions",
                 files=[
-                    ("file", ("sample.wav", b"wave-bytes", "audio/wav")),
+                    ("file", ("sample.wav", WAV_BYTES, "audio/wav")),
                     ("model", (None, "gateway/audio-transcribe")),
                 ],
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 
         self.assertEqual(response.status_code, 413)
-        self.assertEqual(response.json()["detail"], "Payload Too Large")
+        self.assertEqual(response.json()["detail"], "Downstream request failed with status 413.")
+        self.assertNotIn("Payload Too Large", response.text)
         fake_http_client.post.assert_awaited_once()
 
     def test_audio_transcriptions_rejects_missing_file(self):
@@ -486,12 +489,25 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Audio transcriptions endpoint expects multipart/form-data.")
         fake_http_client.post.assert_not_awaited()
 
+    def test_audio_transcriptions_rejects_invalid_audio_upload(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
+            response = client.post(
+                "/v1/audio/transcriptions",
+                data={"model": "gateway/audio-transcribe"},
+                files={"file": ("sample.wav", b"not-audio", "audio/wav")},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Invalid audio file content.")
+        fake_http_client.post.assert_not_awaited()
+
     def test_audio_transcriptions_unknown_model(self):
         with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
             response = client.post(
                 "/v1/audio/transcriptions",
                 data={"model": "unknown-audio-model"},
-                files={"file": ("sample.wav", b"wave-bytes", "audio/wav")},
+                files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 
@@ -507,7 +523,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             response = client.post(
                 "/v1/audio/transcriptions",
                 data={"model": "gateway/audio-transcribe", "stream": "true"},
-                files={"file": ("sample.wav", b"wave-bytes", "audio/wav")},
+                files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 

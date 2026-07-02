@@ -15,9 +15,11 @@ from llm_gateway_core.api.v1.chat import (
 )
 from llm_gateway_core.services.request_handler import (
     MAX_RETRY_AFTER_SECONDS,
+    STREAM_PRIMING_MAX_BYTES,
     RequestErrorDetail,
     _clamped_retry_after,
     _make_json_request,
+    _make_streaming_request,
     parse_retry_after_header,
 )
 from tests._async_compat import run_async
@@ -124,6 +126,61 @@ class MakeJsonRequestRetryAfterTests(unittest.TestCase):
         self.assertIsInstance(error_detail, RequestErrorDetail)
         self.assertIsNone(error_detail.retry_after)
         self.assertEqual(error_detail.status_code, 500)
+
+
+class _FakeStreamingResponse:
+    status_code = 200
+    headers = {}
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def aiter_bytes(self):
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aread(self):
+        return b""
+
+
+class _FakeStreamContext:
+    def __init__(self, response):
+        self.response = response
+        self.closed = False
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.closed = True
+
+
+class _FakeStreamingClient:
+    def __init__(self, chunks):
+        self.context = _FakeStreamContext(_FakeStreamingResponse(chunks))
+
+    def stream(self, *args, **kwargs):
+        return self.context
+
+
+class MakeStreamingRequestTests(unittest.TestCase):
+    def test_stream_priming_buffer_is_limited_before_first_content_chunk(self):
+        comment_chunk = b": keepalive\n\n"
+        oversized_comments = comment_chunk * ((STREAM_PRIMING_MAX_BYTES // len(comment_chunk)) + 1)
+        fake_client = _FakeStreamingClient([oversized_comments])
+
+        response_data, error_detail = run_async(
+            _make_streaming_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+            )
+        )
+
+        self.assertIsNone(response_data)
+        self.assertEqual(error_detail, "Stream priming exceeded maximum buffered bytes before content.")
+        self.assertTrue(fake_client.context.closed)
 
 
 class ComputeRetrySleepTests(unittest.TestCase):

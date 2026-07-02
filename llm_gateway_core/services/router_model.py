@@ -11,9 +11,12 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 from typing import Any
 
 from fastapi import HTTPException, Request
+
+from ..utils.usage_tracking import build_model_cost_rate_registry, calculate_model_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -181,15 +184,86 @@ def _request_summary(request_body: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _usage_cost(usage: dict[str, Any]) -> float | None:
+    try:
+        cost = float(usage.get("cost"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(cost) or cost < 0:
+        return None
+    return cost
+
+
+def _cost_rate_registry(request: Request, config_loader: Any) -> dict[tuple[str, str], Any]:
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    registry = getattr(app_state, "cost_rate_registry", None)
+    if isinstance(registry, dict):
+        return registry
+    return build_model_cost_rate_registry(getattr(config_loader, "providers_config", None))
+
+
+def _usage_component_cost(
+    *,
+    usage: dict[str, Any],
+    request: Request,
+    config_loader: Any,
+    provider: str | None,
+    model: str | None,
+) -> float | None:
+    upstream_cost = _usage_cost(usage)
+    if upstream_cost is not None:
+        return upstream_cost
+    if not provider or not model:
+        return None
+    registry = _cost_rate_registry(request, config_loader)
+    return calculate_model_cost_usd(
+        prompt_tokens=usage.get("prompt_tokens") or 0,
+        completion_tokens=usage.get("completion_tokens") or 0,
+        rates=registry.get((provider, model)),
+    )
+
+
+def _coerce_token_count(value: Any) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _usage_for_cost(usage: dict[str, Any]) -> dict[str, Any]:
+    if "prompt_tokens" in usage or "completion_tokens" in usage:
+        return usage
+    prompt_tokens = (
+        _coerce_token_count(usage.get("input_tokens"))
+        + _coerce_token_count(usage.get("cache_creation_input_tokens"))
+        + _coerce_token_count(usage.get("cache_read_input_tokens"))
+    )
+    completion_tokens = _coerce_token_count(usage.get("output_tokens"))
+    normalized_usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    if "cost" in usage:
+        normalized_usage["cost"] = usage["cost"]
+    return normalized_usage
+
+
 def _add_usage(target_usage: dict[str, Any], extra_usage: dict[str, Any]) -> None:
     for key in ("prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens", "cached_tokens"):
         value = extra_usage.get(key)
         if isinstance(value, (int, float)) and value > 0:
             target_usage[key] = int(target_usage.get(key) or 0) + int(value)
 
-    extra_cost = extra_usage.get("cost")
-    if isinstance(extra_cost, (int, float)):
-        target_usage["cost"] = float(target_usage.get("cost") or 0.0) + float(extra_cost)
+
+def _add_anthropic_usage(target_usage: dict[str, Any], extra_usage: dict[str, Any]) -> None:
+    normalized_extra = _usage_for_cost(extra_usage)
+    input_tokens = _coerce_token_count(normalized_extra.get("prompt_tokens"))
+    output_tokens = _coerce_token_count(normalized_extra.get("completion_tokens"))
+    if input_tokens:
+        target_usage["input_tokens"] = _coerce_token_count(target_usage.get("input_tokens")) + input_tokens
+    if output_tokens:
+        target_usage["output_tokens"] = _coerce_token_count(target_usage.get("output_tokens")) + output_tokens
 
 
 class RouterModelService:
@@ -225,6 +299,8 @@ class RouterModelService:
             request_body=request_body,
         )
         selector_usage = selector_response.get("usage") if isinstance(selector_response, dict) else {}
+        selector_provider = getattr(request.state, "llmgateway_provider", None)
+        selector_provider_model = getattr(request.state, "llmgateway_provider_model", None)
         selector_text = _extract_text(selector_response)
         try:
             decision = _parse_selector_decision(selector_text)
@@ -246,8 +322,34 @@ class RouterModelService:
         )
 
         if isinstance(response, dict):
-            if isinstance(response.get("usage"), dict) and "choices" in response:
-                _add_usage(response["usage"], selector_usage or {})
+            response_usage = response.get("usage")
+            is_anthropic_raw = bool(getattr(request.state, "llmgateway_response_is_anthropic_raw", False))
+            if "choices" in response or is_anthropic_raw:
+                if not isinstance(response_usage, dict):
+                    response_usage = {}
+                    response["usage"] = response_usage
+                delegate_usage = dict(response_usage)
+                selector_usage_dict = selector_usage if isinstance(selector_usage, dict) else {}
+                delegate_cost = _usage_component_cost(
+                    usage=_usage_for_cost(delegate_usage),
+                    request=request,
+                    config_loader=self._config_loader,
+                    provider=getattr(request.state, "llmgateway_provider", None),
+                    model=getattr(request.state, "llmgateway_provider_model", None),
+                )
+                selector_cost = _usage_component_cost(
+                    usage=_usage_for_cost(selector_usage_dict),
+                    request=request,
+                    config_loader=self._config_loader,
+                    provider=selector_provider,
+                    model=selector_provider_model,
+                )
+                if is_anthropic_raw and "choices" not in response:
+                    _add_anthropic_usage(response_usage, selector_usage_dict)
+                else:
+                    _add_usage(response_usage, selector_usage_dict)
+                if delegate_cost is not None or selector_cost is not None:
+                    response_usage["cost"] = float(delegate_cost or 0.0) + float(selector_cost or 0.0)
             response["router"] = {
                 "model": gateway_model_name,
                 "selector_model": router_config["selector_model"],

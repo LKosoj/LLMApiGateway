@@ -21,7 +21,7 @@
     var CYCLE_ORDER = ['light', 'dark', 'system'];
 
     // Icons/labels for the toggle button
-    var LABELS = { light: 'L', dark: 'D', system: 'S' };
+    var LABELS = { light: '☀', dark: '☾', system: '◎' };
     var ICONS = {
         light: '&#9728;',   // sun unicode ☀
         dark:  '&#9790;',   // crescent moon ☾
@@ -148,7 +148,7 @@
     var _toggles = [];
 
     function _buttonLabel(mode, effective) {
-        // Text label, e.g. "L" / "D" / "S", and aria-label
+        // Compact text symbols plus title/aria-label keep the button self-explanatory.
         var ariaMap = {
             light: 'Switch to dark mode',
             dark:  'Switch to system mode',
@@ -166,7 +166,6 @@
         el.setAttribute('aria-label', lbl.aria);
         el.setAttribute('title', lbl.aria);
         el.setAttribute('data-theme-mode', mode);
-        // Use text labels to avoid emoji rendering issues
         el.textContent = lbl.text;
     }
 

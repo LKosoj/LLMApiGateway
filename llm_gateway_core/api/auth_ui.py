@@ -9,11 +9,15 @@ from ..config.paths import STATIC_DIR
 from ..config.settings import settings
 from ..utils.html_cache import get_template
 from ..middleware.auth import (
+    API_KEY_DISABLED_DETAIL,
     DEFAULT_UI_PATH,
     ROLE_MASTER,
     ROLE_USER,
     SESSION_COOKIE_NAME,
     SESSION_HMAC_CONFIGURATION_ERROR,
+    _ip_blocked_response,
+    _note_auth_failure,
+    _note_auth_success,
     _tokens_match,
     build_login_redirect_path,
     clear_authenticated_session_cookie,
@@ -24,10 +28,43 @@ from ..middleware.auth import (
     normalize_next_path,
     set_authenticated_session_cookie,
 )
+from ..db.rejections_db import record_rejection
+from ..utils.client_ip import get_client_ip
 
 auth_router = APIRouter()
 
 LOGIN_TEMPLATE_PATH = STATIC_DIR / "login.html"
+
+
+def _invalid_login_response(request: Request) -> JSONResponse:
+    record_rejection(
+        request,
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        reason="Invalid API Key",
+        category="auth_invalid",
+    )
+    _note_auth_failure(request)
+    response = JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": "Invalid API Key"},
+    )
+    clear_authenticated_session_cookie(response)
+    return response
+
+
+def _disabled_login_response(request: Request) -> JSONResponse:
+    record_rejection(
+        request,
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        reason=API_KEY_DISABLED_DETAIL,
+        category="key_disabled",
+    )
+    response = JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": "Invalid API Key"},
+    )
+    clear_authenticated_session_cookie(response)
+    return response
 
 
 async def _render_login_page(next_path: str, error_message: str | None = None) -> HTMLResponse:
@@ -76,6 +113,14 @@ async def login_page(request: Request, next: str | None = None):
 @auth_router.post("/auth/login", include_in_schema=False)
 async def login_submit(request: Request):
     next_path = DEFAULT_UI_PATH
+    guard = getattr(request.app.state, "ip_block_guard", None)
+    if guard is not None:
+        client_ip = get_client_ip(request)
+        if client_ip:
+            retry_after = guard.check_blocked(client_ip)
+            if retry_after is not None:
+                return _ip_blocked_response(retry_after)
+
     try:
         payload = await request.json()
     except Exception:
@@ -100,12 +145,7 @@ async def login_submit(request: Request):
         )
 
     if not isinstance(api_key, str) or not api_key:
-        response = JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": "Invalid API Key"},
-        )
-        clear_authenticated_session_cookie(response)
-        return response
+        return _invalid_login_response(request)
 
     role = ROLE_MASTER
     key_id: int | None = None
@@ -118,19 +158,17 @@ async def login_submit(request: Request):
             if api_keys_db is not None
             else None
         )
-        if record is None or record.disabled:
-            response = JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Invalid API Key"},
-            )
-            clear_authenticated_session_cookie(response)
-            return response
+        if record is None:
+            return _invalid_login_response(request)
+        if record.disabled:
+            return _disabled_login_response(request)
         role = ROLE_USER
         key_id = record.id
 
     session_id = create_authenticated_session(role=role, key_id=key_id)
     response = JSONResponse(content={"redirect_to": next_path, "role": role})
     set_authenticated_session_cookie(response, session_id)
+    _note_auth_success(request)
     return response
 
 

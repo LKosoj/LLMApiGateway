@@ -16,24 +16,14 @@
     const calcBtn = document.getElementById('calcBtn');
     const calcResult = document.getElementById('calcResult');
     const toast = document.getElementById('toast');
+    const { apiFetch } = window.gatewayAuth;
 
     // ---------- Theme ----------
     Theme.attachToggle('darkModeToggle');
 
     // ---------- Toast ----------
-    let toastTimer = null;
     function showToast(msg, isError) {
-        toast.textContent = msg;
-        toast.classList.toggle('error', !!isError);
-        toast.classList.add('visible');
-        if (toastTimer) { clearTimeout(toastTimer); }
-        toastTimer = setTimeout(() => toast.classList.remove('visible'), 3000);
-    }
-
-    // ---------- Fetch helper ----------
-    async function apiFetch(url, options) {
-        const resp = await fetch(url, Object.assign({ credentials: 'include' }, options));
-        return resp;
+        window.gatewayUi.showToast(toast, msg, { isError, timeoutMs: 3000 });
     }
 
     // ---------- Render table ----------

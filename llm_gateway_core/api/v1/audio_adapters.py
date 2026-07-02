@@ -2,6 +2,8 @@ import asyncio
 import io
 import logging
 import subprocess
+import threading
+import time
 import wave
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +41,8 @@ NVIDIA_RIVA_ALLOWED_PAYLOAD_KEYS = frozenset(
     }
 )
 NVIDIA_RIVA_RETRYABLE_STATUS_CODES = frozenset({"deadline_exceeded", "internal", "resource_exhausted", "unavailable"})
+NVIDIA_RIVA_GRPC_CLIENT_CACHE_TTL_SECONDS = 600.0
+NVIDIA_RIVA_GRPC_CLIENT_CACHE_MAX_ENTRIES = 64
 
 
 @dataclass
@@ -62,6 +66,17 @@ class _NvidiaRivaCapabilities:
     supported_language_codes: list[str]
     supports_offline: bool
     supports_online: bool
+
+
+@dataclass
+class _NvidiaRivaGrpcClientCacheEntry:
+    auth: Any
+    asr_service: Any
+    expires_at: float
+
+
+_NVIDIA_RIVA_GRPC_CLIENT_CACHE: dict[tuple[object, ...], _NvidiaRivaGrpcClientCacheEntry] = {}
+_NVIDIA_RIVA_GRPC_CLIENT_CACHE_LOCK = threading.Lock()
 
 
 def _coerce_bool(value: object, field_name: str) -> bool:
@@ -624,6 +639,67 @@ def _is_retryable_grpc_error(exc: Exception) -> bool:
     return code_name.lower() in NVIDIA_RIVA_RETRYABLE_STATUS_CODES
 
 
+def _nvidia_riva_grpc_client_cache_key(
+    *,
+    grpc_uri: str,
+    use_ssl: bool,
+    metadata: list[list[str]],
+    include_model: bool,
+) -> tuple[object, ...]:
+    normalized_metadata = tuple((str(name), str(value)) for name, value in metadata)
+    return grpc_uri, use_ssl, normalized_metadata, include_model
+
+
+def _clear_nvidia_riva_grpc_client_cache() -> None:
+    with _NVIDIA_RIVA_GRPC_CLIENT_CACHE_LOCK:
+        _NVIDIA_RIVA_GRPC_CLIENT_CACHE.clear()
+
+
+def _get_nvidia_riva_grpc_client(
+    riva_client,
+    *,
+    grpc_uri: str,
+    use_ssl: bool,
+    metadata: list[list[str]],
+    include_model: bool,
+):
+    now = time.monotonic()
+    cache_key = _nvidia_riva_grpc_client_cache_key(
+        grpc_uri=grpc_uri,
+        use_ssl=use_ssl,
+        metadata=metadata,
+        include_model=include_model,
+    )
+    with _NVIDIA_RIVA_GRPC_CLIENT_CACHE_LOCK:
+        for cached_key, cached_entry in list(_NVIDIA_RIVA_GRPC_CLIENT_CACHE.items()):
+            if cached_entry.expires_at <= now:
+                _NVIDIA_RIVA_GRPC_CLIENT_CACHE.pop(cached_key, None)
+
+        cached_entry = _NVIDIA_RIVA_GRPC_CLIENT_CACHE.get(cache_key)
+        if cached_entry is not None:
+            return cached_entry.auth, cached_entry.asr_service
+
+        auth = riva_client.Auth(
+            uri=grpc_uri,
+            use_ssl=use_ssl,
+            metadata_args=metadata,
+            options=[
+                ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+                ("grpc.max_send_message_length", 64 * 1024 * 1024),
+            ],
+        )
+        asr_service = riva_client.ASRService(auth)
+
+        if len(_NVIDIA_RIVA_GRPC_CLIENT_CACHE) >= NVIDIA_RIVA_GRPC_CLIENT_CACHE_MAX_ENTRIES:
+            _NVIDIA_RIVA_GRPC_CLIENT_CACHE.pop(next(iter(_NVIDIA_RIVA_GRPC_CLIENT_CACHE)), None)
+        _NVIDIA_RIVA_GRPC_CLIENT_CACHE[cache_key] = _NvidiaRivaGrpcClientCacheEntry(
+            auth=auth,
+            asr_service=asr_service,
+            expires_at=now + NVIDIA_RIVA_GRPC_CLIENT_CACHE_TTL_SECONDS,
+        )
+        return auth, asr_service
+
+
 def _call_nvidia_riva_grpc_sync(
     *,
     grpc_uri: str,
@@ -642,16 +718,13 @@ def _call_nvidia_riva_grpc_sync(
             detail="NVIDIA audio route requires 'nvidia-riva-client' to be installed on the gateway.",
         ) from exc
 
-    auth = riva_client.Auth(
-        uri=grpc_uri,
+    auth, asr_service = _get_nvidia_riva_grpc_client(
+        riva_client,
+        grpc_uri=grpc_uri,
         use_ssl=use_ssl,
-        metadata_args=metadata,
-        options=[
-            ("grpc.max_receive_message_length", 64 * 1024 * 1024),
-            ("grpc.max_send_message_length", 64 * 1024 * 1024),
-        ],
+        metadata=metadata,
+        include_model=include_model,
     )
-    asr_service = riva_client.ASRService(auth)
     effective_request_payload = request_payload
     effective_use_streaming = use_streaming
     if use_streaming and not include_model:

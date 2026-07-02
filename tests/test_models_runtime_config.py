@@ -61,12 +61,22 @@ UPDATED_RULES_TEXT = """
 
 
 class _FallbackModelsResponse:
-    def __init__(self, payload: dict | None = None, status_code: int = 200):
+    def __init__(
+        self,
+        payload: dict | None = None,
+        status_code: int = 200,
+        *,
+        text: str = '{"data":[]}',
+        json_error: Exception | None = None,
+    ):
         self._payload = payload or {"data": []}
         self.status_code = status_code
-        self.text = '{"data":[]}'
+        self.text = text
+        self._json_error = json_error
 
     def json(self):
+        if self._json_error is not None:
+            raise self._json_error
         return self._payload
 
 
@@ -170,6 +180,53 @@ class ModelsRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(call.kwargs["headers"]["anthropic-version"], ANTHROPIC_API_VERSION)
         self.assertNotIn("Authorization", call.kwargs["headers"])
 
+    def test_models_endpoint_sanitizes_downstream_catalog_error_logs(self):
+        with self._client() as (client, fake_http_client):
+            fake_http_client.get = AsyncMock(
+                return_value=_FallbackModelsResponse(
+                    status_code=503,
+                    text="secret-upstream-body https://internal.example/models?token=secret",
+                )
+            )
+            with self.assertLogs("llm_gateway_core.api.v1.models", level="WARNING") as logs:
+                response = client.get(
+                    "/v1/models",
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.json()["data"]}
+        self.assertEqual(ids, {"gateway-model-v1"})
+        log_output = "\n".join(logs.output)
+        self.assertIn("Downstream error 503", log_output)
+        self.assertNotIn("secret-upstream-body", log_output)
+        self.assertNotIn("internal.example", log_output)
+        self.assertNotIn("openrouter.example/models", log_output)
+
+    def test_models_endpoint_sanitizes_invalid_catalog_json_logs(self):
+        with self._client() as (client, fake_http_client):
+            fake_http_client.get = AsyncMock(
+                return_value=_FallbackModelsResponse(
+                    status_code=200,
+                    text="secret-invalid-json-body",
+                    json_error=ValueError("secret-json-error"),
+                )
+            )
+            with self.assertLogs("llm_gateway_core.api.v1.models", level="ERROR") as logs:
+                response = client.get(
+                    "/v1/models",
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.json()["data"]}
+        self.assertEqual(ids, {"gateway-model-v1"})
+        log_output = "\n".join(logs.output)
+        self.assertIn("Invalid JSON response", log_output)
+        self.assertNotIn("secret-invalid-json-body", log_output)
+        self.assertNotIn("secret-json-error", log_output)
+        self.assertNotIn("openrouter.example/models", log_output)
+
     def test_get_model_uses_anthropic_fallback_provider_catalog_contract(self):
         self.providers_path.write_text(
             """
@@ -196,6 +253,29 @@ class ModelsRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(call.kwargs["headers"]["x-api-key"], "ANTHROPIC-KEY")
         self.assertEqual(call.kwargs["headers"]["anthropic-version"], ANTHROPIC_API_VERSION)
         self.assertNotIn("Authorization", call.kwargs["headers"])
+
+    def test_get_model_sanitizes_invalid_downstream_json_logs(self):
+        with self._client() as (client, fake_http_client):
+            fake_http_client.get = AsyncMock(
+                return_value=_FallbackModelsResponse(
+                    status_code=200,
+                    text="secret-invalid-model-json-body",
+                    json_error=ValueError("secret-model-json-error"),
+                )
+            )
+            with self.assertLogs("llm_gateway_core.api.v1.models", level="ERROR") as logs:
+                response = client.get(
+                    "/v1/models/provider-model-v1",
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "Model 'provider-model-v1' not found.")
+        log_output = "\n".join(logs.output)
+        self.assertIn("Invalid JSON response", log_output)
+        self.assertNotIn("secret-invalid-model-json-body", log_output)
+        self.assertNotIn("secret-model-json-error", log_output)
+        self.assertNotIn("openrouter.example/models/provider-model-v1", log_output)
 
     def test_models_endpoint_uses_explicit_provider_model_list(self):
         self.providers_path.write_text(
@@ -288,6 +368,8 @@ class ModelsRuntimeConfigTests(unittest.TestCase):
             response = client.get("/v1/models/not-pinned", headers=headers)
 
         self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "Model 'not-pinned' not found.")
+        self.assertNotIn("pinned-model-a", str(response.json()))
         # An explicit list must not trigger a live per-model lookup for missing ids.
         self.assertEqual(fake_http_client.get.await_count, 0)
 

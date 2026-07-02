@@ -46,7 +46,8 @@ body.dark-mode .playground-panel {
     display: flex;
     flex-direction: column;
     gap: 14px;
-    min-width: 620px;
+    min-width: 0;
+    width: 100%;
 }
 
 .playground-form .field-group {
@@ -369,13 +370,13 @@ body.dark-mode .chat-message.user {
 }
 
 body.dark-mode .playground-result .download-link {
-    background: #273147;
-    border-color: #3d4a66;
-    color: #a9c3ff;
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    color: var(--accent-text);
 }
 
 body.dark-mode .playground-result .download-link:hover {
-    background: #303c57;
+    background: color-mix(in srgb, var(--accent) 22%, var(--bg-elevated));
 }
 
 .playground-result .search-hit {
@@ -387,8 +388,8 @@ body.dark-mode .playground-result .download-link:hover {
 }
 
 body.dark-mode .playground-result .search-hit {
-    background: #24282f;
-    border-color: #353a42;
+    background: var(--bg-sunken);
+    border-color: var(--border);
 }
 
 .playground-result .search-hit a {
@@ -432,8 +433,8 @@ body.dark-mode .playground-result .search-hit {
 }
 
 body.dark-mode .playground-result .markdown-render {
-    background: #21252c;
-    border-color: #353a42;
+    background: var(--bg-sunken);
+    border-color: var(--border);
 }
 
 .playground-result .markdown-render img {
@@ -546,7 +547,32 @@ body.dark-mode .playground-result .image-card {
 }
 
 body.dark-mode .playground-result pre.raw-json {
-    background: #1a1d23;
-    border-color: #353a42;
-    color: #e8e8ec;
+    background: var(--bg-sunken);
+    border-color: var(--border);
+    color: var(--text);
+}
+
+@media (max-width: 480px) {
+    .playground-panel,
+    .playground-result {
+        overflow-x: visible;
+    }
+
+    .playground-form .field-row,
+    .playground-actions,
+    .playground-result .result-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .playground-form .field-row .field-group,
+    .run-button,
+    .reset-button {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .playground-form .toggle-field {
+        align-self: flex-start;
+    }
 }

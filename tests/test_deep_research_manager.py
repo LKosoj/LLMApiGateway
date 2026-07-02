@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from llm_gateway_core.agents import deep_research as deep_research_module
 from llm_gateway_core.agents.deep_research import (
+    DeepResearchUnavailableError,
     DeepResearchManager,
     GatewayImageGenerator,
     _image_filename,
@@ -555,6 +556,21 @@ class GeneratedImagesInResultTests(unittest.TestCase):
         )
         self.assertIn("generated_images", result)
         self.assertEqual(result["generated_images"], [])
+
+
+class DeepResearchUnavailableTests(unittest.TestCase):
+    def test_manager_fails_explicitly_when_gpt_researcher_extra_is_missing(self):
+        with patch.object(deep_research_module, "GPTResearcher", None):
+            with patch.object(
+                deep_research_module,
+                "GPT_RESEARCHER_IMPORT_ERROR",
+                ImportError("missing optional package"),
+            ):
+                with self.assertRaises(DeepResearchUnavailableError) as ctx:
+                    DeepResearchManager()._get_researcher_factory()
+
+        self.assertIn("gpt-researcher", str(ctx.exception))
+        self.assertIn("not installed", str(ctx.exception))
 
 
 if __name__ == "__main__":

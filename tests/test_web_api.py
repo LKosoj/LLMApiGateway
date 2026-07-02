@@ -282,6 +282,8 @@ class WebApiTests(unittest.TestCase):
         blocked_urls = (
             "http://127.0.0.1:9000/private",
             "http://10.0.0.5/private",
+            "http://100.64.0.1/private",
+            "http://100.127.255.254/private",
             "http://169.254.169.254/latest/meta-data/",
             "http://localhost:9000/private",
         )
@@ -290,6 +292,96 @@ class WebApiTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(HTTPException) as ctx:
                 web_api._validate_http_url(url)
             self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_fetch_host_resolution_is_not_cached(self):
+        calls = []
+
+        def fake_getaddrinfo(hostname, port, *, type=None):  # noqa: A002 - mirrors socket API
+            calls.append((hostname, port, type))
+            return [(None, None, None, None, (f"93.184.216.{len(calls)}", port))]
+
+        with patch.object(web_api.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+            first = web_api._resolve_fetch_host("example.com", 443)
+            second = web_api._resolve_fetch_host("example.com", 443)
+
+        self.assertEqual(first, ("93.184.216.1",))
+        self.assertEqual(second, ("93.184.216.2",))
+        self.assertEqual(len(calls), 2)
+
+    def test_web_read_url_validation_blocks_mixed_public_and_private_dns(self):
+        def fake_getaddrinfo(_hostname, port, *, type=None):  # noqa: A002 - mirrors socket API
+            return [
+                (None, None, None, None, ("93.184.216.34", port)),
+                (None, None, None, None, ("127.0.0.1", port)),
+            ]
+
+        with (
+            patch.object(web_api.socket, "getaddrinfo", side_effect=fake_getaddrinfo),
+            self.assertRaises(HTTPException) as ctx,
+        ):
+            web_api._validate_http_url("https://example.com/article")
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_public_redirects_revalidate_each_hop_and_block_private_target(self):
+        class _RedirectResponse:
+            status_code = 302
+            headers = {"location": "http://127.0.0.1/private"}
+            url = "https://example.com/article"
+
+        class _FakeClient:
+            async def get(self, *_args, **_kwargs):
+                return _RedirectResponse()
+
+        with (
+            patch.object(web_api, "_resolve_fetch_host", return_value=("93.184.216.34",)),
+            self.assertRaises(HTTPException) as ctx,
+        ):
+            run_async(web_api._get_with_public_redirects(_FakeClient(), "https://example.com/article"))
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_pinned_backend_connects_to_validated_ip_not_original_host(self):
+        calls = []
+
+        class _FakeBackend:
+            async def connect_tcp(self, host, port, **_kwargs):
+                calls.append((host, port))
+                return object()
+
+            async def sleep(self, _seconds):
+                return None
+
+        backend = web_api._PinnedHostNetworkBackend(
+            pinned_host="example.com",
+            pinned_port=443,
+            connect_ip="93.184.216.34",
+        )
+        backend._backend = _FakeBackend()
+
+        result = run_async(backend.connect_tcp("example.com", 443))
+
+        self.assertIsNotNone(result)
+        self.assertEqual(calls, [("93.184.216.34", 443)])
+        with self.assertRaises(web_api.httpcore.ConnectError):
+            run_async(backend.connect_tcp("other.example", 443))
+
+    def test_cloakbrowser_fetch_is_disabled_unless_explicitly_enabled(self):
+        with (
+            patch.object(web_api.settings, "web_read_cloakbrowser_enabled", False),
+            patch.object(web_api, "_cloakbrowser_render_sync") as render_mock,
+        ):
+            result = run_async(web_api._cloakbrowser_fetch("https://example.com/article"))
+
+        self.assertIsNone(result)
+        render_mock.assert_not_called()
+
+    def test_cloakbrowser_no_sandbox_is_explicit_opt_in(self):
+        with patch.object(web_api.settings, "web_read_cloakbrowser_no_sandbox", False):
+            self.assertNotIn("--no-sandbox", web_api._cloakbrowser_launch_args())
+
+        with patch.object(web_api.settings, "web_read_cloakbrowser_no_sandbox", True):
+            self.assertIn("--no-sandbox", web_api._cloakbrowser_launch_args())
 
     def test_client_disconnect_cancels_running_web_work(self):
         class DisconnectingRequest:

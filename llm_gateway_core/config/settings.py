@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     log_chat_messages: bool = os.getenv("LOG_CHAT_ENABLED", "false").lower() == "true"
     log_fallback_full_messages: bool = os.getenv("LOG_FALLBACK_FULL_MESSAGES", "false").lower() == "true"
     routing_diagnostic_headers: bool = _get_bool_env("ROUTING_DIAGNOSTIC_HEADERS", False)
+    max_request_body_bytes: int = _get_positive_int_env("MAX_REQUEST_BODY_BYTES", 100 * 1024 * 1024)
 
     # Brute-force protection: block a client IP after repeated failed
     # authentications (key guessing). Counts consecutive auth_invalid rejections
@@ -60,6 +61,8 @@ class Settings(BaseSettings):
     ip_block_enabled: bool = _get_bool_env("IP_BLOCK_ENABLED", True)
     ip_block_max_failures: int = _get_positive_int_env("IP_BLOCK_MAX_FAILURES", 5)
     ip_block_duration_minutes: int = _get_positive_int_env("IP_BLOCK_DURATION_MINUTES", 20)
+    trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "")
+    session_cookie_secure: bool = _get_bool_env("SESSION_COOKIE_SECURE", True)
 
     # Add CORS settings
     cors_allow_origins_str: str | None = os.getenv("CORS_ALLOW_ORIGINS") # Load as string
@@ -90,6 +93,8 @@ class Settings(BaseSettings):
     tavily_api_key: str | None = os.getenv("TAVILY_API_KEY") or None
     jina_api_key: str | None = os.getenv("JINA_API_KEY") or None
     zai_api_key: str | None = os.getenv("ZAI_API_KEY") or None
+    web_read_cloakbrowser_enabled: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_ENABLED", False)
+    web_read_cloakbrowser_no_sandbox: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_NO_SANDBOX", False)
 
 
     # Example of Pydantic's .env handling (alternative approach)

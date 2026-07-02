@@ -90,6 +90,43 @@ INVALID_OPERATION_RULES_TEXT = """
 }
 """.strip()
 
+WEB_RESEARCH_RULES_TEXT = """
+{
+  "web_search": [
+    {
+      "gateway_model_name": "llmgateway/web-search",
+      "query_model": "gateway-chat"
+    }
+  ],
+  "web_read": [
+    {
+      "gateway_model_name": "llmgateway/web-read"
+    }
+  ],
+  "rerank": [
+    {
+      "gateway_model_name": "llmgateway/rerank",
+      "routes": [
+        {
+          "provider": "cohere",
+          "model": "rerank-model",
+          "target_path": "/rerank"
+        }
+      ]
+    }
+  ],
+  "web_research": [
+    {
+      "gateway_model_name": "llmgateway/web-research",
+      "search_model": "llmgateway/web-search",
+      "read_model": "llmgateway/web-read",
+      "rerank_model": "llmgateway/rerank",
+      "analysis_model": "gateway-chat"
+    }
+  ]
+}
+""".strip()
+
 EMPTY_OPERATION_RULES = {
     "embeddings": {},
     "rerank": {},
@@ -175,6 +212,65 @@ class OperationRulesLoadingTests(unittest.TestCase):
 
         self.assertFalse(result)
         self.assertEqual(config_loader.operation_rules, EMPTY_OPERATION_RULES)
+
+    def test_reload_operation_rules_returns_false_on_cross_validation_error(self):
+        self.fallback_rules_path.write_text(
+            """
+[
+  {
+    "gateway_model_name": "gateway-chat",
+    "fallback_models": [{"provider": "openrouter", "model": "gpt-4o-mini"}],
+    "rotate_models": false
+  }
+]
+""".strip(),
+            encoding="utf-8",
+        )
+        self.operation_rules_path.write_text("", encoding="utf-8")
+        config_loader = self._build_loader()
+        config_loader.load_providers()
+        config_loader.load_fallback_rules()
+        config_loader.load_operation_rules()
+        self.operation_rules_path.write_text(WEB_RESEARCH_RULES_TEXT, encoding="utf-8")
+
+        result = config_loader.reload_operation_rules()
+
+        self.assertTrue(result)
+        valid_operation_rules = config_loader.operation_rules
+        self.fallback_rules_path.write_text("[]", encoding="utf-8")
+        config_loader.load_fallback_rules()
+        self.operation_rules_path.write_text(WEB_RESEARCH_RULES_TEXT, encoding="utf-8")
+
+        result = config_loader.reload_operation_rules()
+
+        self.assertFalse(result)
+        self.assertIs(config_loader.operation_rules, valid_operation_rules)
+
+    def test_reload_fallback_rules_returns_false_on_cross_validation_error(self):
+        self.fallback_rules_path.write_text(
+            """
+[
+  {
+    "gateway_model_name": "gateway-chat",
+    "fallback_models": [{"provider": "openrouter", "model": "gpt-4o-mini"}],
+    "rotate_models": false
+  }
+]
+""".strip(),
+            encoding="utf-8",
+        )
+        self.operation_rules_path.write_text(WEB_RESEARCH_RULES_TEXT, encoding="utf-8")
+        config_loader = self._build_loader()
+        config_loader.load_providers()
+        config_loader.load_fallback_rules()
+        config_loader.load_operation_rules()
+        original_fallback_rules = config_loader.fallback_rules
+        self.fallback_rules_path.write_text("[]", encoding="utf-8")
+
+        result = config_loader.reload_fallback_rules()
+
+        self.assertFalse(result)
+        self.assertIs(config_loader.fallback_rules, original_fallback_rules)
 
     def test_project_root_models_operation_rules_example_loads_successfully(self):
         self.assertTrue(PROJECT_ROOT_OPERATION_RULES_PATH.exists())

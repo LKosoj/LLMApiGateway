@@ -294,6 +294,30 @@ class UpstreamRoutingStateTests(unittest.TestCase):
         self.assertEqual(second_row["requests_last_minute"], 1)
         self.assertEqual(second_row["tokens_last_minute"], 100)
 
+    def test_retry_after_cooldown_uses_upstream_seconds_instead_of_default_floor(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-retry-after-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=True,
+            retry_after=1,
+        )
+
+        blocked = state.select_key("openrouter", "provider-model", [key])
+        self.assertFalse(blocked.available)
+        self.assertIn("cooldown 1s", blocked.blocked_reason)
+
+        clock.value += 1.1
+        selected = state.select_key("openrouter", "provider-model", [key])
+        self.assertTrue(selected.available)
+
     def test_order_rules_by_penalty_reorders_rules_by_recorded_penalty(self):
         clock = _Clock()
         state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)

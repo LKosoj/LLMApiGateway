@@ -127,6 +127,7 @@ class ChatLoggingStreamErrorsTests(unittest.TestCase):
                 "cost": 0,
                 "operation": "chat",
             },
+            request=None,
         )
 
     def test_anthropic_tool_use_stream_is_included_in_log_output(self):

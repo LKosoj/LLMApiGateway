@@ -44,6 +44,13 @@ document.addEventListener('DOMContentLoaded', () => {
         _countdownTimers[cardId] = timer;
     }
 
+    function clearCountdownTimers() {
+        Object.keys(_countdownTimers).forEach((cardId) => {
+            clearInterval(_countdownTimers[cardId]);
+            delete _countdownTimers[cardId];
+        });
+    }
+
     function colorClass(current, limit) {
         if (limit == null || limit <= 0) return 'color-neutral';
         const pct = current / limit;
@@ -184,7 +191,8 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function numText(value) {
@@ -195,8 +203,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Render all cards ───────────────────────────────────────────────────
 
     function renderAllCards(keys) {
+        clearCountdownTimers();
         if (!keys || keys.length === 0) {
-            quotaGrid.innerHTML = '<p class="quota-empty">No API keys found.</p>';
+            quotaGrid.innerHTML = `
+                <div class="quota-empty">
+                    <strong>No API keys found.</strong>
+                    <span>Create a virtual key on the API Keys page to see quota usage here.</span>
+                    <a href="/v1/ui/api-keys">Open API Keys</a>
+                </div>
+            `;
             return;
         }
 
@@ -238,7 +253,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function initPolling() {
         fetchQuotaData();
         const _pollingInterval = setInterval(fetchQuotaData, 5000);
-        window.addEventListener('beforeunload', () => clearInterval(_pollingInterval));
+        window.addEventListener('beforeunload', () => {
+            clearInterval(_pollingInterval);
+            clearCountdownTimers();
+        });
     }
 
     // ── Upstream Subscriptions ─────────────────────────────────────────────
@@ -278,10 +296,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else if (cat.total > 0) {
                         pct = Math.min(100, Math.round(cat.used / cat.total * 100));
                         cls = pct >= 85 ? 'color-danger' : pct >= 60 ? 'color-warn' : 'color-ok';
-                        const rem = cat.remaining != null ? ` / ${cat.total} (${cat.remaining} left)` : ` / ${cat.total}`;
-                        countLabel = `${cat.used}${rem}`;
+                        const rem = cat.remaining != null
+                            ? ` / ${numText(cat.total)} (${numText(cat.remaining)} left)`
+                            : ` / ${numText(cat.total)}`;
+                        countLabel = `${numText(cat.used)}${rem}`;
                     } else {
-                        countLabel = `${cat.used} / 0`;
+                        countLabel = `${numText(cat.used)} / 0`;
                     }
                     bodyHtml += `
                         <div class="upstream-category">

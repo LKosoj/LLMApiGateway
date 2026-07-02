@@ -7,7 +7,24 @@
 }
 
 .keys-table-wrap {
+    position: relative;
     overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+.keys-table-wrap::after {
+    content: "Scroll horizontally";
+    position: sticky;
+    right: 8px;
+    bottom: 6px;
+    display: none;
+    float: right;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-size: 12px;
+    box-shadow: var(--shadow-sm);
 }
 
 .keys-table {
@@ -23,6 +40,7 @@
     border-bottom: 1px solid var(--border);
     text-align: left;
     vertical-align: top;
+    font-size: 14px;
 }
 
 .keys-table code {
@@ -178,5 +196,9 @@
     .keys-toolbar button,
     .modal-buttons button {
         width: 100%;
+    }
+
+    .keys-table-wrap::after {
+        display: inline-flex;
     }
 }

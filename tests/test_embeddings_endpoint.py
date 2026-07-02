@@ -232,7 +232,8 @@ class EmbeddingsEndpointTests(unittest.TestCase):
                     )
 
                 self.assertEqual(response.status_code, 400 if status_code == 400 else 503)
-                self.assertEqual(response.json()["detail"], f"downstream-{status_code}")
+                self.assertEqual(response.json()["detail"], f"Downstream request failed with status {status_code}.")
+                self.assertNotIn(f"downstream-{status_code}", response.text)
                 fake_http_client.post.assert_awaited_once()
 
     def test_post_embeddings_retries_same_route_when_operation_route_configures_retry(self):
@@ -340,7 +341,8 @@ class EmbeddingsEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "bad request")
+        self.assertEqual(response.json()["detail"], "Downstream request failed with status 400.")
+        self.assertNotIn("bad request", response.text)
         self.assertEqual(fake_http_client.post.await_count, 1)
 
     def test_api_v1_router_registers_embeddings_router(self):

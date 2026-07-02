@@ -21,14 +21,15 @@ from ..services.rate_limiter import RateLimiter
 from ..services.access_control import UsdBudgetLedger
 from ..services.active_requests import update_active_request
 from ..services.upstream_routing_state import UpstreamRoutingState
+from ..middleware.content_size import contains_request_body_too_large
 from ..utils.log_redaction import redact_headers_for_log, redact_request_body_text
 from ..utils.usage_tracking import (
+    RATE_BASED_COST_SKIP_KEY,
     UPSTREAM_COST_PRESENT_KEY,
     apply_rate_based_cost,
     backfill_zero_token_counts,
     build_model_cost_rate_registry,
     enrich_tokens_usage as enrich_usage_metadata,
-    extract_request_x_title,
     extract_tokens_usage,
     initialize_tokens_usage,
 )
@@ -86,13 +87,49 @@ def set_usd_budget_ledger(ledger: UsdBudgetLedger | None) -> None:
     state.usd_budget_ledger = ledger
 
 
-def _require_tokens_usage_db() -> TokensUsageDB:
-    if state.tokens_usage_db is None:
+def _dependency_from_request(request: Request | None, name: str):
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    if app_state is None:
+        return None
+    return getattr(app_state, name, None)
+
+
+def _tokens_usage_db_from_request(request: Request | None) -> TokensUsageDB | None:
+    db = _dependency_from_request(request, "tokens_usage_db")
+    if db is not None:
+        return db
+    return state.tokens_usage_db
+
+
+def _api_keys_db_from_request(request: Request | None) -> ApiKeysDB | None:
+    db = _dependency_from_request(request, "api_keys_db")
+    if db is not None:
+        return db
+    return state.api_keys_db
+
+
+def _rate_limiter_from_request(request: Request | None) -> RateLimiter | None:
+    limiter = _dependency_from_request(request, "rate_limiter")
+    if limiter is not None:
+        return limiter
+    return state.rate_limiter
+
+
+def _usd_budget_ledger_from_request(request: Request | None) -> UsdBudgetLedger | None:
+    ledger = _dependency_from_request(request, "usd_budget_ledger")
+    if ledger is not None:
+        return ledger
+    return state.usd_budget_ledger
+
+
+def _require_tokens_usage_db(request: Request | None = None) -> TokensUsageDB:
+    tokens_usage_db = _tokens_usage_db_from_request(request)
+    if tokens_usage_db is None:
         raise RuntimeError(
             "chat_logging.tokens_usage_db is not bound. "
             "Call set_tokens_usage_db() from the application lifespan or test setup before recording usage."
         )
-    return state.tokens_usage_db
+    return tokens_usage_db
 
 
 def _decode_body(body_bytes: bytes, headers: dict) -> str:
@@ -112,39 +149,47 @@ def _decode_body(body_bytes: bytes, headers: dict) -> str:
         return body_bytes.decode("utf-8", errors="replace")
 
 
-def record_tokens_usage(tokens_usage):
+def record_tokens_usage(tokens_usage, request: Request | None = None):
     try:
+        tokens_usage.pop(RATE_BASED_COST_SKIP_KEY, None)
         tokens_usage.pop(UPSTREAM_COST_PRESENT_KEY, None)
         usd_budget_reserved = bool(tokens_usage.pop("_usd_budget_reserved", False))
         key_tpm_limit = tokens_usage.pop("_key_tpm_limit", None)
+        usd_budget_reserved_estimate = tokens_usage.pop("_usd_budget_reserved_estimate", None)
+        if usd_budget_reserved_estimate is None and request is not None:
+            usd_budget_reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
         # Ensure total_tokens is recalculated before saving
         tokens_usage["total_tokens"] = tokens_usage.get("prompt_tokens", 0) + tokens_usage.get("completion_tokens", 0)
 
         logger.info(f"Recording token usage: {tokens_usage.get('prompt_tokens')}+{tokens_usage.get('completion_tokens')}={tokens_usage.get('total_tokens')} for model {tokens_usage.get('gateway_model')}")
         try:
-            _require_tokens_usage_db().insert_usage(tokens_usage)
+            _require_tokens_usage_db(request).insert_usage(tokens_usage)
         except Exception as db_error:
             logger.error("Failed to insert token usage data into database: %s", db_error, exc_info=True)
 
         key_id = tokens_usage.get("api_key_id")
-        if key_id is not None and state.api_keys_db is not None:
+        api_keys_db = _api_keys_db_from_request(request)
+        if key_id is not None and api_keys_db is not None:
             try:
-                state.api_keys_db.record_spent(int(key_id), float(tokens_usage.get("cost") or 0.0))
+                api_keys_db.record_spent(int(key_id), float(tokens_usage.get("cost") or 0.0))
             except Exception as budget_error:
                 logger.error("Failed to update spent_usd for key %s: %s", key_id, budget_error)
 
-        if key_id is not None and usd_budget_reserved and state.usd_budget_ledger is not None:
+        usd_budget_ledger = _usd_budget_ledger_from_request(request)
+        if key_id is not None and usd_budget_reserved and usd_budget_ledger is not None:
             try:
-                state.usd_budget_ledger.commit(
+                usd_budget_ledger.commit_reserved(
                     int(key_id),
                     float(tokens_usage.get("cost") or 0.0),
+                    reserved=usd_budget_reserved_estimate,
                 )
             except Exception as ledger_error:
                 logger.error("Failed to commit USD budget reservation for key %s: %s", key_id, ledger_error)
 
-        if key_id is not None and state.rate_limiter is not None:
+        rate_limiter = _rate_limiter_from_request(request)
+        if key_id is not None and rate_limiter is not None:
             try:
-                state.rate_limiter.add_tokens(int(key_id), int(tokens_usage.get("total_tokens") or 0), tpm_limit=key_tpm_limit)
+                rate_limiter.add_tokens(int(key_id), int(tokens_usage.get("total_tokens") or 0), tpm_limit=key_tpm_limit)
             except Exception as tpm_error:
                 logger.error("Failed to attribute tokens to RateLimiter for key %s: %s", key_id, tpm_error)
     except Exception as usage_error:
@@ -209,6 +254,7 @@ def record_chat_observability(
     llm_response_accum,
     tokens_usage,
     cost_rate_registry=None,
+    request: Request | None = None,
 ):
     if backfill_zero_token_counts(tokens_usage, req_body_str, llm_response_accum):
         logger.warning(
@@ -223,7 +269,7 @@ def record_chat_observability(
         )
 
     apply_rate_based_cost(tokens_usage, cost_rate_registry)
-    record_tokens_usage(tokens_usage)
+    record_tokens_usage(tokens_usage, request=request)
 
     if settings.log_chat_messages:
         write_log(req_headers, req_body_str, llm_response_accum, tokens_usage)
@@ -235,6 +281,7 @@ def _record_chat_observability_with_rates(
     llm_response_accum,
     tokens_usage,
     cost_rate_registry,
+    request: Request | None = None,
 ) -> None:
     if cost_rate_registry is None:
         record_chat_observability(
@@ -242,6 +289,7 @@ def _record_chat_observability_with_rates(
             req_body_str,
             llm_response_accum,
             tokens_usage,
+            request=request,
         )
         return
     record_chat_observability(
@@ -250,6 +298,7 @@ def _record_chat_observability_with_rates(
         llm_response_accum,
         tokens_usage,
         cost_rate_registry,
+        request=request,
     )
 
 
@@ -280,9 +329,11 @@ def _release_usd_budget_reservation_for_request(request: Request) -> None:
         return
 
     key_id = getattr(request.state, "usd_budget_reserved_key_id", None)
-    if key_id is not None and state.usd_budget_ledger is not None:
+    usd_budget_ledger = _usd_budget_ledger_from_request(request)
+    reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
+    if key_id is not None and usd_budget_ledger is not None:
         try:
-            state.usd_budget_ledger.release(int(key_id))
+            usd_budget_ledger.release(int(key_id), reserved_estimate)
         except Exception as ledger_error:
             logger.error("Failed to release USD budget reservation for key %s: %s", key_id, ledger_error)
     request.state.usd_budget_finalized = True
@@ -497,9 +548,13 @@ class ChunkProcessor:
         if self._log_written:
             return
 
-        x_title = extract_request_x_title(self.request)
-        if x_title:
-            self.tokens_usage["x_title"] = x_title
+        if self.request is not None:
+            self.tokens_usage = enrich_tokens_usage(
+                self.tokens_usage,
+                self.request,
+                self.gateway_model,
+                self.operation,
+            )
         _merge_request_usage_tracker(self.tokens_usage, self.request)
         _record_upstream_tokens_for_request(self.request, self.tokens_usage)
         _log_rtk_compression_stats(self.request)
@@ -509,6 +564,7 @@ class ChunkProcessor:
             self.llm_response_accum,
             self.tokens_usage,
             _cost_rate_registry_from_request(self.request),
+            self.request,
         )
         self._log_written = True
 
@@ -819,27 +875,18 @@ class ChunkProcessor:
 def _init_tokens_and_response():
     return "", initialize_tokens_usage()
 
+
+def _request_usage_tracker_has_billable_usage(request: Request) -> bool:
+    usage_tracker = getattr(request.state, "usage_tracker", None)
+    if not isinstance(usage_tracker, dict):
+        return False
+    return any(
+        isinstance(usage_tracker.get(key), (int, float)) and usage_tracker.get(key) > 0
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+    )
+
+
 async def log_chat_completions(request: Request, call_next: Callable) -> Response:
-    if state.tokens_usage_db is None:
-        app_db = getattr(request.app.state, "tokens_usage_db", None)
-        if isinstance(app_db, TokensUsageDB):
-            state.tokens_usage_db = app_db
-
-    if state.api_keys_db is None:
-        app_api_keys_db = getattr(request.app.state, "api_keys_db", None)
-        if isinstance(app_api_keys_db, ApiKeysDB):
-            state.api_keys_db = app_api_keys_db
-
-    if state.rate_limiter is None:
-        app_rate_limiter = getattr(request.app.state, "rate_limiter", None)
-        if app_rate_limiter is not None:
-            state.rate_limiter = app_rate_limiter
-
-    if state.usd_budget_ledger is None:
-        app_usd_budget_ledger = getattr(request.app.state, "usd_budget_ledger", None)
-        if isinstance(app_usd_budget_ledger, UsdBudgetLedger):
-            state.usd_budget_ledger = app_usd_budget_ledger
-
     operation = _extract_operation_from_url(request.url.path)
     if operation is None:
         return await call_next(request)
@@ -858,6 +905,8 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
         request.scope["receive"] = receive
 
     except Exception as e:
+        if contains_request_body_too_large(e):
+            raise
         logger.error(f"Error capturing request body in log_chat middleware: {e}", exc_info=True)
         # We don't want to break the request if logging fails, but we might have consumed the body
         try:
@@ -877,7 +926,7 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
         _release_usd_budget_reservation_for_request(request)
         raise
 
-    if response.status_code >= 400:
+    if response.status_code >= 400 and not _request_usage_tracker_has_billable_usage(request):
         _release_usd_budget_reservation_for_request(request)
         return response
     
@@ -891,7 +940,28 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
         is_real_streaming = "text/event-stream" in content_type
         is_streaming_response = isinstance(response, StreamingResponse) or "StreamingResponse" in type(response).__name__
         
-        if is_streaming_response:
+        if response.status_code >= 400:
+            llm_response_accum, tokens_usage = _init_tokens_and_response()
+            tokens_usage = enrich_tokens_usage(tokens_usage, request, requested_gateway_model, operation)
+            tokens_usage = _merge_request_usage_tracker(tokens_usage, request)
+            if getattr(request.state, "usd_budget_reserved", False):
+                tokens_usage["_usd_budget_reserved"] = True
+            key_tpm_rec = getattr(request.state, "api_key_record", None)
+            if key_tpm_rec is not None and getattr(key_tpm_rec, "tpm", None):
+                tokens_usage["_key_tpm_limit"] = key_tpm_rec.tpm
+            tokens_usage["duration_ms"] = int((time.monotonic() - request_started_at) * 1000)
+            _record_upstream_tokens_for_request(request, tokens_usage)
+            await anyio.to_thread.run_sync(
+                _record_chat_observability_with_rates,
+                req_headers,
+                req_body_str,
+                llm_response_accum,
+                tokens_usage,
+                _cost_rate_registry_from_request(request),
+                request,
+            )
+            _mark_usd_budget_reservation_finalized(request)
+        elif is_streaming_response:
             original_iterator = response.body_iterator
             chunk_processor: ChunkProcessor | None = None
 
@@ -985,6 +1055,7 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
                 llm_response_accum,
                 tokens_usage,
                 _cost_rate_registry_from_request(request),
+                request,
             )
             _mark_usd_budget_reservation_finalized(request)
 

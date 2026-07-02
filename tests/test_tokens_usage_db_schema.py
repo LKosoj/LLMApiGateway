@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,6 +81,76 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             self.assertEqual(latest_record["duration_ms"], 3210)
             self.assertEqual(latest_record["x_title"], "tgBot")
             self.assertIs(created_at.tzinfo, timezone.utc)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_insert_usage_once_is_durable_across_db_instances(self):
+        db_path = Path("db/test_usage_idempotency_once.sqlite")
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            db = TokensUsageDB(db_filename=db_path.name)
+            first_inserted = db.insert_usage_once(
+                "pdf-job-key",
+                {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                    "cost": 0.25,
+                    "gateway_model": "gateway/pdf",
+                    "operation": "pdf_conversion",
+                    "model": "pdf-model",
+                    "provider": "converter",
+                },
+            )
+            reopened = TokensUsageDB(db_filename=db_path.name)
+            second_inserted = reopened.insert_usage_once(
+                "pdf-job-key",
+                {
+                    "prompt_tokens": 99,
+                    "completion_tokens": 99,
+                    "total_tokens": 198,
+                    "cost": 99,
+                    "gateway_model": "gateway/pdf",
+                    "operation": "pdf_conversion",
+                    "model": "pdf-model",
+                    "provider": "converter",
+                },
+            )
+
+            rows = run_async(reopened.get_latest_usage_records(limit=10, offset=0))
+
+            self.assertTrue(first_inserted)
+            self.assertFalse(second_inserted)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["total_tokens"], 15)
+            self.assertEqual(rows[0]["cost"], 0.25)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_insert_usage_once_allows_one_concurrent_insert(self):
+        db_path = Path("db/test_usage_idempotency_concurrent.sqlite")
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            db = TokensUsageDB(db_filename=db_path.name)
+            usage = {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "gateway_model": "gateway/pdf",
+                "operation": "pdf_conversion",
+                "model": "pdf-model",
+                "provider": "converter",
+            }
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(lambda _index: db.insert_usage_once("same-job-key", usage), range(2)))
+
+            rows = run_async(db.get_latest_usage_records(limit=10, offset=0))
+
+            self.assertEqual(sorted(results), [False, True])
+            self.assertEqual(len(rows), 1)
         finally:
             db_path.unlink(missing_ok=True)
 

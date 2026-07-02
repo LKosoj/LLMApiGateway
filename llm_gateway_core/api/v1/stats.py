@@ -52,23 +52,26 @@ ANALYTICS_RANGES = {
 ANALYTICS_BUCKETS = {"hour", "day", "week", "month"}
 
 
-def _effective_api_key_filter(request: Request, requested_api_key_id: int | None = None) -> int | None:
+def _effective_api_key_filter(request: Request) -> int | None:
     """Return the ``api_key_id`` filter to apply for the current caller.
 
     Master callers always see the full usage set. Virtual-key callers are
     always scoped to their own ``api_key_id`` so they can only inspect their
     own statistics.
     """
-    role = getattr(request.state, "api_key_role", ROLE_MASTER)
+    role = getattr(request.state, "api_key_role", None)
     if role == ROLE_USER:
-        return getattr(request.state, "api_key_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        if api_key_id is None:
+            raise HTTPException(status_code=401, detail="Virtual key session is missing api_key_id.")
+        return api_key_id
     if role != ROLE_MASTER:
         raise HTTPException(status_code=401, detail="Authenticated API key role is not recognized.")
     return None
 
 
 def _is_master_caller(request: Request) -> bool:
-    return getattr(request.state, "api_key_role", ROLE_MASTER) == ROLE_MASTER
+    return getattr(request.state, "api_key_role", None) == ROLE_MASTER
 
 
 def _optional_query_value(value: str | None) -> str | None:
@@ -111,7 +114,7 @@ def _resolve_analytics_scope(
     requested_api_key_id: int | None,
     api_key_scope: str | None,
 ) -> tuple[str, int | None, bool, str]:
-    role = getattr(request.state, "api_key_role", ROLE_MASTER)
+    role = getattr(request.state, "api_key_role", None)
     if role == ROLE_USER:
         api_key_id = getattr(request.state, "api_key_id", None)
         if api_key_id is None:
@@ -248,7 +251,7 @@ async def get_aggregated_stats(request: Request, period: str, api_key_id: int | 
         if period not in ['hour', 'day', 'week', 'month']:
             raise HTTPException(status_code=400, detail="Invalid period. Must be 'hour', 'day', 'week', or 'month'.")
 
-        api_key_id_filter = _effective_api_key_filter(request, api_key_id)
+        api_key_id_filter = _effective_api_key_filter(request)
 
         async def _fetch():
             end_date = datetime.now(timezone.utc)
@@ -277,7 +280,7 @@ async def get_aggregated_stats(request: Request, period: str, api_key_id: int | 
         raise he
     except Exception as e:
         logging.error(f"Error fetching aggregated usage statistics for period '{period}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not retrieve usage statistics: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve usage statistics.")
 
 @stats_router.get("/api/usage-records", response_class=JSONResponse, tags=["Usage Stats API"])
 async def get_usage_records(
@@ -293,7 +296,7 @@ async def get_usage_records(
 
     try:
         limit, offset = validate_usage_records_pagination(limit, offset)
-        api_key_id_filter = _effective_api_key_filter(request, api_key_id)
+        api_key_id_filter = _effective_api_key_filter(request)
 
         active_records = get_active_requests_registry(request.app).list_records(
             api_key_id=api_key_id_filter
@@ -329,7 +332,7 @@ async def get_usage_records(
         raise he
     except Exception as e:
         logging.error(f"Error fetching usage records: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not retrieve usage records: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve usage records.")
 
 
 @stats_router.get("/api/analytics-dashboard", response_class=JSONResponse, tags=["Analytics Dashboard API"])
@@ -757,7 +760,7 @@ async def get_fallback_stats(request: Request, period: str):
         raise he
     except Exception as e:
         logging.error(f"Error fetching fallback stats for period '{period}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not retrieve fallback statistics: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve fallback statistics.")
 
 
 @stats_router.get("/api/fallback-records", response_class=JSONResponse, tags=["Fallback Analytics API"])
@@ -784,7 +787,7 @@ async def get_fallback_records(request: Request, limit: int = 25, offset: int = 
         raise he
     except Exception as e:
         logging.error(f"Error fetching fallback records: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not retrieve fallback records: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve fallback records.")
 
 
 @stats_router.get("/api/upstream-status", response_class=JSONResponse, tags=["Upstream Analytics API"])
@@ -877,7 +880,7 @@ async def get_upstream_stats(request: Request, period: str, api_key_id: int | No
     try:
         if period not in ['hour', 'day', 'week', 'month']:
             raise HTTPException(status_code=400, detail="Invalid period. Must be 'hour', 'day', 'week', or 'month'.")
-        api_key_id_filter = _effective_api_key_filter(request, api_key_id)
+        api_key_id_filter = _effective_api_key_filter(request)
 
         async def _fetch():
             start_date = _get_period_start_date(period)
@@ -896,4 +899,4 @@ async def get_upstream_stats(request: Request, period: str, api_key_id: int | No
         raise
     except Exception as e:
         logging.error(f"Error fetching upstream stats for period '{period}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not retrieve upstream statistics: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve upstream statistics.")

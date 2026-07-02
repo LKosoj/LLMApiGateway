@@ -154,9 +154,7 @@ def compute_next_budget_reset(period: str, *, now: datetime | None = None) -> st
     """
     if period not in ("daily", "monthly"):
         return None
-    moment = now or datetime.now(timezone.utc)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
+    moment = _normalize_utc_datetime(now)
     if period == "daily":
         nxt = (moment + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
@@ -174,6 +172,17 @@ def compute_next_budget_reset(period: str, *, now: datetime | None = None) -> st
             microsecond=0,
         )
     return nxt.isoformat()
+
+
+def _normalize_utc_datetime(moment: datetime | None = None) -> datetime:
+    value = moment or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _utc_now_iso() -> str:
+    return _normalize_utc_datetime().replace(microsecond=0).isoformat()
 
 
 def _deserialize_metadata(raw: str | None) -> dict[str, Any]:
@@ -221,10 +230,17 @@ class ApiKeysDB:
         db_dir = resolve_db_dir(__file__)
         os.makedirs(db_dir, exist_ok=True)
         self.db_path = db_dir / db_filename
-        self._batcher = write_batcher
+        self._batcher: WriteBatcher | None = None
+        if write_batcher is not None:
+            self.set_batcher(write_batcher)
         self._init_db()
 
     def set_batcher(self, batcher: WriteBatcher) -> None:
+        if batcher.db_path.resolve() != self.db_path.resolve():
+            raise ValueError(
+                "ApiKeysDB requires a WriteBatcher bound to the same SQLite "
+                f"database: got {batcher.db_path}, expected {self.db_path}."
+            )
         self._batcher = batcher
 
     # ------------------------------------------------------------------
@@ -303,7 +319,7 @@ class ApiKeysDB:
         validate_metadata_size(metadata)
 
         key_value = api_key or generate_api_key()
-        created_at = datetime.now().isoformat()
+        created_at = _utc_now_iso()
         # Coerce non-positive RPM/TPM to NULL so ``create`` and ``update`` agree
         # on how "no limit" is represented; downstream code treats NULL as
         # unlimited, while a stored ``0`` would be picked up as a hard zero
@@ -456,7 +472,7 @@ class ApiKeysDB:
         if key_id is None:
             return
         amount = float(cost_usd or 0.0)
-        timestamp = datetime.now().isoformat()
+        timestamp = _utc_now_iso()
         sql = (
             "UPDATE api_keys "
             "SET spent_usd = spent_usd + ?, last_used_at = ? "
@@ -479,7 +495,7 @@ class ApiKeysDB:
         if key_id is None:
             return
         sql = "UPDATE api_keys SET last_used_at = ? WHERE id = ?"
-        params = (datetime.now().isoformat(), key_id)
+        params = (_utc_now_iso(), key_id)
         if self._batcher is not None:
             self._batcher.enqueue(sql, params)
         else:
@@ -498,9 +514,7 @@ class ApiKeysDB:
         behaviour. Returns the post-reset records so the caller can refresh any
         in-memory budget ledger.
         """
-        moment = now or datetime.now(timezone.utc)
-        if moment.tzinfo is None:
-            moment = moment.replace(tzinfo=timezone.utc)
+        moment = _normalize_utc_datetime(now)
         now_iso = moment.replace(microsecond=0).isoformat()
 
         reset_records: list[ApiKeyRecord] = []

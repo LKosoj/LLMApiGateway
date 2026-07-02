@@ -227,7 +227,7 @@ class EmbeddingsProxyTests(unittest.TestCase):
                 )
 
         self.assertEqual(exc_info.exception.status_code, 400)
-        self.assertEqual(exc_info.exception.detail, "bad request")
+        self.assertEqual(exc_info.exception.detail, "Downstream request failed with status 400.")
         self.fake_http_client.post.assert_awaited_once()
         sleep_mock.assert_not_awaited()
 

@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "gateway_model_name": "llmgateway/router",
+    "selector_model": "llmgateway/light_model",
+    "targets": [
+      {
+        "type": "gateway_model",
+        "model": "llmgateway/light_model"
+      },
+      {
+        "type": "gateway_model",
+        "model": "llmgateway/free"
+      },
+      {
+        "type": "gateway_model",
+        "model": "llmgateway/high"
+      }
+    ]
+  }
+]

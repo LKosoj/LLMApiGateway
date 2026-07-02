@@ -161,6 +161,7 @@ class RerankApiTests(unittest.TestCase):
         client.app.state.tokens_usage_db.insert_usage.assert_called_once()
         call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
         self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
+        self.assertIsInstance(call_args.pop("request_id"), str)
         self.assertEqual(
             call_args,
             {
@@ -364,7 +365,8 @@ class RerankApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["detail"], "rerank-downstream-500")
+        self.assertEqual(response.json()["detail"], "Downstream request failed with status 500.")
+        self.assertNotIn("rerank-downstream-500", response.text)
         fake_http_client.post.assert_awaited_once()
 
 

@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.auth_ui import auth_router
+from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.middleware.auth import (
     ROLE_USER,
@@ -13,6 +14,7 @@ from llm_gateway_core.middleware.auth import (
     create_authenticated_session,
 )
 from llm_gateway_core.services.active_requests import get_active_requests_registry
+from llm_gateway_core.services.ip_blocklist import IpBlockGuard
 
 
 def build_test_app() -> FastAPI:
@@ -65,6 +67,14 @@ def build_test_app() -> FastAPI:
     async def openrouter_free_models():
         return {"status": "protected-openrouter-free-models"}
 
+    @app.post("/v1/ui/providers-config")
+    async def providers_config():
+        return {"status": "protected-providers-config"}
+
+    @app.get("/v1/fallback-model-evals")
+    async def fallback_model_evals():
+        return {"status": "protected-fallback-model-evals"}
+
     @app.get("/v1/api/usage-records")
     async def stats():
         return {"status": "protected-stats"}
@@ -81,6 +91,7 @@ class AuthMiddlewareTests(unittest.TestCase):
         self.gateway_key_patchers = [
             patch("llm_gateway_core.middleware.auth.settings.gateway_api_key", "test-gateway-key"),
             patch("llm_gateway_core.api.auth_ui.settings.gateway_api_key", "test-gateway-key"),
+            patch("llm_gateway_core.middleware.auth.settings.session_cookie_secure", False),
         ]
         for patcher in self.gateway_key_patchers:
             patcher.start()
@@ -142,6 +153,36 @@ class AuthMiddlewareTests(unittest.TestCase):
         self.assertEqual(login_page_response.status_code, 303)
         self.assertEqual(login_page_response.headers["location"], "/v1/ui/usage-stats")
 
+    def test_login_cookie_is_secure_by_default(self):
+        app = build_test_app()
+        with patch("llm_gateway_core.middleware.auth.settings.session_cookie_secure", True):
+            with TestClient(app, base_url="https://testserver") as client:
+                response = client.post(
+                    "/auth/login",
+                    json={"api_key": "test-gateway-key", "next": "/v1/ui/usage-stats"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        set_cookie = response.headers["set-cookie"]
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("SameSite=lax", set_cookie)
+        self.assertIn("Secure", set_cookie)
+
+    def test_login_cookie_secure_can_be_disabled_for_local_http(self):
+        app = build_test_app()
+        with patch("llm_gateway_core.middleware.auth.settings.session_cookie_secure", False):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/auth/login",
+                    json={"api_key": "test-gateway-key", "next": "/v1/ui/usage-stats"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        set_cookie = response.headers["set-cookie"]
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("SameSite=lax", set_cookie)
+        self.assertNotIn("Secure", set_cookie)
+
     def test_persistent_cookie_survives_new_client_instance(self):
         login_response = self.client.post(
             "/auth/login",
@@ -168,6 +209,111 @@ class AuthMiddlewareTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json(), {"detail": "Invalid API Key"})
+
+    def test_invalid_login_records_auth_invalid_rejection(self):
+        mock_db = MagicMock(spec=RejectionsDB)
+        app = build_test_app()
+        app.state.rejections_db = mock_db
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/auth/login",
+                json={"api_key": "wrong-key", "next": "/v1/ui/usage-stats"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        mock_db.insert_rejection.assert_called()
+        call_kwargs = mock_db.insert_rejection.call_args.kwargs
+        self.assertEqual(call_kwargs["category"], "auth_invalid")
+        self.assertEqual(call_kwargs["status_code"], 401)
+        self.assertEqual(call_kwargs["path"], "/auth/login")
+
+    def test_login_blocks_after_repeated_invalid_keys(self):
+        guard = IpBlockGuard(max_failures=2, block_seconds=600.0)
+        mock_db = MagicMock(spec=RejectionsDB)
+        app = build_test_app()
+        app.state.ip_block_guard = guard
+        app.state.rejections_db = mock_db
+
+        with TestClient(app) as client:
+            for _ in range(2):
+                response = client.post(
+                    "/auth/login",
+                    json={"api_key": "wrong-key", "next": "/v1/ui/usage-stats"},
+                )
+                self.assertEqual(response.status_code, 401)
+
+            blocked = client.post(
+                "/auth/login",
+                json={"api_key": "test-gateway-key", "next": "/v1/ui/usage-stats"},
+            )
+            login_page = client.get("/auth/login")
+            health = client.get("/health")
+            static_asset = client.get("/static/test.js")
+
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(blocked.headers.get("Retry-After"), "600")
+        self.assertEqual(login_page.status_code, 200)
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(static_asset.status_code, 200)
+        categories = [call.kwargs["category"] for call in mock_db.insert_rejection.call_args_list]
+        self.assertEqual(categories.count("auth_invalid"), 2)
+        self.assertEqual(categories.count("ip_blocked"), 1)
+
+    def test_disabled_login_records_key_disabled_without_blocking_ip(self):
+        guard = IpBlockGuard(max_failures=1, block_seconds=600.0)
+        mock_rejections_db = MagicMock(spec=RejectionsDB)
+        mock_api_keys_db = MagicMock()
+        mock_api_keys_db.get_by_key.return_value = ApiKeyRecord(
+            id=7,
+            name="disabled-key",
+            api_key="disabled-key",
+            budget_usd=None,
+            spent_usd=0.0,
+            rpm=None,
+            tpm=None,
+            disabled=True,
+        )
+        app = build_test_app()
+        app.state.api_keys_db = mock_api_keys_db
+        app.state.ip_block_guard = guard
+        app.state.rejections_db = mock_rejections_db
+
+        with TestClient(app) as client:
+            disabled_response = client.post("/auth/login", json={"api_key": "disabled-key"})
+            valid_response = client.post("/auth/login", json={"api_key": "test-gateway-key"})
+
+        self.assertEqual(disabled_response.status_code, 401)
+        self.assertEqual(disabled_response.json(), {"detail": "Invalid API Key"})
+        self.assertEqual(valid_response.status_code, 200)
+        categories = [call.kwargs["category"] for call in mock_rejections_db.insert_rejection.call_args_list]
+        self.assertEqual(categories, ["key_disabled"])
+
+    def test_successful_login_resets_invalid_key_counter(self):
+        guard = IpBlockGuard(max_failures=3, block_seconds=600.0)
+        app = build_test_app()
+        app.state.ip_block_guard = guard
+        app.state.rejections_db = MagicMock(spec=RejectionsDB)
+
+        with TestClient(app) as client:
+            for _ in range(2):
+                self.assertEqual(
+                    client.post("/auth/login", json={"api_key": "wrong-key"}).status_code,
+                    401,
+                )
+            self.assertEqual(
+                client.post("/auth/login", json={"api_key": "test-gateway-key"}).status_code,
+                200,
+            )
+            for _ in range(2):
+                self.assertEqual(
+                    client.post("/auth/login", json={"api_key": "wrong-key"}).status_code,
+                    401,
+                )
+            self.assertEqual(
+                client.post("/auth/login", json={"api_key": "test-gateway-key"}).status_code,
+                200,
+            )
 
     def test_sensitive_paths_accept_valid_bearer_token(self):
         headers = {"Authorization": "Bearer test-gateway-key", "Accept": "text/html"}
@@ -234,6 +380,26 @@ class AuthMiddlewareTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(
             response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )
+
+    def test_config_editor_legacy_and_eval_paths_are_master_only(self):
+        self.client.cookies.set(
+            SESSION_COOKIE_NAME,
+            create_authenticated_session(role=ROLE_USER, key_id=7),
+        )
+
+        providers_response = self.client.post("/v1/ui/providers-config", content="[]")
+        eval_response = self.client.get("/v1/fallback-model-evals")
+
+        self.assertEqual(providers_response.status_code, 403)
+        self.assertEqual(eval_response.status_code, 403)
+        self.assertEqual(
+            providers_response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )
+        self.assertEqual(
+            eval_response.json(),
             {"detail": "This endpoint is reserved for the master API key"},
         )
 

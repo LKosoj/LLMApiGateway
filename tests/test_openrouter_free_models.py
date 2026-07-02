@@ -1,5 +1,7 @@
+import os
 import re
 import unittest
+from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
@@ -9,12 +11,14 @@ from tests._async_compat import run_async
 
 from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ProviderDetails
+from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.openrouter_free_models import (
     HEALTH_PROBE_MAX_TOKENS,
     OpenRouterFreeModelsNotConfigured,
     OpenRouterFreeModelsService,
     ScoredOpenRouterModel,
     _catalog_fingerprint,
+    _run_sum_even_squares_tests,
     _is_eligible_free_text_model,
     _score_metadata,
 )
@@ -98,6 +102,45 @@ def _model_entry(model_id, *, price="0", context=262144, parameters=None, output
 
 
 class OpenRouterFreeModelsServiceTests(unittest.TestCase):
+    def test_code_eval_subprocess_uses_posix_rlimits(self):
+        captured: dict[str, object] = {}
+
+        class FakeProcess:
+            returncode = 0
+
+            async def communicate(self, input_data):
+                captured["input"] = input_data
+                return b"", b""
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return FakeProcess()
+
+        with patch(
+            "llm_gateway_core.services.openrouter_free_models.asyncio.create_subprocess_exec",
+            side_effect=fake_create_subprocess_exec,
+        ):
+            passed, stderr = run_async(_run_sum_even_squares_tests("def sum_even_squares(nums):\n    return 0\n"))
+
+        self.assertTrue(passed)
+        self.assertEqual(stderr, "")
+        kwargs = captured["kwargs"]
+        self.assertIsInstance(kwargs, dict)
+        if os.name == "posix":
+            self.assertTrue(callable(kwargs.get("preexec_fn")))
+        else:
+            self.assertNotIn("preexec_fn", kwargs)
+
+    @unittest.skipIf(os.name != "posix", "POSIX rlimits are required for this regression test")
+    def test_code_eval_rlimit_rejects_large_memory_allocation(self):
+        code = "def sum_even_squares(nums):\n    waste = [0] * (10**12)\n    return len(waste)\n"
+
+        passed, stderr = run_async(_run_sum_even_squares_tests(code))
+
+        self.assertFalse(passed)
+        self.assertIn("MemoryError", stderr)
+
     def test_eligible_filter_requires_free_text_model(self):
         free_text = _model_entry("provider/free:free")
         paid_text = _model_entry("provider/paid", price="0.1")
@@ -354,6 +397,17 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
 
 
 class OpenRouterFreeModelsApiTests(unittest.TestCase):
+    def _app_with_role(self, role: str) -> FastAPI:
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def set_role(request, call_next):
+            request.state.api_key_role = role
+            return await call_next(request)
+
+        app.include_router(editor_router, prefix="/v1")
+        return app
+
     def test_status_endpoint_returns_disabled_payload_without_service(self):
         app = FastAPI()
         app.include_router(editor_router, prefix="/v1")
@@ -383,9 +437,8 @@ class OpenRouterFreeModelsApiTests(unittest.TestCase):
             async def get_status(self):
                 return {"configured": True, "manualRefreshRunning": True}
 
-        app = FastAPI()
+        app = self._app_with_role(ROLE_MASTER)
         app.state.openrouter_free_models_service = FakeService()
-        app.include_router(editor_router, prefix="/v1")
         response = TestClient(app).post("/v1/openrouter/free-models/run")
 
         self.assertEqual(response.status_code, 409)
@@ -402,9 +455,8 @@ class OpenRouterFreeModelsApiTests(unittest.TestCase):
             async def get_status(self):
                 return {"configured": True, "manualRefreshRunning": self.started}
 
-        app = FastAPI()
+        app = self._app_with_role(ROLE_MASTER)
         app.state.openrouter_free_models_service = FakeService()
-        app.include_router(editor_router, prefix="/v1")
         response = TestClient(app).post("/v1/openrouter/free-models/run")
 
         self.assertEqual(response.status_code, 200)
@@ -416,16 +468,26 @@ class OpenRouterFreeModelsApiTests(unittest.TestCase):
             async def start_manual_full_refresh(self):
                 raise OpenRouterFreeModelsNotConfigured("not configured")
 
-        app = FastAPI()
+        app = self._app_with_role(ROLE_MASTER)
         app.state.openrouter_free_models_service = FakeService()
-        app.include_router(editor_router, prefix="/v1")
         response = TestClient(app).post("/v1/openrouter/free-models/run")
 
         self.assertEqual(response.status_code, 503)
 
     def test_run_endpoint_returns_503_when_service_missing(self):
-        app = FastAPI()
-        app.include_router(editor_router, prefix="/v1")
+        app = self._app_with_role(ROLE_MASTER)
         response = TestClient(app).post("/v1/openrouter/free-models/run")
 
         self.assertEqual(response.status_code, 503)
+
+    def test_run_endpoint_rejects_non_master_role(self):
+        app = self._app_with_role(ROLE_USER)
+        app.state.openrouter_free_models_service = object()
+
+        response = TestClient(app).post("/v1/openrouter/free-models/run")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )

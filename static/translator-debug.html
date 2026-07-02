@@ -84,12 +84,12 @@
                 <textarea id="mockResponse" rows="6" spellcheck="false" placeholder='Leave blank to use the built-in mock response'></textarea>
 
                 <div class="btn-row">
-                    <button id="runBtn" class="btn-primary" onclick="runTranslation()">
+                    <button id="runBtn" type="button" class="btn-primary">
                         Run translation
                     </button>
-                    <button class="btn-secondary" onclick="loadOpenAISample()">OpenAI sample</button>
-                    <button class="btn-secondary" onclick="loadAnthropicSample()">Anthropic sample</button>
-                    <button class="btn-secondary" onclick="loadToolSample()">Tool-use sample</button>
+                    <button id="openaiSampleBtn" type="button" class="btn-secondary">OpenAI sample</button>
+                    <button id="anthropicSampleBtn" type="button" class="btn-secondary">Anthropic sample</button>
+                    <button id="toolSampleBtn" type="button" class="btn-secondary">Tool-use sample</button>
                 </div>
             </div>
 
@@ -106,6 +106,8 @@
         </div>
     </div>
 
+    <script src="/static/ui-core.js"></script>
+    <script src="/static/shared-nav.js"></script>
     <script src="/static/shared-auth.js"></script>
     <script src="/static/translator-debug.js"></script>
 </body>

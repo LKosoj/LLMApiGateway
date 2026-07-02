@@ -4,6 +4,7 @@ from datetime import timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 import main
@@ -274,6 +275,19 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(response.json()["total_records"], 3)
         self.assertEqual(fake_tokens_usage_db.calls, [(100, 0, None)])
 
+    def test_usage_records_without_authenticated_role_fails_closed(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+        app = FastAPI()
+        app.state.tokens_usage_db = fake_tokens_usage_db
+        app.include_router(stats_module.stats_router, prefix="/v1")
+
+        with TestClient(app) as client:
+            response = client.get("/v1/api/usage-records")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "Authenticated API key role is not recognized.")
+        self.assertEqual(fake_tokens_usage_db.calls, [])
+
     def test_usage_stats_include_gateway_model_in_aggregated_payload(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
@@ -422,6 +436,15 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(fake_tokens_usage_db.calls, [(2, 0, 11)])
         self.assertEqual(fake_tokens_usage_db.count_calls, [11])
         self.assertEqual(fake_tokens_usage_db.aggregated_calls[0][3], 11)
+
+    def test_virtual_key_usage_filter_requires_api_key_id(self):
+        request = Mock()
+        request.state = SimpleNamespace(api_key_role=ROLE_USER)
+
+        with self.assertRaises(HTTPException) as ctx:
+            stats_module._effective_api_key_filter(request)
+
+        self.assertEqual(ctx.exception.status_code, 401)
 
     def test_usage_stats_call_async_aggregation_directly(self):
         """Verify that the handler calls async DB aggregation method."""

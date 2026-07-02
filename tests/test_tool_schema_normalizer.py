@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import sys
 
 from llm_gateway_core.services.tool_schema_normalizer import (
     _MAX_SCHEMA_DEPTH,
@@ -81,6 +82,46 @@ class NormalizeMetaKeysTests(unittest.TestCase):
         for meta in ("$schema", "$id", "$comment"):
             self.assertNotIn(meta, out)
         self.assertEqual(out["type"], "object")
+
+    def test_definition_blocks_are_stripped_when_unreferenced(self):
+        out = normalize_tool_schema(
+            {
+                "type": "object",
+                "$defs": {"Unused": {"type": "string"}},
+                "definitions": {"AlsoUnused": {"type": "integer"}},
+            }
+        )
+
+        self.assertNotIn("$defs", out)
+        self.assertNotIn("definitions", out)
+
+    def test_definition_blocks_are_preserved_and_normalized_when_referenced(self):
+        out = normalize_tool_schema(
+            {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                    "address": {"$ref": "#/$defs/Address"},
+                },
+                "$defs": {
+                    "Address": {
+                        "$id": "Address",
+                        "type": "object",
+                        "properties": {
+                            "line1": {"type": ["string", "null"]},
+                        },
+                    }
+                },
+            }
+        )
+
+        self.assertNotIn("$schema", out)
+        self.assertIn("$defs", out)
+        self.assertEqual(out["properties"]["address"], {"$ref": "#/$defs/Address"})
+        address = out["$defs"]["Address"]
+        self.assertNotIn("$id", address)
+        self.assertEqual(address["properties"]["line1"]["type"], "string")
+        self.assertTrue(address["properties"]["line1"]["nullable"])
 
 
 class RecursiveNormalizationTests(unittest.TestCase):
@@ -189,6 +230,19 @@ class NormalizeDepthLimitTests(unittest.TestCase):
             node = child
         # Must not raise ``RecursionError``.
         out = _normalize_schema(schema)
+        self.assertIsInstance(out, dict)
+
+    def test_ref_prescan_does_not_recurse_on_deep_schema(self):
+        depth = sys.getrecursionlimit() + 100
+        schema: dict = {"type": "object"}
+        node = schema
+        for _ in range(depth):
+            child: dict = {"type": "object"}
+            node["items"] = child
+            node = child
+
+        out = _normalize_schema(schema)
+
         self.assertIsInstance(out, dict)
 
 

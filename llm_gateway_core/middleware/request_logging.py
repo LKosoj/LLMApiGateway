@@ -13,6 +13,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         start_time = time.time()
         request_id = str(uuid.uuid4()) # Generate a unique ID for each request
+        request.state.llmgateway_request_id = request_id
 
         # Skip logging for health checks
         if request.url.path == "/health":
@@ -52,6 +53,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 async def log_middleware_functional(request: Request, call_next: Callable):
     start_time = time.time()
     request_id = str(uuid.uuid4())
+    request.state.llmgateway_request_id = request_id
 
     if request.url.path == "/health":
         return await call_next(request)

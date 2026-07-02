@@ -106,6 +106,10 @@ data/
 # Cython debug symbols
 cython_debug/
 models_fallback_rules.mine.json
+providers.local.json
+providers.secret.json
+models_*_rules.local.json
+models_*_rules.secret.json
 model_rotation.sqlite
 *:Zone.Identifier
 /scripts/fix_config_perms.sh

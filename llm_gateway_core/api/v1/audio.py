@@ -24,6 +24,7 @@ from .operation_proxy import (
     should_retry_operation_status,
     sleep_before_retry,
 )
+from .operation_runtime import serialize_upload_limited
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ def _append_scalar_form_value(payload: dict[str, object], field_name: str, field
 
 
 async def _serialize_upload(value: UploadFile | StarletteUploadFile) -> tuple[str, bytes, str | None]:
-    return value.filename or "audio.bin", await value.read(), value.content_type
+    return await serialize_upload_limited(value, default_filename="audio.bin", kind="audio")
 
 
 async def _parse_audio_transcription_request(
@@ -317,7 +318,7 @@ async def _fetch_audio_voices_payload(
                     f"network error {type(exc).__name__}",
                 )
                 continue
-            raise HTTPException(status_code=503, detail=f"Downstream request failed: {exc}") from exc
+            raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
 
         logger.info("Audio voices downstream response status %s from %s", response.status_code, sanitized_target_url)
         if response.status_code >= 400:

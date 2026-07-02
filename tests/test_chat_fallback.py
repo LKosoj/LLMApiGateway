@@ -8,6 +8,8 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.db.api_keys_db import ApiKeyRecord
+from llm_gateway_core.services.upstream_routing_state import fingerprint_api_key
 
 
 class ChatFallbackTests(unittest.TestCase):
@@ -466,6 +468,82 @@ class ChatFallbackTests(unittest.TestCase):
         self.assertNotIn("hidden reasoning", response_text)
         self.assertEqual("".join(streamed_content), '{"ok":true}')
         self.assertIn("data: [DONE]", response_text)
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_streaming_json_object_sanitizes_final_unterminated_event(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = Mock()
+        fake_config_loader.providers_config = {
+            "test-provider": SimpleNamespace(
+                baseUrl="https://provider.example",
+                apikey="DIRECT-KEY",
+            )
+        }
+        fake_config_loader.fallback_rules = {
+            "gateway-model": {
+                "fallback_models": [
+                    {
+                        "provider": "test-provider",
+                        "model": "provider-model",
+                        "use_provider_order_as_fallback": False,
+                    }
+                ],
+                "rotate_models": False,
+            }
+        }
+        fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
+        fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        async def stream_body():
+            yield b'data: {"id":"stream-json-1","created":1735689600,"choices":[{"delta":{"content":"```json\\n{\\"ok\\":true}\\n"}}]}\n\n'
+            yield b'data: {"id":"stream-json-1","created":1735689600,"choices":[{"delta":{"content":"```"}}]}'
+
+        make_llm_request_mock.return_value = (
+            StreamingResponse(stream_body(), media_type="text/event-stream"),
+            None,
+        )
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with client.stream(
+                    "POST",
+                    "/v1/chat/completions",
+                    json={
+                        "model": "gateway-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                        "response_format": {"type": "json_object"},
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                ) as response:
+                    response_text = response.read().decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("```json", response_text)
+        self.assertNotIn('\\"content":"```"', response_text)
+        streamed_content = []
+        for line in response_text.splitlines():
+            if not line.startswith("data: {"):
+                continue
+            payload = json.loads(line[len("data: "):])
+            for choice in payload.get("choices", []):
+                content = choice.get("delta", {}).get("content")
+                if isinstance(content, str):
+                    streamed_content.append(content)
+        self.assertEqual("".join(streamed_content), '{"ok":true}')
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
@@ -1220,8 +1298,94 @@ class ChatFallbackTests(unittest.TestCase):
                         self.assertEqual(response.json(), {"id": "rotation-success"})
                         self.assertEqual(
                             get_next_model_index_mock.call_args.kwargs["api_key"],
-                            "test-gateway-key",
+                            f"master:{fingerprint_api_key('test-gateway-key')}",
                         )
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.ModelRotationDB", return_value=Mock(get_next_model_index=AsyncMock(return_value=0)))
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_model_rotation_uses_virtual_key_id_scope(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        model_rotation_db_cls,
+        make_llm_request_mock,
+    ):
+        class FakeApiKeysDB:
+            def __init__(self, record):
+                self.record = record
+
+            def get_by_key(self, api_key):
+                return self.record if api_key == self.record.api_key else None
+
+            def get_by_id(self, key_id):
+                return self.record if key_id == self.record.id else None
+
+            def reset_due_budgets(self):
+                return []
+
+            def record_spent(self, key_id, cost):
+                return None
+
+        get_next_model_index_mock = model_rotation_db_cls.return_value.get_next_model_index
+        fake_config_loader = Mock()
+        fake_config_loader.providers_config = {
+            "test-provider": SimpleNamespace(
+                baseUrl="https://provider.example",
+                apikey="DIRECT-KEY",
+            )
+        }
+        fake_config_loader.fallback_rules = {
+            "gateway-model": {
+                "fallback_models": [
+                    {
+                        "provider": "test-provider",
+                        "model": "provider-model-1",
+                        "use_provider_order_as_fallback": False,
+                    },
+                    {
+                        "provider": "test-provider",
+                        "model": "provider-model-2",
+                        "use_provider_order_as_fallback": False,
+                    },
+                ],
+                "rotate_models": True,
+            }
+        }
+        fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
+        fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.return_value = ({"id": "rotation-success"}, None)
+        record = ApiKeyRecord(
+            id=123,
+            name="virtual-key",
+            api_key="lgk_virtual",
+            budget_usd=None,
+            spent_usd=0.0,
+            rpm=None,
+            tpm=None,
+        )
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with patch("main.ApiKeysDB", return_value=FakeApiKeysDB(record)):
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/v1/chat/completions",
+                        json={"model": "gateway-model", "messages": [{"role": "user", "content": "hello"}]},
+                        headers={"Authorization": "Bearer lgk_virtual"},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"id": "rotation-success"})
+        self.assertEqual(get_next_model_index_mock.call_args.kwargs["api_key"], "user:123")
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.ModelRotationDB", return_value=Mock(get_next_model_index=AsyncMock(return_value=1)))
@@ -1385,6 +1549,62 @@ class ChatFallbackTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"id": "retry-success"})
         self.assertEqual(make_llm_request_mock.await_count, 2)
+        sleep_mock.assert_not_awaited()
+
+    @patch("llm_gateway_core.api.v1.chat.asyncio.sleep", new_callable=AsyncMock)
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_chain_attempt_budget_exhaustion_does_not_sleep_before_exit(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+        sleep_mock,
+    ):
+        fake_config_loader = Mock()
+        fake_config_loader.providers_config = {
+            "test-provider": SimpleNamespace(
+                baseUrl="https://provider.example",
+                apikey="DIRECT-KEY",
+            )
+        }
+        fake_config_loader.fallback_rules = {
+            "gateway-model": {
+                "fallback_models": [
+                    {
+                        "provider": "test-provider",
+                        "model": "provider-model",
+                        "retry_count": 1,
+                        "retry_delay": 10,
+                        "use_provider_order_as_fallback": False,
+                    }
+                ],
+                "rotate_models": False,
+                "max_total_attempts": 1,
+            }
+        }
+        fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
+        fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+        make_llm_request_mock.return_value = (None, "temporary failure")
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={"model": "gateway-model", "messages": [{"role": "user", "content": "hello"}]},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(make_llm_request_mock.await_count, 1)
         sleep_mock.assert_not_awaited()
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")

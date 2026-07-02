@@ -73,6 +73,14 @@ def _build_streaming_openai_response_with_unterminated_final_event() -> Streamin
     return StreamingResponse(body(), media_type="text/event-stream")
 
 
+def _build_streaming_openai_error_response() -> StreamingResponse:
+    async def body():
+        yield b'data: {"id":"chunk-error-1","created":1735689600,"error":{"message":"SECRET_UPSTREAM_STREAM_ERROR","type":"server_error"}}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(body(), media_type="text/event-stream")
+
+
 def _build_streaming_openai_reasoning_response() -> StreamingResponse:
     async def body():
         yield b'data: {"id":"chunk-reasoning-1","created":1735689600,"choices":[{"delta":{"role":"assistant","reasoning_content":"internal note"}}]}\n'
@@ -162,6 +170,7 @@ class OpenAIResponsesTests(unittest.TestCase):
                     "prompt_tokens": 10,
                     "completion_tokens": 5,
                     "total_tokens": 15,
+                    "cost": 0.123,
                     "prompt_tokens_details": {"cached_tokens": 2},
                     "completion_tokens_details": {"reasoning_tokens": 1},
                 },
@@ -281,6 +290,16 @@ class OpenAIResponsesTests(unittest.TestCase):
                 }
             ],
         )
+
+        _tokens_usage_db.return_value.insert_usage.assert_called_once()
+        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
+        self.assertEqual(usage_row["prompt_tokens"], 10)
+        self.assertEqual(usage_row["completion_tokens"], 5)
+        self.assertEqual(usage_row["total_tokens"], 15)
+        self.assertEqual(usage_row["cached_tokens"], 2)
+        self.assertEqual(usage_row["reasoning_tokens"], 1)
+        self.assertEqual(usage_row["cost"], 0.123)
+        self.assertFalse(usage_row.get("is_estimated", False))
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
@@ -433,6 +452,54 @@ class OpenAIResponsesTests(unittest.TestCase):
         self.assertIn('"type":"response.completed"', response_text)
         self.assertIn('"input_tokens":11', response_text)
         self.assertIn('"output_tokens":4', response_text)
+        self.assertIn("data: [DONE]", response_text)
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_responses_endpoint_stream_error_chunk_emits_failed_event(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = _build_fake_config_loader()
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.return_value = (_build_streaming_openai_error_response(), None)
+
+        responses_payload = {
+            "model": "gateway-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Hello"}],
+                }
+            ],
+            "stream": True,
+        }
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with client.stream(
+                    "POST",
+                    "/v1/responses",
+                    json=responses_payload,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                ) as response:
+                    response_text = response.read().decode("utf-8")
+
+        self.assertIn('"type":"response.failed"', response_text)
+        self.assertIn('"message":"Upstream stream failed."', response_text)
+        self.assertNotIn('"type":"response.completed"', response_text)
+        self.assertNotIn("SECRET_UPSTREAM_STREAM_ERROR", response_text)
         self.assertIn("data: [DONE]", response_text)
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")

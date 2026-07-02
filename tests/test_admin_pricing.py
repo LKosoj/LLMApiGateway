@@ -268,6 +268,50 @@ class TestPutPricing(_PricingTestBase):
         resp = client.put("/v1/admin/pricing", json=payload, headers=_master_headers())
         self.assertEqual(resp.status_code, 422)
 
+    def test_put_pricing_rejects_partial_payload_that_would_drop_existing_models(self):
+        providers_data = [
+            {
+                "test_provider": {
+                    "baseUrl": "https://example.com/v1",
+                    "apikey": "dummy",
+                    "models": {
+                        "model_x": {"input_rate": 1.0, "output_rate": 2.0},
+                    },
+                }
+            },
+            {
+                "other_provider": {
+                    "baseUrl": "https://other.example/v1",
+                    "apikey": "dummy",
+                    "models": {
+                        "other_model": {"input_rate": 3.0, "output_rate": 4.0},
+                    },
+                }
+            },
+        ]
+        providers_path = self.tmp_path / "providers.json"
+        original_content = json.dumps(providers_data)
+        providers_path.write_text(original_content, encoding="utf-8")
+        app, _ = _build_app(providers_path)
+        client = TestClient(app)
+
+        payload = {
+            "items": [
+                {
+                    "provider": "test_provider",
+                    "model": "model_x",
+                    "input_rate": 2.0,
+                    "output_rate": 5.0,
+                }
+            ]
+        }
+
+        resp = client.put("/v1/admin/pricing", json=payload, headers=_master_headers())
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("missing existing model rates", resp.json()["detail"])
+        self.assertEqual(providers_path.read_text(encoding="utf-8"), original_content)
+
 
 class TestCalculate(_PricingTestBase):
     def test_calculate_returns_correct_cost(self):

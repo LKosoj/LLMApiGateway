@@ -22,6 +22,7 @@ from .operation_proxy import (
     should_retry_operation_status,
     sleep_before_retry,
 )
+from .operation_runtime import serialize_upload_limited
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ router = APIRouter()
 PDF_CONVERSIONS_SECTION = "pdf_conversions"
 PDF_CONVERSION_OPERATION = "pdf_conversion"
 PROTECTED_PDF_CUSTOM_PARAM_KEYS = frozenset({"file", "model"})
+PDF_JOB_TERMINAL_STATUSES = frozenset({"completed", "complete", "succeeded", "success", "done", "failed"})
 
 
 def _get_operation_runtime(
@@ -67,7 +69,7 @@ def _append_scalar_form_value(payload: dict[str, object], field_name: str, field
 
 
 async def _serialize_upload(value: UploadFile | StarletteUploadFile) -> tuple[str, bytes, str | None]:
-    return value.filename or "document.pdf", await value.read(), value.content_type
+    return await serialize_upload_limited(value, default_filename="document.pdf", kind="pdf")
 
 
 async def _parse_pdf_multipart_request(
@@ -186,7 +188,7 @@ async def _proxy_get_raw_to_downstream(
                     f"network error {type(exc).__name__}",
                 )
                 continue
-            raise HTTPException(status_code=503, detail=f"Downstream request failed: {exc}") from exc
+            raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
 
         logger.info(
             "Raw PDF operation downstream GET response status %s from %s",
@@ -222,6 +224,13 @@ def _is_json_content_type(content_type: str | None) -> bool:
     return "/json" in normalized_content_type or "+json" in normalized_content_type
 
 
+def _parse_json_response_body(response_body: bytes) -> object:
+    try:
+        return json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Downstream request returned invalid JSON.") from exc
+
+
 def _response_from_raw_body(
     response_body: bytes,
     status_code: int,
@@ -229,10 +238,7 @@ def _response_from_raw_body(
     headers: dict[str, str] | None = None,
 ):
     if _is_json_content_type(content_type):
-        try:
-            parsed_response = json.loads(response_body.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise HTTPException(status_code=503, detail="Downstream request returned invalid JSON.") from exc
+        parsed_response = _parse_json_response_body(response_body)
         return JSONResponse(content=parsed_response, status_code=status_code)
 
     response_headers = dict(headers or {})
@@ -264,6 +270,59 @@ async def _resolve_pdf_route(request: Request, requested_model: str):
     base_url, headers = await _prepare_pdf_http_request(request, dispatcher, route, provider_config)
     effective_client = proxy_http_clients.get(route.provider, http_client)
     return route, base_url, headers, effective_client, retry_count, retry_delay
+
+
+def _pdf_job_payload_has_terminal_usage(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    status = payload.get("status")
+    if not isinstance(status, str) or status.strip().lower() not in PDF_JOB_TERMINAL_STATUSES:
+        return False
+    return isinstance(payload.get("usage"), dict)
+
+
+def _payload_has_usage(payload: object) -> bool:
+    return isinstance(payload, dict) and isinstance(payload.get("usage"), dict)
+
+
+def _pdf_job_usage_idempotency_key(request: Request, *, gateway_model: str, job_id: str) -> str:
+    api_key_id = getattr(request.state, "api_key_id", None)
+    provider = getattr(request.state, "llmgateway_provider", None)
+    provider_model = getattr(request.state, "llmgateway_provider_model", None)
+    return "|".join(
+        [
+            "pdf_job_usage",
+            str(api_key_id if api_key_id is not None else "master"),
+            gateway_model,
+            str(provider or ""),
+            str(provider_model or ""),
+            job_id,
+        ]
+    )
+
+
+async def _record_pdf_job_usage_once(
+    request: Request,
+    payload: object,
+    *,
+    gateway_model: str,
+    job_id: str,
+    duration_ms: int,
+) -> None:
+    if not _pdf_job_payload_has_terminal_usage(payload):
+        return
+    await record_operation_usage(
+        request,
+        payload if isinstance(payload, dict) else {},
+        gateway_model=gateway_model,
+        operation=PDF_CONVERSION_OPERATION,
+        duration_ms=duration_ms,
+        idempotency_key=_pdf_job_usage_idempotency_key(
+            request,
+            gateway_model=gateway_model,
+            job_id=job_id,
+        ),
+    )
 
 
 @router.post("/pdf/convert")
@@ -314,18 +373,20 @@ async def create_pdf_job(request: Request):
         retry_delay=retry_delay,
     )
 
-    await record_operation_usage(
-        request,
-        response_payload if isinstance(response_payload, dict) else {},
-        gateway_model=requested_model,
-        operation=PDF_CONVERSION_OPERATION,
-        duration_ms=request_duration_ms(request_started_at),
-    )
+    if _payload_has_usage(response_payload):
+        await record_operation_usage(
+            request,
+            response_payload if isinstance(response_payload, dict) else {},
+            gateway_model=requested_model,
+            operation=PDF_CONVERSION_OPERATION,
+            duration_ms=request_duration_ms(request_started_at),
+        )
     return JSONResponse(content=response_payload, status_code=downstream_status_code)
 
 
 @router.get("/pdf/jobs/{job_id}")
 async def get_pdf_job(job_id: str, model: str, request: Request):
+    request_started_at = time.monotonic()
     _route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(request, model)
     response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
         _join_downstream_path(base_url, "jobs", job_id),
@@ -334,6 +395,16 @@ async def get_pdf_job(job_id: str, model: str, request: Request):
         retry_count=retry_count,
         retry_delay=retry_delay,
     )
+    if _is_json_content_type(content_type):
+        parsed_response = _parse_json_response_body(response_body)
+        await _record_pdf_job_usage_once(
+            request,
+            parsed_response,
+            gateway_model=model,
+            job_id=job_id,
+            duration_ms=request_duration_ms(request_started_at),
+        )
+        return JSONResponse(content=parsed_response, status_code=status_code)
     return _response_from_raw_body(response_body, status_code, content_type, response_headers)
 
 

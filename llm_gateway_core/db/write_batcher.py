@@ -1,9 +1,13 @@
 import asyncio
+import hashlib
+import json
 import logging
 import threading
 from collections import deque
 from contextlib import suppress
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
@@ -48,8 +52,14 @@ class WriteBatcher:
         *,
         batch_size: int = 100,
         flush_interval: float = 0.5,
+        dead_letter_path: Path | None = None,
     ) -> None:
         self._db_path = db_path
+        self._dead_letter_path = (
+            dead_letter_path
+            if dead_letter_path is not None
+            else db_path.with_suffix(db_path.suffix + ".dead-letter.jsonl")
+        )
         self._batch_size = batch_size
         self._flush_interval = flush_interval
         self._queue: asyncio.Queue[object] = asyncio.Queue()
@@ -66,6 +76,10 @@ class WriteBatcher:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
 
     async def start(self) -> None:
         """Start the background writer task.  Must be called from the event loop."""
@@ -199,13 +213,82 @@ class WriteBatcher:
     async def _flush(self, batch: list[tuple[str, tuple]]) -> None:
         if not batch:
             return
+        await self._flush_or_split(batch)
+
+    async def _flush_or_split(self, batch: list[tuple[str, tuple]]) -> None:
         try:
-            async with aiosqlite.connect(self._db_path) as db:
+            await self._flush_once(batch)
+            logger.debug("WriteBatcher: flushed %d writes.", len(batch))
+        except Exception as exc:
+            if len(batch) == 1:
+                self._write_dead_letter(batch[0], exc)
+                logger.exception(
+                    "WriteBatcher: dead-lettered failed single-row write.",
+                )
+                return
+
+            midpoint = len(batch) // 2
+            logger.warning(
+                "WriteBatcher: failed to flush %d writes; retrying as smaller batches.",
+                len(batch),
+                exc_info=True,
+            )
+            await self._flush_or_split(batch[:midpoint])
+            await self._flush_or_split(batch[midpoint:])
+
+    async def _flush_once(self, batch: list[tuple[str, tuple]]) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            try:
                 for pragma in RUNTIME_PRAGMAS:
                     await db.execute(pragma)
                 for sql, params in batch:
                     await db.execute(sql, params)
                 await db.commit()
-            logger.debug("WriteBatcher: flushed %d writes.", len(batch))
+            except Exception:
+                with suppress(Exception):
+                    await db.rollback()
+                raise
+
+    def _write_dead_letter(self, item: tuple[str, tuple], exc: Exception) -> None:
+        sql, params = item
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "db_path": str(self._db_path),
+            "sql": sql,
+            "params": _redact_params(params),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+        try:
+            self._dead_letter_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._dead_letter_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+                handle.write("\n")
         except Exception:
-            logger.exception("WriteBatcher: failed to flush %d writes.", len(batch))
+            logger.exception(
+                "WriteBatcher: failed to write dead-letter record to %s.",
+                self._dead_letter_path,
+            )
+
+
+def _redact_params(params: tuple) -> list[Any]:
+    return [_redact_value(value) for value in params]
+
+
+def _redact_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _redacted_marker("str", value.encode("utf-8"), len(value))
+    if isinstance(value, bytes):
+        return _redacted_marker("bytes", value, len(value))
+    if isinstance(value, (tuple, list)):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _redact_value(item) for key, item in value.items()}
+    return f"<redacted {type(value).__name__}>"
+
+
+def _redacted_marker(kind: str, value: bytes, length: int) -> str:
+    digest = hashlib.sha256(value).hexdigest()[:12]
+    return f"<redacted {kind} len={length} sha256={digest}>"

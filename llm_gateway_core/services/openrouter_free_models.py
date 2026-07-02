@@ -7,9 +7,11 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -35,6 +37,8 @@ HEALTH_PROBE_TIMEOUT_SECONDS = 30.0
 HEALTH_PROBE_MAX_TOKENS = 16
 LITE_EVAL_TIMEOUT_SECONDS = 45.0
 CODE_EVAL_TIMEOUT_SECONDS = 2.0
+CODE_EVAL_CPU_LIMIT_SECONDS = 2
+CODE_EVAL_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
 
 
 class OpenRouterFreeModelsNotConfigured(RuntimeError):
@@ -965,6 +969,27 @@ def _python_code_safety_error(code: str) -> str | None:
     return None
 
 
+def _code_eval_preexec_fn() -> Callable[[], None] | None:
+    if os.name != "posix":
+        return None
+    try:
+        import resource
+    except ImportError:
+        return None
+
+    def set_resource_limits() -> None:
+        resource.setrlimit(
+            resource.RLIMIT_AS,
+            (CODE_EVAL_MEMORY_LIMIT_BYTES, CODE_EVAL_MEMORY_LIMIT_BYTES),
+        )
+        resource.setrlimit(
+            resource.RLIMIT_CPU,
+            (CODE_EVAL_CPU_LIMIT_SECONDS, CODE_EVAL_CPU_LIMIT_SECONDS),
+        )
+
+    return set_resource_limits
+
+
 async def _run_sum_even_squares_tests(code: str) -> tuple[bool, str]:
     harness = """
 import sys
@@ -997,15 +1022,22 @@ for values, expected in tests:
     if actual != expected:
         raise AssertionError(f"{values}: {actual} != {expected}")
 """
+    subprocess_kwargs: dict[str, Any] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+    }
+    preexec_fn = _code_eval_preexec_fn()
+    if preexec_fn is not None:
+        subprocess_kwargs["preexec_fn"] = preexec_fn
+
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-I",
         "-S",
         "-c",
         harness,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        **subprocess_kwargs,
     )
     try:
         _stdout, stderr = await asyncio.wait_for(

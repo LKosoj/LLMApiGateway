@@ -746,6 +746,13 @@ div[style*="position:relative"] {
     font-size: 0.85rem;
 }
 
+.raw-json-editor {
+    width: 100%;
+    min-height: 360px;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
 .gateway-model-field input {
     font-family: var(--font-mono);
     font-size: 0.95rem;
@@ -922,6 +929,23 @@ div[style*="position:relative"] {
 .provider-base-url-field,
 .provider-api-key-field {
     grid-column: span 2;
+}
+
+.secret-input-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+}
+
+.secret-input-row input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.compact-button {
+    flex: 0 0 auto;
+    padding-inline: 12px;
 }
 
 .secondary-button,

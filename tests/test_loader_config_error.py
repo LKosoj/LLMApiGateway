@@ -425,14 +425,17 @@ class LoaderConfigErrorTests(unittest.TestCase):
                 config_loader.load_providers()
                 config_loader.fallback_rules = {}
                 model_rules = config_loader.load_model_rules()
+                reloaded_model_rules = config_loader.load_model_rules()
 
         self.assertEqual(model_rules["aliases"], {"public-fast": "pool-fast"})
+        self.assertEqual(reloaded_model_rules["aliases"], {"public-fast": "pool-fast"})
         self.assertIn("pool-fast", config_loader.fallback_rules)
         self.assertTrue(config_loader.fallback_rules["pool-fast"]["rotate_models"])
         self.assertEqual(
             config_loader.fallback_rules["pool-fast"]["fallback_models"][0]["model"],
             "provider-fast",
         )
+        self.assertEqual(list(config_loader.fallback_rules.keys()), ["pool-fast"])
 
     def test_model_rules_reject_unknown_alias_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -454,6 +457,44 @@ class LoaderConfigErrorTests(unittest.TestCase):
                 )
 
         self.assertIn("unknown target", str(ctx.exception))
+
+    def test_model_rules_validation_does_not_mutate_live_fallback_rules(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            providers_path = Path(temp_dir) / "providers.json"
+            providers_path.write_text(VALID_PROVIDERS_SINGLE, encoding="utf-8")
+            config_loader = ConfigLoader(
+                providers_filename=str(providers_path),
+                fallback_rules_filename=str(Path(temp_dir) / "fr.json"),
+            )
+
+            with patch.object(main.settings, "fallback_provider", "openrouter"):
+                providers = config_loader.load_providers()
+
+            config_loader.fallback_rules = {
+                "live-model": {
+                    "fallback_models": [
+                        {"provider": "openrouter", "model": "live-provider-model"}
+                    ],
+                    "rotate_models": False,
+                }
+            }
+            candidate_rules = {
+                "candidate-model": {
+                    "fallback_models": [
+                        {"provider": "openrouter", "model": "candidate-provider-model"}
+                    ],
+                    "rotate_models": False,
+                }
+            }
+
+            parsed = config_loader.parse_and_validate_model_rules_payload(
+                '{"aliases": {"public-candidate": "candidate-model"}}',
+                providers_config=providers,
+                fallback_rules=candidate_rules,
+            )
+
+        self.assertEqual(parsed["aliases"], {"public-candidate": "candidate-model"})
+        self.assertEqual(list(config_loader.fallback_rules.keys()), ["live-model"])
 
 
 if __name__ == "__main__":

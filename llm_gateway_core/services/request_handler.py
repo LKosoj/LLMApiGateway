@@ -21,6 +21,7 @@ DEFAULT_RETRY_DELAY_SECONDS = 0.0
 # Upstream Retry-After hints beyond this threshold would deadlock the gateway waiting
 # on a single slow provider. Clamp to the same 120s ceiling that bounds retry_delay.
 MAX_RETRY_AFTER_SECONDS = 120.0
+STREAM_PRIMING_MAX_BYTES = 1024 * 1024
 
 
 class RequestErrorDetail(str):
@@ -483,6 +484,7 @@ async def _make_streaming_request(
         stream_open = True
         body_iterator = response.aiter_bytes()
         prefetched_chunks: list[bytes] = []
+        prefetched_bytes = 0
         saw_real_data_chunk = False
         buffer = ""
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -510,6 +512,10 @@ async def _make_streaming_request(
             if not chunk:
                 logging.debug(f"Skipping empty chunk received from {target_url}")
                 continue
+
+            prefetched_bytes += len(chunk)
+            if prefetched_bytes > STREAM_PRIMING_MAX_BYTES:
+                return None, "Stream priming exceeded maximum buffered bytes before content."
 
             prefetched_chunks.append(chunk)
             try:

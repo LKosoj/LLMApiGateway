@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from llm_gateway_core.api.v1 import stats as stats_module
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
+from llm_gateway_core.middleware.auth import ROLE_MASTER
 from tests._async_compat import run_async
 
 
@@ -104,7 +105,7 @@ class StatsNullRowsTests(unittest.TestCase):
         fake_db = _StatsNullRowsDB()
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(tokens_usage_db=fake_db)),
-            state=SimpleNamespace(),
+            state=SimpleNamespace(api_key_role=ROLE_MASTER),
         )
 
         response = run_async(stats_module.get_aggregated_stats(request, "day"))

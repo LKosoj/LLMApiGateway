@@ -68,12 +68,14 @@ class ChatErrorHandlingTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 503)
+        body = response.json()
         self.assertEqual(
-            response.json(),
-            {
-                "detail": "All configured providers failed for model 'gateway-model'. Last error: Configured provider is unavailable for the requested model."
-            },
+            body["detail"],
+            "All configured providers failed for model 'gateway-model'. Last error: Configured provider is unavailable for the requested model.",
         )
+        self.assertEqual(body["error"]["type"], "internal_error")
+        self.assertEqual(body["error"]["code"], "http_503")
+        self.assertTrue(body["request_id"])
         self.assertNotIn("Traceback", response.text)
         self.assertNotIn("AttributeError", response.text)
 
@@ -164,7 +166,11 @@ class ChatErrorHandlingTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json(), {"detail": "Missing 'model' in request body"})
+        body = response.json()
+        self.assertEqual(body["detail"], "Missing 'model' in request body")
+        self.assertEqual(body["error"]["message"], "Missing 'model' in request body")
+        self.assertEqual(body["error"]["type"], "invalid_request_error")
+        self.assertTrue(body["request_id"])
         self.assertNotIn("Internal server error", response.text)
 
 

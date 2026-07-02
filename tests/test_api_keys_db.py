@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,6 +19,7 @@ from llm_gateway_core.db.api_keys_db import (
     compute_next_budget_reset,
     generate_api_key,
 )
+from llm_gateway_core.db.write_batcher import WriteBatcher
 
 
 class _ApiKeysDBTestBase(unittest.TestCase):
@@ -67,6 +68,8 @@ class ApiKeysDBCrudTests(_ApiKeysDBTestBase):
         self.assertEqual(record.rpm, 60)
         self.assertEqual(record.tpm, 1_000)
         self.assertEqual(record.allowed_models, ["gpt-4o", "claude-3"])
+        created_at = datetime.fromisoformat(record.created_at)
+        self.assertEqual(created_at.tzinfo, timezone.utc)
         self.assertEqual(record.metadata, {"owner": "alice"})
         self.assertEqual(record.spent_usd, 0.0)
         self.assertFalse(record.disabled)
@@ -139,6 +142,8 @@ class ApiKeysDBCrudTests(_ApiKeysDBTestBase):
         fresh = self.db.get_by_id(record.id)
         self.assertAlmostEqual(fresh.spent_usd, 1.0, places=6)
         self.assertIsNotNone(fresh.last_used_at)
+        last_used_at = datetime.fromisoformat(fresh.last_used_at)
+        self.assertEqual(last_used_at.tzinfo, timezone.utc)
 
 
 class ApiKeysDBBatcherMismatchTests(_ApiKeysDBTestBase):
@@ -160,6 +165,25 @@ class ApiKeysDBBatcherMismatchTests(_ApiKeysDBTestBase):
         # Fresh read — mimics the next-request snapshot used by access_control.
         fresh = self.db.get_by_id(record.id)
         self.assertAlmostEqual(fresh.spent_usd, 0.42, places=6)
+
+    def test_set_batcher_rejects_wrong_database_path(self):
+        batcher = WriteBatcher(self._root / "db" / "tokens_usage.db")
+
+        with self.assertRaisesRegex(ValueError, "same SQLite database"):
+            self.db.set_batcher(batcher)
+
+    def test_set_batcher_accepts_same_database_path(self):
+        batcher = WriteBatcher(self.db.db_path)
+
+        self.db.set_batcher(batcher)
+
+        self.assertIs(self.db._batcher, batcher)
+
+    def test_constructor_rejects_wrong_batcher_database_path(self):
+        batcher = WriteBatcher(self._root / "db" / "tokens_usage.db")
+
+        with self.assertRaisesRegex(ValueError, "same SQLite database"):
+            ApiKeysDB(db_filename="test_api_keys.db", write_batcher=batcher)
 
 
 class BudgetEnforcementTests(_ApiKeysDBTestBase):
@@ -197,6 +221,13 @@ class ComputeNextBudgetResetTests(unittest.TestCase):
 
     def test_daily_returns_next_midnight_utc(self):
         now = datetime(2026, 5, 29, 12, 34, 56, tzinfo=timezone.utc)
+        self.assertEqual(
+            compute_next_budget_reset("daily", now=now),
+            "2026-05-30T00:00:00+00:00",
+        )
+
+    def test_daily_normalizes_non_utc_aware_datetime(self):
+        now = datetime(2026, 5, 29, 23, 30, 0, tzinfo=timezone(timedelta(hours=3)))
         self.assertEqual(
             compute_next_budget_reset("daily", now=now),
             "2026-05-30T00:00:00+00:00",

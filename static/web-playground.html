@@ -147,7 +147,7 @@
                     </div>
                     <label class="toggle-field">
                         <input id="searchIncludeImages" name="include_images" type="checkbox">
-                        Include images[]
+                        Include images
                     </label>
                 </div>
                 <div class="field-row">
@@ -161,7 +161,7 @@
                     </div>
                 </div>
                 <div class="playground-actions">
-                    <button type="submit" class="secondary-button run-button">Run search</button>
+                    <button type="submit" class="primary-button run-button">Run search</button>
                     <span class="playground-status" data-status-for="search"></span>
                 </div>
             </form>
@@ -185,9 +185,9 @@
                         <option value="text">text</option>
                     </select>
                 </div>
-                <label class="toggle-field">
-                    <input id="readIncludeImages" name="include_images" type="checkbox">
-                    Include images[]
+                    <label class="toggle-field">
+                        <input id="readIncludeImages" name="include_images" type="checkbox">
+                    Include images
                 </label>
                 <div class="playground-actions">
                     <button type="submit" class="secondary-button run-button">Fetch and parse</button>
@@ -232,7 +232,7 @@
                     </div>
                     <label class="toggle-field">
                         <input id="tavilySearchIncludeImages" name="include_images" type="checkbox">
-                        Include images[]
+                        Include images
                     </label>
                 </div>
                 <div class="field-row">
@@ -273,7 +273,7 @@
                     </div>
                     <label class="toggle-field">
                         <input id="tavilyExtractIncludeImages" name="include_images" type="checkbox">
-                        Include images[]
+                        Include images
                     </label>
                 </div>
                 <div class="playground-actions">
@@ -688,8 +688,10 @@
         </section>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.11/purify.min.js"></script>
+    <script src="/static/vendor/marked.min.js"></script>
+    <script src="/static/vendor/purify.min.js"></script>
+    <script src="/static/ui-core.js"></script>
+    <script src="/static/shared-nav.js"></script>
     <script src="/static/shared-auth.js"></script>
     <script src="/static/web-playground.js"></script>
     <script>

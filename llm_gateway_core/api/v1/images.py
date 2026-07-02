@@ -23,6 +23,7 @@ from .operation_proxy import (
     record_operation_usage,
     request_duration_ms,
 )
+from .operation_runtime import serialize_upload_limited
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ def _is_truthy_form_value(value: object) -> bool:
 
 
 async def _serialize_upload(value: UploadFile | StarletteUploadFile) -> tuple[str, bytes, str | None]:
-    return value.filename or "upload.bin", await value.read(), value.content_type
+    return await serialize_upload_limited(value, default_filename="upload.bin", kind="image")
 
 
 async def _parse_multipart_edit_request(

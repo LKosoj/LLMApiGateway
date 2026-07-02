@@ -28,6 +28,7 @@ TOKEN_RATE_SCALE = 1_000_000
 FALLBACK_USAGE_SOURCE = "estimate_fallback"
 REQUEST_TITLE_HEADER = "x-title"
 UPSTREAM_COST_PRESENT_KEY = "_upstream_cost_present"
+RATE_BASED_COST_SKIP_KEY = "_skip_rate_based_cost"
 
 
 @dataclass(frozen=True)
@@ -208,7 +209,7 @@ def apply_rate_based_cost(
     provider: str | None = None,
     model: str | None = None,
 ) -> None:
-    if tokens_usage.get(UPSTREAM_COST_PRESENT_KEY):
+    if tokens_usage.get(UPSTREAM_COST_PRESENT_KEY) or tokens_usage.get(RATE_BASED_COST_SKIP_KEY):
         return
 
     target_provider = provider or _string_value(tokens_usage.get("provider"))

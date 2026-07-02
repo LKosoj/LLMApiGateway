@@ -113,6 +113,47 @@ def _pricing_items_from_registry(
     ]
 
 
+def _current_pricing_keys(provider_list: list[Any]) -> set[tuple[str, str]]:
+    current_keys: set[tuple[str, str]] = set()
+    for entry in provider_list:
+        if not isinstance(entry, dict):
+            continue
+        for provider_name, details in entry.items():
+            if not isinstance(provider_name, str) or not isinstance(details, dict):
+                continue
+            models = details.get("models")
+            if not isinstance(models, dict):
+                continue
+            for model_name in models:
+                if isinstance(model_name, str):
+                    current_keys.add((provider_name, model_name))
+    return current_keys
+
+
+def _validate_pricing_payload_completeness(
+    provider_list: list[Any],
+    new_models_by_provider: dict[str, dict[str, dict[str, float]]],
+) -> None:
+    current_keys = _current_pricing_keys(provider_list)
+    if not current_keys:
+        return
+
+    payload_keys = {
+        (provider_name, model_name)
+        for provider_name, models in new_models_by_provider.items()
+        for model_name in models
+    }
+    missing_keys = sorted(current_keys - payload_keys)
+    if missing_keys:
+        missing_text = ", ".join(f"{provider}/{model}" for provider, model in missing_keys[:10])
+        if len(missing_keys) > 10:
+            missing_text += f", ... (+{len(missing_keys) - 10} more)"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Pricing update payload is incomplete; missing existing model rates: {missing_text}",
+        )
+
+
 def _rewrite_providers_json(
     providers_path: Path,
     new_items: list[ModelPricing],
@@ -152,6 +193,8 @@ def _rewrite_providers_json(
             "input_rate": item.input_rate,
             "output_rate": item.output_rate,
         }
+
+    _validate_pricing_payload_completeness(provider_list, new_models_by_provider)
 
     # Patch each provider entry in the list
     for entry in provider_list:

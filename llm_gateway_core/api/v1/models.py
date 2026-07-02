@@ -440,8 +440,11 @@ async def get_models(request: Request):
 
                         # Check for downstream errors
                         if response_fallback.status_code >= 400:
-                            error_text = response_fallback.text
-                            logger.warning(f"Downstream error {response_fallback.status_code} fetching models from {target_url}: {error_text[:500]}...")
+                            logger.warning(
+                                "Downstream error %s fetching models from fallback provider '%s'.",
+                                response_fallback.status_code,
+                                fallback_provider_name,
+                            )
                             # Don't raise immediately, allow gateway models to still be returned
                         else:
                             # Attempt to parse JSON and merge models
@@ -457,15 +460,29 @@ async def get_models(request: Request):
                                             gateway_models[model_id] = model_info
                                     logger.info(f"Successfully merged models from fallback provider '{fallback_provider_name}'.")
                                 else:
-                                    logger.warning(f"Unexpected format in response from {target_url}. 'data' field missing or not a list.")
+                                    logger.warning(
+                                        "Unexpected models response format from fallback provider '%s'.",
+                                        fallback_provider_name,
+                                    )
 
                             except ValueError:
-                                logger.error(f"Invalid JSON response fetching models from {target_url}: {response_fallback.text[:500]}...", exc_info=True)
+                                logger.error(
+                                    "Invalid JSON response fetching models from fallback provider '%s'.",
+                                    fallback_provider_name,
+                                )
 
                     except httpx.RequestError as e:
-                        logger.error(f"RequestError fetching models from fallback provider {target_url}: {e}", exc_info=True)
+                        logger.error(
+                            "RequestError fetching models from fallback provider '%s': %s.",
+                            fallback_provider_name,
+                            e.__class__.__name__,
+                        )
                     except Exception as e:
-                        logger.error(f"Unexpected error fetching models from fallback provider {target_url}: {e}", exc_info=True)
+                        logger.error(
+                            "Unexpected error fetching models from fallback provider '%s': %s.",
+                            fallback_provider_name,
+                            e.__class__.__name__,
+                        )
 
 
     gateway_models = _apply_model_rules_to_gateway_models(
@@ -620,19 +637,38 @@ async def get_model(model_id: str, request: Request):
                         else:
                             return model_data
                     except ValueError:
-                        logger.error(f"Invalid JSON response fetching model {model_id} from {target_url}")
+                        logger.error(
+                            "Invalid JSON response fetching model '%s' from fallback provider '%s'.",
+                            model_id,
+                            fallback_provider_name,
+                        )
                 elif response_fallback.status_code == 404:
                     logger.info(f"Model '{model_id}' not found in fallback provider '{fallback_provider_name}'")
                 else:
-                    logger.warning(f"Downstream error {response_fallback.status_code} fetching model {model_id} from {target_url}")
+                    logger.warning(
+                        "Downstream error %s fetching model '%s' from fallback provider '%s'.",
+                        response_fallback.status_code,
+                        model_id,
+                        fallback_provider_name,
+                    )
                     
             except httpx.RequestError as e:
-                logger.error(f"RequestError fetching model {model_id} from fallback provider {target_url}: {e}")
+                logger.error(
+                    "RequestError fetching model '%s' from fallback provider '%s': %s.",
+                    model_id,
+                    fallback_provider_name,
+                    e.__class__.__name__,
+                )
             except Exception as e:
-                logger.error(f"Unexpected error fetching model {model_id} from fallback provider {target_url}: {e}")
+                logger.error(
+                    "Unexpected error fetching model '%s' from fallback provider '%s': %s.",
+                    model_id,
+                    fallback_provider_name,
+                    e.__class__.__name__,
+                )
 
     # Model not found
     raise HTTPException(
         status_code=404,
-        detail=f"Model '{model_id}' not found. Available models: {list(gateway_models.keys())}"
+        detail=f"Model '{model_id}' not found."
     )

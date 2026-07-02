@@ -2,12 +2,13 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 import os
+import stat
 import tempfile
 import json
 from collections.abc import Mapping
 from typing import Any, Literal
 import httpx
-from fastapi import APIRouter, Request, HTTPException, Body
+from fastapi import APIRouter, Request, HTTPException, Body, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pathlib import Path
@@ -29,8 +30,17 @@ from ...services.request_handler import OperationDispatcher, SUPPORTED_OPERATION
 from ...services.provider_models import ProviderModelsService
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...utils.html_cache import get_template
+from ...middleware.auth import ROLE_MASTER
 
 editor_router = APIRouter()
+
+
+def _require_master(request: Request) -> None:
+    if getattr(request.state, "api_key_role", None) != ROLE_MASTER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is reserved for the master API key",
+        )
 
 # Helper to get paths from ConfigLoader
 def _get_config_paths(request: Request):
@@ -145,10 +155,18 @@ def _write_text_atomically(file_path: Path, content: str) -> None:
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=file_path.parent, delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
             temp_file.write(content)
             temp_file.flush()
             os.fsync(temp_file.fileno())
-            temp_path = Path(temp_file.name)
+
+        if file_path.exists():
+            existing_stat = file_path.stat()
+            os.chmod(temp_path, stat.S_IMODE(existing_stat.st_mode))
+            try:
+                os.chown(temp_path, existing_stat.st_uid, existing_stat.st_gid)
+            except (AttributeError, PermissionError, OSError):
+                pass
 
         os.replace(temp_path, file_path)
     except Exception:
@@ -927,6 +945,7 @@ async def save_models_rules(request: Request, payload_text: str = Body(..., medi
     Validates and saves the updated models_fallback_rules.json.
     Triggers a configuration reload on success.
     """
+    _require_master(request)
     config_loader = _get_config_loader(request)
     _, fallback_rules_path, _ = _get_config_paths(request)
 
@@ -972,6 +991,7 @@ async def get_model_rules_text(request: Request):
 
 @editor_router.post("/config/model-rules", tags=["Config Editor API"])
 async def save_model_rules(request: Request, payload_text: str = Body(..., media_type="text/plain")):
+    _require_master(request)
     config_loader = _get_config_loader(request)
     model_rules_path = _get_model_rules_path(request)
     base_fallback_rules = getattr(config_loader, "_fallback_rules_base", None) or config_loader.fallback_rules
@@ -1018,6 +1038,7 @@ async def get_models_rules_structured(request: Request):
 
 @editor_router.post("/config/models-rules/structured", tags=["Config Editor API"])
 async def save_models_rules_structured(request: Request, payload: StructuredRulesPayload):
+    _require_master(request)
     config_loader = _get_config_loader(request)
     _, fallback_rules_path, _ = _get_config_paths(request)
     payload_text = _serialize_structured_rules(payload.rules)
@@ -1068,6 +1089,7 @@ async def get_fusion_rules_structured(request: Request):
 
 @editor_router.post("/config/fusion-rules/structured", tags=["Config Editor API"])
 async def save_fusion_rules_structured(request: Request, payload: StructuredFusionPayload):
+    _require_master(request)
     config_loader = _get_config_loader(request)
     fusion_rules_path = config_loader.fusion_rules_path
     payload_text = _serialize_structured_fusion(payload.rules)
@@ -1116,6 +1138,7 @@ async def get_router_rules_structured(request: Request):
 
 @editor_router.post("/config/router-rules/structured", tags=["Config Editor API"])
 async def save_router_rules_structured(request: Request, payload: StructuredRouterPayload):
+    _require_master(request)
     config_loader = _get_config_loader(request)
     router_rules_path = config_loader.router_rules_path
     payload_text = _serialize_structured_router(payload.rules)
@@ -1160,6 +1183,7 @@ async def get_operation_rules_structured(request: Request):
 
 @editor_router.post("/config/model-operations/structured", tags=["Config Editor API"])
 async def save_operation_rules_structured(request: Request, payload: dict = Body(...)):
+    _require_master(request)
     config_loader = _get_config_loader(request)
     _, _, operation_rules_path = _get_config_paths(request)
 
@@ -1248,6 +1272,7 @@ async def get_providers_structured(request: Request):
 
 @editor_router.post("/config/providers/structured", tags=["Config Editor API"])
 async def save_providers_structured(request: Request, payload: StructuredProvidersPayload):
+    _require_master(request)
     config_loader = _get_config_loader(request)
     providers_path, _, _ = _get_config_paths(request)
     payload_text = _serialize_structured_providers(payload.providers)
@@ -1304,6 +1329,7 @@ async def save_providers_config(request: Request, payload_text: str = Body(..., 
     Validates and saves the updated providers.json.
     Triggers a providers configuration reload on success.
     """
+    _require_master(request)
     config_loader = _get_config_loader(request)
     providers_path, _, _ = _get_config_paths(request)
 
@@ -1396,6 +1422,7 @@ async def get_openrouter_free_models_status(request: Request):
 
 @editor_router.post("/openrouter/free-models/run", tags=["Config Editor API"])
 async def start_openrouter_free_models_refresh(request: Request):
+    _require_master(request)
     service = getattr(request.app.state, "openrouter_free_models_service", None)
     if service is None:
         raise HTTPException(status_code=503, detail="OpenRouter free model scoring service is not initialized.")
@@ -1410,6 +1437,7 @@ async def start_openrouter_free_models_refresh(request: Request):
 
 @editor_router.get("/fallback-model-evals", tags=["Config Editor API"])
 async def get_fallback_model_eval_status(request: Request):
+    _require_master(request)
     service = getattr(request.app.state, "fallback_model_eval_service", None)
     if service is None:
         return {
@@ -1424,6 +1452,7 @@ async def get_fallback_model_eval_status(request: Request):
 
 @editor_router.post("/fallback-model-evals/run", tags=["Config Editor API"])
 async def start_fallback_model_eval(request: Request):
+    _require_master(request)
     service = getattr(request.app.state, "fallback_model_eval_service", None)
     if service is None:
         raise HTTPException(status_code=503, detail="Fallback model eval service is not initialized.")

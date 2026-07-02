@@ -174,7 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
             statsArea.textContent = "";
             statsArea.appendChild(createStatsTable(data));
             if (data.length === 0) {
-                 showMessage('No data available for the selected period.', false);
+                showMessage('');
             } else {
                 showMessage('Statistics loaded successfully.');
             }
@@ -197,6 +197,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabContents = document.querySelectorAll('.tab-content');
 
+    const tabsContainer = document.querySelector('.tabs');
+    if (tabsContainer && typeof tabsContainer.setAttribute === 'function') {
+        tabsContainer.setAttribute('role', 'tablist');
+    }
+
+    const updateTabA11y = (activeTab) => {
+        tabButtons.forEach(btn => {
+            const isActive = btn.dataset.tab === activeTab;
+            btn.setAttribute('role', 'tab');
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        tabContents.forEach(content => {
+            content.setAttribute('role', 'tabpanel');
+        });
+    };
+
     tabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const tab = button.dataset.tab;
@@ -206,6 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             button.classList.add('active');
             document.getElementById(`${tab}TabContent`).classList.add('active');
+            updateTabA11y(tab);
 
             // Load data for the active tab
             if (tab === 'records') {
@@ -222,6 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+    updateTabA11y('analytics');
 
     // --- Usage Records Logic (New) ---
     const recordsArea = document.getElementById('recordsArea');

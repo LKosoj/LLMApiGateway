@@ -89,6 +89,50 @@ def test_dev_deps_in_requirements_dev_txt():
     )
 
 
+def test_research_deps_in_requirements_research_txt():
+    """All [project.optional-dependencies].research deps must appear in requirements-research.txt."""
+    pyproject_path = PROJECT_ROOT / "pyproject.toml"
+    requirements_research_path = PROJECT_ROOT / "requirements-research.txt"
+
+    assert pyproject_path.exists(), "pyproject.toml not found"
+    assert requirements_research_path.exists(), "requirements-research.txt not found"
+
+    with open(pyproject_path, "rb") as f:
+        data = tomllib.load(f)
+
+    research_deps = data.get("project", {}).get("optional-dependencies", {}).get("research", [])
+    research_names = _parse_pyproject_deps(research_deps)
+    req_research_names = _parse_requirements(requirements_research_path)
+
+    missing = research_names - req_research_names
+    assert not missing, (
+        f"Packages in pyproject.toml [project.optional-dependencies].research "
+        f"but missing from requirements-research.txt: {sorted(missing)}"
+    )
+
+
+def test_research_extra_is_not_a_runtime_dependency():
+    """gpt-researcher must stay out of the base runtime dependency set."""
+    pyproject_path = PROJECT_ROOT / "pyproject.toml"
+    requirements_path = PROJECT_ROOT / "requirements.txt"
+    requirements_research_path = PROJECT_ROOT / "requirements-research.txt"
+
+    with open(pyproject_path, "rb") as f:
+        data = tomllib.load(f)
+
+    runtime_names = _parse_pyproject_deps(data.get("project", {}).get("dependencies", []))
+    research_names = _parse_pyproject_deps(
+        data.get("project", {}).get("optional-dependencies", {}).get("research", [])
+    )
+    req_names = _parse_requirements(requirements_path)
+    req_research_names = _parse_requirements(requirements_research_path)
+
+    assert "gpt-researcher" not in runtime_names
+    assert "gpt-researcher" not in req_names
+    assert "gpt-researcher" in research_names
+    assert "gpt-researcher" in req_research_names
+
+
 def _parse_requirements_versions(path: Path) -> dict[str, str]:
     """Extract normalized package name -> pinned version from a requirements file."""
     versions: dict[str, str] = {}
@@ -123,4 +167,28 @@ def test_runtime_dep_versions_match_between_files():
     assert not mismatches, (
         "The following packages have different pinned versions between "
         "requirements.txt and requirements-dev.txt:\n" + "\n".join(mismatches)
+    )
+
+
+def test_runtime_dep_versions_match_research_requirements():
+    """Research extra must not upgrade packages already pinned by requirements.txt."""
+    requirements_path = PROJECT_ROOT / "requirements.txt"
+    requirements_research_path = PROJECT_ROOT / "requirements-research.txt"
+
+    assert requirements_path.exists(), "requirements.txt not found"
+    assert requirements_research_path.exists(), "requirements-research.txt not found"
+
+    req_versions = _parse_requirements_versions(requirements_path)
+    research_versions = _parse_requirements_versions(requirements_research_path)
+
+    mismatches = []
+    for pkg in sorted(req_versions):
+        if pkg in research_versions and req_versions[pkg] != research_versions[pkg]:
+            mismatches.append(
+                f"{pkg}: requirements.txt={req_versions[pkg]}, requirements-research.txt={research_versions[pkg]}"
+            )
+
+    assert not mismatches, (
+        "The following packages have different pinned versions between "
+        "requirements.txt and requirements-research.txt:\n" + "\n".join(mismatches)
     )

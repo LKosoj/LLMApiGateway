@@ -15,11 +15,11 @@ from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
 from tests._async_compat import run_async
 
 
-def _panel_response(content):
+def _panel_response(content, usage=None):
     return (
         {
             "choices": [{"message": {"role": "assistant", "content": content}}],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            "usage": usage or {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         },
         None,
     )
@@ -152,6 +152,98 @@ class FusionServiceTests(unittest.TestCase):
         self.assertEqual(result["usage"]["total_tokens"], 8)
         self.assertEqual(request.state.llmgateway_provider, "p1")
         self.assertEqual(request.state.llmgateway_provider_model, "main")
+
+    def test_pipeline_sums_cost_by_actual_fusion_member(self):
+        config_loader = SimpleNamespace(
+            providers_config={
+                "p1": SimpleNamespace(
+                    baseUrl="https://p1.example",
+                    apikey="K",
+                    type="openai",
+                    models={
+                        "m1": {"input_rate": 1.0, "output_rate": 2.0},
+                        "judge": {"input_rate": 3.0, "output_rate": 4.0},
+                    },
+                ),
+            }
+        )
+        service = FusionEnsembleService(config_loader)
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def priced_members(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            if model == "m1":
+                return _panel_response(
+                    "m1 answer",
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            if model == "m2":
+                return _panel_response(
+                    "m2 answer",
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "cost": 0.02},
+                )
+            if model == "judge":
+                return _panel_response(
+                    json.dumps({"agreements": [], "disputes": []}),
+                    {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+                )
+            return _panel_response(
+                "FINAL ANSWER",
+                {"prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10, "cost": 0.5},
+            )
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=priced_members,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(judge_model={"provider": "p1", "model": "judge"}),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        expected_cost = 0.02 + 0.5 + ((10 * 1.0 + 5 * 2.0) / 1_000_000) + ((2 * 3.0 + 3 * 4.0) / 1_000_000)
+        self.assertEqual(result["usage"]["total_tokens"], 32)
+        self.assertAlmostEqual(result["usage"]["cost"], expected_cost)
+        self.assertNotIn("_cost_incomplete", result["usage"])
+        self.assertAlmostEqual(request.state.usage_tracker["cost"], expected_cost)
+        self.assertTrue(request.state.usage_tracker[fusion_ensemble.RATE_BASED_COST_SKIP_KEY])
+        self.assertNotIn(fusion_ensemble.UPSTREAM_COST_PRESENT_KEY, request.state.usage_tracker)
+
+    def test_main_failure_preserves_panel_and_judge_usage_tracker(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def fail_main(client, url, headers, payload, is_streaming):
+            if payload["model"] == "main":
+                return None, "main rate limited"
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_main,
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                run_async(
+                    service.run(
+                        request=request,
+                        gateway_model_name="llmgateway/fusion-test",
+                        fusion_config=self._fusion_config(judge_model={"provider": "p1", "model": "judge"}),
+                        request_body={"messages": [{"role": "user", "content": "hi"}]},
+                        http_client=None,
+                        proxy_http_clients={},
+                    )
+                )
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(request.state.usage_tracker["prompt_tokens"], 3)
+        self.assertEqual(request.state.usage_tracker["completion_tokens"], 3)
+        self.assertEqual(request.state.usage_tracker["total_tokens"], 6)
 
     def test_all_panel_members_failing_raises_502(self):
         service = self._service()
@@ -575,7 +667,12 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
         _tokens_usage_db,
         make_llm_request_mock,
     ):
-        config_loader_cls.return_value = self._fake_config_loader()
+        fake_config_loader = self._fake_config_loader()
+        fake_config_loader.fusion_rules["llmgateway/fusion-test"]["judge_model"] = {
+            "provider": "p1",
+            "model": "judge",
+        }
+        config_loader_cls.return_value = fake_config_loader
         fake_http_client = Mock()
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
@@ -597,6 +694,102 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
         self.assertEqual(body["model"], "llmgateway/fusion-test")
         self.assertTrue(body["choices"][0]["message"]["content"].startswith("FINAL ANSWER"))
         self.assertEqual(len(body["fusion"]["panel"]), 2)
+
+    @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_fusion_main_failure_records_partial_usage(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = self._fake_config_loader()
+        fake_config_loader.fusion_rules["llmgateway/fusion-test"]["judge_model"] = {
+            "provider": "p1",
+            "model": "judge",
+        }
+        config_loader_cls.return_value = fake_config_loader
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        async def fail_main(client, url, headers, payload, is_streaming):
+            if payload["model"] == "main":
+                return None, "main rate limited"
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        make_llm_request_mock.side_effect = fail_main
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "llmgateway/fusion-test",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 502)
+        _tokens_usage_db.return_value.insert_usage.assert_called_once()
+        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
+        self.assertEqual(usage_row["prompt_tokens"], 3)
+        self.assertEqual(usage_row["completion_tokens"], 3)
+        self.assertEqual(usage_row["total_tokens"], 6)
+        self.assertEqual(usage_row["gateway_model"], "llmgateway/fusion-test")
+        self.assertEqual(usage_row["operation"], "chat")
+
+    @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_fusion_main_failure_does_not_price_partial_usage_as_main_model(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = self._fake_config_loader()
+        fake_config_loader.fusion_rules["llmgateway/fusion-test"]["judge_model"] = {
+            "provider": "p1",
+            "model": "judge",
+        }
+        fake_config_loader.providers_config["p1"].models = {
+            "main": {"input_rate": 1000, "output_rate": 1000},
+        }
+        config_loader_cls.return_value = fake_config_loader
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        async def fail_main(client, url, headers, payload, is_streaming):
+            if payload["model"] == "main":
+                return None, "main rate limited"
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        make_llm_request_mock.side_effect = fail_main
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "llmgateway/fusion-test",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 502)
+        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
+        self.assertEqual(usage_row["prompt_tokens"], 3)
+        self.assertEqual(usage_row["completion_tokens"], 3)
+        self.assertEqual(usage_row["cost"], 0)
 
     @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
     @patch("main.TokensUsageDB")

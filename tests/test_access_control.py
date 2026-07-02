@@ -155,6 +155,25 @@ class UsdBudgetLedgerTests(unittest.TestCase):
 
         self.assertTrue(ledger.reserve(1, 5.0))
 
+    def test_release_uses_matching_reservation_amount(self):
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(1, budget_usd=10.0, spent_usd=0.0)
+        self.assertTrue(ledger.reserve(1, 7.0))
+        self.assertTrue(ledger.reserve(1, 2.0))
+
+        ledger.release(1, 2.0)
+
+        self.assertEqual(ledger.reserved_for(1), 7.0)
+
+    def test_discard_record_removes_reserved_budget(self):
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(1, budget_usd=10.0, spent_usd=0.0)
+        self.assertTrue(ledger.reserve(1, 5.0))
+
+        ledger.discard_record(1)
+
+        self.assertEqual(ledger.reserved_for(1), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

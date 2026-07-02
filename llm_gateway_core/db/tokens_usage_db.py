@@ -18,6 +18,12 @@ INSERT INTO tokens_usage
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
+INSERT_USAGE_IDEMPOTENCY_SQL = """
+INSERT OR IGNORE INTO usage_idempotency_keys
+(idempotency_key, created_at)
+VALUES (?, ?)
+"""
+
 
 def _utc_isoformat(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
@@ -240,6 +246,13 @@ class TokensUsageDB:
             ON tokens_usage (x_title, timestamp DESC)
             ''')
 
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usage_idempotency_keys (
+                idempotency_key TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL
+            )
+            ''')
+
             conn.commit()
             logger.info("Tokens usage database initialized at %s", self.db_path)
         except Exception as e:
@@ -288,6 +301,59 @@ class TokensUsageDB:
         else:
             # Fallback for tests / standalone usage without batcher.
             self._insert_sync(params)
+
+    def insert_usage_once(self, idempotency_key: str, tokens_usage: dict) -> bool:
+        """Persist a usage row once for a durable idempotency key.
+
+        This bypasses WriteBatcher because the idempotency key and the usage
+        row must commit atomically.
+        """
+        if not idempotency_key:
+            raise ValueError("idempotency_key must not be empty")
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        params = (
+            timestamp,
+            tokens_usage.get("duration_ms"),
+            tokens_usage.get("prompt_tokens", 0),
+            tokens_usage.get("completion_tokens", 0),
+            tokens_usage.get("total_tokens", 0),
+            tokens_usage.get("reasoning_tokens", 0),
+            tokens_usage.get("cached_tokens", 0),
+            tokens_usage.get("cost", 0.0),
+            tokens_usage.get("gateway_model"),
+            tokens_usage.get("operation"),
+            tokens_usage.get("model"),
+            tokens_usage.get("provider"),
+            tokens_usage.get("request_id"),
+            1 if tokens_usage.get("is_estimated") else 0,
+            tokens_usage.get("usage_source"),
+            float(tokens_usage.get("cost_saved") or 0.0),
+            tokens_usage.get("api_key_id"),
+            tokens_usage.get("upstream_key_fingerprint"),
+            tokens_usage.get("x_title"),
+        )
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout = 30000")
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(INSERT_USAGE_IDEMPOTENCY_SQL, (idempotency_key, timestamp))
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return False
+            conn.execute(INSERT_USAGE_SQL, params)
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error("Error inserting idempotent token usage data: %s", e)
+            if conn:
+                conn.rollback()
+            raise
+        finally:
+            if conn:
+                conn.close()
 
     def _insert_sync(self, params: tuple) -> None:
         conn = None

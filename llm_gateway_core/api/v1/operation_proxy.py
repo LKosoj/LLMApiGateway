@@ -17,6 +17,21 @@ logger = logging.getLogger(__name__)
 RETRYABLE_OPERATION_STATUS_CODES = frozenset({408, 409, 429})
 
 
+def _response_body_length(response: httpx.Response) -> int | None:
+    content = getattr(response, "content", None)
+    if content is None:
+        text = getattr(response, "text", None)
+        if isinstance(text, str):
+            return len(text.encode("utf-8"))
+        return None
+    if isinstance(content, str):
+        return len(content.encode("utf-8"))
+    try:
+        return len(content)
+    except TypeError:
+        return None
+
+
 async def read_json_request_body(request: Request, endpoint_name: str) -> dict:
     try:
         request_body_json = json.loads((await request.body()).decode("utf-8"))
@@ -25,30 +40,16 @@ async def read_json_request_body(request: Request, endpoint_name: str) -> dict:
         return sanitize_payload(request_body_json)
     except Exception as exc:
         logger.error("Error reading request body for %s: %s", endpoint_name, exc, exc_info=True)
-        raise HTTPException(status_code=400, detail=f"Error reading request body: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object.") from exc
 
 
 def extract_downstream_error_detail(response: httpx.Response) -> str:
-    try:
-        response_json = response.json()
-    except ValueError:
-        return response.text or f"Downstream request failed with status {response.status_code}."
-
-    if isinstance(response_json, dict):
-        detail = response_json.get("detail")
-        if isinstance(detail, str) and detail:
-            return detail
-
-        error = response_json.get("error")
-        if isinstance(error, dict):
-            message = error.get("message") or error.get("detail")
-            if message:
-                return str(message)
-            return str(error)
-        if error:
-            return str(error)
-
-    return response.text or f"Downstream request failed with status {response.status_code}."
+    logger.warning(
+        "Downstream operation request failed with status %s and body_bytes=%s",
+        response.status_code,
+        _response_body_length(response),
+    )
+    return f"Downstream request failed with status {response.status_code}."
 
 
 def sanitize_target_url_for_log(target_url: str) -> str:
@@ -65,8 +66,8 @@ def sanitize_target_url_for_log(target_url: str) -> str:
             split_result.scheme,
             netloc,
             split_result.path,
-            split_result.query,
-            split_result.fragment,
+            "",
+            "",
         )
     )
 
@@ -82,10 +83,15 @@ def _commit_usd_budget_reservation(request: Request, cost_usd: float) -> None:
     if getattr(request.state, "usd_budget_finalized", False):
         return
     key_id = getattr(request.state, "usd_budget_reserved_key_id", None)
+    reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
     ledger = getattr(request.app.state, "usd_budget_ledger", None)
     if key_id is not None and ledger is not None:
         try:
-            ledger.commit(int(key_id), float(cost_usd or 0.0))
+            ledger.commit_reserved(
+                int(key_id),
+                float(cost_usd or 0.0),
+                reserved=reserved_estimate,
+            )
         except Exception as exc:
             logger.error("Failed to commit USD budget reservation for key %s: %s", key_id, exc)
             return
@@ -150,6 +156,12 @@ async def proxy_json_to_downstream(
 
                 if response.status_code >= 400:
                     error_detail = (await response.aread()).decode("utf-8", errors="replace")
+                    logger.warning(
+                        "Streaming operation downstream error status %s from %s body_bytes=%s",
+                        response.status_code,
+                        sanitized_target_url,
+                        len(error_detail.encode("utf-8")),
+                    )
                     await stream_context.__aexit__(None, None, None)
 
                     if should_retry_operation_status(response.status_code) and attempt_number < total_attempts:
@@ -164,7 +176,7 @@ async def proxy_json_to_downstream(
 
                     raise HTTPException(
                         status_code=downstream_error_status_code(response.status_code),
-                        detail=error_detail or f"Downstream request failed with status {response.status_code}.",
+                        detail=f"Downstream request failed with status {response.status_code}.",
                     )
 
                 async def _stream_body():
@@ -183,10 +195,9 @@ async def proxy_json_to_downstream(
             response = await http_client.post(target_url, headers=headers, json=payload)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.warning(
-                "Operation downstream request to %s failed with network error: %s",
+                "Operation downstream request to %s failed with network error type=%s",
                 sanitized_target_url,
-                exc,
-                exc_info=True,
+                type(exc).__name__,
             )
             if attempt_number < total_attempts:
                 await sleep_before_retry(
@@ -197,7 +208,7 @@ async def proxy_json_to_downstream(
                     f"network error {type(exc).__name__}",
                 )
                 continue
-            raise HTTPException(status_code=503, detail=f"Downstream request failed: {exc}") from exc
+            raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
 
         logger.info(
             "Operation downstream response status %s from %s",
@@ -246,10 +257,9 @@ async def proxy_json_raw_to_downstream(
             response = await http_client.post(target_url, headers=headers, json=payload)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.warning(
-                "Raw JSON operation downstream request to %s failed with network error: %s",
+                "Raw JSON operation downstream request to %s failed with network error type=%s",
                 sanitized_target_url,
-                exc,
-                exc_info=True,
+                type(exc).__name__,
             )
             if attempt_number < total_attempts:
                 await sleep_before_retry(
@@ -260,7 +270,7 @@ async def proxy_json_raw_to_downstream(
                     f"network error {type(exc).__name__}",
                 )
                 continue
-            raise HTTPException(status_code=503, detail=f"Downstream request failed: {exc}") from exc
+            raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
 
         logger.info(
             "Raw JSON operation downstream response status %s from %s",
@@ -308,10 +318,9 @@ async def proxy_multipart_to_downstream(
             response = await http_client.post(target_url, headers=headers, data=normalized_data, files=files)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.warning(
-                "Multipart operation downstream request to %s failed with network error: %s",
+                "Multipart operation downstream request to %s failed with network error type=%s",
                 sanitized_target_url,
-                exc,
-                exc_info=True,
+                type(exc).__name__,
             )
             if attempt_number < total_attempts:
                 await sleep_before_retry(
@@ -322,7 +331,7 @@ async def proxy_multipart_to_downstream(
                     f"network error {type(exc).__name__}",
                 )
                 continue
-            raise HTTPException(status_code=503, detail=f"Downstream request failed: {exc}") from exc
+            raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
 
         logger.info(
             "Multipart operation downstream response status %s from %s",
@@ -380,10 +389,9 @@ async def proxy_multipart_raw_to_downstream(
             response = await http_client.post(target_url, **request_kwargs)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.warning(
-                "Raw multipart operation downstream request to %s failed with network error: %s",
+                "Raw multipart operation downstream request to %s failed with network error type=%s",
                 sanitized_target_url,
-                exc,
-                exc_info=True,
+                type(exc).__name__,
             )
             if attempt_number < total_attempts:
                 await sleep_before_retry(
@@ -394,7 +402,7 @@ async def proxy_multipart_raw_to_downstream(
                     f"network error {type(exc).__name__}",
                 )
                 continue
-            raise HTTPException(status_code=503, detail=f"Downstream request failed: {exc}") from exc
+            raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
 
         logger.info(
             "Raw multipart operation downstream response status %s from %s",
@@ -451,7 +459,8 @@ async def record_operation_usage(
     gateway_model: str,
     operation: str,
     duration_ms: int | None = None,
-) -> None:
+    idempotency_key: str | None = None,
+) -> bool:
     tokens_usage_db = getattr(request.app.state, "tokens_usage_db", None)
 
     tokens_usage = extract_tokens_usage(downstream_json)
@@ -466,16 +475,32 @@ async def record_operation_usage(
 
     if tokens_usage_db is None:
         logger.warning("TokensUsageDB not found in application state; skipping %s usage persistence.", operation)
+        if idempotency_key is not None:
+            return False
     else:
         try:
-            tokens_usage_db.insert_usage(tokens_usage)
+            if idempotency_key is None:
+                tokens_usage_db.insert_usage(tokens_usage)
+            else:
+                insert_usage_once = getattr(tokens_usage_db, "insert_usage_once", None)
+                if not callable(insert_usage_once):
+                    logger.warning(
+                        "TokensUsageDB does not support idempotent usage persistence; skipping %s usage.",
+                        operation,
+                    )
+                    return False
+                inserted = await asyncio.to_thread(insert_usage_once, idempotency_key, tokens_usage)
+                if not inserted:
+                    return False
         except Exception as exc:
             logger.error("Failed to store %s usage statistics: %s", operation, exc, exc_info=True)
+            if idempotency_key is not None:
+                return False
 
     key_id = tokens_usage.get("api_key_id")
     if key_id is None:
         _commit_usd_budget_reservation(request, float(tokens_usage.get("cost") or 0.0))
-        return
+        return True
 
     api_keys_db = getattr(request.app.state, "api_keys_db", None)
     if api_keys_db is not None:
@@ -501,6 +526,8 @@ async def record_operation_usage(
             )
         except Exception as exc:
             logger.error("Failed to attribute %s tokens to RateLimiter for key %s: %s", operation, key_id, exc)
+
+    return True
 
 
 def json_response(content: dict, status_code: int) -> JSONResponse:

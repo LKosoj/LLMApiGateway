@@ -456,7 +456,8 @@ class RerankEndpointTests(unittest.TestCase):
                     )
 
                 self.assertEqual(response.status_code, 400 if status_code == 400 else 503)
-                self.assertEqual(response.json()["detail"], f"rerank-downstream-{status_code}")
+                self.assertEqual(response.json()["detail"], f"Downstream request failed with status {status_code}.")
+                self.assertNotIn(f"rerank-downstream-{status_code}", response.text)
                 fake_http_client.post.assert_awaited_once()
 
     def test_post_rerank_retries_same_route_when_operation_route_configures_retry(self):

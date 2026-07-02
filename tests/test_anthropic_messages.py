@@ -121,6 +121,14 @@ def _build_streaming_openai_response_with_unterminated_final_event() -> Streamin
     return StreamingResponse(body(), media_type="text/event-stream")
 
 
+def _build_streaming_openai_error_response() -> StreamingResponse:
+    async def body():
+        yield b'data: {"error":{"message":"SECRET_UPSTREAM_STREAM_ERROR","type":"server_error"}}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(body(), media_type="text/event-stream")
+
+
 class AnthropicMessagesTests(unittest.TestCase):
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
@@ -170,7 +178,14 @@ class AnthropicMessagesTests(unittest.TestCase):
                         "message": {"role": "assistant", "content": "Hello!"},
                     }
                 ],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                    "cost": 0.045,
+                    "prompt_tokens_details": {"cached_tokens": 4},
+                    "completion_tokens_details": {"reasoning_tokens": 2},
+                },
             },
             None,
         )
@@ -218,6 +233,16 @@ class AnthropicMessagesTests(unittest.TestCase):
         )
         self.assertEqual(provider_payload["max_tokens"], 32)
         self.assertFalse(provider_payload["stream"])
+
+        _tokens_usage_db.return_value.insert_usage.assert_called_once()
+        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
+        self.assertEqual(usage_row["prompt_tokens"], 10)
+        self.assertEqual(usage_row["completion_tokens"], 5)
+        self.assertEqual(usage_row["total_tokens"], 15)
+        self.assertEqual(usage_row["cached_tokens"], 4)
+        self.assertEqual(usage_row["reasoning_tokens"], 2)
+        self.assertEqual(usage_row["cost"], 0.045)
+        self.assertFalse(usage_row.get("is_estimated", False))
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
@@ -482,6 +507,45 @@ class AnthropicMessagesTests(unittest.TestCase):
         self.assertIn('"input_tokens"', response_text)
         self.assertIn('"output_tokens"', response_text)
         self.assertIn("event: message_stop", response_text)
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_messages_endpoint_stream_error_chunk_emits_anthropic_error_event(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = _build_fake_config_loader()
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+        make_llm_request_mock.return_value = (_build_streaming_openai_error_response(), None)
+
+        anthropic_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 32,
+            "stream": True,
+        }
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with client.stream(
+                    "POST",
+                    "/v1/messages",
+                    json=anthropic_payload,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                ) as response:
+                    response_text = response.read().decode("utf-8")
+
+        self.assertIn("event: error", response_text)
+        self.assertIn('"message":"Upstream stream failed."', response_text)
+        self.assertNotIn("event: message_stop", response_text)
+        self.assertNotIn("SECRET_UPSTREAM_STREAM_ERROR", response_text)
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")

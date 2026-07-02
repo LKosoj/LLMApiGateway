@@ -122,8 +122,12 @@ document.addEventListener('DOMContentLoaded', function () {
     let routerFallbackChains = {};
     const providerModelsCache = new Map();
     const providerModelsRequests = new Map();
+    let providersLoadState = 'loading';
+    let providersLoadRequestId = 0;
+    let saveInFlight = false;
     let fallbackEvalPollTimer = null;
     let openRouterFreePollTimer = null;
+    let fallbackRowModelRequestSeq = 0;
 
     function renderMessage(type, text) {
         messageArea.className = type;
@@ -447,6 +451,30 @@ document.addEventListener('DOMContentLoaded', function () {
         } else {
             saveButton.textContent = 'Save Configuration';
         }
+        updateSaveButtonDisabledState();
+        updateProvidersControlsState();
+    }
+
+    function updateSaveButtonDisabledState() {
+        if (saveInFlight) {
+            saveButton.disabled = true;
+            return;
+        }
+        if (activeEditor === 'providers') {
+            saveButton.disabled = providersLoadState !== 'ready';
+            return;
+        }
+        saveButton.disabled = false;
+    }
+
+    function updateProvidersControlsState() {
+        addProviderButton.disabled = providersLoadState !== 'ready';
+        updateSaveButtonDisabledState();
+    }
+
+    function setProvidersLoadState(state) {
+        providersLoadState = state;
+        updateProvidersControlsState();
     }
 
     function refreshRulesEmptyState() {
@@ -984,6 +1012,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     async function refreshFallbackRowModels(fallbackRow, providerName, selectedModel) {
         const modelSelect = fallbackRow.querySelector('.model-select');
+        const loadToken = String(++fallbackRowModelRequestSeq);
+        fallbackRow.dataset.modelsRequestToken = loadToken;
         fallbackRow.dataset.modelsLoadError = 'false';
         clearUnavailableFallbackModelMetadata(fallbackRow);
         modelSelect.disabled = true;
@@ -997,6 +1027,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             const models = await getProviderModels(providerName);
+            if (fallbackRow.dataset.modelsRequestToken !== loadToken) {
+                return;
+            }
             modelSelect.disabled = false;
             setSelectOptions(modelSelect, models, models.length > 0 ? 'Choose a model' : 'No models available', selectedModel || '');
 
@@ -1019,6 +1052,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 models.length > 0 ? 'success' : 'warning'
             );
         } catch (error) {
+            if (fallbackRow.dataset.modelsRequestToken !== loadToken) {
+                return;
+            }
             fallbackRow.dataset.modelsLoadError = 'true';
             setSelectOptions(modelSelect, [], 'Could not load models', '');
             setFallbackRowStatus(
@@ -2217,7 +2253,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Rerank:', error);
             renderMessage('error', `Error saving Rerank: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
@@ -2717,7 +2753,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Fusion:', error);
             renderMessage('error', `Error saving Fusion: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
@@ -3009,7 +3045,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Router:', error);
             renderMessage('error', `Error saving Router: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
@@ -3055,7 +3091,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Embeddings:', error);
             renderMessage('error', `Error saving Embeddings: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
@@ -3464,7 +3500,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Images:', error);
             renderMessage('error', `Error saving Images: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
@@ -3928,7 +3964,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Audio Routes:', error);
             renderMessage('error', `Error saving Audio Routes: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
@@ -4286,7 +4322,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Web Services:', error);
             renderMessage('error', `Error saving Web Services: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
@@ -4674,7 +4710,22 @@ document.addEventListener('DOMContentLoaded', function () {
         const baseUrlInput = createTextInput('provider-base-url-input', 'https://api.example.com/v1');
         baseUrlInput.value = initialData.baseUrl || '';
         const apiKeyInput = createTextInput('provider-api-key-input', '${APIKEY_PROVIDER}');
+        apiKeyInput.type = 'password';
+        apiKeyInput.autocomplete = 'off';
         apiKeyInput.value = initialData.apikey || '';
+        const apiKeyRevealButton = document.createElement('button');
+        apiKeyRevealButton.type = 'button';
+        apiKeyRevealButton.className = 'secondary-button compact-button';
+        apiKeyRevealButton.textContent = 'Show';
+        apiKeyRevealButton.addEventListener('click', () => {
+            const shouldShow = apiKeyInput.type === 'password';
+            apiKeyInput.type = shouldShow ? 'text' : 'password';
+            apiKeyRevealButton.textContent = shouldShow ? 'Hide' : 'Show';
+        });
+        const apiKeyControl = document.createElement('div');
+        apiKeyControl.className = 'secret-input-row';
+        apiKeyControl.appendChild(apiKeyInput);
+        apiKeyControl.appendChild(apiKeyRevealButton);
         const typeSelect = createSelect('provider-type-select');
         setSelectOptions(typeSelect, ['openai', 'anthropic'], 'Choose API type', initialData.type || 'openai');
         const proxyInput = createTextInput('provider-proxy-input', '${PROXY_PROVIDER} or https://proxy:8080');
@@ -4682,7 +4733,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const baseUrlField = createFieldGroup('Base URL', baseUrlInput, 'provider-base-url-field');
         attachFieldTooltip(baseUrlField, PROVIDER_FIELD_TOOLTIPS.baseUrl);
-        const apiKeyField = createFieldGroup('API Key', apiKeyInput, 'provider-api-key-field');
+        const apiKeyField = createFieldGroup('API Key', apiKeyControl, 'provider-api-key-field');
         attachFieldTooltip(apiKeyField, PROVIDER_FIELD_TOOLTIPS.apikey);
         const typeField = createFieldGroup('API Type', typeSelect, 'provider-type-field');
         attachFieldTooltip(typeField, PROVIDER_FIELD_TOOLTIPS.type);
@@ -4768,26 +4819,38 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function loadProvidersEditor() {
+        const requestId = ++providersLoadRequestId;
+        originalProvidersContent = null;
+        setProvidersLoadState('loading');
         renderMessage('info', 'Loading Providers...');
         try {
             const response = await apiFetch('/v1/config/providers/structured');
             const payload = await response.json();
+            if (requestId !== providersLoadRequestId) {
+                return;
+            }
             if (!response.ok) {
                 throw new Error(payload.detail || `HTTP ${response.status}`);
             }
             const providers = Array.isArray(payload.providers) ? payload.providers : [];
             await renderProviders(providers);
+            if (requestId !== providersLoadRequestId) {
+                return;
+            }
             availableProviders = providers
                 .map(provider => typeof provider.name === 'string' ? provider.name.trim() : '')
                 .filter(Boolean);
             originalProvidersContent = getProvidersSnapshotContent();
+            setProvidersLoadState('ready');
             renderMessage('success', 'Providers loaded successfully.');
         } catch (error) {
+            if (requestId !== providersLoadRequestId) {
+                return;
+            }
             console.error('Error fetching Providers:', error);
             renderErrorWithDetails('Error loading Providers:', error.message);
-            providersList.textContent = '';
-            refreshProvidersEmptyState();
-            originalProvidersContent = stableSerialize({ providers: [] });
+            originalProvidersContent = null;
+            setProvidersLoadState('error');
         }
     }
 
@@ -4882,10 +4945,17 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    function scheduleOpenRouterFreePolling(payload) {
+    function stopOpenRouterFreePolling() {
         if (openRouterFreePollTimer) {
             clearTimeout(openRouterFreePollTimer);
             openRouterFreePollTimer = null;
+        }
+    }
+
+    function scheduleOpenRouterFreePolling(payload) {
+        stopOpenRouterFreePolling();
+        if (activeEditor !== 'openrouter-free') {
+            return;
         }
         if (runOpenRouterFreeEvalButton) {
             runOpenRouterFreeEvalButton.disabled = Boolean(payload.manualRefreshRunning);
@@ -5045,10 +5115,17 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    function scheduleFallbackEvalPolling(payload) {
+    function stopFallbackEvalPolling() {
         if (fallbackEvalPollTimer) {
             clearTimeout(fallbackEvalPollTimer);
             fallbackEvalPollTimer = null;
+        }
+    }
+
+    function scheduleFallbackEvalPolling(payload) {
+        stopFallbackEvalPolling();
+        if (activeEditor !== 'fallback-eval') {
+            return;
         }
         runFallbackEvalButton.disabled = Boolean(payload.running);
         if (payload.running) {
@@ -5156,11 +5233,16 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Fallback Rules:', error);
             renderMessage('error', `Error saving Fallback Rules: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
     async function saveProviders() {
+        if (providersLoadState !== 'ready' || originalProvidersContent === null) {
+            renderMessage('error', 'Cannot save Providers: provider configuration has not loaded successfully.');
+            return;
+        }
+
         let payload;
         try {
             payload = getProvidersPayloadForSave();
@@ -5213,7 +5295,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Providers:', error);
             renderMessage('error', `Error saving Providers: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateProvidersControlsState();
         }
     }
 
@@ -5258,13 +5340,100 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error saving Model Rules:', error);
             renderMessage('error', `Error saving Model Rules: ${error.message}`);
         } finally {
-            saveButton.disabled = false;
+            updateSaveButtonDisabledState();
         }
     }
 
+    function isCurrentEditorDirty() {
+        if (activeEditor === 'rules' && originalRulesContent !== null) {
+            try {
+                return getRulesSnapshotContent() !== originalRulesContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'embeddings' && originalEmbeddingsContent !== null) {
+            try {
+                return getNormalizedEmbeddingsContent() !== originalEmbeddingsContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'rerank' && originalRerankContent !== null) {
+            try {
+                return getNormalizedRerankContent() !== originalRerankContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'images' && originalImagesContent !== null) {
+            try {
+                return getNormalizedImagesContent() !== originalImagesContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'audio' && originalAudioContent !== null) {
+            try {
+                return getNormalizedAudioContent() !== originalAudioContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'web' && originalWebContent !== null) {
+            try {
+                return getNormalizedWebContent() !== originalWebContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'providers' && originalProvidersContent !== null) {
+            try {
+                return getProvidersSnapshotContent() !== originalProvidersContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'fusion' && originalFusionContent !== null) {
+            try {
+                return getNormalizedFusionContent() !== originalFusionContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'router' && originalRouterContent !== null) {
+            try {
+                return getNormalizedRouterContent() !== originalRouterContent;
+            } catch (error) {
+                return true;
+            }
+        }
+        if (activeEditor === 'model-rules' && originalModelRulesContent !== null) {
+            return modelRulesRawInput.value !== originalModelRulesContent;
+        }
+        return false;
+    }
+
+    function updateRulesTabA11y(activeTabName) {
+        const tabs = Array.from(document.querySelectorAll('.tabs .tab-button[data-tab]'));
+        const tabList = tabs[0]?.closest('.tabs');
+        if (tabList) {
+            tabList.setAttribute('role', 'tablist');
+        }
+        tabs.forEach((button) => {
+            const isActive = button.dataset.tab === activeTabName;
+            button.setAttribute('role', 'tab');
+            button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+    }
+
     function switchTab(tabName) {
+        if (activeEditor === tabName && tabName === 'providers' && providersLoadState === 'loading') {
+            return;
+        }
         if (
             activeEditor === tabName
+            && !(tabName === 'providers' && providersLoadState === 'error')
             && (
                 originalRulesContent !== null
                 || originalEmbeddingsContent !== null
@@ -5281,92 +5450,23 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        let hasUnsavedChanges = false;
-        if (activeEditor === 'rules' && originalRulesContent !== null) {
-            try {
-                if (getRulesSnapshotContent() !== originalRulesContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'embeddings' && originalEmbeddingsContent !== null) {
-            try {
-                if (getNormalizedEmbeddingsContent() !== originalEmbeddingsContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'rerank' && originalRerankContent !== null) {
-            try {
-                if (getNormalizedRerankContent() !== originalRerankContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'images' && originalImagesContent !== null) {
-            try {
-                if (getNormalizedImagesContent() !== originalImagesContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'audio' && originalAudioContent !== null) {
-            try {
-                if (getNormalizedAudioContent() !== originalAudioContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'web' && originalWebContent !== null) {
-            try {
-                if (getNormalizedWebContent() !== originalWebContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'providers' && originalProvidersContent !== null) {
-            try {
-                if (getProvidersSnapshotContent() !== originalProvidersContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'fusion' && originalFusionContent !== null) {
-            try {
-                if (getNormalizedFusionContent() !== originalFusionContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'router' && originalRouterContent !== null) {
-            try {
-                if (getNormalizedRouterContent() !== originalRouterContent) {
-                    hasUnsavedChanges = true;
-                }
-            } catch (error) {
-                hasUnsavedChanges = true;
-            }
-        } else if (activeEditor === 'model-rules' && originalModelRulesContent !== null) {
-            if (modelRulesRawInput.value !== originalModelRulesContent) {
-                hasUnsavedChanges = true;
-            }
-        }
-
-        if (hasUnsavedChanges) {
+        if (isCurrentEditorDirty()) {
             if (!confirm('You have unsaved changes. Are you sure you want to switch tabs? Your changes will be lost.')) {
                 return;
             }
         }
 
+        const previousEditor = activeEditor;
+        if (previousEditor !== tabName) {
+            if (previousEditor === 'openrouter-free') {
+                stopOpenRouterFreePolling();
+            } else if (previousEditor === 'fallback-eval') {
+                stopFallbackEvalPolling();
+            }
+        }
+
         activeEditor = tabName;
+        updateRulesTabA11y(tabName);
         updateControlsVisibility();
         tabOpenRouterFree.classList.remove('active');
         tabFallbackEval.classList.remove('active');
@@ -5728,6 +5828,10 @@ document.addEventListener('DOMContentLoaded', function () {
     tabRouter.addEventListener('click', () => switchTab('router'));
     tabModelRules.addEventListener('click', () => switchTab('model-rules'));
     addProviderButton.addEventListener('click', () => {
+        if (providersLoadState !== 'ready') {
+            renderMessage('error', 'Cannot add Provider: provider configuration has not loaded successfully.');
+            return;
+        }
         const providerCard = buildProviderCard({});
         providerCard.classList.remove('collapsed');
         providersList.appendChild(providerCard);
@@ -5837,61 +5941,58 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    saveButton.addEventListener('click', function () {
+    window.addEventListener('beforeunload', (event) => {
+        if (!isCurrentEditorDirty()) {
+            return;
+        }
+        event.preventDefault();
+        event.returnValue = '';
+    });
+
+    saveButton.addEventListener('click', async function () {
+        if (saveInFlight) {
+            return;
+        }
+        let saveAction = null;
         if (activeEditor === 'rules') {
-            saveRules();
+            saveAction = saveRules;
+        } else if (activeEditor === 'embeddings') {
+            saveAction = saveEmbeddings;
+        } else if (activeEditor === 'rerank') {
+            saveAction = saveRerank;
+        } else if (activeEditor === 'images') {
+            saveAction = saveImages;
+        } else if (activeEditor === 'audio') {
+            saveAction = saveAudio;
+        } else if (activeEditor === 'web') {
+            saveAction = saveWeb;
+        } else if (activeEditor === 'providers') {
+            saveAction = saveProviders;
+        } else if (activeEditor === 'fusion') {
+            saveAction = saveFusion;
+        } else if (activeEditor === 'router') {
+            saveAction = saveRouter;
+        } else if (activeEditor === 'model-rules') {
+            saveAction = saveModelRules;
+        }
+
+        if (!saveAction) {
+            renderMessage('error', 'No active editor selected.');
             return;
         }
 
-        if (activeEditor === 'embeddings') {
-            saveEmbeddings();
-            return;
+        saveInFlight = true;
+        updateSaveButtonDisabledState();
+        try {
+            await saveAction();
+        } finally {
+            saveInFlight = false;
+            updateSaveButtonDisabledState();
         }
-
-        if (activeEditor === 'rerank') {
-            saveRerank();
-            return;
-        }
-
-        if (activeEditor === 'images') {
-            saveImages();
-            return;
-        }
-
-        if (activeEditor === 'audio') {
-            saveAudio();
-            return;
-        }
-
-        if (activeEditor === 'web') {
-            saveWeb();
-            return;
-        }
-
-        if (activeEditor === 'providers') {
-            saveProviders();
-            return;
-        }
-
-        if (activeEditor === 'fusion') {
-            saveFusion();
-            return;
-        }
-
-        if (activeEditor === 'router') {
-            saveRouter();
-            return;
-        }
-
-        if (activeEditor === 'model-rules') {
-            saveModelRules();
-            return;
-        }
-
-        renderMessage('error', 'No active editor selected.');
     });
 
     updateControlsVisibility();
+    updateRulesTabA11y(activeEditor);
     void initializeOpenRouterFreeTabAvailability();
     void loadRulesEditor();
 });

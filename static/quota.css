@@ -318,10 +318,30 @@ h1 {
 
 /* ── Empty state ── */
 .quota-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+    grid-column: 1 / -1;
     text-align: center;
     padding: 40px 20px;
     color: var(--text-muted);
     font-size: 15px;
+}
+
+.quota-empty strong {
+    color: var(--text-strong);
+}
+
+.quota-empty a {
+    color: var(--accent-text);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.quota-empty a:hover {
+    text-decoration: underline;
 }
 
 /* ── No-limit label ── */

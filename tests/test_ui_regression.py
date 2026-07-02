@@ -47,6 +47,85 @@ def _route_empty_analytics_dashboard(page: Page, server: str):
     )
 
 
+def test_rules_editor_guards_dirty_state_before_unload():
+    content = Path("static/editor.js").read_text(encoding="utf-8")
+
+    assert "function isCurrentEditorDirty()" in content
+    assert "window.addEventListener('beforeunload'" in content
+    assert "event.preventDefault()" in content
+    assert "event.returnValue = ''" in content
+
+
+def test_rules_editor_ignores_stale_provider_model_loads():
+    content = Path("static/editor.js").read_text(encoding="utf-8")
+
+    assert "fallbackRowModelRequestSeq" in content
+    assert "fallbackRow.dataset.modelsRequestToken = loadToken" in content
+    assert "fallbackRow.dataset.modelsRequestToken !== loadToken" in content
+
+
+def test_rules_editor_stops_eval_polling_when_switching_tabs():
+    content = Path("static/editor.js").read_text(encoding="utf-8")
+
+    assert "function stopOpenRouterFreePolling()" in content
+    assert "function stopFallbackEvalPolling()" in content
+    assert "if (activeEditor !== 'openrouter-free')" in content
+    assert "if (activeEditor !== 'fallback-eval')" in content
+    assert "previousEditor === 'openrouter-free'" in content
+    assert "previousEditor === 'fallback-eval'" in content
+
+
+def test_model_rules_raw_textarea_has_stable_rows():
+    content = Path("static/rules-editor.html").read_text(encoding="utf-8")
+
+    assert 'id="modelRulesRawInput"' in content
+    assert 'rows="18"' in content
+
+
+def test_quota_rerender_clears_countdown_timers_and_has_empty_cta():
+    js_content = Path("static/quota.js").read_text(encoding="utf-8")
+    css_content = Path("static/quota.css").read_text(encoding="utf-8")
+
+    assert "function clearCountdownTimers()" in js_content
+    assert "clearCountdownTimers();" in js_content
+    assert 'href="/v1/ui/api-keys"' in js_content
+    assert ".quota-empty a" in css_content
+
+
+def test_translator_debug_has_no_inline_event_handlers():
+    html_content = Path("static/translator-debug.html").read_text(encoding="utf-8")
+    js_content = Path("static/translator-debug.js").read_text(encoding="utf-8")
+
+    assert "onclick=" not in html_content
+    assert "onclick=" not in js_content
+    assert 'addEventListener("click"' in js_content
+    assert "copyStep(copyButton)" in js_content
+
+
+def test_web_playground_mobile_layout_and_labels_are_clean():
+    html_content = Path("static/web-playground.html").read_text(encoding="utf-8")
+    css_content = Path("static/web-playground.css").read_text(encoding="utf-8")
+
+    assert "Include images[]" not in html_content
+    assert 'class="primary-button run-button">Run search</button>' in html_content
+    assert "@media (max-width: 480px)" in css_content
+    assert "min-width: 620px" not in css_content
+
+
+def test_usage_stats_empty_state_is_not_duplicated_by_status_message():
+    content = Path("static/usage-stats.js").read_text(encoding="utf-8")
+
+    assert "showMessage('No data available for the selected period.'" not in content
+
+
+def test_api_keys_modal_has_escape_and_focus_trap():
+    content = Path("static/api-keys.js").read_text(encoding="utf-8")
+
+    assert 'event.key === "Escape"' in content
+    assert 'event.key !== "Tab"' in content
+    assert "getModalFocusableElements" in content
+
+
 class MockProviderHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/models":
@@ -190,7 +269,12 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     provider_card = page.locator("#providersList .provider-card").last
     provider_card.locator(".provider-name-input").fill("anthropic_local")
     provider_card.locator(".provider-base-url-input").fill("https://anthropic.local")
+    expect(provider_card.locator(".provider-api-key-input")).to_have_attribute("type", "password")
     provider_card.locator(".provider-api-key-input").fill("DIRECT-KEY")
+    provider_card.locator(".provider-api-key-field button", has_text="Show").click()
+    expect(provider_card.locator(".provider-api-key-input")).to_have_attribute("type", "text")
+    provider_card.locator(".provider-api-key-field button", has_text="Hide").click()
+    expect(provider_card.locator(".provider-api-key-input")).to_have_attribute("type", "password")
     provider_card.locator(".provider-type-select").select_option("anthropic")
     provider_card.locator(".provider-proxy-input").fill("http://proxy.local:8080")
     expect(provider_card.locator(".provider-api-key-field .field-tooltip-button")).to_have_count(1)
@@ -230,6 +314,180 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     expect(saved_provider.locator(".provider-models-input")).to_have_value(
         '{\n  "deepseek/deepseek-r1:free": {\n    "pricing": {\n      "input": 0.1\n    }\n  }\n}'
     )
+
+
+def test_providers_editor_load_failure_disables_save_and_add_until_retry(page: Page, server):
+    session = create_authenticated_session("test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+
+    provider_get_count = 0
+    provider_post_count = 0
+
+    def handle_structured_providers(route):
+        nonlocal provider_get_count, provider_post_count
+        if route.request.method == "POST":
+            provider_post_count += 1
+            route.fulfill(status=500, json={"detail": "unexpected save"})
+            return
+
+        provider_get_count += 1
+        if provider_get_count == 1:
+            route.fulfill(status=500, json={"detail": "structured providers failed"})
+            return
+
+        route.fulfill(
+            json={
+                "providers": [
+                    {
+                        "name": "openai",
+                        "baseUrl": "http://api.openai.test",
+                        "apikey": "key",
+                        "type": "openai",
+                    }
+                ]
+            }
+        )
+
+    page.route("**/v1/config/providers/structured", handle_structured_providers)
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+    page.click("#tabProviders")
+
+    expect(page.locator("#messageArea")).to_contain_text("Error loading Providers")
+    expect(page.locator("#saveButton")).to_be_disabled()
+    expect(page.locator("#addProviderButton")).to_be_disabled()
+    expect(page.locator("#providersList .provider-card")).to_have_count(0)
+
+    page.locator("#saveButton").dispatch_event("click")
+    expect(page.locator("#messageArea")).to_contain_text("Cannot save Providers")
+    page.wait_for_timeout(100)
+    assert provider_post_count == 0
+
+    page.locator("#addProviderButton").dispatch_event("click")
+    expect(page.locator("#messageArea")).to_contain_text("Cannot add Provider")
+    expect(page.locator("#providersList .provider-card")).to_have_count(0)
+
+    page.click("#tabProviders")
+
+    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#saveButton")).to_be_enabled()
+    expect(page.locator("#addProviderButton")).to_be_enabled()
+    expect(page.locator("#providersList .provider-card")).to_have_count(1)
+    assert provider_get_count == 2
+    assert provider_post_count == 0
+
+
+def test_async_providers_load_does_not_enable_save_on_other_tab(page: Page, server):
+    session = create_authenticated_session("test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+
+    delayed_provider_route = {}
+    rules_save_route = {}
+
+    def handle_structured_providers(route):
+        if route.request.method == "GET" and not delayed_provider_route:
+            delayed_provider_route["route"] = route
+            return
+        route.continue_()
+
+    def handle_rules(route):
+        if route.request.method == "POST":
+            rules_save_route["route"] = route
+            return
+        route.continue_()
+
+    page.route("**/v1/config/providers/structured", handle_structured_providers)
+    page.route("**/v1/config/models-rules/structured", handle_rules)
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    page.click("#tabProviders")
+    expect(page.locator("#saveButton")).to_be_disabled()
+    page.click("#tabRules")
+    expect(page.locator("#saveButton")).to_be_enabled()
+
+    page.click("#saveButton")
+    expect(page.locator("#saveButton")).to_be_disabled()
+    assert "route" in rules_save_route
+
+    page.click("#tabProviders")
+    expect(page.locator("#saveButton")).to_be_disabled()
+    page.click("#tabRules")
+    expect(page.locator("#saveButton")).to_be_disabled()
+
+    delayed_provider_route["route"].fulfill(
+        json={
+            "providers": [
+                {
+                    "name": "openai",
+                    "baseUrl": "http://api.openai.test",
+                    "apikey": "key",
+                    "type": "openai",
+                }
+            ]
+        }
+    )
+    page.wait_for_timeout(100)
+    expect(page.locator("#saveButton")).to_be_disabled()
+
+    rules_save_route["route"].fulfill(json={"message": "Fallback Rules updated successfully."})
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+    expect(page.locator("#saveButton")).to_be_enabled()
+
+
+def test_providers_editor_ignores_stale_load_responses(page: Page, server):
+    session = create_authenticated_session("test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+
+    provider_get_routes = []
+
+    def handle_structured_providers(route):
+        if route.request.method == "GET":
+            provider_get_routes.append(route)
+            return
+        route.continue_()
+
+    page.route("**/v1/config/providers/structured", handle_structured_providers)
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+
+    page.click("#tabProviders")
+    expect(page.locator("#saveButton")).to_be_disabled()
+    page.click("#tabProviders")
+    page.wait_for_timeout(100)
+    assert len(provider_get_routes) == 1
+
+    page.click("#tabRules")
+    page.click("#tabProviders")
+    expect(page.locator("#saveButton")).to_be_disabled()
+    assert len(provider_get_routes) == 2
+
+    provider_get_routes[1].fulfill(
+        json={
+            "providers": [
+                {
+                    "name": "openai",
+                    "baseUrl": "http://api.openai.test",
+                    "apikey": "key",
+                    "type": "openai",
+                }
+            ]
+        }
+    )
+    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#providersList .provider-card")).to_have_count(1)
+    expect(page.locator("#saveButton")).to_be_enabled()
+    expect(page.locator("#addProviderButton")).to_be_enabled()
+
+    provider_get_routes[0].fulfill(status=500, json={"detail": "stale providers failure"})
+    page.wait_for_timeout(100)
+
+    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).not_to_contain_text("stale providers failure")
+    expect(page.locator("#providersList .provider-card")).to_have_count(1)
+    expect(page.locator("#saveButton")).to_be_enabled()
+    expect(page.locator("#addProviderButton")).to_be_enabled()
 
 
 def _build_master_session_cookie_value(gateway_api_key: str) -> str:
@@ -522,7 +780,7 @@ def test_usage_stats_page_renders_operation_column(page: Page, server):
     )
 
     page.goto(f"{server}/v1/ui/usage-stats")
-    page.get_by_role("button", name="Usage Statistics").click()
+    page.get_by_role("tab", name="Usage Statistics").click()
 
     expect(page.locator("#statsArea thead")).to_contain_text("Operation")
     expect(page.locator("#statsArea tbody")).to_contain_text("embeddings")
@@ -679,7 +937,8 @@ def test_api_keys_page_does_not_offer_per_key_usage(page: Page, server):
 
     page.goto(f"{server}/v1/ui/api-keys")
 
-    expect(page.locator("#keysArea")).to_contain_text("lgk_test")
+    expect(page.locator("#keysArea")).not_to_contain_text("lgk_test")
+    expect(page.locator("#keysArea")).to_contain_text("••••")
     expect(page.locator("#keyModal")).not_to_contain_text("shown only once")
     expect(page.locator('button[data-action="usage"]')).to_have_count(0)
     expect(page.locator("#keyUsagePanel")).to_have_count(0)

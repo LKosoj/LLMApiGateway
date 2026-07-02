@@ -5,7 +5,7 @@ import httpx
 from asyncio import create_task as asyncio_create_task
 from asyncio import sleep as scheduler_sleep
 from collections.abc import Mapping
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -22,8 +22,9 @@ from llm_gateway_core.services.image_retention import cleanup_old_images
 from llm_gateway_core.utils.logging_setup import configure_logging
 from llm_gateway_core.middleware.request_logging import log_middleware_functional
 from llm_gateway_core.middleware.auth import api_key_auth # Functional middleware
-from llm_gateway_core.middleware import chat_logging as _chat_logging_module
 from llm_gateway_core.middleware.chat_logging import log_chat_completions # Functional middleware
+from llm_gateway_core.middleware.content_size import ContentSizeLimitMiddleware
+from llm_gateway_core.api.error_envelope import error_response
 from llm_gateway_core.api.auth_ui import auth_router
 from llm_gateway_core.api.v1 import router as api_v1_router
 from llm_gateway_core.api.v1.rules_editor import editor_router as api_v1_editor_router # Import the new editor router
@@ -34,7 +35,6 @@ from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
-from llm_gateway_core.api.v1 import chat as _chat_router_module
 from llm_gateway_core.services.provider_models import ProviderModelsService
 from llm_gateway_core.services.openrouter_free_models import OpenRouterFreeModelsService
 from llm_gateway_core.services.fallback_model_evals import FallbackModelEvalService
@@ -46,7 +46,7 @@ from llm_gateway_core.services.ip_blocklist import IpBlockGuard
 from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
 from llm_gateway_core.services.router_model import RouterModelService
-from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
+from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState, fingerprint_api_key
 from llm_gateway_core.services.upstream_subscription_quota import UpstreamSubscriptionQuotaService
 from llm_gateway_core.utils.html_cache import preload_templates
 
@@ -322,7 +322,6 @@ async def lifespan(app: FastAPI):
     app.state.fallback_events_db = fallback_events_db
     app.state.rejections_db = rejections_db
     app.state.write_batcher = write_batcher
-    _chat_logging_module.set_tokens_usage_db(tokens_usage_db)
 
     # ApiKeysDB lives in a separate SQLite file (``api_keys.db``) from the
     # shared WriteBatcher (``tokens_usage.db``); binding the two would route
@@ -331,17 +330,14 @@ async def lifespan(app: FastAPI):
     # from worker threads when no batcher is bound.
     api_keys_db = ApiKeysDB()
     app.state.api_keys_db = api_keys_db
-    _chat_logging_module.set_api_keys_db(api_keys_db)
 
     usd_budget_ledger = UsdBudgetLedger()
     app.state.usd_budget_ledger = usd_budget_ledger
-    _chat_logging_module.set_usd_budget_ledger(usd_budget_ledger)
 
     app.state.active_requests_registry = ActiveRequestsRegistry()
 
     rate_limiter = RateLimiter()
     app.state.rate_limiter = rate_limiter
-    _chat_logging_module.set_rate_limiter(rate_limiter)
 
     if settings.ip_block_enabled:
         app.state.ip_block_guard = IpBlockGuard(
@@ -360,9 +356,19 @@ async def lifespan(app: FastAPI):
     app.state.chat_model_failure_cooldowns = {}
     app.state.upstream_routing_state = UpstreamRoutingState()
 
-    model_rotation_db = ModelRotationDB()
+    def resolve_legacy_rotation_scope(token: str) -> str | None:
+        if settings.gateway_api_key and token == settings.gateway_api_key:
+            return f"master:{fingerprint_api_key(token)}"
+        get_by_key = getattr(api_keys_db, "get_by_key", None)
+        if get_by_key is None:
+            return None
+        record = get_by_key(token)
+        if record is not None:
+            return f"user:{record.id}"
+        return None
+
+    model_rotation_db = ModelRotationDB(legacy_scope_resolver=resolve_legacy_rotation_scope)
     app.state.model_rotation_db = model_rotation_db
-    _chat_router_module.set_model_rotation_db(model_rotation_db)
     logger.info("TokensUsageDB, FallbackEventsDB, RejectionsDB, ModelRotationDB, ApiKeysDB, RateLimiter and WriteBatcher initialized.")
 
     http_client = create_shared_http_client()
@@ -432,11 +438,6 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Application shutdown...")
-        shutdown_config_error: RuntimeError | None = None
-        try:
-            ensure_gateway_api_key_configured()
-        except RuntimeError as exc:
-            shutdown_config_error = exc
         if usage_stats_cleanup_task is not None:
             usage_stats_cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -462,8 +463,6 @@ async def lifespan(app: FastAPI):
             logger.info("Proxy HTTP client for '%s' closed.", name)
         await http_client.aclose()
         logger.info("Shared httpx.AsyncClient closed.")
-        if shutdown_config_error is not None:
-            raise shutdown_config_error
 
 # Create FastAPI app instance
 STATIC_FILES_DIR = STATIC_DIR
@@ -492,25 +491,6 @@ def configure_cors(app: FastAPI, cors_allow_origins: list[str] | None = None) ->
     )
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception during {request.method} {request.url.path}: {exc}", exc_info=True)
-    return Response(
-        content=f"Internal server error: {str(exc)}",
-        status_code=500
-    )
-
-# 1. CORS Middleware (usually first)
-configure_cors(app, settings.cors_allow_origins)
-
-# 2. Request Logging Middleware
-app.middleware("http")(log_middleware_functional)
-
-# 3. Authentication Middleware
-app.middleware("http")(api_key_auth)
-
-# 3.5 Anthropic Version Header Middleware
-@app.middleware("http")
 async def add_anthropic_version_header(request: Request, call_next):
     response = await call_next(request)
     if "/v1/messages" in request.url.path or "/v1/models" in request.url.path or "anthropic-version" in request.headers:
@@ -519,7 +499,6 @@ async def add_anthropic_version_header(request: Request, call_next):
     return response
 
 
-@app.middleware("http")
 async def add_routing_diagnostic_headers(request: Request, call_next):
     response = await call_next(request)
     if not settings.routing_diagnostic_headers:
@@ -539,16 +518,60 @@ async def add_routing_diagnostic_headers(request: Request, call_next):
         response.headers["X-Fallback-Attempts"] = str(len(attempts))
     return response
 
-# 4. Chat Completion Observability Middleware
-logger.info("Chat usage tracking is ENABLED.")
-if settings.log_chat_messages:
-    logger.info("Chat message file logging is ENABLED.")
-else:
-    logger.info("Chat message file logging is DISABLED.")
-app.middleware("http")(log_chat_completions)
 
-# 5. GZip Middleware - added via add_middleware to be the outermost layer for responses
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+def configure_gateway_middleware(
+    app: FastAPI,
+    *,
+    cors_allow_origins: list[str] | None = None,
+    max_request_body_bytes: int | None = None,
+) -> None:
+    # Starlette wraps middleware in reverse registration order: register the
+    # innermost layers first so inbound requests hit CORS/logging/auth before
+    # chat_logging can buffer request bodies.
+    logger.info("Chat usage tracking is ENABLED.")
+    if settings.log_chat_messages:
+        logger.info("Chat message file logging is ENABLED.")
+    else:
+        logger.info("Chat message file logging is DISABLED.")
+
+    app.middleware("http")(log_chat_completions)
+    app.middleware("http")(add_anthropic_version_header)
+    app.middleware("http")(add_routing_diagnostic_headers)
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.middleware("http")(api_key_auth)
+    app.add_middleware(
+        ContentSizeLimitMiddleware,
+        max_body_size=max_request_body_bytes or settings.max_request_body_bytes,
+    )
+    app.middleware("http")(log_middleware_functional)
+    configure_cors(app, cors_allow_origins)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception during {request.method} {request.url.path}: {exc}", exc_info=True)
+    return error_response(
+        request,
+        status_code=500,
+        detail="Internal server error",
+        error_type="internal_error",
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return error_response(
+        request,
+        status_code=exc.status_code,
+        detail=exc.detail,
+        headers=exc.headers,
+    )
+
+configure_gateway_middleware(
+    app,
+    cors_allow_origins=settings.cors_allow_origins,
+    max_request_body_bytes=settings.max_request_body_bytes,
+)
 
 
 # --- API Routers ---

@@ -10,7 +10,6 @@ import tiktoken
 import gzip
 import io
 import time
-import hashlib
 from uuid import uuid4
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -54,6 +53,12 @@ from ...utils.api_keys import split_api_keys
 from ...utils.log_redaction import redact_payload_for_log
 from ...utils.text_sanitize import sanitize_payload
 from ...utils.usage_tracking import extract_request_x_title, extract_tokens_usage
+from .chat_sanitizers import (
+    expects_json_object_response as _expects_json_object_response,
+    sanitize_json_object_response_content as _sanitize_json_object_response_content,
+    sanitize_openai_response_content_think_tags as _sanitize_openai_response_content_think_tags,
+    strip_think_blocks as _strip_think_blocks,
+)
 
 # Bound by the FastAPI lifespan via ``set_model_rotation_db``. Defined at
 # module import only as a declaration — no ``ModelRotationDB()`` is created
@@ -61,8 +66,6 @@ from ...utils.usage_tracking import extract_request_x_title, extract_tokens_usag
 # SQLite file the moment anything imports chat.py, which previously leaked
 # into test runs and scripts that didn't need rotation at all.
 model_rotation_db: ModelRotationDB | None = None
-MODEL_FAILURE_COOLDOWN_SECONDS = 10 * 60
-MODEL_FAILURE_COOLDOWNS_STATE_KEY = "chat_model_failure_cooldowns"
 TEMPORARY_MODEL_FAILURE_MARKERS = (
     "currently overloaded",
     "engine is overloaded",
@@ -152,16 +155,25 @@ def _upstream_key_candidates_for_provider(
     return candidates, pool_config, pool_name
 
 
-def _affinity_scope_for_request(request: Request) -> str:
+def _auth_scope_for_request(request: Request) -> str:
     api_key_id = getattr(request.state, "api_key_id", None)
     if api_key_id is not None:
         return f"user:{api_key_id}"
     role = getattr(request.state, "api_key_role", "master")
     if role != "master":
         return f"role:{role}"
-    authorization = request.headers.get("authorization", "")
-    token_hash = hashlib.sha256(authorization.encode("utf-8")).hexdigest()[:16] if authorization else "session"
-    return f"master:{token_hash}"
+    token = _extract_gateway_auth_token_from_request(request) or settings.gateway_api_key
+    return f"master:{fingerprint_api_key(token)}"
+
+
+def _affinity_scope_for_request(request: Request) -> str:
+    return _auth_scope_for_request(request)
+
+
+def _rotation_scope_for_request(request: Request) -> str:
+    return _auth_scope_for_request(request)
+
+
 TEMPORARY_MODEL_FAILURE_STATUS_RE = re.compile(
     r"\b(?:downstream\s+error|http|status(?:\s+code)?|error)\s*(429|5[0-9]{2})\b",
     re.IGNORECASE,
@@ -175,13 +187,17 @@ def set_model_rotation_db(db: ModelRotationDB | None) -> None:
     model_rotation_db = db
 
 
-def _require_model_rotation_db() -> ModelRotationDB:
-    if model_rotation_db is None:
+def _require_model_rotation_db(request: Request | None = None) -> ModelRotationDB:
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    db = getattr(app_state, "model_rotation_db", None) if app_state is not None else None
+    if db is None:
+        db = model_rotation_db
+    if db is None:
         raise RuntimeError(
             "chat.model_rotation_db is not bound. "
             "Call set_model_rotation_db() from the application lifespan or test setup before requesting rotation."
         )
-    return model_rotation_db
+    return db
 
 
 def get_token_usage(chunk_data: dict) -> dict:
@@ -190,44 +206,6 @@ def get_token_usage(chunk_data: dict) -> dict:
     Returns a dict with prompt_tokens, completion_tokens, total_tokens, etc.
     """
     return extract_tokens_usage(chunk_data)
-
-
-def _get_model_failure_cooldowns(request: Request) -> dict[tuple[str, str], float]:
-    cooldowns = getattr(request.app.state, MODEL_FAILURE_COOLDOWNS_STATE_KEY, None)
-    if cooldowns is None:
-        cooldowns = {}
-        setattr(request.app.state, MODEL_FAILURE_COOLDOWNS_STATE_KEY, cooldowns)
-    return cooldowns
-
-
-def _model_failure_cooldown_key(
-    provider_name: str | None,
-    provider_model: str | None,
-) -> tuple[str, str] | None:
-    if not provider_name or not provider_model:
-        return None
-    return provider_name, provider_model
-
-
-def _get_active_model_failure_cooldown_remaining(
-    request: Request,
-    provider_name: str | None,
-    provider_model: str | None,
-) -> float | None:
-    cooldown_key = _model_failure_cooldown_key(provider_name, provider_model)
-    if cooldown_key is None:
-        return None
-
-    cooldowns = _get_model_failure_cooldowns(request)
-    expires_at = cooldowns.get(cooldown_key)
-    if expires_at is None:
-        return None
-
-    remaining_seconds = expires_at - time.monotonic()
-    if remaining_seconds <= 0:
-        cooldowns.pop(cooldown_key, None)
-        return None
-    return remaining_seconds
 
 
 def _is_temporary_model_failure(error_detail: object) -> bool:
@@ -257,27 +235,6 @@ def _is_temporary_model_failure(error_detail: object) -> bool:
     return any(marker in lower_error_text for marker in TEMPORARY_MODEL_FAILURE_MARKERS)
 
 
-def _mark_model_failure_cooldown(
-    request: Request,
-    provider_name: str | None,
-    provider_model: str | None,
-    error_detail: object,
-) -> None:
-    cooldown_key = _model_failure_cooldown_key(provider_name, provider_model)
-    if cooldown_key is None:
-        return
-
-    cooldowns = _get_model_failure_cooldowns(request)
-    cooldowns[cooldown_key] = time.monotonic() + MODEL_FAILURE_COOLDOWN_SECONDS
-    logging.warning(
-        "Temporarily disabled model '%s' via provider '%s' for %.0f seconds after transient failure: %s",
-        provider_model,
-        provider_name,
-        MODEL_FAILURE_COOLDOWN_SECONDS,
-        error_detail,
-    )
-
-
 router = APIRouter()
 anthropic_router = APIRouter()
 responses_router = APIRouter()
@@ -285,12 +242,6 @@ ANTHROPIC_API_KEY_HEADER_NAME = "X-Api-Key"
 # Anthropic requires max_tokens; default chosen when neither client nor rule set one.
 ANTHROPIC_DEFAULT_MAX_TOKENS = 32768
 TOKEN_COUNT_ENCODING_FALLBACKS = ("o200k_base", "cl100k_base")
-JSON_OBJECT_RESPONSE_FORMAT_TYPES = frozenset({"json_object"})
-JSON_MARKDOWN_CODE_BLOCK_RE = re.compile(
-    r"^\s*```(?:json)?\s*(?P<payload>.*?)\s*```\s*$",
-    re.IGNORECASE | re.DOTALL,
-)
-JSON_THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
 JSON_STREAM_OPENING_PREFIXES = (
     "```json\r\n",
     "```json\n",
@@ -353,120 +304,6 @@ def _read_json_request_body(request_body_bytes: bytes, endpoint_name: str, reque
     except Exception as e:
         logging.error(f"Error reading request body for {endpoint_name}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"Error reading request body: {str(e)}")
-
-
-def _expects_json_object_response(request_body_json: dict) -> bool:
-    response_format = request_body_json.get("response_format")
-    if not isinstance(response_format, dict):
-        return False
-
-    response_type = response_format.get("type")
-    return isinstance(response_type, str) and response_type in JSON_OBJECT_RESPONSE_FORMAT_TYPES
-
-
-def _is_json_object_payload(text: str) -> bool:
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return False
-
-    return isinstance(parsed, dict)
-
-
-def _strip_think_blocks(text: str) -> str:
-    return JSON_THINK_BLOCK_RE.sub("", text)
-
-
-def _unwrap_json_object_markdown_wrapper(text: str) -> str | None:
-    stripped_text = text.strip()
-    candidates: list[str] = []
-
-    markdown_match = JSON_MARKDOWN_CODE_BLOCK_RE.fullmatch(stripped_text)
-    if markdown_match:
-        payload = markdown_match.group("payload").strip()
-        if payload:
-            candidates.append(payload)
-
-    if stripped_text.lower().startswith("json"):
-        prefixed_payload = stripped_text[4:].lstrip(" \t\r\n:")
-        if prefixed_payload:
-            candidates.append(prefixed_payload)
-
-    for candidate in candidates:
-        if _is_json_object_payload(candidate):
-            return candidate
-
-    return None
-
-
-def _extract_sanitized_json_object_content(text: str) -> str | None:
-    stripped_text = text.strip()
-    candidates = [stripped_text]
-
-    without_think_blocks = _strip_think_blocks(stripped_text).strip()
-    if without_think_blocks != stripped_text:
-        candidates.append(without_think_blocks)
-
-    for candidate in candidates:
-        if _is_json_object_payload(candidate):
-            return candidate
-
-        unwrapped_candidate = _unwrap_json_object_markdown_wrapper(candidate)
-        if unwrapped_candidate is not None:
-            return unwrapped_candidate
-
-    return None
-
-
-def _sanitize_json_object_response_content(response_data: dict, requested_model: str) -> None:
-    choices = response_data.get("choices")
-    if not isinstance(choices, list):
-        return
-
-    for choice in choices:
-        if not isinstance(choice, dict):
-            continue
-
-        message = choice.get("message")
-        if not isinstance(message, dict):
-            continue
-
-        content = message.get("content")
-        if not isinstance(content, str):
-            continue
-
-        sanitized_content = _extract_sanitized_json_object_content(content)
-        if sanitized_content is None:
-            continue
-
-        if sanitized_content != content:
-            logging.info("Sanitized non-stream JSON response content for model '%s'.", requested_model)
-            message["content"] = sanitized_content
-
-
-def _sanitize_openai_response_content_think_tags(response_data: dict, requested_model: str) -> None:
-    choices = response_data.get("choices")
-    if not isinstance(choices, list):
-        return
-
-    for choice in choices:
-        if not isinstance(choice, dict):
-            continue
-
-        message = choice.get("message")
-        if not isinstance(message, dict):
-            continue
-
-        content = message.get("content")
-        if not isinstance(content, str):
-            continue
-
-        sanitized_content = _strip_think_blocks(content)
-        if sanitized_content == content:
-            continue
-
-        logging.info("Stripped <think> tags from non-stream response content for model '%s'.", requested_model)
-        message["content"] = sanitized_content
 
 
 def _buffer_json_stream_suffix(content: str, state: dict) -> str:
@@ -897,6 +734,125 @@ def _sanitize_openai_json_object_stream(response: StreamingResponse, requested_m
         def serialize_event(payload: dict) -> bytes:
             return f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n".encode("utf-8")
 
+        def flush_choice_buffers() -> list[bytes]:
+            if last_template_chunk is None:
+                return []
+
+            output_chunks: list[bytes] = []
+            for choice_index, state in choice_states.items():
+                pending_content = _flush_stream_think_buffer(state)
+                if pending_content:
+                    sanitized_pending_content = _sanitize_json_object_stream_content_fragment(pending_content, state)
+                    if sanitized_pending_content:
+                        template_choice = {"index": choice_index}
+                        output_chunks.append(
+                            serialize_event(
+                                _build_openai_stream_delta_chunk(
+                                    last_template_chunk,
+                                    template_choice,
+                                    choice_index,
+                                    sanitized_pending_content,
+                                )
+                            )
+                        )
+                flushed_suffix = _flush_json_stream_suffix(state)
+                if flushed_suffix:
+                    template_choice = {"index": choice_index}
+                    output_chunks.append(
+                        serialize_event(
+                            _build_openai_stream_delta_chunk(
+                                last_template_chunk,
+                                template_choice,
+                                choice_index,
+                                flushed_suffix,
+                            )
+                        )
+                    )
+            return output_chunks
+
+        async def emit_sanitized_event(event: str):
+            nonlocal last_template_chunk
+            stripped_event = event.strip()
+            if not stripped_event:
+                return
+
+            if stripped_event == "data: [DONE]":
+                for output_chunk in flush_choice_buffers():
+                    yield output_chunk
+                yield b"data: [DONE]\n\n"
+                return
+
+            if not stripped_event.startswith("data: "):
+                yield f"{event}\n\n".encode("utf-8")
+                return
+
+            data = stripped_event[len("data: "):]
+            try:
+                chunk_json = sanitize_payload(json.loads(data))
+            except Exception:
+                yield f"{event}\n\n".encode("utf-8")
+                return
+
+            if not isinstance(chunk_json, dict):
+                yield f"{event}\n\n".encode("utf-8")
+                return
+
+            last_template_chunk = _extract_stream_template(chunk_json)
+            choices = chunk_json.get("choices")
+            if not isinstance(choices, list):
+                yield serialize_event(chunk_json)
+                return
+
+            sanitized_choices: list[dict] = []
+            for choice_index, choice in enumerate(choices):
+                if not isinstance(choice, dict):
+                    sanitized_choices.append(choice)
+                    continue
+
+                state = get_choice_state(choice_index)
+                finish_reason = choice.get("finish_reason")
+                if finish_reason is not None:
+                    pending_content = _flush_stream_think_buffer(state)
+                    if pending_content:
+                        sanitized_pending_content = _sanitize_json_object_stream_content_fragment(pending_content, state)
+                        if sanitized_pending_content:
+                            yield serialize_event(
+                                _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, sanitized_pending_content)
+                            )
+                    flushed_suffix = _flush_json_stream_suffix(state)
+                    if flushed_suffix:
+                        yield serialize_event(
+                            _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, flushed_suffix)
+                        )
+                    sanitized_choices.append(choice)
+                    continue
+
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    sanitized_choices.append(choice)
+                    continue
+
+                content = delta.get("content")
+                if not isinstance(content, str):
+                    sanitized_choices.append(choice)
+                    continue
+
+                sanitized_content = _sanitize_json_object_stream_delta(content, state)
+                if sanitized_content:
+                    delta["content"] = sanitized_content
+                    sanitized_choices.append(choice)
+                    continue
+
+                delta.pop("content", None)
+                if delta:
+                    sanitized_choices.append(choice)
+
+            if not sanitized_choices and not chunk_json.get("usage"):
+                return
+
+            chunk_json["choices"] = sanitized_choices
+            yield serialize_event(chunk_json)
+
         async for chunk in response.body_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
             buffer += text_chunk
@@ -904,107 +860,15 @@ def _sanitize_openai_json_object_stream(response: StreamingResponse, requested_m
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
             for event in events:
-                stripped_event = event.strip()
-                if not stripped_event:
-                    continue
-
-                if stripped_event == "data: [DONE]":
-                    for choice_index, state in choice_states.items():
-                        pending_content = _flush_stream_think_buffer(state)
-                        if pending_content and last_template_chunk is not None:
-                            sanitized_pending_content = _sanitize_json_object_stream_content_fragment(pending_content, state)
-                            if sanitized_pending_content:
-                                template_choice = {"index": choice_index}
-                                yield serialize_event(
-                                    _build_openai_stream_delta_chunk(
-                                        last_template_chunk,
-                                        template_choice,
-                                        choice_index,
-                                        sanitized_pending_content,
-                                    )
-                                )
-                        flushed_suffix = _flush_json_stream_suffix(state)
-                        if flushed_suffix and last_template_chunk is not None:
-                            template_choice = {"index": choice_index}
-                            yield serialize_event(
-                                _build_openai_stream_delta_chunk(last_template_chunk, template_choice, choice_index, flushed_suffix)
-                            )
-                    yield b"data: [DONE]\n\n"
-                    continue
-
-                if not stripped_event.startswith("data: "):
-                    yield f"{event}\n\n".encode("utf-8")
-                    continue
-
-                data = stripped_event[len("data: "):]
-                try:
-                    chunk_json = sanitize_payload(json.loads(data))
-                except Exception:
-                    yield f"{event}\n\n".encode("utf-8")
-                    continue
-
-                if not isinstance(chunk_json, dict):
-                    yield f"{event}\n\n".encode("utf-8")
-                    continue
-
-                last_template_chunk = _extract_stream_template(chunk_json)
-                choices = chunk_json.get("choices")
-                if not isinstance(choices, list):
-                    yield serialize_event(chunk_json)
-                    continue
-
-                sanitized_choices: list[dict] = []
-                for choice_index, choice in enumerate(choices):
-                    if not isinstance(choice, dict):
-                        sanitized_choices.append(choice)
-                        continue
-
-                    state = get_choice_state(choice_index)
-                    finish_reason = choice.get("finish_reason")
-                    if finish_reason is not None:
-                        pending_content = _flush_stream_think_buffer(state)
-                        if pending_content:
-                            sanitized_pending_content = _sanitize_json_object_stream_content_fragment(pending_content, state)
-                            if sanitized_pending_content:
-                                yield serialize_event(
-                                    _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, sanitized_pending_content)
-                                )
-                        flushed_suffix = _flush_json_stream_suffix(state)
-                        if flushed_suffix:
-                            yield serialize_event(
-                                _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, flushed_suffix)
-                            )
-                        sanitized_choices.append(choice)
-                        continue
-
-                    delta = choice.get("delta")
-                    if not isinstance(delta, dict):
-                        sanitized_choices.append(choice)
-                        continue
-
-                    content = delta.get("content")
-                    if not isinstance(content, str):
-                        sanitized_choices.append(choice)
-                        continue
-
-                    sanitized_content = _sanitize_json_object_stream_delta(content, state)
-                    if sanitized_content:
-                        delta["content"] = sanitized_content
-                        sanitized_choices.append(choice)
-                        continue
-
-                    delta.pop("content", None)
-                    if delta:
-                        sanitized_choices.append(choice)
-
-                if not sanitized_choices and not chunk_json.get("usage"):
-                    continue
-
-                chunk_json["choices"] = sanitized_choices
-                yield serialize_event(chunk_json)
+                async for sanitized_event in emit_sanitized_event(event):
+                    yield sanitized_event
 
         if buffer.strip():
-            yield buffer.encode("utf-8")
+            async for sanitized_event in emit_sanitized_event(buffer):
+                yield sanitized_event
+
+        for output_chunk in flush_choice_buffers():
+            yield output_chunk
 
     logging.info("Enabled streaming JSON wrapper sanitization for model '%s'.", requested_model)
     return StreamingResponse(
@@ -2200,6 +2064,10 @@ def _format_anthropic_sse_event(event_name: str, payload: dict) -> bytes:
     return f"event: {event_name}\ndata: {event_json}\n\n".encode("utf-8")
 
 
+def _is_openai_stream_error_chunk(chunk_json: dict) -> bool:
+    return "error" in chunk_json and not chunk_json.get("choices")
+
+
 def _update_request_usage_tracker(request: Request | None, usage_payload: object) -> None:
     if request is None or not isinstance(usage_payload, dict):
         return
@@ -2242,13 +2110,30 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
         thinking_block_index: int | None = None
         next_content_index = 0
         tool_block_states: dict[int, dict] = {}
+        failed = False
 
         def process_openai_chunk(chunk_json: dict) -> list[bytes]:
-            nonlocal stream_id, finish_reason, usage, started
+            nonlocal stream_id, finish_reason, usage, started, failed
             nonlocal text_block_index, thinking_block_index, next_content_index
 
             output_events: list[bytes] = []
             stream_id = chunk_json.get("id", stream_id)
+
+            if _is_openai_stream_error_chunk(chunk_json):
+                failed = True
+                output_events.append(
+                    _format_anthropic_sse_event(
+                        "error",
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "Upstream stream failed.",
+                            },
+                        },
+                    )
+                )
+                return output_events
 
             chunk_usage = chunk_json.get("usage")
             if chunk_usage:
@@ -2418,6 +2303,8 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
                     continue
                 for event in process_openai_chunk(chunk_json):
                     yield event
+                if failed:
+                    return
 
         # Process any remaining data left in the buffer after the stream ends.
         if buffer:
@@ -2429,6 +2316,8 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
                         chunk_json = sanitize_payload(json.loads(data))
                         for event in process_openai_chunk(chunk_json):
                             yield event
+                        if failed:
+                            return
                     except Exception:
                         pass
 
@@ -2897,15 +2786,40 @@ def _openai_stream_to_responses(
         tool_call_ids: dict[int, str] = {}
         tool_call_names: dict[int, str] = {}
         tool_call_arguments: dict[int, list[str]] = {}
+        failed = False
 
         def process_openai_chunk(chunk_json: dict) -> list[bytes]:
-            nonlocal response_id, created_at, usage
+            nonlocal response_id, created_at, usage, failed
             nonlocal next_output_index, reasoning_output_index, text_output_index
 
             output_events: list[bytes] = []
             response_id = chunk_json.get("id", response_id)
             if created_at is None:
                 created_at = chunk_json.get("created")
+
+            if _is_openai_stream_error_chunk(chunk_json):
+                failed = True
+                output_events.append(
+                    _format_responses_sse_event(
+                        {
+                            "type": "response.failed",
+                            "response": {
+                                "id": response_id,
+                                "object": "response",
+                                "created_at": created_at,
+                                "status": "failed",
+                                "model": requested_model,
+                                "output": [],
+                                "usage": usage,
+                                "error": {
+                                    "code": "upstream_stream_error",
+                                    "message": "Upstream stream failed.",
+                                },
+                            },
+                        }
+                    )
+                )
+                return output_events
 
             choices = chunk_json.get("choices", [])
             first_choice = choices[0] if choices else {}
@@ -3030,6 +2944,9 @@ def _openai_stream_to_responses(
                     continue
                 for event in process_openai_chunk(chunk_json):
                     yield event
+                if failed:
+                    yield b"data: [DONE]\n\n"
+                    return
 
         # Process any remaining data left in the buffer after the stream ends.
         if buffer:
@@ -3041,6 +2958,9 @@ def _openai_stream_to_responses(
                         chunk_json = sanitize_payload(json.loads(data))
                         for event in process_openai_chunk(chunk_json):
                             yield event
+                        if failed:
+                            yield b"data: [DONE]\n\n"
+                            return
                     except Exception:
                         pass
 
@@ -3592,7 +3512,7 @@ async def _attempt_model_fallback_rule(
 
             logging.warning("All sub-providers for '%s' failed.", provider_name)
 
-        if remaining_attempts > 0:
+        if remaining_attempts > 0 and not _budget_exhausted():
             sleep_seconds = _compute_retry_sleep_seconds(retry_delay, error_detail)
             if sleep_seconds > 0:
                 logging.info(
@@ -3829,12 +3749,12 @@ async def _dispatch_chat_request(
             "dynamic_penalty_enabled": dynamic_penalty_enabled,
         }
 
-    api_key = _extract_gateway_auth_token_from_request(request)
+    rotation_scope = _rotation_scope_for_request(request)
 
     start_index = 0
     if rotate_models and len(model_fallbacks_sequence) > 1:
-        start_index = await _require_model_rotation_db().get_next_model_index(
-            api_key=api_key,
+        start_index = await _require_model_rotation_db(request).get_next_model_index(
+            api_key=rotation_scope,
             gateway_model=requested_model,
             total_models=len(model_fallbacks_sequence),
         )
@@ -3972,6 +3892,7 @@ async def openai_responses(request: Request):
 
     if not isinstance(response_data, dict):
         raise HTTPException(status_code=500, detail="Internal server error: expected JSON response")
+    _update_request_usage_tracker(request, response_data.get("usage"))
     return _openai_response_to_responses(response_data, requested_model)
 
 
@@ -4007,6 +3928,7 @@ async def anthropic_messages(request: Request):
         return _openai_stream_to_anthropic(request, response_data, requested_model)
     if not isinstance(response_data, dict):
         raise HTTPException(status_code=500, detail="Internal server error: expected JSON response")
+    _update_request_usage_tracker(request, response_data.get("usage"))
     if is_anthropic_raw:
         return response_data
     return _openai_response_to_anthropic(response_data, requested_model)

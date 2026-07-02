@@ -26,6 +26,7 @@
 
     let editingKeyId = null;
     let availableModels = [];
+    let modalReturnFocus = null;
 
     function showMessage(text, isError = false) {
         messageArea.textContent = text;
@@ -56,6 +57,13 @@
             .replace(/'/g, "&#39;");
     }
 
+    function maskSecret(value) {
+        const text = String(value || "");
+        if (!text) return "—";
+        if (text.length <= 8) return "••••";
+        return `${text.slice(0, 4)}…${text.slice(-4)}`;
+    }
+
     function renderKeysTable(keys) {
         if (!keys.length) {
             keysArea.innerHTML = "<p>No API keys yet. Use <em>Create API Key</em> to add one.</p>";
@@ -78,7 +86,7 @@
                 : '<span class="muted-inline">all</span>';
             const lastUsed = k.last_used_at ? escapeHtml(k.last_used_at.replace("T", " ").slice(0, 19)) : "—";
             const resetPeriod = (k.budget_period && k.budget_period !== "none") ? escapeHtml(k.budget_period) : '<span class="muted-inline">—</span>';
-            const keyCode = `<code>${escapeHtml(k.api_key)}</code>`;
+            const keyCode = `<code class="masked-secret" title="Full key is shown only immediately after creation">${escapeHtml(maskSecret(k.api_key))}</code>`;
             return `
                 <tr data-key-id="${k.id}">
                     <td><strong>${escapeHtml(k.name)}</strong><br><small>id ${k.id}</small></td>
@@ -175,6 +183,7 @@
     }
 
     function openCreateModal() {
+        modalReturnFocus = document.activeElement;
         editingKeyId = null;
         modalTitle.textContent = "Create API Key";
         editOnlyFields.style.display = "none";
@@ -193,11 +202,12 @@
     }
 
     function openEditModal(record) {
+        modalReturnFocus = document.activeElement;
         editingKeyId = record.id;
         modalTitle.textContent = `Edit: ${record.name}`;
         editOnlyFields.style.display = "flex";
         newKeyNotice.style.display = "block";
-        newKeyValue.textContent = record.api_key;
+        newKeyValue.textContent = "Only shown immediately after key creation.";
         fieldName.value = record.name;
         fieldBudget.value = record.budget_usd != null ? record.budget_usd : "";
         fieldBudgetPeriod.value = record.budget_period || "none";
@@ -213,6 +223,37 @@
 
     function closeModal() {
         modalOverlay.classList.remove("visible");
+        if (modalReturnFocus && typeof modalReturnFocus.focus === "function") {
+            modalReturnFocus.focus();
+        }
+        modalReturnFocus = null;
+    }
+
+    function getModalFocusableElements() {
+        return Array.from(modalOverlay.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )).filter((element) => !element.disabled && element.offsetParent !== null);
+    }
+
+    function handleModalKeydown(event) {
+        if (!modalOverlay.classList.contains("visible")) return;
+        if (event.key === "Escape") {
+            event.preventDefault();
+            closeModal();
+            return;
+        }
+        if (event.key !== "Tab") return;
+        const focusable = getModalFocusableElements();
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
     }
 
     function parseOptionalNumber(value) {
@@ -316,6 +357,7 @@
     modalOverlay.addEventListener("click", (event) => {
         if (event.target === modalOverlay) closeModal();
     });
+    modalOverlay.addEventListener("keydown", handleModalKeydown);
 
     Theme.attachToggle("darkModeToggle");
 

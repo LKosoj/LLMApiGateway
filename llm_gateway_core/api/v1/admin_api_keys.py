@@ -208,4 +208,7 @@ async def delete_api_key(request: Request, key_id: int) -> dict[str, Any]:
     rate_limiter = getattr(request.app.state, "rate_limiter", None)
     if rate_limiter is not None:
         rate_limiter.reset(key_id)
+    ledger = getattr(request.app.state, "usd_budget_ledger", None)
+    if isinstance(ledger, UsdBudgetLedger):
+        ledger.discard_record(key_id)
     return {"deleted": True, "id": key_id}

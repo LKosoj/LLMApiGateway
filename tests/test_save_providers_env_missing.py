@@ -5,10 +5,13 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ConfigLoader
+from llm_gateway_core.middleware.auth import ROLE_USER
 
 
 VALID_PROVIDERS_TEXT = """
@@ -136,6 +139,31 @@ class SaveProvidersEnvMissingTests(unittest.TestCase):
             self.providers_path.read_text(encoding="utf-8"),
             self._providers_payload("${EXISTING_ENV}"),
         )
+
+    def test_legacy_providers_config_route_requires_master_in_handler(self):
+        original_file_content = self.providers_path.read_text(encoding="utf-8")
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def set_user_role(request, call_next):
+            request.state.api_key_role = ROLE_USER
+            return await call_next(request)
+
+        app.include_router(editor_router, prefix="/v1")
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/ui/providers-config",
+                content=VALID_PROVIDERS_TEXT,
+                headers={"Content-Type": "text/plain"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )
+        self.assertEqual(self.providers_path.read_text(encoding="utf-8"), original_file_content)
 
 
 if __name__ == "__main__":

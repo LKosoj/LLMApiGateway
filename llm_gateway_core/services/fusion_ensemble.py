@@ -41,6 +41,13 @@ from ..config.loader import (
 )
 from ..services.provider_auth import resolve_provider_auth_material
 from ..services.request_handler import make_llm_request
+from ..utils.usage_tracking import (
+    RATE_BASED_COST_SKIP_KEY,
+    UPSTREAM_COST_PRESENT_KEY,
+    build_model_cost_rate_registry,
+    calculate_model_cost_usd,
+    extract_tokens_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,15 +142,62 @@ def _messages_to_text(messages: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _add_usage(accumulator: Dict[str, int], usage: Optional[Dict[str, Any]]) -> None:
+def _add_usage(
+    accumulator: Dict[str, Any],
+    usage: Optional[Dict[str, Any]],
+    *,
+    member: Dict[str, Any] | None = None,
+    cost_rate_registry: Dict[tuple[str, str], Any] | None = None,
+) -> None:
     if not isinstance(usage, dict):
         return
-    prompt = int(usage.get("prompt_tokens") or 0)
-    completion = int(usage.get("completion_tokens") or 0)
-    total = int(usage.get("total_tokens") or (prompt + completion))
+    extracted = extract_tokens_usage({"usage": usage})
+    raw_cost_incomplete = bool(usage.get("_cost_incomplete"))
+    prompt = int(extracted.get("prompt_tokens") or 0)
+    completion = int(extracted.get("completion_tokens") or 0)
+    total = int(extracted.get("total_tokens") or (prompt + completion))
     accumulator["prompt_tokens"] += prompt
     accumulator["completion_tokens"] += completion
     accumulator["total_tokens"] += total
+
+    cost: float | None = None
+    if raw_cost_incomplete:
+        accumulator["_cost_incomplete"] = True
+    elif extracted.get(UPSTREAM_COST_PRESENT_KEY):
+        cost = float(extracted.get("cost") or 0.0)
+    elif member is not None and cost_rate_registry is not None and (prompt > 0 or completion > 0):
+        cost = calculate_model_cost_usd(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            rates=cost_rate_registry.get((str(member.get("provider")), str(member.get("model")))),
+        )
+
+    if cost is not None:
+        accumulator["cost"] = float(accumulator.get("cost") or 0.0) + cost
+    elif prompt > 0 or completion > 0:
+        accumulator["_cost_incomplete"] = True
+
+
+def _sync_request_usage_tracker(request: Request, usage_total: Dict[str, Any]) -> None:
+    tracker = getattr(request.state, "usage_tracker", None)
+    if not isinstance(tracker, dict):
+        tracker = {}
+        request.state.usage_tracker = tracker
+
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens", "cached_tokens"):
+        value = usage_total.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            tracker[key] = int(value)
+
+    cost = usage_total.get("cost")
+    if isinstance(cost, (int, float)) and cost >= 0:
+        tracker["cost"] = float(cost)
+    if usage_total.get("_cost_incomplete") or isinstance(cost, (int, float)):
+        tracker[RATE_BASED_COST_SKIP_KEY] = True
+
+
+def _public_usage(usage_total: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: value for key, value in usage_total.items() if not key.startswith("_")}
 
 
 def _parse_judge_analysis(raw_text: str) -> Dict[str, Any]:
@@ -201,7 +255,8 @@ class FusionEnsembleService:
         web_tools = fusion_config.get("web_tools") or None
         include_details = self._resolve_include_details(request_body, fusion_config)
 
-        usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        usage_total: Dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        cost_rate_registry = build_model_cost_rate_registry(getattr(self._config_loader, "providers_config", None))
 
         # Base context shared by all members of this run (single timestamp so
         # panel/judge/main agree). Panel members also get a recency cue when web
@@ -215,7 +270,13 @@ class FusionEnsembleService:
         if web_tools:
             panel_calls = [
                 self._call_member_with_tools(
-                    member, panel_messages, http_client, proxy_http_clients, request, web_tools
+                    member,
+                    panel_messages,
+                    http_client,
+                    proxy_http_clients,
+                    request,
+                    web_tools,
+                    cost_rate_registry,
                 )
                 for member in panel
             ]
@@ -239,7 +300,7 @@ class FusionEnsembleService:
             else:
                 content, usage = outcome
                 entry["content"] = content
-                _add_usage(usage_total, usage)
+                _add_usage(usage_total, usage, member=member, cost_rate_registry=cost_rate_registry)
                 successful.append({"provider": member.get("provider"), "model": member.get("model"), "content": content})
             panel_results.append(entry)
 
@@ -251,6 +312,7 @@ class FusionEnsembleService:
 
         conversation_text = _messages_to_text(base_messages)
         panel_text = _format_panel_answers(successful)
+        _sync_request_usage_tracker(request, usage_total)
 
         # 2. Fan-in: the judge returns a structured analysis.
         analysis: Dict[str, Any]
@@ -269,7 +331,8 @@ class FusionEnsembleService:
             judge_text, judge_usage = await self._call_member(
                 judge_member, judge_messages, http_client, proxy_http_clients, request
             )
-            _add_usage(usage_total, judge_usage)
+            _add_usage(usage_total, judge_usage, member=judge_member, cost_rate_registry=cost_rate_registry)
+            _sync_request_usage_tracker(request, usage_total)
             analysis = _parse_judge_analysis(judge_text)
         except Exception as exc:  # judge analysis is auxiliary — never fail the request on it
             logger.warning("Fusion judge failed: %s", exc)
@@ -288,15 +351,24 @@ class FusionEnsembleService:
                 ),
             },
         ]
-        final_content, main_usage = await self._call_member(
-            main_member, main_messages, http_client, proxy_http_clients, request
-        )
-        _add_usage(usage_total, main_usage)
-
         # Record the main model on request.state so usage logging attributes the
         # aggregated call to it.
         request.state.llmgateway_provider = main_member.get("provider")
         request.state.llmgateway_provider_model = main_member.get("model")
+
+        try:
+            final_content, main_usage = await self._call_member(
+                main_member, main_messages, http_client, proxy_http_clients, request
+            )
+        except Exception as exc:
+            _sync_request_usage_tracker(request, usage_total)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Fusion main model failed for model '{gateway_model_name}'.",
+            ) from exc
+
+        _add_usage(usage_total, main_usage, member=main_member, cost_rate_registry=cost_rate_registry)
+        _sync_request_usage_tracker(request, usage_total)
 
         if include_details:
             footer = _render_analysis_footer(analysis)
@@ -432,6 +504,7 @@ class FusionEnsembleService:
         proxy_http_clients: Dict[str, Any],
         request: Request,
         web_tools: Dict[str, Any],
+        cost_rate_registry: Dict[tuple[str, str], Any],
     ) -> Tuple[str, Dict[str, Any]]:
         """Run a panel member in an agentic web-tool loop and return (text, usage).
 
@@ -454,7 +527,12 @@ class FusionEnsembleService:
                 member, convo, http_client, proxy_http_clients, request,
                 tools=tool_schemas if offer_tools else None,
             )
-            _add_usage(usage_total, response.get("usage") or {})
+            _add_usage(
+                usage_total,
+                response.get("usage") or {},
+                member=member,
+                cost_rate_registry=cost_rate_registry,
+            )
             message = ((response.get("choices") or [{}])[0] or {}).get("message") or {}
             tool_calls = message.get("tool_calls") if offer_tools else None
             if not tool_calls:
@@ -486,9 +564,14 @@ class FusionEnsembleService:
 
         # Iterations exhausted while still requesting tools — force a final answer.
         final_response = await self._raw_chat_call(
-            member, convo, http_client, proxy_http_clients, tools=None
+            member, convo, http_client, proxy_http_clients, request=request, tools=None
         )
-        _add_usage(usage_total, final_response.get("usage") or {})
+        _add_usage(
+            usage_total,
+            final_response.get("usage") or {},
+            member=member,
+            cost_rate_registry=cost_rate_registry,
+        )
         return _extract_text(final_response), usage_total
 
     @staticmethod
@@ -587,7 +670,7 @@ class FusionEnsembleService:
                     "finish_reason": "stop",
                 }
             ],
-            "usage": usage_total,
+            "usage": _public_usage(usage_total),
             "fusion": fusion_block,
         }
 

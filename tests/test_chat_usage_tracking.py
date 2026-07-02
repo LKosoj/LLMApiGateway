@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.testclient import TestClient
 
+from llm_gateway_core.api.v1 import chat
 from llm_gateway_core.middleware import chat_logging
 
 
@@ -53,6 +54,92 @@ class ChatUsageTrackingTests(unittest.TestCase):
         insert_usage_mock.assert_called_once()
         call_args = dict(insert_usage_mock.call_args[0][0])
         self.assertEqual(call_args["x_title"], "tgBot")
+
+    def test_chat_logging_prefers_app_state_db_over_module_fallback(self):
+        app = FastAPI()
+        app.state.tokens_usage_db = Mock()
+        app.middleware("http")(chat_logging.log_chat_completions)
+
+        @app.post("/v1/chat/completions")
+        async def completions(request: Request):
+            request.state.llmgateway_provider = "provider-name"
+            request.state.llmgateway_provider_model = "provider-model"
+            return JSONResponse(
+                content={
+                    "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 4,
+                        "total_tokens": 7,
+                    },
+                    "model": "provider-model",
+                }
+            )
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with TestClient(app) as client:
+                response = client.post("/v1/chat/completions", json={"model": "demo-model"})
+
+        self.assertEqual(response.status_code, 200)
+        app.state.tokens_usage_db.insert_usage.assert_called_once()
+        self._fake_db.insert_usage.assert_not_called()
+
+    def test_chat_logging_keeps_two_app_instances_isolated(self):
+        first_app = FastAPI()
+        first_app.state.tokens_usage_db = Mock()
+        first_app.middleware("http")(chat_logging.log_chat_completions)
+
+        second_app = FastAPI()
+        second_app.state.tokens_usage_db = Mock()
+        second_app.middleware("http")(chat_logging.log_chat_completions)
+
+        async def completions(request: Request):
+            request.state.llmgateway_provider = "provider-name"
+            request.state.llmgateway_provider_model = "provider-model"
+            return JSONResponse(
+                content={
+                    "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+                    "model": "provider-model",
+                }
+            )
+
+        first_app.post("/v1/chat/completions")(completions)
+        second_app.post("/v1/chat/completions")(completions)
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with TestClient(first_app) as first_client:
+                first_response = first_client.post("/v1/chat/completions", json={"model": "first-model"})
+            with TestClient(second_app) as second_client:
+                second_response = second_client.post("/v1/chat/completions", json={"model": "second-model"})
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        first_app.state.tokens_usage_db.insert_usage.assert_called_once()
+        second_app.state.tokens_usage_db.insert_usage.assert_called_once()
+        self.assertEqual(
+            first_app.state.tokens_usage_db.insert_usage.call_args.args[0]["gateway_model"],
+            "first-model",
+        )
+        self.assertEqual(
+            second_app.state.tokens_usage_db.insert_usage.call_args.args[0]["gateway_model"],
+            "second-model",
+        )
+        self._fake_db.insert_usage.assert_not_called()
+
+    def test_model_rotation_db_prefers_request_app_state(self):
+        app_db = Mock()
+        global_db = Mock()
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(model_rotation_db=app_db))
+        )
+
+        original_db = chat.model_rotation_db
+        try:
+            chat.set_model_rotation_db(global_db)
+            self.assertIs(chat._require_model_rotation_db(request), app_db)
+        finally:
+            chat.set_model_rotation_db(original_db)
 
     def test_usage_stats_are_recorded_even_when_file_logging_is_disabled(self):
         app = FastAPI()
@@ -498,6 +585,49 @@ class ChatUsageTrackingTests(unittest.TestCase):
                 "model": "gpt-4.1",
             },
         )
+
+    def test_streaming_usage_write_path_enriches_request_metadata(self):
+        app = FastAPI()
+        app.middleware("http")(chat_logging.log_chat_completions)
+
+        @app.post("/v1/responses")
+        async def responses(request: Request):
+            request.state.llmgateway_provider = "openai"
+            request.state.llmgateway_provider_model = "gpt-4.1"
+            request.state.llmgateway_request_id = "req-stream"
+            request.state.api_key_id = 42
+            request.state.llmgateway_upstream_key_fingerprint = "fp-stream"
+
+            async def body():
+                yield b'data: {"type":"response.output_text.delta","response_id":"resp_1","output_index":0,"content_index":0,"delta":"Hello"}\n\n'
+                yield b'data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":7,"output_tokens":2,"total_tokens":9}}}\n\n'
+                yield b'data: [DONE]\n\n'
+
+            return StreamingResponse(body(), media_type="text/event-stream")
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with patch.object(chat_logging, "write_log") as write_log_mock:
+                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                    with TestClient(app) as client:
+                        with client.stream(
+                            "POST",
+                            "/v1/responses",
+                            json={"model": "gateway-model", "input": "Hi"},
+                            headers={"X-Title": " tgBot "},
+                        ) as response:
+                            _ = response.read()
+
+        self.assertEqual(response.status_code, 200)
+        write_log_mock.assert_not_called()
+        insert_usage_mock.assert_called_once()
+        call_args = dict(insert_usage_mock.call_args[0][0])
+        self.assertEqual(call_args["request_id"], "req-stream")
+        self.assertEqual(call_args["api_key_id"], 42)
+        self.assertEqual(call_args["upstream_key_fingerprint"], "fp-stream")
+        self.assertEqual(call_args["x_title"], "tgBot")
+        self.assertEqual(call_args["gateway_model"], "gateway-model")
+        self.assertEqual(call_args["provider"], "openai")
+        self.assertEqual(call_args["model"], "gpt-4.1")
 
     def test_messages_count_tokens_requests_are_not_recorded_in_usage_stats(self):
         app = FastAPI()

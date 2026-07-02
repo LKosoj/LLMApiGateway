@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 import main
 from llm_gateway_core.config.loader import ConfigLoader
 
+WAV_BYTES = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
+
 
 VALID_PROVIDERS_TEXT = """
 [
@@ -194,7 +196,7 @@ class OperationRulesIntegrationTests(unittest.TestCase):
             unauthorized_audio = client.post(
                 "/v1/audio/transcriptions",
                 data={"model": "gateway/audio-transcribe"},
-                files={"file": ("sample.wav", b"wave-bytes", "audio/wav")},
+                files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
             )
 
             authorized_headers = {"Authorization": "Bearer test-gateway-key"}
@@ -211,7 +213,7 @@ class OperationRulesIntegrationTests(unittest.TestCase):
             authorized_audio = client.post(
                 "/v1/audio/transcriptions",
                 data={"model": "gateway/audio-transcribe"},
-                files={"file": ("sample.wav", b"wave-bytes", "audio/wav")},
+                files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
                 headers=authorized_headers,
             )
 

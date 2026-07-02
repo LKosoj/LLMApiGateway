@@ -3,6 +3,18 @@
 // ── Dark-mode toggle (unified Theme manager from theme.js, as in quota.js) ───
 document.addEventListener("DOMContentLoaded", () => {
     Theme.attachToggle("darkModeToggle");
+    document.getElementById("runBtn").addEventListener("click", () => {
+        void runTranslation();
+    });
+    document.getElementById("openaiSampleBtn").addEventListener("click", loadOpenAISample);
+    document.getElementById("anthropicSampleBtn").addEventListener("click", loadAnthropicSample);
+    document.getElementById("toolSampleBtn").addEventListener("click", loadToolSample);
+    document.getElementById("stepsContainer").addEventListener("click", (event) => {
+        const copyButton = event.target.closest(".btn-copy");
+        if (copyButton) {
+            copyStep(copyButton);
+        }
+    });
 });
 
 // ── Sample payloads ───────────────────────────────────────────────────────────
@@ -177,7 +189,7 @@ function renderSteps(steps) {
         card.innerHTML = `
             <div class="step-header">
                 <span class="step-label">Step ${step.step}: ${escapeHtml(step.title)}</span>
-                <button class="btn-copy" onclick="copyStep(this)">Copy</button>
+                <button type="button" class="btn-copy">Copy</button>
             </div>
             <div class="step-card-body">
                 <textarea readonly rows="8" spellcheck="false">${escapeHtml(prettyPayload)}</textarea>
@@ -204,5 +216,6 @@ function escapeHtml(str) {
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
 }

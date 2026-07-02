@@ -65,6 +65,7 @@ WorkingDirectory=$PROJECT_DIR
 ExecStart=$PYTHON_BIN $PROJECT_DIR/main.py
 Restart=always
 RestartSec=5
+UMask=0007
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

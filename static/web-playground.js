@@ -41,20 +41,35 @@
     const { apiFetch } = window.gatewayAuth;
 
     function activateSection(name) {
+        const tabList = SECTION_BUTTONS[0]?.closest(".tabs");
+        if (tabList) tabList.setAttribute("role", "tablist");
         SECTION_BUTTONS.forEach((btn) => {
-            btn.classList.toggle("active", btn.dataset.playgroundSectionTab === name);
+            const isActive = btn.dataset.playgroundSectionTab === name;
+            btn.classList.toggle("active", isActive);
+            btn.setAttribute("role", "tab");
+            btn.setAttribute("aria-selected", isActive ? "true" : "false");
         });
         SECTION_PANELS.forEach((panel) => {
             panel.hidden = panel.dataset.playgroundSectionPanel !== name;
+            panel.setAttribute("role", "tabpanel");
         });
+        if (name === "audio-speech") {
+            refreshAudioVoiceSelect();
+        }
     }
 
     function activateWebTab(name) {
+        const tabList = WEB_TAB_BUTTONS[0]?.closest(".tabs");
+        if (tabList) tabList.setAttribute("role", "tablist");
         WEB_TAB_BUTTONS.forEach((btn) => {
-            btn.classList.toggle("active", btn.dataset.webTab === name);
+            const isActive = btn.dataset.webTab === name;
+            btn.classList.toggle("active", isActive);
+            btn.setAttribute("role", "tab");
+            btn.setAttribute("aria-selected", isActive ? "true" : "false");
         });
         WEB_TAB_PANELS.forEach((panel) => {
             panel.hidden = panel.dataset.webPanel !== name;
+            panel.setAttribute("role", "tabpanel");
         });
     }
 
@@ -1138,6 +1153,8 @@
     }
 
     async function bootstrap() {
+        activateSection("web");
+        activateWebTab("search");
         wireSimpleChatForm();
         wireForm("search", "searchForm", "/v1/web/search", renderSearchResult);
         wireForm("read", "readForm", "/v1/web/read", renderReadResult);
@@ -1159,7 +1176,6 @@
                 if (select) populateSelect(select, models[section] || [], section === "chat" ? fusionModelNames : null);
             });
             syncChatFusionOptions();
-            refreshAudioVoiceSelect();
         } catch (err) {
             STATUS_KINDS.forEach((kind) => {
                 setStatus(kind, `Failed to load models: ${err.message || err}`, true);
