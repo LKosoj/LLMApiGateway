@@ -338,6 +338,10 @@ class StatsApiPaginationTests(unittest.TestCase):
                 "req-running",
                 provider="openrouter",
                 model="qwen/qwen3",
+                upstream_key_fingerprint="fp-upstream",
+                prompt_tokens=42,
+                total_tokens=42,
+                is_estimated=True,
             )
             client.app.state.active_requests_registry = active_requests
 
@@ -354,6 +358,10 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(payload["records"][0]["gateway_model"], "llmgateway/qwen")
         self.assertEqual(payload["records"][0]["provider"], "openrouter")
         self.assertEqual(payload["records"][0]["model"], "qwen/qwen3")
+        self.assertEqual(payload["records"][0]["upstream_key_fingerprint"], "fp-upstream")
+        self.assertEqual(payload["records"][0]["prompt_tokens"], 42)
+        self.assertEqual(payload["records"][0]["total_tokens"], 42)
+        self.assertTrue(payload["records"][0]["is_estimated"])
         self.assertEqual(payload["records"][1]["status"], "completed")
         self.assertEqual(fake_tokens_usage_db.calls, [(1, 0, None)])
         self.assertEqual(fake_tokens_usage_db.count_calls, [None])

@@ -3361,6 +3361,7 @@ async def _attempt_model_fallback_rule(
                 operation=getattr(request.state, "llmgateway_operation", "chat"),
                 provider=provider_name,
                 model=provider_model,
+                upstream_key_fingerprint=upstream_key_fingerprint,
             )
             _track_attempt_start()
             t0 = time.monotonic()
@@ -3461,6 +3462,7 @@ async def _attempt_model_fallback_rule(
                     operation=getattr(request.state, "llmgateway_operation", "chat"),
                     provider=provider_name,
                     model=provider_model,
+                    upstream_key_fingerprint=upstream_key_fingerprint,
                 )
                 _track_attempt_start()
                 t0 = time.monotonic()

@@ -30,6 +30,7 @@ from ..utils.usage_tracking import (
     backfill_zero_token_counts,
     build_model_cost_rate_registry,
     enrich_tokens_usage as enrich_usage_metadata,
+    estimate_prompt_tokens,
     extract_tokens_usage,
     initialize_tokens_usage,
 )
@@ -886,6 +887,43 @@ def _request_usage_tracker_has_billable_usage(request: Request) -> bool:
     )
 
 
+# Strong references keep fire-and-forget estimation tasks alive until done.
+_ACTIVE_PROMPT_ESTIMATE_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_active_request_prompt_estimate(
+    request: Request, req_body_str: str, gateway_model: str | None
+) -> None:
+    """Reflect an estimated prompt token count on the in-flight usage record.
+
+    Tiktoken encoding of a large body can take hundreds of milliseconds, so it
+    runs in a worker thread as a background task instead of delaying the
+    request path; the update is a no-op if the request finishes first.
+    """
+    if not req_body_str:
+        return
+
+    async def _estimate_and_update() -> None:
+        try:
+            estimated = await anyio.to_thread.run_sync(
+                estimate_prompt_tokens, req_body_str, gateway_model
+            )
+        except Exception:
+            logger.exception("ChatLogging: failed to estimate in-flight prompt tokens")
+            return
+        if estimated > 0:
+            update_active_request(
+                request,
+                prompt_tokens=estimated,
+                total_tokens=estimated,
+                is_estimated=True,
+            )
+
+    task = asyncio.create_task(_estimate_and_update())
+    _ACTIVE_PROMPT_ESTIMATE_TASKS.add(task)
+    task.add_done_callback(_ACTIVE_PROMPT_ESTIMATE_TASKS.discard)
+
+
 async def log_chat_completions(request: Request, call_next: Callable) -> Response:
     operation = _extract_operation_from_url(request.url.path)
     if operation is None:
@@ -919,6 +957,7 @@ async def log_chat_completions(request: Request, call_next: Callable) -> Respons
 
     requested_gateway_model = _extract_gateway_model_from_request_body(req_body_str)
     update_active_request(request, gateway_model=requested_gateway_model, operation=operation)
+    _schedule_active_request_prompt_estimate(request, req_body_str, requested_gateway_model)
     request_started_at = time.monotonic()
     try:
         response = await call_next(request)

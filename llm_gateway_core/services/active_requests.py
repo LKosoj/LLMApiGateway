@@ -73,6 +73,7 @@ class ActiveRequestsRegistry:
                 "usage_source": None,
                 "cost_saved": 0.0,
                 "api_key_id": api_key_id,
+                "upstream_key_fingerprint": None,
                 "x_title": x_title,
                 "status": "running",
                 "_started_monotonic": time.monotonic(),
@@ -86,6 +87,10 @@ class ActiveRequestsRegistry:
         operation: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        upstream_key_fingerprint: str | None = None,
+        prompt_tokens: int | None = None,
+        total_tokens: int | None = None,
+        is_estimated: bool | None = None,
     ) -> None:
         if not request_id:
             return
@@ -98,6 +103,10 @@ class ActiveRequestsRegistry:
                 "operation": operation,
                 "provider": provider,
                 "model": model,
+                "upstream_key_fingerprint": upstream_key_fingerprint,
+                "prompt_tokens": prompt_tokens,
+                "total_tokens": total_tokens,
+                "is_estimated": is_estimated,
             }
             for key, value in updates.items():
                 if value is not None:
@@ -157,6 +166,10 @@ def update_active_request(
     operation: str | None = None,
     provider: str | None = None,
     model: str | None = None,
+    upstream_key_fingerprint: str | None = None,
+    prompt_tokens: int | None = None,
+    total_tokens: int | None = None,
+    is_estimated: bool | None = None,
 ) -> None:
     request_id = active_request_id(request)
     if not request_id:
@@ -171,6 +184,10 @@ def update_active_request(
         operation=operation,
         provider=provider,
         model=model,
+        upstream_key_fingerprint=upstream_key_fingerprint,
+        prompt_tokens=prompt_tokens,
+        total_tokens=total_tokens,
+        is_estimated=is_estimated,
     )
 
 
@@ -181,4 +198,7 @@ def update_active_request_from_state(request: Request) -> None:
         operation=getattr(request.state, "llmgateway_operation", None),
         provider=getattr(request.state, "llmgateway_provider", None),
         model=getattr(request.state, "llmgateway_provider_model", None),
+        upstream_key_fingerprint=getattr(
+            request.state, "llmgateway_upstream_key_fingerprint", None
+        ),
     )
