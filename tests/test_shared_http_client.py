@@ -138,6 +138,7 @@ class SharedHttpClientTests(unittest.TestCase):
     def test_create_shared_http_client_configures_finite_timeouts(self):
         http_client = main.create_shared_http_client()
         self.assertEqual(http_client.timeout.connect, main.HTTP_CLIENT_CONNECT_TIMEOUT_SECONDS)
+        self.assertEqual(main.HTTP_CLIENT_READ_TIMEOUT_SECONDS, 500.0)
         self.assertEqual(http_client.timeout.read, main.HTTP_CLIENT_READ_TIMEOUT_SECONDS)
         self.assertEqual(http_client.timeout.write, main.HTTP_CLIENT_WRITE_TIMEOUT_SECONDS)
         self.assertEqual(http_client.timeout.pool, main.HTTP_CLIENT_POOL_TIMEOUT_SECONDS)

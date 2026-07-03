@@ -14,7 +14,7 @@
       },
       {
         "provider": "nvidia",
-        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -111,7 +111,7 @@
       },
       {
         "provider": "nvidia",
-        "model": "z-ai/glm-5.1",
+        "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -293,8 +293,8 @@
         "custom_headers": {}
       },
       {
-        "provider": "aitunnel",
-        "model": "qwen3-235b-a22b-2507",
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -348,7 +348,7 @@
       },
       {
         "provider": "nvidia",
-        "model": "z-ai/glm-5.1",
+        "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {}
@@ -449,11 +449,9 @@
     "gateway_model_name": "llmgateway/free_gd",
     "fallback_models": [
       {
-        "provider": "openrouter",
-        "model": "openai/gpt-oss-120b:free",
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
-        "retry_delay": 1,
-        "retry_count": 1,
         "custom_body_params": {},
         "custom_headers": {}
       },
@@ -465,9 +463,11 @@
         "custom_headers": {}
       },
       {
-        "provider": "nvidia",
-        "model": "z-ai/glm-5.1",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b:free",
         "use_provider_order_as_fallback": false,
+        "retry_delay": 1,
+        "retry_count": 1,
         "custom_body_params": {},
         "custom_headers": {}
       }
