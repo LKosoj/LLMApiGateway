@@ -896,7 +896,7 @@ def test_usage_records_highlight_running_requests(page: Page, server):
     assert background not in {"rgba(0, 0, 0, 0)", "transparent"}
 
 
-def test_api_keys_page_does_not_offer_per_key_usage(page: Page, server):
+def test_api_keys_page_masks_list_but_shows_full_key_in_edit(page: Page, server):
     session = _build_master_session_cookie_value("test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
     page.route(
@@ -939,7 +939,8 @@ def test_api_keys_page_does_not_offer_per_key_usage(page: Page, server):
 
     expect(page.locator("#keysArea")).not_to_contain_text("lgk_test")
     expect(page.locator("#keysArea")).to_contain_text("••••")
-    expect(page.locator("#keyModal")).not_to_contain_text("shown only once")
+    page.locator('button[data-action="edit"]').click()
+    expect(page.locator("#keyModal")).to_contain_text("lgk_test")
     expect(page.locator('button[data-action="usage"]')).to_have_count(0)
     expect(page.locator("#keyUsagePanel")).to_have_count(0)
 

@@ -225,7 +225,7 @@ Router-модель — это обычная chat gateway-модель, кот�
 
 CRUD над виртуальными ключами доступен через Admin API (master-only):
 - `GET /v1/admin/api-keys` — список всех ключей вместе со значениями `api_key`, `spent_usd`, `last_used_at`, `budget_period`, `budget_reset_at`.
-- `POST /v1/admin/api-keys` — создать новый ключ; принимает необязательное поле `budget_period` (`none`/`daily`/`monthly`); ответ содержит `api_key`, `budget_period` и `budget_reset_at`. В Web-UI полный ключ показывается только сразу после создания; в списке и карточке редактирования отображается маска.
+- `POST /v1/admin/api-keys` — создать новый ключ; принимает необязательное поле `budget_period` (`none`/`daily`/`monthly`); ответ содержит `api_key`, `budget_period` и `budget_reset_at`. В Web-UI список ключей остаётся замаскированным, а карточка редактирования показывает полный ключ master-админу.
 - `PATCH /v1/admin/api-keys/{id}` — частичное обновление полей ключа, включая `reset_spent: true` для обнуления счётчика и `budget_period` для изменения периода сброса; ответ содержит обновлённые `budget_period` и `budget_reset_at`.
 - `DELETE /v1/admin/api-keys/{id}` — удаление ключа.
 - `GET /v1/admin/rejections` — список governance-отказов шлюза (только master-ключ). Query-параметры:

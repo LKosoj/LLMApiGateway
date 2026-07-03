@@ -86,7 +86,7 @@
                 : '<span class="muted-inline">all</span>';
             const lastUsed = k.last_used_at ? escapeHtml(k.last_used_at.replace("T", " ").slice(0, 19)) : "—";
             const resetPeriod = (k.budget_period && k.budget_period !== "none") ? escapeHtml(k.budget_period) : '<span class="muted-inline">—</span>';
-            const keyCode = `<code class="masked-secret" title="Full key is shown only immediately after creation">${escapeHtml(maskSecret(k.api_key))}</code>`;
+            const keyCode = `<code class="masked-secret" title="Open Edit to see the full key">${escapeHtml(maskSecret(k.api_key))}</code>`;
             return `
                 <tr data-key-id="${k.id}">
                     <td><strong>${escapeHtml(k.name)}</strong><br><small>id ${k.id}</small></td>
@@ -207,7 +207,7 @@
         modalTitle.textContent = `Edit: ${record.name}`;
         editOnlyFields.style.display = "flex";
         newKeyNotice.style.display = "block";
-        newKeyValue.textContent = "Only shown immediately after key creation.";
+        newKeyValue.textContent = record.api_key || "";
         fieldName.value = record.name;
         fieldBudget.value = record.budget_usd != null ? record.budget_usd : "";
         fieldBudgetPeriod.value = record.budget_period || "none";

@@ -225,7 +225,7 @@ On `/v1/ui/api-keys`, the master admin manages virtual keys and their limits. Ma
 
 CRUD over virtual keys is available through the master-only Admin API:
 - `GET /v1/admin/api-keys` — list every key together with its `api_key`, `spent_usd`, `last_used_at`, `budget_period`, `budget_reset_at`.
-- `POST /v1/admin/api-keys` — create a new key; accepts the optional `budget_period` field (`none`/`daily`/`monthly`); the response contains `api_key`, `budget_period`, and `budget_reset_at`. In the Web UI, the full key is shown only immediately after creation; the list and edit modal display a masked value.
+- `POST /v1/admin/api-keys` — create a new key; accepts the optional `budget_period` field (`none`/`daily`/`monthly`); the response contains `api_key`, `budget_period`, and `budget_reset_at`. In the Web UI, the key list stays masked, while the edit modal shows the full key to the master admin.
 - `PATCH /v1/admin/api-keys/{id}` — partial update, including `reset_spent: true` to reset the spend counter and `budget_period` to change the reset schedule; the response contains the updated `budget_period` and `budget_reset_at`.
 - `DELETE /v1/admin/api-keys/{id}` — remove a key.
 - `GET /v1/admin/rejections` — list gateway governance rejections (master key only). Query parameters:
