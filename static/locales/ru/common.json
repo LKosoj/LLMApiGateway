@@ -1,0 +1,37 @@
+{
+  "appName": "LLM API Gateway",
+  "loading": "Загрузка…",
+  "items": "{count, plural, one {# элемент} few {# элемента} many {# элементов} other {# элемента}}",
+  "languageChanged": "Язык изменён на {locale}",
+  "languageLabel": "Язык",
+  "localeChangeFailed": "Не удалось сменить язык интерфейса.",
+  "errors": {
+    "invalidApiKey": "Неверный API-ключ.",
+    "invalidRequest": "Некорректный запрос.",
+    "rateLimited": "Слишком много запросов. Повторите попытку позже.",
+    "unavailable": "Сервис временно недоступен.",
+    "requestFailed": "Запрос завершился ошибкой (HTTP {status}).",
+    "network": "Не удалось связаться с сервисом."
+  },
+  "theme": {
+    "switchToDark": "Переключить на тёмную тему",
+    "switchToSystem": "Использовать системную тему",
+    "switchToLight": "Переключить на светлую тему"
+  },
+  "productVersion": {
+    "ready": "(v{version})",
+    "unavailable": "(версия недоступна)"
+  },
+  "navigation": {
+    "label": "Основная навигация",
+    "docs": "Документация",
+    "usage": "Статистика",
+    "quota": "Квота",
+    "rules": "Редактор правил",
+    "playground": "Песочница",
+    "apiKeys": "API-ключи",
+    "rejections": "Отклонения",
+    "translator": "Отладка переводчика",
+    "pricing": "Тарифы"
+  }
+}

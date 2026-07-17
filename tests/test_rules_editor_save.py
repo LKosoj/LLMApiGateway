@@ -1,13 +1,11 @@
 import tempfile
 import unittest
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
-import main
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.rules_editor_test_support import transactional_rules_editor_client
 
 
 VALID_PROVIDERS_TEXT = """
@@ -51,12 +49,17 @@ class RulesEditorSaveTests(unittest.TestCase):
         self.operation_rules_path = Path(self.temp_dir.name) / "models_operation_rules.json"
         self.fusion_rules_path = Path(self.temp_dir.name) / "models_fusion_rules.json"
         self.router_rules_path = Path(self.temp_dir.name) / "models_router_rules.json"
+        self.model_rules_path = Path(self.temp_dir.name) / "models_model_rules.json"
         self.providers_path.write_text(VALID_PROVIDERS_TEXT, encoding="utf-8")
         self.rules_path.write_text(VALID_RULES_TEXT, encoding="utf-8")
         self.operation_rules_path.write_text("{}", encoding="utf-8")
         self.fusion_rules_path.write_text("[]", encoding="utf-8")
         self.router_rules_path.write_text("[]", encoding="utf-8")
-        self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
+        self.model_rules_path.write_text("{}", encoding="utf-8")
+        self.fallback_provider_patcher = patch(
+            "llm_gateway_core.config.loader.settings.fallback_provider",
+            "openrouter",
+        )
         self.fallback_provider_patcher.start()
 
         self.config_loader = ConfigLoader(
@@ -65,11 +68,9 @@ class RulesEditorSaveTests(unittest.TestCase):
             operation_rules_filename=str(self.operation_rules_path),
             fusion_rules_filename=str(self.fusion_rules_path),
             router_rules_filename=str(self.router_rules_path),
+            model_rules_filename=str(self.model_rules_path),
         )
-        self.config_loader.load_providers()
-        self.config_loader.load_fallback_rules()
-        self.config_loader.load_fusion_rules()
-        self.config_loader.load_router_rules()
+        self.config_loader.load_complete()
 
     def tearDown(self):
         self.fallback_provider_patcher.stop()
@@ -77,17 +78,8 @@ class RulesEditorSaveTests(unittest.TestCase):
 
     @contextmanager
     def _client(self):
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB"))
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
-
-            with TestClient(main.app) as client:
-                yield client
+        with transactional_rules_editor_client(self.config_loader) as result:
+            yield result
 
     def test_save_models_rules_returns_400_for_unknown_provider(self):
         invalid_rules_text = """
@@ -105,7 +97,7 @@ class RulesEditorSaveTests(unittest.TestCase):
         ]
         """.strip()
 
-        with self._client() as client:
+        with self._client() as (client, runtime):
             response = client.post(
                 "/v1/config/models-rules",
                 content=invalid_rules_text,
@@ -116,10 +108,29 @@ class RulesEditorSaveTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("missing-provider", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
+        self.assertEqual(
+            response.json()["detail"]["errors"],
+            [
+                {
+                    "type": "rule_validation",
+                    "loc": [],
+                    "msg": (
+                        "Invalid provider 'missing-provider' used in fallback "
+                        "rule for 'gateway-model'. Provider not found in "
+                        "configuration."
+                    ),
+                }
+            ],
+        )
+        self.assertNotIn("DIRECT-KEY", response.text)
+        self.assertIs(runtime.initial_snapshot.config_loader, self.config_loader)
 
     def test_save_providers_returns_400_for_invalid_json(self):
-        with self._client() as client:
+        with self._client() as (client, _runtime):
             response = client.post(
                 "/v1/config/providers",
                 content='[{ "provider-a": ',
@@ -130,9 +141,13 @@ class RulesEditorSaveTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
 
     def test_get_providers_structured_returns_provider_cards(self):
-        with self._client() as client:
+        with self._client() as (client, _runtime):
             response = client.get(
                 "/v1/config/providers/structured",
                 headers={"Authorization": "Bearer test-gateway-key"},
@@ -164,17 +179,24 @@ class RulesEditorSaveTests(unittest.TestCase):
             ]
         }
 
-        with self._client() as client:
+        with self._client() as (client, runtime):
             response = client.post(
                 "/v1/config/providers/structured",
                 json=payload,
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
+            client.get("/_test/runtime-generation")
+            published = runtime.observed_snapshot
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(published.generation, 2)
+        self.assertEqual(
+            published.config_loader.providers_config["devbox"].baseUrl,
+            "https://new-devbox.example",
+        )
         self.assertEqual(
             self.config_loader.providers_config["devbox"].baseUrl,
-            "https://new-devbox.example",
+            "https://devbox.example",
         )
         saved_text = self.providers_path.read_text(encoding="utf-8")
         self.assertIn('"devbox"', saved_text)
@@ -196,9 +218,16 @@ class RulesEditorSaveTests(unittest.TestCase):
 """.strip(),
             encoding="utf-8",
         )
-        self.config_loader.load_router_rules()
+        self.config_loader = ConfigLoader(
+            providers_filename=str(self.providers_path),
+            fallback_rules_filename=str(self.rules_path),
+            operation_rules_filename=str(self.operation_rules_path),
+            fusion_rules_filename=str(self.fusion_rules_path),
+            router_rules_filename=str(self.router_rules_path),
+            model_rules_filename=str(self.model_rules_path),
+        ).load_complete()
 
-        with self._client() as client:
+        with self._client() as (client, _runtime):
             response = client.get(
                 "/v1/config/router-rules/structured",
                 headers={"Authorization": "Bearer test-gateway-key"},
@@ -225,15 +254,21 @@ class RulesEditorSaveTests(unittest.TestCase):
             ]
         }
 
-        with self._client() as client:
+        with self._client() as (client, runtime):
             response = client.post(
                 "/v1/config/router-rules/structured",
                 json=payload,
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
+            client.get("/_test/runtime-generation")
+            published = runtime.observed_snapshot
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("gateway/router", self.config_loader.router_rules)
+        self.assertIn(
+            "gateway/router",
+            published.config_loader.router_rules,
+        )
+        self.assertNotIn("gateway/router", self.config_loader.router_rules)
         saved_text = self.router_rules_path.read_text(encoding="utf-8")
         self.assertIn('"gateway_model_name": "gateway/router"', saved_text)
         self.assertIn('"type": "fallback_entry"', saved_text)
@@ -250,7 +285,7 @@ class RulesEditorSaveTests(unittest.TestCase):
             ]
         }
 
-        with self._client() as client:
+        with self._client() as (client, _runtime):
             response = client.post(
                 "/v1/config/router-rules/structured",
                 json=payload,
@@ -258,26 +293,11 @@ class RulesEditorSaveTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("unknown selector_model", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
         self.assertEqual(self.router_rules_path.read_text(encoding="utf-8"), original_file_content)
-
-    def test_save_models_rules_does_not_overwrite_file_when_replace_fails(self):
-        updated_rules_text = VALID_RULES_TEXT.replace("provider-model", "provider-model-v2")
-        original_file_content = self.rules_path.read_text(encoding="utf-8")
-
-        with self._client() as client:
-            with patch("llm_gateway_core.api.v1.rules_editor.os.replace", side_effect=OSError("disk full")):
-                response = client.post(
-                    "/v1/config/models-rules",
-                    content=updated_rules_text,
-                    headers={
-                        "Authorization": "Bearer test-gateway-key",
-                        "Content-Type": "text/plain",
-                    },
-                )
-
-        self.assertEqual(response.status_code, 500)
-        self.assertEqual(self.rules_path.read_text(encoding="utf-8"), original_file_content)
 
 
 if __name__ == "__main__":

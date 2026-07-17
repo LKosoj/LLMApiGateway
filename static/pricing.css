@@ -34,6 +34,28 @@
     margin: 0 0 12px 0;
 }
 
+.pricing-conflict-state {
+    border: 1px solid #d97706;
+    border-radius: var(--radius-md);
+    margin-bottom: 12px;
+    padding: 12px 14px;
+}
+
+.pricing-conflict-state:focus {
+    outline: 3px solid var(--accent-soft);
+    outline-offset: 2px;
+}
+
+.pricing-conflict-state h3 {
+    font-size: 14px;
+    margin: 0 0 4px;
+}
+
+.pricing-conflict-state p {
+    font-size: 13px;
+    margin: 0 0 10px;
+}
+
 /* Table */
 .pricing-table-wrap {
     overflow-x: auto;
@@ -54,11 +76,11 @@
 }
 
 .pricing-table th {
+    color: var(--text);
     font-weight: 600;
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    opacity: 0.75;
 }
 
 .pricing-table td input[type="text"],
@@ -105,7 +127,7 @@
 .pricing-table .btn-delete {
     background: none;
     border: 1px solid rgba(185, 74, 72, 0.5);
-    color: #b94a48;
+    color: var(--error);
     border-radius: 4px;
     padding: 3px 10px;
     cursor: pointer;

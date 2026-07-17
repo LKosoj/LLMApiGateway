@@ -1,87 +1,83 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-i18n-page="pricing">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway - Pricing</title>
+    <title data-i18n="pricing:pageTitle">LLM Gateway - Pricing</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/usage-stats.css">
     <link rel="stylesheet" href="/static/pricing.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
     <script src="/static/theme.js"></script>
 </head>
 <body>
     <div class="top-nav">
         <div class="top-nav-content">
-            <a href="/v1/ui/docs" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
-                Docs
-            </a>
-            <a href="/v1/ui/usage-stats" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-                Usage Statistics
-            </a>
-            <a href="/v1/ui/quota" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                Quota
-            </a>
-            <a href="/v1/ui/rules-editor" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                Rules Editor
-            </a>
-            <a href="/v1/ui/playground" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
-                Playground
-            </a>
-            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
-                API Keys
-            </a>
-            <a href="/v1/ui/rejections" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Rejections
-            </a>
-            <a href="/v1/ui/pricing" class="nav-button active" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                Pricing
-            </a>
-            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
-                <span class="icon-placeholder"></span>
-            </button>
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
         </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
     </div>
 
     <div class="container">
-        <h1>LLM Gateway - Pricing <span class="page-version">(v1.10)</span></h1>
+        <h1><span data-i18n="pricing:heading">LLM Gateway - Pricing</span> <span class="page-version" data-product-version data-i18n-aria-label="pricing:productVersionLabel"></span></h1>
 
         <!-- Toast notification -->
-        <div id="toast" class="pricing-toast" role="alert" aria-live="polite"></div>
+        <div id="toast" class="pricing-toast"></div>
+        <div id="pricingRawDetail" data-i18n-raw-detail></div>
 
         <!-- Section 1: Editor -->
         <section class="pricing-section">
             <div class="pricing-section-header">
-                <h2>Editor</h2>
+                <h2 data-i18n="pricing:editor.title">Editor</h2>
                 <div class="pricing-toolbar-actions">
-                    <button id="addRowBtn" type="button" class="secondary-button">Add Row</button>
-                    <button id="saveBtn" type="button" class="primary-button">Save Changes</button>
+                    <button id="addRowBtn" type="button" class="secondary-button" data-i18n="pricing:editor.addRow" disabled>Add Row</button>
+                    <button id="saveBtn" type="button" class="primary-button" data-i18n="pricing:editor.save" disabled>Save Changes</button>
                 </div>
             </div>
-            <p class="pricing-hint">Rates are in <strong>USD per 1 million tokens</strong>. Changes are written to <code>providers.json</code> atomically.</p>
+            <p class="pricing-hint">
+                <span data-i18n="pricing:editor.hintPrefix">Rates are in</span>
+                <strong data-i18n="pricing:editor.hintUnit">USD per 1 million tokens</strong><span data-i18n="pricing:editor.hintMiddle">. Changes are written to</span>
+                <code data-i18n="pricing:editor.providersFile">providers.json</code><span data-i18n="pricing:editor.hintSuffix"> atomically.</span>
+            </p>
+            <div
+                id="pricingConflictState"
+                class="pricing-conflict-state"
+                role="alert"
+                tabindex="-1"
+                hidden
+            >
+                <h3 data-i18n="pricing:conflict.title"></h3>
+                <p data-i18n="pricing:conflict.message"></p>
+                <button
+                    id="reloadPricingBtn"
+                    type="button"
+                    class="secondary-button"
+                    data-i18n="pricing:conflict.reload"
+                ></button>
+            </div>
             <div class="pricing-table-wrap">
                 <table class="pricing-table" id="pricingTable">
                     <thead>
                         <tr>
-                            <th>Provider</th>
-                            <th>Model</th>
-                            <th>Input rate ($/1M)</th>
-                            <th>Output rate ($/1M)</th>
+                            <th data-i18n="pricing:editor.table.provider">Provider</th>
+                            <th data-i18n="pricing:editor.table.model">Model</th>
+                            <th data-i18n="pricing:editor.table.inputRate">Input rate ($/1M)</th>
+                            <th data-i18n="pricing:editor.table.outputRate">Output rate ($/1M)</th>
                             <th></th>
                         </tr>
                     </thead>
                     <tbody id="pricingTableBody">
                     </tbody>
                 </table>
-                <div id="pricingEmptyState" class="pricing-empty-state">
+                <div id="pricingEmptyState" class="pricing-empty-state" data-i18n="pricing:editor.empty">
                     No pricing configured. Add rows to define per-model rates.
                 </div>
             </div>
@@ -89,33 +85,45 @@
 
         <!-- Section 2: Calculator -->
         <section class="pricing-section">
-            <h2>Calculator</h2>
+            <h2 data-i18n="pricing:calculator.title">Calculator</h2>
             <div class="pricing-calc-grid">
                 <div class="pricing-calc-field">
-                    <label for="calcModel">Model</label>
+                    <label for="calcModel" data-i18n="pricing:calculator.model">Model</label>
                     <select id="calcModel">
-                        <option value="">— select model —</option>
+                        <option value="" data-i18n="pricing:calculator.selectModel">— select model —</option>
                     </select>
                 </div>
                 <div class="pricing-calc-field">
-                    <label for="calcPromptTokens">Prompt tokens</label>
+                    <label for="calcPromptTokens" data-i18n="pricing:calculator.promptTokens">Prompt tokens</label>
                     <input type="number" id="calcPromptTokens" min="0" value="1000000" />
                 </div>
                 <div class="pricing-calc-field">
-                    <label for="calcCompletionTokens">Completion tokens</label>
+                    <label for="calcCompletionTokens" data-i18n="pricing:calculator.completionTokens">Completion tokens</label>
                     <input type="number" id="calcCompletionTokens" min="0" value="500000" />
                 </div>
                 <div class="pricing-calc-field pricing-calc-action">
-                    <button id="calcBtn" type="button" class="primary-button">Calculate</button>
+                    <button id="calcBtn" type="button" class="primary-button" data-i18n="pricing:calculator.calculate">Calculate</button>
                 </div>
             </div>
-            <div id="calcResult" class="pricing-calc-result" hidden></div>
+            <div id="calcResult" class="pricing-calc-result" hidden>
+                <span id="calcCostValue" class="cost-value"></span>
+                <span class="rates-info">
+                    <span data-i18n="pricing:calculator.result.model">Model:</span>
+                    <strong id="calcModelValue"></strong>
+                    <span aria-hidden="true"> | </span>
+                    <span data-i18n="pricing:calculator.result.input">Input:</span>
+                    <strong id="calcInputRateValue"></strong>
+                    <span aria-hidden="true"> | </span>
+                    <span data-i18n="pricing:calculator.result.output">Output:</span>
+                    <strong id="calcOutputRateValue"></strong>
+                </span>
+            </div>
         </section>
     </div>
 
-    <script src="/static/ui-core.js"></script>
-    <script src="/static/shared-nav.js"></script>
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
     <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
     <script src="/static/pricing.js"></script>
 </body>
 </html>

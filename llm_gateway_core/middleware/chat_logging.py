@@ -1,136 +1,102 @@
-import os
 import asyncio
+import hashlib
 import json
 import glob
-import codecs
+import os
 import anyio
 import time
 from datetime import datetime
 from uuid import uuid4
 import logging
 from pprint import pformat
+import zlib
 from ..config.settings import settings
-from fastapi import Request, Response
-from fastapi.responses import StreamingResponse
-from typing import Callable
+from ..config.paths import resolve_log_dir
+from fastapi import Request
+from typing import TYPE_CHECKING
 import gzip
 import io
-from ..db.api_keys_db import ApiKeysDB
-from ..db.tokens_usage_db import TokensUsageDB
-from ..services.rate_limiter import RateLimiter
-from ..services.access_control import UsdBudgetLedger
-from ..services.active_requests import update_active_request
+from ..services.active_requests import active_request_id
+from ..services.accounting import AccountingValidationError, classify_billing_policy
 from ..services.upstream_routing_state import UpstreamRoutingState
-from ..middleware.content_size import contains_request_body_too_large
-from ..utils.log_redaction import redact_headers_for_log, redact_request_body_text
+from ..services.stream_observation import (
+    SSEFramer,
+    SSEFramingError,
+    StreamObservationLease,
+    StreamObservationTooLarge,
+)
+from ..api.v1.chat_accounting import (
+    CHAT_TERMINAL_HANDOFF_STATE_KEY,
+    ChatStreamDialect,
+    ChatTerminalOwner,
+    bind_chat_request,
+    build_chat_response_observation,
+    install_chat_terminal_handoff,
+    release_chat,
+    take_chat_terminal_owner,
+)
+from ..middleware.accounting_admission import (
+    get_accounting_request_context,
+    resolve_effective_http_route,
+)
+from ..middleware.response_observation import (
+    ResponseObservationStateError,
+    ResponseStart,
+    TransportResult,
+    WireMode,
+    captured_request_body,
+    enable_request_capture,
+    publish_response_observation,
+)
+from ..services.runtime_config import AppServices, RuntimeSnapshot
+from ..utils.log_redaction import (
+    redact_headers_for_log,
+    redact_request_body_text,
+    safe_exception_type_name,
+)
 from ..utils.usage_tracking import (
-    RATE_BASED_COST_SKIP_KEY,
     UPSTREAM_COST_PRESENT_KEY,
     apply_rate_based_cost,
     backfill_zero_token_counts,
-    build_model_cost_rate_registry,
     enrich_tokens_usage as enrich_usage_metadata,
     estimate_prompt_tokens,
     extract_tokens_usage,
-    initialize_tokens_usage,
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ..services.active_requests import ActiveRequestsRegistry
+    from ..services.task_supervisor import TaskSupervisor
+
 _STREAM_END = object()
-STREAM_CHUNK_QUEUE_MAXSIZE = 0  # Unbounded — avoids blocking the event loop on put()
+_STREAM_ABORT = object()
+STREAM_CHUNK_QUEUE_MAXSIZE = settings.stream_chunk_queue_maxsize
 STREAM_LOG_CAPTURE_MAX_CHARS = 262_144
+STREAM_TOOL_STATE_MAX_ITEMS = 1024
+STREAM_TOOL_STATE_KEY_MAX_BYTES = 128
 STREAM_LOG_TRUNCATION_MARKER = "\n\n[TRUNCATED]\n"
 _LOG_CLEANUP_INTERVAL = 10  # Only check for old log cleanup every N writes
 # Upper bound for waiting on the chunk-processing task during shutdown of a streaming
 # response. Guards against indefinite hangs if the worker is blocked on disk I/O or
-# an external SQLite lock — observability must not become a liveness hazard.
+# blocking token calculation — observability must not become a liveness hazard.
 CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS = 5.0
 _log_write_counter = 0
 
 
-class ChatLoggingState:
-    """Encapsulates the mutable module-level state for chat logging middleware.
-
-    Instead of bare globals (``tokens_usage_db``, ``api_keys_db``, etc.) the
-    state lives in a single object.  The module-level ``state`` instance is the
-    only public handle — tests and the lifespan bind attributes on it.
-    """
-
-    tokens_usage_db: TokensUsageDB | None = None
-    api_keys_db: ApiKeysDB | None = None
-    rate_limiter: RateLimiter | None = None
-    usd_budget_ledger: UsdBudgetLedger | None = None
-
-
-# Module-level singleton — the only public handle for state binding.
-state = ChatLoggingState()
-
-
-# Backwards-compatible setters kept for external callers (lifespan, tests).
-# Each delegates to the ``state`` instance so that no code path can diverge.
-def set_tokens_usage_db(db: TokensUsageDB | None) -> None:
-    """Bind (or unbind) the TokensUsageDB used for chat usage recording."""
-    state.tokens_usage_db = db
-
-
-def set_api_keys_db(db: ApiKeysDB | None) -> None:
-    """Bind (or unbind) the ApiKeysDB used for per-key budget tracking."""
-    state.api_keys_db = db
-
-
-def set_rate_limiter(limiter: RateLimiter | None) -> None:
-    """Bind (or unbind) the RateLimiter used for per-key TPM attribution."""
-    state.rate_limiter = limiter
-
-
-def set_usd_budget_ledger(ledger: UsdBudgetLedger | None) -> None:
-    """Bind (or unbind) the in-memory USD reservation ledger."""
-    state.usd_budget_ledger = ledger
-
-
-def _dependency_from_request(request: Request | None, name: str):
-    app_state = getattr(getattr(request, "app", None), "state", None)
-    if app_state is None:
-        return None
-    return getattr(app_state, name, None)
-
-
-def _tokens_usage_db_from_request(request: Request | None) -> TokensUsageDB | None:
-    db = _dependency_from_request(request, "tokens_usage_db")
-    if db is not None:
-        return db
-    return state.tokens_usage_db
-
-
-def _api_keys_db_from_request(request: Request | None) -> ApiKeysDB | None:
-    db = _dependency_from_request(request, "api_keys_db")
-    if db is not None:
-        return db
-    return state.api_keys_db
-
-
-def _rate_limiter_from_request(request: Request | None) -> RateLimiter | None:
-    limiter = _dependency_from_request(request, "rate_limiter")
-    if limiter is not None:
-        return limiter
-    return state.rate_limiter
-
-
-def _usd_budget_ledger_from_request(request: Request | None) -> UsdBudgetLedger | None:
-    ledger = _dependency_from_request(request, "usd_budget_ledger")
-    if ledger is not None:
-        return ledger
-    return state.usd_budget_ledger
-
-
-def _require_tokens_usage_db(request: Request | None = None) -> TokensUsageDB:
-    tokens_usage_db = _tokens_usage_db_from_request(request)
-    if tokens_usage_db is None:
-        raise RuntimeError(
-            "chat_logging.tokens_usage_db is not bound. "
-            "Call set_tokens_usage_db() from the application lifespan or test setup before recording usage."
-        )
-    return tokens_usage_db
+def _safe_stream_request_id(request: Request | None) -> str:
+    if request is None:
+        return "none"
+    request_id = active_request_id(request)
+    if not isinstance(request_id, str) or not request_id:
+        return "none"
+    if (
+        len(request_id) <= 128
+        and request_id.isascii()
+        and all(character.isalnum() or character in "._-" for character in request_id)
+    ):
+        return request_id
+    return "sha256:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
 
 
 def _decode_body(body_bytes: bytes, headers: dict) -> str:
@@ -148,53 +114,6 @@ def _decode_body(body_bytes: bytes, headers: dict) -> str:
     except Exception as e:
         logger.debug(f"Failed to decode or decompress request body: {e}")
         return body_bytes.decode("utf-8", errors="replace")
-
-
-def record_tokens_usage(tokens_usage, request: Request | None = None):
-    try:
-        tokens_usage.pop(RATE_BASED_COST_SKIP_KEY, None)
-        tokens_usage.pop(UPSTREAM_COST_PRESENT_KEY, None)
-        usd_budget_reserved = bool(tokens_usage.pop("_usd_budget_reserved", False))
-        key_tpm_limit = tokens_usage.pop("_key_tpm_limit", None)
-        usd_budget_reserved_estimate = tokens_usage.pop("_usd_budget_reserved_estimate", None)
-        if usd_budget_reserved_estimate is None and request is not None:
-            usd_budget_reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
-        # Ensure total_tokens is recalculated before saving
-        tokens_usage["total_tokens"] = tokens_usage.get("prompt_tokens", 0) + tokens_usage.get("completion_tokens", 0)
-
-        logger.info(f"Recording token usage: {tokens_usage.get('prompt_tokens')}+{tokens_usage.get('completion_tokens')}={tokens_usage.get('total_tokens')} for model {tokens_usage.get('gateway_model')}")
-        try:
-            _require_tokens_usage_db(request).insert_usage(tokens_usage)
-        except Exception as db_error:
-            logger.error("Failed to insert token usage data into database: %s", db_error, exc_info=True)
-
-        key_id = tokens_usage.get("api_key_id")
-        api_keys_db = _api_keys_db_from_request(request)
-        if key_id is not None and api_keys_db is not None:
-            try:
-                api_keys_db.record_spent(int(key_id), float(tokens_usage.get("cost") or 0.0))
-            except Exception as budget_error:
-                logger.error("Failed to update spent_usd for key %s: %s", key_id, budget_error)
-
-        usd_budget_ledger = _usd_budget_ledger_from_request(request)
-        if key_id is not None and usd_budget_reserved and usd_budget_ledger is not None:
-            try:
-                usd_budget_ledger.commit_reserved(
-                    int(key_id),
-                    float(tokens_usage.get("cost") or 0.0),
-                    reserved=usd_budget_reserved_estimate,
-                )
-            except Exception as ledger_error:
-                logger.error("Failed to commit USD budget reservation for key %s: %s", key_id, ledger_error)
-
-        rate_limiter = _rate_limiter_from_request(request)
-        if key_id is not None and rate_limiter is not None:
-            try:
-                rate_limiter.add_tokens(int(key_id), int(tokens_usage.get("total_tokens") or 0), tpm_limit=key_tpm_limit)
-            except Exception as tpm_error:
-                logger.error("Failed to attribute tokens to RateLimiter for key %s: %s", key_id, tpm_error)
-    except Exception as usage_error:
-        logger.error("Failed to record token usage side effects: %s", usage_error, exc_info=True)
 
 
 def write_log(req_headers, req_body_str, llm_response_accum, tokens_usage):
@@ -226,8 +145,9 @@ def write_log(req_headers, req_body_str, llm_response_accum, tokens_usage):
             f"{division_line}\nRequest Body:\n-{division_line}\n\n{sanitized_request_body}\n\n"
             f"{division_line}\nLLM Response:\n{division_line}\n\n{llm_response_accum}"
         )
-        os.makedirs("logs", exist_ok=True)
-        log_path = os.path.join("./logs", filename)
+        log_dir = os.fspath(resolve_log_dir())
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, filename)
 
         # Write the new log file
         with open(log_path, "w", encoding="utf-8") as f:
@@ -238,7 +158,10 @@ def write_log(req_headers, req_body_str, llm_response_accum, tokens_usage):
         global _log_write_counter
         _log_write_counter += 1
         if _log_write_counter % _LOG_CLEANUP_INTERVAL == 0:
-            log_files = sorted(glob.glob(os.path.join("./logs", "*.txt")), key=os.path.getmtime)
+            log_files = sorted(
+                glob.glob(os.path.join(log_dir, "*.txt")),
+                key=os.path.getmtime,
+            )
             max_logs = settings.log_file_limit or 50
             while len(log_files) > max_logs:
                 try:
@@ -256,6 +179,8 @@ def record_chat_observability(
     tokens_usage,
     cost_rate_registry=None,
     request: Request | None = None,
+    *,
+    services: "AppServices",
 ):
     if backfill_zero_token_counts(tokens_usage, req_body_str, llm_response_accum):
         logger.warning(
@@ -270,7 +195,6 @@ def record_chat_observability(
         )
 
     apply_rate_based_cost(tokens_usage, cost_rate_registry)
-    record_tokens_usage(tokens_usage, request=request)
 
     if settings.log_chat_messages:
         write_log(req_headers, req_body_str, llm_response_accum, tokens_usage)
@@ -282,6 +206,7 @@ def _record_chat_observability_with_rates(
     llm_response_accum,
     tokens_usage,
     cost_rate_registry,
+    services: "AppServices",
     request: Request | None = None,
 ) -> None:
     if cost_rate_registry is None:
@@ -291,6 +216,7 @@ def _record_chat_observability_with_rates(
             llm_response_accum,
             tokens_usage,
             request=request,
+            services=services,
         )
         return
     record_chat_observability(
@@ -300,6 +226,7 @@ def _record_chat_observability_with_rates(
         tokens_usage,
         cost_rate_registry,
         request=request,
+        services=services,
     )
 
 
@@ -318,44 +245,6 @@ def _log_rtk_compression_stats(request: Request | None) -> None:
     )
 
 
-def _mark_usd_budget_reservation_finalized(request: Request) -> None:
-    if getattr(request.state, "usd_budget_reserved", False):
-        request.state.usd_budget_finalized = True
-
-
-def _release_usd_budget_reservation_for_request(request: Request) -> None:
-    if not getattr(request.state, "usd_budget_reserved", False):
-        return
-    if getattr(request.state, "usd_budget_finalized", False):
-        return
-
-    key_id = getattr(request.state, "usd_budget_reserved_key_id", None)
-    usd_budget_ledger = _usd_budget_ledger_from_request(request)
-    reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
-    if key_id is not None and usd_budget_ledger is not None:
-        try:
-            usd_budget_ledger.release(int(key_id), reserved_estimate)
-        except Exception as ledger_error:
-            logger.error("Failed to release USD budget reservation for key %s: %s", key_id, ledger_error)
-    request.state.usd_budget_finalized = True
-
-
-def _extract_gateway_model_from_request_body(req_body_str: str) -> str | None:
-    if not req_body_str:
-        return None
-
-    try:
-        request_payload = json.loads(req_body_str)
-    except Exception:
-        logger.debug("Could not parse request body to extract gateway model for usage statistics.")
-        return None
-
-    gateway_model = request_payload.get("model")
-    if isinstance(gateway_model, str) and gateway_model:
-        return gateway_model
-    return None
-
-
 def _extract_operation_from_url(url_path: str) -> str | None:
     path = url_path.rstrip("/")
     if path.endswith("/chat/completions") or path.endswith("/responses"):
@@ -363,6 +252,29 @@ def _extract_operation_from_url(url_path: str) -> str | None:
     if path.endswith("/messages"):
         return "messages"
     return None
+
+
+def _chat_stream_dialect(url_path: str) -> ChatStreamDialect:
+    path = url_path.rstrip("/")
+    if path.endswith("/chat/completions"):
+        return ChatStreamDialect.OPENAI
+    if path.endswith("/messages"):
+        return ChatStreamDialect.ANTHROPIC
+    if path.endswith("/responses"):
+        return ChatStreamDialect.RESPONSES
+    raise ValueError("unsupported chat accounting route")
+
+
+async def _release_chat_owner(
+    owner: ChatTerminalOwner,
+    *,
+    primary_error: BaseException | None = None,
+) -> None:
+    try:
+        await release_chat(owner)
+    except BaseException:
+        if primary_error is None:
+            raise
 
 
 def _extract_responses_output_text(output_items: object) -> str:
@@ -414,10 +326,25 @@ def _extract_response_text_for_log(response_data: dict) -> str:
     return _extract_responses_output_text(response_data.get("output"))
 
 
-def enrich_tokens_usage(tokens_usage, request: Request, gateway_model: str | None = None, operation: str | None = None):
+def enrich_tokens_usage(
+    tokens_usage,
+    request: Request,
+    gateway_model: str | None = None,
+    operation: str | None = None,
+    *,
+    config_loader,
+    cost_rate_registry,
+):
     if operation is None:
         operation = _extract_operation_from_url(request.url.path)
-    return enrich_usage_metadata(tokens_usage, request, gateway_model=gateway_model, operation=operation)
+    return enrich_usage_metadata(
+        tokens_usage,
+        request,
+        config_loader=config_loader,
+        cost_rate_registry=cost_rate_registry,
+        gateway_model=gateway_model,
+        operation=operation,
+    )
 
 
 def _merge_request_usage_tracker(tokens_usage: dict, request: Request | None) -> dict:
@@ -447,11 +374,12 @@ def _merge_request_usage_tracker(tokens_usage: dict, request: Request | None) ->
     return tokens_usage
 
 
-def _record_upstream_tokens_for_request(request: Request | None, tokens_usage: dict) -> None:
+def _record_upstream_tokens_for_request(
+    request: Request | None,
+    tokens_usage: dict,
+    upstream_state: UpstreamRoutingState,
+) -> None:
     if request is None:
-        return
-    upstream_state = getattr(request.app.state, "upstream_routing_state", None)
-    if not isinstance(upstream_state, UpstreamRoutingState):
         return
     provider = getattr(request.state, "llmgateway_provider", None)
     model = getattr(request.state, "llmgateway_provider_model", None)
@@ -466,20 +394,6 @@ def _record_upstream_tokens_for_request(request: Request | None, tokens_usage: d
     )
 
 
-def _cost_rate_registry_from_request(request: Request | None):
-    if request is None:
-        return None
-    app_state = getattr(getattr(request, "app", None), "state", None)
-    if app_state is None:
-        return None
-    registry = getattr(app_state, "cost_rate_registry", None)
-    if isinstance(registry, dict):
-        return registry or None
-    config_loader = getattr(app_state, "config_loader", None)
-    registry = build_model_cost_rate_registry(getattr(config_loader, "providers_config", None))
-    return registry or None
-
-
 class ChunkProcessor:
     """Asyncio-based stream chunk processor.
 
@@ -487,7 +401,7 @@ class ChunkProcessor:
     parses SSE/JSON deltas into the token usage and response-log accumulators,
     and — once the stream ends — delegates the blocking ``record_chat_observability``
     call to a threadpool via ``asyncio.to_thread`` so the event loop is never
-    held on disk/SQLite I/O. The prior ``threading.Thread`` implementation
+    held on token calculation or optional log-file I/O. The prior ``threading.Thread`` implementation
     forced every chunk to cross a thread boundary; running in-loop avoids
     that overhead while the ``to_thread`` hop preserves non-blocking semantics
     for the heavy finalizer.
@@ -498,19 +412,24 @@ class ChunkProcessor:
         req_headers,
         req_body_str,
         is_real_streaming,
+        *,
+        services: "AppServices",
+        config_loader,
+        cost_rate_registry,
         provider_name=None,
         provider_model=None,
         gateway_model=None,
         operation="chat",
         api_key_id=None,
-        usd_budget_reserved=False,
-        key_tpm_limit=None,
         request: Request | None = None,
     ):
         self.req_headers = req_headers
         self.req_body_str = req_body_str
         self.is_real_streaming = is_real_streaming
         self.request = request
+        self.services = services
+        self.config_loader = config_loader
+        self.cost_rate_registry = cost_rate_registry
         self.provider_name = provider_name
         self.provider_model = provider_model
         self.gateway_model = gateway_model
@@ -518,6 +437,7 @@ class ChunkProcessor:
         self.api_key_id = api_key_id
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=STREAM_CHUNK_QUEUE_MAXSIZE)
         self.llm_response_accum = ""
+        self._response_accum_bytes = 0
         self.tokens_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -535,15 +455,24 @@ class ChunkProcessor:
             self.tokens_usage["gateway_model"] = gateway_model
         if api_key_id is not None:
             self.tokens_usage["api_key_id"] = api_key_id
-        if usd_budget_reserved:
-            self.tokens_usage["_usd_budget_reserved"] = True
-        if key_tpm_limit is not None:
-            self.tokens_usage["_key_tpm_limit"] = key_tpm_limit
         self._finished = False
+        self._finishing = False
         self._log_written = False
         self._anthropic_tool_blocks: dict[object, dict[str, object]] = {}
         self._response_accum_truncated = False
+        self._reasoning_header_written = False
         self._task: asyncio.Task | None = None
+        self._finish_task: asyncio.Task | None = None
+        self._observation_failed = False
+        self._gzip_decision_made = False
+        self._gzip_probe = bytearray()
+        self._gzip_probe_lease: StreamObservationLease | None = None
+        self._gzip_decompressor = None
+        self._gzip_complete = False
+        self._owned_observation_bytes = 0
+        self._retained_observation_bytes = 0
+        self._queued_observation_items = 0
+        self._queue_progress_event = asyncio.Event()
 
     def _write_log_once(self):
         if self._log_written:
@@ -555,16 +484,23 @@ class ChunkProcessor:
                 self.request,
                 self.gateway_model,
                 self.operation,
+                config_loader=self.config_loader,
+                cost_rate_registry=self.cost_rate_registry,
             )
         _merge_request_usage_tracker(self.tokens_usage, self.request)
-        _record_upstream_tokens_for_request(self.request, self.tokens_usage)
+        _record_upstream_tokens_for_request(
+            self.request,
+            self.tokens_usage,
+            self.services.upstream_routing_state,
+        )
         _log_rtk_compression_stats(self.request)
         _record_chat_observability_with_rates(
             self.req_headers,
             self.req_body_str,
             self.llm_response_accum,
             self.tokens_usage,
-            _cost_rate_registry_from_request(self.request),
+            self.cost_rate_registry,
+            self.services,
             self.request,
         )
         self._log_written = True
@@ -572,27 +508,369 @@ class ChunkProcessor:
     def start(self) -> None:
         if self._task is not None:
             return
-        self._task = asyncio.create_task(self._run())
+        self._task = self.services.task_supervisor.create_task(
+            self._run(),
+            name="chat-stream-observer",
+        )
 
-    def enqueue_chunk(self, chunk) -> None:
-        # Queue is unbounded (STREAM_CHUNK_QUEUE_MAXSIZE=0), so put_nowait
-        # never blocks and never raises QueueFull. Using the non-async form
-        # keeps the producer path (enqueueing_generator) free of awaits.
-        self.queue.put_nowait(chunk)
+    def _record_stream_failure(
+        self,
+        reason_code: str,
+        payload: bytes,
+        exception: BaseException | None = None,
+    ) -> None:
+        self.services.stream_observation_capacity.record_failure(reason_code)
+        logger.warning(
+            "Stream observation failure reason=%s type=%s length=%d sha256=%s request_id=%s",
+            reason_code,
+            safe_exception_type_name(exception) if exception is not None else "none",
+            len(payload),
+            hashlib.sha256(payload).hexdigest(),
+            _safe_stream_request_id(self.request),
+        )
 
-    async def finish(self) -> None:
-        if self._finished:
+    @staticmethod
+    def _chunk_bytes(chunk: object) -> bytes:
+        if isinstance(chunk, bytes):
+            return chunk
+        if isinstance(chunk, bytearray):
+            return bytes(chunk)
+        if isinstance(chunk, memoryview):
+            return chunk.tobytes()
+        if isinstance(chunk, str):
+            return chunk.encode("utf-8")
+        return str(chunk).encode("utf-8")
+
+    async def enqueue_chunk(self, chunk: object) -> None:
+        if self._finishing or self._finished:
+            raise RuntimeError("Cannot enqueue a stream chunk after finish.")
+        if self._task is not None and self._task.done():
+            self._observation_failed = True
+            return
+        if self._observation_failed:
             return
 
-        self._finished = True
+        raw_chunk = self._chunk_bytes(chunk)
+        if not raw_chunk:
+            return
+        if self._gzip_complete:
+            self._fail_observation("gzip_trailing_data", raw_chunk)
+            return
+
+        if not self._gzip_decision_made:
+            if not self._gzip_probe and raw_chunk == b"\x1f":
+                probe_lease = await self._acquire_observation_lease(
+                    1,
+                    raw_chunk,
+                    too_large_reason="chunk_too_large",
+                )
+                if probe_lease is None:
+                    return
+                self._gzip_probe.extend(raw_chunk)
+                self._gzip_probe_lease = probe_lease
+                self._owned_observation_bytes += probe_lease.remaining_bytes
+                return
+            probe_prefix = bytes(self._gzip_probe)
+            self._gzip_probe.clear()
+            probe_lease = self._gzip_probe_lease
+            self._gzip_probe_lease = None
+            self._gzip_decision_made = True
+            if (probe_prefix + raw_chunk[:2]).startswith(b"\x1f\x8b"):
+                try:
+                    self._gzip_decompressor = zlib.decompressobj(
+                        16 + zlib.MAX_WBITS
+                    )
+                except BaseException as exc:
+                    if probe_lease is not None:
+                        self._release_owned_lease(probe_lease)
+                    self._fail_observation(
+                        "gzip_initialization_failed",
+                        raw_chunk,
+                        exc,
+                    )
+                    raise
+            if probe_prefix:
+                if self._gzip_decompressor is not None:
+                    try:
+                        probe_output = self._gzip_decompressor.decompress(
+                            probe_prefix,
+                            self.services.stream_event_max_bytes,
+                        )
+                        probe_has_tail = bool(
+                            self._gzip_decompressor.unconsumed_tail
+                        )
+                        probe_has_unused_data = bool(
+                            self._gzip_decompressor.unused_data
+                        )
+                    except BaseException as exc:
+                        if probe_lease is not None:
+                            self._release_owned_lease(probe_lease)
+                        self._fail_observation("gzip_invalid", probe_prefix, exc)
+                        if isinstance(exc, zlib.error):
+                            return
+                        raise
+                    if (
+                        probe_output
+                        or probe_has_tail
+                        or probe_has_unused_data
+                    ):
+                        if probe_lease is not None:
+                            self._release_owned_lease(probe_lease)
+                        self._fail_observation("gzip_invalid", probe_prefix)
+                        return
+                    if probe_lease is not None:
+                        self._release_owned_lease(probe_lease)
+                else:
+                    if probe_lease is None:
+                        raise RuntimeError("Gzip probe bytes have no capacity lease.")
+                    self._publish_observed_chunk(
+                        probe_prefix,
+                        probe_lease,
+                        already_owned=True,
+                    )
+                if self._observation_failed:
+                    return
+
+        if self._gzip_decompressor is not None:
+            await self._enqueue_gzip_chunk(raw_chunk)
+            return
+        await self._enqueue_observed_chunk(raw_chunk)
+
+    def _fail_observation(
+        self,
+        reason_code: str,
+        payload: bytes,
+        exception: BaseException | None = None,
+    ) -> None:
+        self._observation_failed = True
+        self._gzip_decompressor = None
+        self._gzip_probe.clear()
+        if self._gzip_probe_lease is not None:
+            self._release_owned_lease(self._gzip_probe_lease)
+            self._gzip_probe_lease = None
+        self._record_stream_failure(reason_code, payload, exception)
+        try:
+            self.queue.put_nowait(_STREAM_ABORT)
+        except asyncio.QueueFull:
+            pass
+
+    async def _acquire_observation_lease(
+        self,
+        byte_count: int,
+        payload: bytes,
+        *,
+        too_large_reason: str,
+    ) -> StreamObservationLease | None:
+        capacity = self.services.stream_observation_capacity
+        snapshot = capacity.snapshot
+        if byte_count > snapshot.max_bytes:
+            self._fail_observation(too_large_reason, payload)
+            return None
+        while self._owned_observation_bytes and (
+            snapshot.waiters
+            or snapshot.active_items >= snapshot.max_items
+            or snapshot.active_bytes + byte_count > snapshot.max_bytes
+        ):
+            if self._queued_observation_items:
+                if self._task is None:
+                    self._fail_observation(
+                        "observation_progress_exhausted",
+                        payload,
+                    )
+                    self._drain_pending_observation_queue()
+                    return None
+                self._queue_progress_event.clear()
+                await self._queue_progress_event.wait()
+                snapshot = capacity.snapshot
+                continue
+            break
+        if self._retained_observation_bytes and (
+            snapshot.waiters
+            or snapshot.active_bytes + byte_count > snapshot.max_bytes
+        ):
+            self._fail_observation("observation_progress_exhausted", payload)
+            return None
+        try:
+            return await capacity.acquire(byte_count)
+        except StreamObservationTooLarge as exc:
+            self._fail_observation(too_large_reason, payload, exc)
+            return None
+
+    def _publish_observed_chunk(
+        self,
+        observed_chunk: bytes,
+        lease: StreamObservationLease,
+        *,
+        allow_finishing: bool = False,
+        already_owned: bool = False,
+    ) -> None:
+        try:
+            if (
+                self._observation_failed
+                or self._finished
+                or (self._finishing and not allow_finishing)
+                or (self._task is not None and self._task.done())
+            ):
+                if already_owned:
+                    self._release_owned_lease(lease)
+                else:
+                    lease.release_all()
+                return
+            self.queue.put_nowait((observed_chunk, lease))
+            self._queued_observation_items += 1
+            if not already_owned:
+                self._owned_observation_bytes += lease.remaining_bytes
+        except asyncio.QueueFull:
+            if already_owned:
+                self._release_owned_lease(lease)
+            else:
+                lease.release_all()
+            self._fail_observation("queue_capacity_invariant", observed_chunk)
+        except BaseException:
+            if already_owned:
+                self._release_owned_lease(lease)
+            else:
+                lease.release_all()
+            raise
+
+    def _release_owned_lease(self, lease: StreamObservationLease) -> None:
+        byte_count = lease.remaining_bytes
+        if byte_count > self._owned_observation_bytes:
+            raise RuntimeError("Stream observation byte ownership underflow.")
+        self._owned_observation_bytes -= byte_count
+        lease.release_all()
+
+    def _drain_pending_observation_queue(self) -> None:
+        while True:
+            try:
+                pending_item = self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if pending_item is _STREAM_END or pending_item is _STREAM_ABORT:
+                continue
+            _, pending_lease = pending_item
+            if self._queued_observation_items <= 0:
+                raise RuntimeError("Stream observation queue ownership underflow.")
+            self._queued_observation_items -= 1
+            self._release_owned_lease(pending_lease)
+        self._queue_progress_event.set()
+
+    async def _enqueue_observed_chunk(
+        self,
+        observed_chunk: bytes,
+        *,
+        allow_finishing: bool = False,
+    ) -> None:
+        lease = await self._acquire_observation_lease(
+            len(observed_chunk),
+            observed_chunk,
+            too_large_reason="chunk_too_large",
+        )
+        if lease is None:
+            return
+        self._publish_observed_chunk(
+            observed_chunk,
+            lease,
+            allow_finishing=allow_finishing,
+        )
+
+    async def _enqueue_gzip_chunk(self, raw_chunk: bytes) -> None:
+        event_limit = self.services.stream_event_max_bytes
+        pending_input = raw_chunk
+        drain_output = True
+        while (pending_input or drain_output) and not self._observation_failed:
+            lease = await self._acquire_observation_lease(
+                event_limit,
+                raw_chunk,
+                too_large_reason="gzip_capacity_too_small",
+            )
+            if lease is None:
+                return
+            try:
+                observed_chunk = self._gzip_decompressor.decompress(
+                    pending_input,
+                    event_limit,
+                )
+                pending_input = self._gzip_decompressor.unconsumed_tail
+                trailing_data = bool(self._gzip_decompressor.unused_data)
+                gzip_eof = self._gzip_decompressor.eof
+            except BaseException as exc:
+                lease.release_all()
+                self._fail_observation("gzip_invalid", raw_chunk, exc)
+                if isinstance(exc, zlib.error):
+                    return
+                raise
+
+            if trailing_data:
+                lease.release_all()
+                self._fail_observation("gzip_trailing_data", raw_chunk)
+                return
+            if not observed_chunk:
+                lease.release_all()
+            else:
+                unused_bytes = event_limit - len(observed_chunk)
+                if unused_bytes:
+                    lease.consume(unused_bytes)
+                self._publish_observed_chunk(observed_chunk, lease)
+                if self._observation_failed:
+                    return
+
+            if gzip_eof:
+                self._gzip_decompressor = None
+                self._gzip_complete = True
+                return
+            drain_output = len(observed_chunk) == event_limit
+            if not pending_input and not drain_output:
+                return
+
+    async def finish(self) -> None:
+        if self._finish_task is None:
+            self._finishing = True
+            try:
+                self._finish_task = self.services.task_supervisor.create_task(
+                    self._finish(),
+                    name="chat-stream-finish",
+                )
+            except BaseException:
+                self._finishing = False
+                raise
+        await asyncio.shield(self._finish_task)
+
+    async def _finish(self) -> None:
+        if self._finished:
+            return
+        if self._task is not None and self._task.done():
+            self._finished = True
+            return
+        if self._gzip_probe and not self._observation_failed:
+            pending_probe = bytes(self._gzip_probe)
+            self._gzip_probe.clear()
+            probe_lease = self._gzip_probe_lease
+            self._gzip_probe_lease = None
+            self._gzip_decision_made = True
+            if probe_lease is None:
+                raise RuntimeError("Gzip probe bytes have no capacity lease.")
+            self._publish_observed_chunk(
+                pending_probe,
+                probe_lease,
+                allow_finishing=True,
+                already_owned=True,
+            )
+        if (
+            self._gzip_decompressor is not None
+            and not self._observation_failed
+            and not self._gzip_decompressor.eof
+        ):
+            self._fail_observation("gzip_invalid", b"")
         await self.queue.put(_STREAM_END)
+        self._finished = True
 
     async def wait(self, timeout: float) -> bool:
         """Wait for the processing task to finish within ``timeout`` seconds.
 
         Returns True on clean completion, False on timeout. On timeout, the
-        underlying task is shielded so it continues in the background — the
-        stream completion path must not stall on a stuck worker.
+        underlying task is shielded and remains owned by the process task
+        supervisor, which drains it during application shutdown.
         """
         if self._task is None:
             return True
@@ -619,35 +897,46 @@ class ChunkProcessor:
         if not text or self._response_accum_truncated:
             return
 
-        remaining = STREAM_LOG_CAPTURE_MAX_CHARS - len(self.llm_response_accum)
+        remaining = STREAM_LOG_CAPTURE_MAX_CHARS - self._response_accum_bytes
         if remaining <= 0:
-            self.llm_response_accum += STREAM_LOG_TRUNCATION_MARKER
             self._response_accum_truncated = True
             return
 
-        if len(text) <= remaining:
+        encoded = text.encode("utf-8")
+        if len(encoded) <= remaining:
             self.llm_response_accum += text
+            self._response_accum_bytes += len(encoded)
             return
 
-        safe_remaining = max(remaining - len(STREAM_LOG_TRUNCATION_MARKER), 0)
+        marker = STREAM_LOG_TRUNCATION_MARKER.encode("utf-8")
+        safe_remaining = max(remaining - len(marker), 0)
         if safe_remaining > 0:
-            self.llm_response_accum += text[:safe_remaining]
-        self.llm_response_accum += STREAM_LOG_TRUNCATION_MARKER
+            prefix = encoded[:safe_remaining].decode("utf-8", errors="ignore")
+            self.llm_response_accum += prefix
+            self._response_accum_bytes += len(prefix.encode("utf-8"))
+        if len(marker) <= STREAM_LOG_CAPTURE_MAX_CHARS - self._response_accum_bytes:
+            self.llm_response_accum += STREAM_LOG_TRUNCATION_MARKER
+            self._response_accum_bytes += len(marker)
         self._response_accum_truncated = True
 
     def _append_reasoning_piece(self, reasoning_piece: str) -> None:
         if not reasoning_piece:
             return
 
-        if not self.llm_response_accum.endswith("\n\n[Reasoning]:\n") and "[Reasoning]:" not in self.llm_response_accum:
+        # self._reasoning_header_written tracks the same fact the old
+        # "[Reasoning]:" not in self.llm_response_accum scan did, without
+        # re-scanning the whole (up to STREAM_LOG_CAPTURE_MAX_CHARS) accumulator
+        # on every streamed delta.
+        if not self._reasoning_header_written:
             self._append_log_text("\n\n[Reasoning]:\n")
+            self._reasoning_header_written = True
         self._append_log_text(reasoning_piece)
 
     def _append_response_piece(self, content_piece: str, *, after_reasoning: bool = False) -> None:
         if not content_piece:
             return
 
-        if after_reasoning or "[Reasoning]:" in self.llm_response_accum:
+        if after_reasoning or self._reasoning_header_written:
             if not self.llm_response_accum.endswith("\n\n[Response]:\n"):
                 self._append_log_text("\n\n[Response]:\n")
         self._append_log_text(content_piece)
@@ -659,13 +948,45 @@ class ChunkProcessor:
         *,
         tool_name: object | None = None,
     ) -> None:
-        state = self._anthropic_tool_blocks.setdefault(
-            block_index,
-            {
-                "name": tool_name if isinstance(tool_name, str) and tool_name else f"tool_{block_index}",
+        if self._response_accum_truncated:
+            self._anthropic_tool_blocks.clear()
+            return
+        if self._observation_failed:
+            return
+        if (
+            isinstance(block_index, str)
+            and len(block_index.encode("utf-8")) > STREAM_TOOL_STATE_KEY_MAX_BYTES
+        ):
+            self._anthropic_tool_blocks.clear()
+            self._fail_observation("tool_state_key_too_large", b"")
+            return
+        if (
+            isinstance(tool_name, str)
+            and len(tool_name.encode("utf-8")) > STREAM_TOOL_STATE_KEY_MAX_BYTES
+        ):
+            self._anthropic_tool_blocks.clear()
+            self._fail_observation("tool_state_name_too_large", b"")
+            return
+        try:
+            state = self._anthropic_tool_blocks.get(block_index)
+        except TypeError:
+            self._anthropic_tool_blocks.clear()
+            self._fail_observation("tool_state_key_invalid", b"")
+            return
+        if state is None:
+            if len(self._anthropic_tool_blocks) >= STREAM_TOOL_STATE_MAX_ITEMS:
+                self._anthropic_tool_blocks.clear()
+                self._fail_observation("tool_state_capacity_exhausted", b"")
+                return
+            state = {
+                "name": (
+                    tool_name
+                    if isinstance(tool_name, str) and tool_name
+                    else f"tool_{block_index}"
+                ),
                 "header_written": False,
-            },
-        )
+            }
+            self._anthropic_tool_blocks[block_index] = state
         if isinstance(tool_name, str) and tool_name:
             state["name"] = tool_name
 
@@ -677,27 +998,38 @@ class ChunkProcessor:
             self._append_log_text(payload)
         elif payload not in (None, {}):
             self._append_log_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        if self._response_accum_truncated:
+            self._anthropic_tool_blocks.clear()
 
-    def _process_decoded_parts(self, parts):
+    def _process_decoded_parts(self, parts, *, canonical_events: bool = False):
         for part in parts:
+            decoded_chunk = None
             try:
-                # Find the 'data: ' line in the chunk (it might be prefixed by 'event: ')
-                decoded_chunk = None
-                for line in part.split("\n"):
-                    line = line.strip()
-                    if line.startswith("data: "):
-                        decoded_chunk = line[len("data: "):].strip()
-                        break
-                
-                # Fallback for non-SSE JSON (e.g. error responses)
-                if not decoded_chunk and part.strip().startswith("{"):
-                    decoded_chunk = part.strip()
+                stripped_part = part.strip()
+                if stripped_part == "[DONE]":
+                    continue
+                if canonical_events:
+                    decoded_chunk = stripped_part
+                elif stripped_part.startswith("{"):
+                    decoded_chunk = stripped_part
+                else:
+                    data_lines = [
+                        line[len("data:"):].lstrip()
+                        for line in part.splitlines()
+                        if line.startswith("data:")
+                    ]
+                    if data_lines:
+                        decoded_chunk = "\n".join(data_lines)
 
                 if not decoded_chunk:
+                    if canonical_events:
+                        raise ValueError("empty canonical SSE data payload")
                     continue
 
                 chunk_json = json.loads(decoded_chunk)
                 if not isinstance(chunk_json, dict):
+                    if canonical_events:
+                        raise ValueError("canonical SSE data payload is not an object")
                     continue
                 
                 # --- OpenAI Format Processing ---
@@ -821,78 +1153,209 @@ class ChunkProcessor:
                         self.tokens_usage["operation"] = self.operation
 
                 if "error" in chunk_json:
-                    self._append_log_text(decoded_chunk)
-                    self._write_log_once()
+                    self._append_log_text("[Upstream error event]")
             except Exception as ex:
-                logger.error(f"ChatLogging: error processing chunk part: {decoded_chunk}: {ex}", exc_info=True)
+                payload = (
+                    decoded_chunk.encode("utf-8")
+                    if isinstance(decoded_chunk, str)
+                    else str(part).encode("utf-8")
+                )
+                self._fail_observation("event_payload_invalid", payload, ex)
+                return
+
+    @staticmethod
+    def _retain_lease(
+        retained_lease: StreamObservationLease | None,
+        lease: StreamObservationLease,
+    ) -> StreamObservationLease:
+        if retained_lease is None:
+            lease.release_item()
+            return lease
+        retained_lease.absorb(lease)
+        return retained_lease
+
+    def _release_consumed_bytes(
+        self,
+        retained_lease: StreamObservationLease | None,
+        byte_count: int,
+    ) -> StreamObservationLease | None:
+        if byte_count == 0:
+            return retained_lease
+        if retained_lease is None:
+            raise RuntimeError("SSE framer consumed bytes without a capacity lease.")
+        if byte_count > self._owned_observation_bytes:
+            raise RuntimeError("Stream observation byte ownership underflow.")
+        retained_lease.consume(byte_count)
+        self._owned_observation_bytes -= byte_count
+        return None if retained_lease.released else retained_lease
 
     async def _run(self):
-        buffer = ""
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        while True:
-            chunk = await self.queue.get()
-
-            try:
-                if chunk is _STREAM_END:
+        framer = SSEFramer(max_event_bytes=self.services.stream_event_max_bytes)
+        retained_lease: StreamObservationLease | None = None
+        non_stream_buffer = bytearray()
+        cancelled = False
+        try:
+            while True:
+                item = await self.queue.get()
+                if item is _STREAM_ABORT:
+                    framer.abort()
+                    non_stream_buffer.clear()
+                    if retained_lease is not None:
+                        self._release_owned_lease(retained_lease)
+                        retained_lease = None
+                    self._retained_observation_bytes = 0
+                    continue
+                if item is _STREAM_END:
+                    if self.is_real_streaming and not self._observation_failed:
+                        try:
+                            batch = framer.finish()
+                        except SSEFramingError as exc:
+                            self._observation_failed = True
+                            self._record_stream_failure(
+                                exc.reason_code,
+                                b"",
+                                exc,
+                            )
+                            if retained_lease is not None:
+                                self._release_owned_lease(retained_lease)
+                                retained_lease = None
+                            self._retained_observation_bytes = 0
+                        else:
+                            retained_lease = self._release_consumed_bytes(
+                                retained_lease,
+                                batch.consumed_bytes,
+                            )
+                            self._retained_observation_bytes = (
+                                retained_lease.remaining_bytes
+                                if retained_lease is not None
+                                else 0
+                            )
+                            self._process_decoded_parts(
+                                (event.data for event in batch.events),
+                                canonical_events=True,
+                            )
+                    elif non_stream_buffer and not self._observation_failed:
+                        try:
+                            decoded_body = bytes(non_stream_buffer).decode(
+                                "utf-8",
+                                errors="strict",
+                            )
+                        except UnicodeDecodeError as exc:
+                            self._observation_failed = True
+                            self._record_stream_failure(
+                                "non_stream_invalid_utf8",
+                                bytes(non_stream_buffer),
+                                exc,
+                            )
+                        else:
+                            self._process_decoded_parts((decoded_body,))
+                        if retained_lease is not None:
+                            self._release_owned_lease(retained_lease)
+                            retained_lease = None
+                        self._retained_observation_bytes = 0
+                        non_stream_buffer.clear()
                     break
 
-                # Decompress chunk if it's gzipped (detect by magic number 0x1f 0x8b)
-                if isinstance(chunk, bytes) and len(chunk) > 2 and chunk[0] == 0x1f and chunk[1] == 0x8b:
+                chunk, lease = item
+                if self._queued_observation_items <= 0:
+                    raise RuntimeError("Stream observation queue ownership underflow.")
+                self._queued_observation_items -= 1
+                self._queue_progress_event.set()
+                if self._observation_failed:
+                    framer.abort()
+                    non_stream_buffer.clear()
+                    if retained_lease is not None:
+                        self._release_owned_lease(retained_lease)
+                        retained_lease = None
+                    self._retained_observation_bytes = 0
+                    self._release_owned_lease(lease)
+                    continue
+                retained_lease = self._retain_lease(retained_lease, lease)
+                self._retained_observation_bytes = retained_lease.remaining_bytes
+
+                if self.is_real_streaming:
                     try:
-                        with gzip.GzipFile(fileobj=io.BytesIO(chunk)) as f:
-                            chunk = f.read()
-                    except Exception as e:
-                        logger.debug(f"Failed to decompress response chunk: {e}")
+                        batch = framer.feed(chunk)
+                    except SSEFramingError as exc:
+                        self._observation_failed = True
+                        self._record_stream_failure(exc.reason_code, chunk, exc)
+                        framer.abort()
+                        if retained_lease is not None:
+                            self._release_owned_lease(retained_lease)
+                            retained_lease = None
+                        self._retained_observation_bytes = 0
+                        continue
+                    retained_lease = self._release_consumed_bytes(
+                        retained_lease,
+                        batch.consumed_bytes,
+                    )
+                    self._retained_observation_bytes = (
+                        retained_lease.remaining_bytes
+                        if retained_lease is not None
+                        else 0
+                    )
+                    self._process_decoded_parts(
+                        (event.data for event in batch.events),
+                        canonical_events=True,
+                    )
+                    continue
 
-                if not self.is_real_streaming:
-                    text = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-                    buffer += text
-                else:
-                    text = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-                    buffer += text
-                    parts = buffer.split("\n\n")
-                    # Keep the last part in buffer if incomplete
-                    buffer = parts.pop() if not buffer.endswith("\n\n") else ""
-                    self._process_decoded_parts(parts)
-            except Exception as ex:
-                logger.error(f"ChatLogging: error processing chunk: {chunk}: {ex}", exc_info=True)
+                if (
+                    len(non_stream_buffer) + len(chunk)
+                    > self.services.json_response_max_bytes
+                ):
+                    self._observation_failed = True
+                    self._record_stream_failure(
+                        "non_stream_body_too_large",
+                        chunk,
+                    )
+                    non_stream_buffer.clear()
+                    if retained_lease is not None:
+                        self._release_owned_lease(retained_lease)
+                        retained_lease = None
+                    self._retained_observation_bytes = 0
+                    continue
+                non_stream_buffer.extend(chunk)
+        except asyncio.CancelledError:
+            cancelled = True
+            self._record_stream_failure("processor_cancelled", b"")
+            raise
+        except BaseException as exc:
+            self._record_stream_failure("processor_failed", b"", exc)
+            raise
+        finally:
+            framer.abort()
+            non_stream_buffer.clear()
+            if retained_lease is not None:
+                self._release_owned_lease(retained_lease)
+            self._retained_observation_bytes = 0
+            self._gzip_decompressor = None
+            self._gzip_probe.clear()
+            self._anthropic_tool_blocks.clear()
+            if self._gzip_probe_lease is not None:
+                self._release_owned_lease(self._gzip_probe_lease)
+                self._gzip_probe_lease = None
+            self._drain_pending_observation_queue()
 
-        if buffer:
-            parts = [buffer]
-            if self.is_real_streaming and buffer.endswith("\n\n"):
-                parts = buffer.split("\n\n")
-            try:
-                self._process_decoded_parts(parts)
-            except Exception:
-                logger.exception("ChatLogging: error processing trailing stream chunk parts")
-
-        # Offload the blocking record-to-DB + write-log-file path to a thread so
-        # the event loop is never held on SQLite or disk I/O during stream teardown.
-        try:
-            await asyncio.to_thread(self._write_log_once)
-        except Exception:
-            logger.exception("ChatLogging: error writing final stream observability record")
-
-def _init_tokens_and_response():
-    return "", initialize_tokens_usage()
-
-
-def _request_usage_tracker_has_billable_usage(request: Request) -> bool:
-    usage_tracker = getattr(request.state, "usage_tracker", None)
-    if not isinstance(usage_tracker, dict):
-        return False
-    return any(
-        isinstance(usage_tracker.get(key), (int, float)) and usage_tracker.get(key) > 0
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-    )
-
-
-# Strong references keep fire-and-forget estimation tasks alive until done.
-_ACTIVE_PROMPT_ESTIMATE_TASKS: set[asyncio.Task] = set()
-
+            if not cancelled:
+                try:
+                    await anyio.to_thread.run_sync(
+                        self._write_log_once,
+                        abandon_on_cancel=False,
+                    )
+                except Exception as exc:
+                    self._record_stream_failure(
+                        "observability_write_failed",
+                        b"",
+                        exc,
+                    )
 
 def _schedule_active_request_prompt_estimate(
-    request: Request, req_body_str: str, gateway_model: str | None
+    request_id: str | None,
+    registry: "ActiveRequestsRegistry",
+    task_supervisor: "TaskSupervisor",
+    req_body_str: str,
+    gateway_model: str | None,
 ) -> None:
     """Reflect an estimated prompt token count on the in-flight usage record.
 
@@ -900,7 +1363,7 @@ def _schedule_active_request_prompt_estimate(
     runs in a worker thread as a background task instead of delaying the
     request path; the update is a no-op if the request finishes first.
     """
-    if not req_body_str:
+    if not request_id or not req_body_str:
         return
 
     async def _estimate_and_update() -> None:
@@ -908,201 +1371,263 @@ def _schedule_active_request_prompt_estimate(
             estimated = await anyio.to_thread.run_sync(
                 estimate_prompt_tokens, req_body_str, gateway_model
             )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("ChatLogging: failed to estimate in-flight prompt tokens")
             return
         if estimated > 0:
-            update_active_request(
-                request,
+            registry.update(
+                request_id,
                 prompt_tokens=estimated,
                 total_tokens=estimated,
                 is_estimated=True,
             )
 
-    task = asyncio.create_task(_estimate_and_update())
-    _ACTIVE_PROMPT_ESTIMATE_TASKS.add(task)
-    task.add_done_callback(_ACTIVE_PROMPT_ESTIMATE_TASKS.discard)
+    task_supervisor.create_task(
+        _estimate_and_update(),
+        name="chat-prompt-estimate",
+    )
 
 
-async def log_chat_completions(request: Request, call_next: Callable) -> Response:
-    operation = _extract_operation_from_url(request.url.path)
-    if operation is None:
-        return await call_next(request)
+class _ChatResponseLifecycle:
+    __slots__ = (
+        "_active_registry",
+        "_binding_attempted",
+        "_chunk_processor",
+        "_config_loader",
+        "_cost_rate_registry",
+        "_gateway_model",
+        "_operation",
+        "_owner",
+        "_req_body_str",
+        "_req_headers",
+        "_request",
+        "_request_id",
+        "_request_started_at",
+        "_route_template",
+        "_services",
+        "_transport_finished",
+        "_wire_mode",
+    )
 
-    try:
-        # Capture request body and headers
-        # Use request.body() which might exhaust the stream
-        req_body_bytes = await request.body()
-        req_headers = dict(request.headers)
-        req_body_str = _decode_body(req_body_bytes, req_headers)
+    def __init__(
+        self,
+        *,
+        request: Request,
+        services: AppServices,
+        runtime_snapshot: RuntimeSnapshot,
+        owner: ChatTerminalOwner,
+        route_template: str,
+        operation: str,
+    ) -> None:
+        self._request = request
+        self._services = services
+        self._owner = owner
+        self._route_template = route_template
+        self._operation = operation
+        self._config_loader = runtime_snapshot.config_loader
+        self._cost_rate_registry = runtime_snapshot.cost_rate_registry
+        self._active_registry = services.active_requests_registry
+        self._request_id = active_request_id(request)
+        self._request_started_at = time.monotonic()
+        self._binding_attempted = False
+        self._gateway_model: str | None = None
+        self._req_headers: dict = {}
+        self._req_body_str = ""
+        self._chunk_processor: ChunkProcessor | None = None
+        self._transport_finished = False
+        self._wire_mode: WireMode | None = None
 
-        # CRITICAL: Re-inject the body into the request stream so that the endpoint can read it again
-        async def receive():
-            return {"type": "http.request", "body": req_body_bytes, "more_body": False}
-        
-        request.scope["receive"] = receive
+    def bind_request(self, *, allow_incomplete: bool = False) -> None:
+        if self._binding_attempted:
+            return
 
-    except Exception as e:
-        if contains_request_body_too_large(e):
-            raise
-        logger.error(f"Error capturing request body in log_chat middleware: {e}", exc_info=True)
-        # We don't want to break the request if logging fails, but we might have consumed the body
         try:
-            response = await call_next(request)
-        except Exception:
-            _release_usd_budget_reservation_for_request(request)
-            raise
-        _release_usd_budget_reservation_for_request(request)
-        return response
+            request_body = captured_request_body(self._request.scope)
+        except ResponseObservationStateError:
+            if not allow_incomplete:
+                raise
+            request_body = b""
+        self._req_headers = dict(self._request.headers)
+        self._req_body_str = _decode_body(request_body, self._req_headers)
+        gateway_model: object = None
+        streaming: object = False
+        try:
+            payload = json.loads(self._req_body_str)
+        except (TypeError, ValueError):
+            payload = None
+        if isinstance(payload, dict):
+            gateway_model = payload.get("model")
+            streaming = payload.get("stream", False)
 
-    requested_gateway_model = _extract_gateway_model_from_request_body(req_body_str)
-    update_active_request(request, gateway_model=requested_gateway_model, operation=operation)
-    _schedule_active_request_prompt_estimate(request, req_body_str, requested_gateway_model)
-    request_started_at = time.monotonic()
+        if isinstance(streaming, bool) and isinstance(gateway_model, str):
+            try:
+                bind_chat_request(
+                    self._owner,
+                    gateway_model=gateway_model,
+                    streaming=streaming,
+                    dialect=_chat_stream_dialect(self._route_template),
+                )
+            except AccountingValidationError:
+                pass
+            else:
+                self._gateway_model = gateway_model
+
+        self._binding_attempted = True
+        self._active_registry.update(
+            self._request_id,
+            gateway_model=self._gateway_model,
+            operation=self._operation,
+        )
+        _schedule_active_request_prompt_estimate(
+            self._request_id,
+            self._active_registry,
+            self._services.task_supervisor,
+            self._req_body_str,
+            self._gateway_model,
+        )
+
+    def _ensure_chunk_processor(self, start: ResponseStart) -> ChunkProcessor:
+        wire_mode = start.wire_mode
+        self.bind_request(allow_incomplete=start.status_code >= 400)
+        if self._wire_mode is not None and self._wire_mode is not wire_mode:
+            raise AccountingValidationError
+        if self._chunk_processor is None:
+            processor = ChunkProcessor(
+                self._req_headers,
+                self._req_body_str,
+                wire_mode is WireMode.SSE,
+                services=self._services,
+                config_loader=self._config_loader,
+                cost_rate_registry=self._cost_rate_registry,
+                provider_name=getattr(
+                    self._request.state,
+                    "llmgateway_provider",
+                    None,
+                ),
+                provider_model=getattr(
+                    self._request.state,
+                    "llmgateway_provider_model",
+                    None,
+                ),
+                gateway_model=self._gateway_model,
+                operation=self._operation,
+                api_key_id=getattr(self._request.state, "api_key_id", None),
+                request=self._request,
+            )
+            processor.start()
+            self._chunk_processor = processor
+            self._wire_mode = wire_mode
+        return self._chunk_processor
+
+    async def observe_body_chunk(self, start: ResponseStart, body: bytes) -> None:
+        processor = self._ensure_chunk_processor(start)
+        await processor.enqueue_chunk(body)
+
+    async def finish_transport(self, result: TransportResult) -> None:
+        if not isinstance(result, TransportResult):
+            raise AccountingValidationError
+        if self._transport_finished:
+            return
+        self._transport_finished = True
+        try:
+            processor = self._chunk_processor
+            if processor is None:
+                return
+            processor.tokens_usage["duration_ms"] = int(
+                (time.monotonic() - self._request_started_at) * 1000
+            )
+            await processor.finish()
+            completed = await processor.wait(CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS)
+            if completed:
+                task_exception = processor.task_exception()
+                if task_exception is not None:
+                    logger.error(
+                        "Stream observation task failed type=%s request_id=%s",
+                        safe_exception_type_name(task_exception),
+                        _safe_stream_request_id(self._request),
+                    )
+            else:
+                logger.warning(
+                    "ChunkProcessor did not finish within %.1fs; "
+                    "leaving it running to avoid blocking the event loop.",
+                    CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS,
+                )
+        finally:
+            self._active_registry.finish(self._request_id)
+
+
+async def prepare_chat_response_observation(request: Request) -> None:
+    """Publish the exact chat terminal owner before endpoint execution."""
+    effective_route = resolve_effective_http_route(
+        request.scope,
+        request.app.routes,
+    )
+    if effective_route is None:
+        return
+    billing_policy = classify_billing_policy(
+        effective_route.method,
+        effective_route.route_template,
+    )
+    if billing_policy is None or billing_policy.operation != "chat":
+        return
+
+    operation = _extract_operation_from_url(effective_route.route_template)
+    if operation is None:
+        raise AccountingValidationError
+    accounting_context = get_accounting_request_context(request.scope)
+    if (
+        accounting_context is None
+        or accounting_context.method != effective_route.method
+        or accounting_context.route_template != effective_route.route_template
+        or accounting_context.policy != billing_policy
+    ):
+        raise AccountingValidationError
     try:
-        response = await call_next(request)
-    except Exception:
-        _release_usd_budget_reservation_for_request(request)
+        services = request.app.state.services
+        runtime_snapshot = request.state.runtime_snapshot
+    except (AttributeError, KeyError, TypeError):
+        raise AccountingValidationError from None
+    if not isinstance(services, AppServices) or not isinstance(
+        runtime_snapshot,
+        RuntimeSnapshot,
+    ):
+        raise AccountingValidationError
+
+    enable_request_capture(request.scope, settings.max_request_body_bytes)
+    owner = take_chat_terminal_owner(request)
+    handoff = None
+    try:
+        handoff = install_chat_terminal_handoff(request)
+        lifecycle = _ChatResponseLifecycle(
+            request=request,
+            services=services,
+            runtime_snapshot=runtime_snapshot,
+            owner=owner,
+            route_template=effective_route.route_template,
+            operation=operation,
+        )
+        observation = build_chat_response_observation(
+            owner,
+            handoff,
+            services,
+            bind_request=lifecycle.bind_request,
+            observe_body_chunk=lifecycle.observe_body_chunk,
+            transport_finished=lifecycle.finish_transport,
+        )
+        publish_response_observation(request.scope, observation)
+    except BaseException as exc:
+        state = request.scope.get("state")
+        if (
+            handoff is not None
+            and isinstance(state, dict)
+            and state.get(CHAT_TERMINAL_HANDOFF_STATE_KEY) is handoff
+        ):
+            del state[CHAT_TERMINAL_HANDOFF_STATE_KEY]
+        await _release_chat_owner(owner, primary_error=exc)
         raise
 
-    if response.status_code >= 400 and not _request_usage_tracker_has_billable_usage(request):
-        _release_usd_budget_reservation_for_request(request)
-        return response
-    
-    # CRITICAL FALLBACK: If body parsing failed (common with compression), use the model set by the controller in request.state
-    if not requested_gateway_model:
-        requested_gateway_model = getattr(request.state, "llmgateway_gateway_model", None)
-
-    try:
-        # If response is streaming, wrap its iterator to enqueue chunks for background processing
-        content_type = response.headers.get("content-type", "").lower()
-        is_real_streaming = "text/event-stream" in content_type
-        is_streaming_response = isinstance(response, StreamingResponse) or "StreamingResponse" in type(response).__name__
-        
-        if response.status_code >= 400:
-            llm_response_accum, tokens_usage = _init_tokens_and_response()
-            tokens_usage = enrich_tokens_usage(tokens_usage, request, requested_gateway_model, operation)
-            tokens_usage = _merge_request_usage_tracker(tokens_usage, request)
-            if getattr(request.state, "usd_budget_reserved", False):
-                tokens_usage["_usd_budget_reserved"] = True
-            key_tpm_rec = getattr(request.state, "api_key_record", None)
-            if key_tpm_rec is not None and getattr(key_tpm_rec, "tpm", None):
-                tokens_usage["_key_tpm_limit"] = key_tpm_rec.tpm
-            tokens_usage["duration_ms"] = int((time.monotonic() - request_started_at) * 1000)
-            _record_upstream_tokens_for_request(request, tokens_usage)
-            await anyio.to_thread.run_sync(
-                _record_chat_observability_with_rates,
-                req_headers,
-                req_body_str,
-                llm_response_accum,
-                tokens_usage,
-                _cost_rate_registry_from_request(request),
-                request,
-            )
-            _mark_usd_budget_reservation_finalized(request)
-        elif is_streaming_response:
-            original_iterator = response.body_iterator
-            chunk_processor: ChunkProcessor | None = None
-
-            async def enqueueing_generator():
-                nonlocal chunk_processor
-                try:
-                    async for chunk in original_iterator:
-                        if chunk_processor is None:
-                            chunk_processor = ChunkProcessor(
-                                req_headers,
-                                req_body_str,
-                                is_real_streaming,
-                                provider_name=getattr(request.state, "llmgateway_provider", None),
-                                provider_model=getattr(request.state, "llmgateway_provider_model", None),
-                                gateway_model=requested_gateway_model,
-                                operation=operation,
-                                api_key_id=getattr(request.state, "api_key_id", None),
-                                usd_budget_reserved=getattr(request.state, "usd_budget_reserved", False),
-                                key_tpm_limit=getattr(getattr(request.state, "api_key_record", None), "tpm", None),
-                            )
-                            chunk_processor.request = request
-                            chunk_processor.start()
-
-                        chunk_processor.enqueue_chunk(chunk)
-                        yield chunk
-                finally:
-                    if chunk_processor is not None:
-                        chunk_processor.tokens_usage["duration_ms"] = int(
-                            (time.monotonic() - request_started_at) * 1000
-                        )
-                        await chunk_processor.finish()
-                        # Bounded wait: observability must not stall the event loop if the
-                        # worker blocks on DB/disk I/O. If the task does not finish in time,
-                        # we log and let it continue in the background — the stream completion
-                        # path must not hang.
-                        completed = await chunk_processor.wait(
-                            CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS
-                        )
-                        if completed:
-                            task_exception = chunk_processor.task_exception()
-                            if task_exception is not None:
-                                logger.error(
-                                    "ChunkProcessor task finished with exception.",
-                                    exc_info=(
-                                        type(task_exception),
-                                        task_exception,
-                                        task_exception.__traceback__,
-                                    ),
-                                )
-                                _release_usd_budget_reservation_for_request(request)
-                            else:
-                                _mark_usd_budget_reservation_finalized(request)
-                        if not completed:
-                            logger.warning(
-                                "ChunkProcessor did not finish within %.1fs; "
-                                "leaving it running to avoid blocking the event loop.",
-                                CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS,
-                            )
-                    else:
-                        _release_usd_budget_reservation_for_request(request)
-
-            response.body_iterator = enqueueing_generator()
-        else:
-            # For non-streaming responses, attempt to read full body content
-            llm_response_accum, tokens_usage = _init_tokens_and_response()
-            if hasattr(response, "body") and response.body:
-                try:
-                    response_data = json.loads(response.body.decode("utf-8"))
-                    if isinstance(response_data, dict):
-                        llm_response_accum = _extract_response_text_for_log(response_data)
-                        tokens_usage = get_token_usage(response_data, include_internal=True)
-                    tokens_usage = enrich_tokens_usage(tokens_usage, request, requested_gateway_model, operation)
-                except Exception as ex:
-                    logger.error(f"ChatLogging: error processing non-streaming body: {ex}", exc_info=True)
-            tokens_usage = enrich_tokens_usage(tokens_usage, request, requested_gateway_model, operation)
-            tokens_usage = _merge_request_usage_tracker(tokens_usage, request)
-            if getattr(request.state, "usd_budget_reserved", False):
-                tokens_usage["_usd_budget_reserved"] = True
-            key_tpm_rec = getattr(request.state, "api_key_record", None)
-            if key_tpm_rec is not None and getattr(key_tpm_rec, "tpm", None):
-                tokens_usage["_key_tpm_limit"] = key_tpm_rec.tpm
-            tokens_usage["duration_ms"] = int((time.monotonic() - request_started_at) * 1000)
-            _record_upstream_tokens_for_request(request, tokens_usage)
-            _log_rtk_compression_stats(request)
-            # Write log file immediately for non-streaming responses
-            # Run observability tasks in a thread to avoid blocking the event loop
-            await anyio.to_thread.run_sync(
-                _record_chat_observability_with_rates,
-                req_headers,
-                req_body_str,
-                llm_response_accum,
-                tokens_usage,
-                _cost_rate_registry_from_request(request),
-                request,
-            )
-            _mark_usd_budget_reservation_finalized(request)
-
-    except Exception as e:
-        _release_usd_budget_reservation_for_request(request)
-        logger.error(f"Error in log_chat_completions middleware: {e}", exc_info=True)
-
-    return response
 
 def get_token_usage(chunk_data, *, include_internal: bool = False):
     """

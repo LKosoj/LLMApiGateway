@@ -22,11 +22,12 @@ from llm_gateway_core.middleware.auth import (
     api_key_auth,
     create_authenticated_session,
 )
+from tests.runtime_test_support import bind_app_services
 
 
 def _build_app(db: RejectionsDB) -> FastAPI:
     app = FastAPI()
-    app.state.rejections_db = db
+    bind_app_services(app, rejections_db=db)
     app.middleware("http")(api_key_auth)
     app.include_router(admin_rejections_router, prefix="/v1")
     return app
@@ -95,6 +96,14 @@ class AdminRejectionsHttpTests(unittest.TestCase):
         self.assertEqual(len(body["items"]), 1)
         self.assertEqual(body["items"][0]["category"], "key_disabled")
         self.assertEqual(body["items"][0]["x_title"], "tgBot")
+
+    def test_container_db_wins_over_conflicting_legacy_alias(self):
+        self.app.state.rejections_db = object()
+
+        resp = self.client.get("/v1/admin/rejections", headers=self._master_headers())
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"items": [], "total": 0})
 
     def test_unknown_category_returns_400(self):
         resp = self.client.get(
@@ -243,7 +252,7 @@ class RejectionsUiMasterOnlyTests(unittest.TestCase):
         )
 
         app = FastAPI()
-        app.state.api_keys_db = _FakeApiKeysDB(self.user_record)
+        bind_app_services(app, api_keys_db=_FakeApiKeysDB(self.user_record))
         app.middleware("http")(api_key_auth)
         app.include_router(admin_rejections_router, prefix="/v1")
         self.client = TestClient(app)

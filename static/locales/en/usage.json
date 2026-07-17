@@ -1,0 +1,218 @@
+{
+  "page": {
+    "title": "LLM Gateway - Usage Statistics",
+    "heading": "LLM Gateway - Usage Statistics",
+    "productVersionAria": "Product version"
+  },
+  "tabs": {
+    "analytics": "Analytics Dashboard",
+    "statistics": "Usage Statistics",
+    "records": "Usage Records",
+    "fallback": "Fallback Analytics",
+    "topology": "Topology"
+  },
+  "actions": {
+    "refreshAction": "Refresh",
+    "previousAction": "Previous",
+    "nextAction": "Next"
+  },
+  "period": {
+    "groupBy": "Group by:",
+    "hourOption": "Hour",
+    "dayOption": "Day",
+    "weekOption": "Week",
+    "monthOption": "Month",
+    "label": "Period: {period}"
+  },
+  "ranges": {
+    "last24Hours": "Last 24 hours",
+    "last7Days": "Last 7 days",
+    "last14Days": "Last 14 days",
+    "last30Days": "Last 30 days",
+    "last90Days": "Last 90 days",
+    "last180Days": "Last 180 days",
+    "last365Days": "Last 365 days",
+    "last12Months": "Last 12 months"
+  },
+  "filters": {
+    "rangeLabel": "Range",
+    "bucketLabel": "Bucket",
+    "virtualKey": "Virtual key",
+    "providerKey": "Provider key",
+    "operationLabel": "Operation",
+    "gatewayLabel": "Gateway",
+    "providerLabel": "Provider",
+    "modelLabel": "Model",
+    "xTitleLabel": "X-Title",
+    "estimatedLabel": "Estimated",
+    "allKeys": "All keys",
+    "unattributed": "Unattributed",
+    "allProviderKeys": "All provider keys",
+    "allOperations": "All operations",
+    "allGateways": "All gateways",
+    "allProviders": "All providers",
+    "allModels": "All models",
+    "allTitles": "All titles",
+    "allUsage": "All usage",
+    "estimatedOnly": "Estimated only",
+    "providerUsage": "Provider usage"
+  },
+  "sections": {
+    "analytics": "Analytics Dashboard",
+    "tokenTrend": "Token Trend",
+    "costByProvider": "Cost by Provider",
+    "filteredBreakdown": "Filtered Breakdown",
+    "xTitleBreakdown": "X-Title Breakdown",
+    "reliabilityTitle": "Reliability",
+    "virtualKeys": "Virtual Keys",
+    "recentActivity": "Recent Activity",
+    "latestRecords": "Latest Usage Records",
+    "fallbackChains": "Fallback Chains"
+  },
+  "fallbackTabs": {
+    "summaryTab": "Summary",
+    "chainsTab": "Chains",
+    "upstream": "Upstream Analytics"
+  },
+  "initial": {
+    "statistics": "Select a period and click Refresh to view statistics.",
+    "records": "Loading usage records…",
+    "fallback": "Select a period and click Refresh to view fallback statistics.",
+    "chains": "Loading fallback chains…",
+    "upstream": "Select a period and click Refresh to view upstream analytics."
+  },
+  "status": {
+    "statisticsLoading": "Loading statistics…",
+    "statisticsLoaded": "Statistics loaded successfully.",
+    "recordsLoading": "Loading usage records…",
+    "recordsLoaded": "Usage records loaded successfully.",
+    "fallbackLoading": "Loading fallback statistics…",
+    "fallbackLoaded": "Fallback statistics loaded.",
+    "chainsLoading": "Loading fallback chains…",
+    "chainsLoaded": "Fallback chains loaded.",
+    "upstreamLoading": "Loading upstream analytics…",
+    "upstreamLoaded": "Upstream analytics loaded.",
+    "analyticsLoading": "Loading analytics…",
+    "analyticsLoaded": "Analytics loaded: {count, plural, one {# request} other {# requests}}.",
+    "requestId": "Request ID: {id}"
+  },
+  "empty": {
+    "statistics": "No data is available for the selected period.",
+    "records": "No usage records are available.",
+    "recordsFound": "No usage records were found.",
+    "fallback": "No fallback failures occurred in the selected period.",
+    "chains": "No fallback chains were found.",
+    "upstream": "No upstream analytics are available for the selected period.",
+    "analytics": "No usage for the selected filters.",
+    "trend": "No trend data for the selected filters.",
+    "providers": "No provider data for the selected filters.",
+    "breakdown": "No rows match the selected filters.",
+    "xTitles": "No X-Title rows match the selected filters.",
+    "virtualKeys": "No virtual key rows match the selected filters.",
+    "recent": "No recent activity matches the selected filters."
+  },
+  "values": {
+    "notAvailable": "N/A",
+    "yesLabel": "Yes",
+    "noLabel": "No",
+    "successLabel": "Success",
+    "failedLabel": "Failed",
+    "completedLabel": "Completed",
+    "runningLabel": "Running",
+    "inProgressLabel": "In progress",
+    "unknownLabel": "Unknown",
+    "virtualKey": "Virtual key #{id}"
+  },
+  "pagination": {
+    "page": "Page {current} of {total}"
+  },
+  "counts": {
+    "attempts": "{count, plural, one {# attempt} other {# attempts}}",
+    "buckets": "{count, plural, one {# bucket} other {# buckets}}",
+    "providers": "{count, plural, one {# provider} other {# providers}}"
+  },
+  "format": {
+    "milliseconds": "{value} ms",
+    "seconds": "{value} s",
+    "retry": "retry: {count}",
+    "retryWithDelay": "retry: {count} ({delay})",
+    "xTitle": "X-Title: {value}",
+    "fallbackMetric": "Fallback: {value}",
+    "rejectedMetric": "Rejected: {value}"
+  },
+  "kpis": {
+    "requestsLabel": "Requests",
+    "totalTokens": "Total Tokens",
+    "costLabel": "Cost",
+    "costSaved": "Cost Saved",
+    "costPerMillion": "Cost / 1M",
+    "averageDuration": "Avg Duration",
+    "activeLabel": "Active",
+    "fallbackErrors": "Fallback Errors",
+    "rejectionsLabel": "Rejections",
+    "estimatedLabel": "Estimated"
+  },
+  "charts": {
+    "tokenTrendAria": "Token trend line chart",
+    "providerCostAria": "Provider cost bar chart"
+  },
+  "columns": {
+    "gatewayModel": "Gateway Model",
+    "resolvedModel": "Resolved Model",
+    "resolvedTarget": "Resolved Target",
+    "operationHeader": "Operation",
+    "statusHeader": "Status",
+    "timestamp": "Timestamp",
+    "durationMs": "Duration (ms)",
+    "providerHeader": "Provider",
+    "modelHeader": "Model",
+    "xTitleHeader": "X-Title",
+    "promptTokens": "Prompt Tokens",
+    "completionTokens": "Completion Tokens",
+    "reasoningTokens": "Reasoning Tokens",
+    "totalTokens": "Total Tokens",
+    "cachedTokens": "Cached Tokens",
+    "countHeader": "Count",
+    "requestsHeader": "Requests",
+    "tokensHeader": "Tokens",
+    "costHeader": "Cost",
+    "costUsd": "Cost (USD)",
+    "costSaved": "Saved",
+    "costSavedUsd": "Cost Saved (USD)",
+    "costPerMillion": "Cost / Million",
+    "estimatedHeader": "Estimated",
+    "averageDuration": "Avg Duration",
+    "errorType": "Error Type",
+    "key": "Key",
+    "attemptsHeader": "Attempts",
+    "successHeader": "Success",
+    "errorsHeader": "Errors",
+    "successRate": "Success Rate",
+    "maxDuration": "Max Duration",
+    "metricHeader": "Metric",
+    "valueHeader": "Value",
+    "virtualKey": "Virtual Key",
+    "gatewayHeader": "Gateway"
+  },
+  "reliability": {
+    "fallbackAttempts": "Fallback attempts",
+    "fallbackErrors": "Fallback errors",
+    "fallbackSuccess": "Fallback success",
+    "rejectionsMetric": "Rejections"
+  },
+  "errorTypes": {
+    "http429": "429 Rate Limit",
+    "http400": "400 Bad Request",
+    "http401": "401 Unauthorized",
+    "http403": "403 Forbidden",
+    "http404": "404 Not Found",
+    "http500": "500 Server Error",
+    "http502": "502 Bad Gateway",
+    "http503": "503 Unavailable",
+    "readTimeout": "Read Timeout",
+    "connectTimeout": "Connect Timeout",
+    "connectError": "Connect Error",
+    "contextOverflow": "Context Overflow",
+    "unknownLabel": "Unknown"
+  }
+}

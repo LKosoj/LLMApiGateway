@@ -1,37 +1,40 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from fastapi.staticfiles import StaticFiles
 
 from llm_gateway_core.api.auth_ui import auth_router
-from llm_gateway_core.db.api_keys_db import ApiKeyRecord
+from llm_gateway_core.db.api_keys_db import ApiKeyRecord, ApiKeysDB
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.middleware.auth import (
+    ApiKeyAuthMiddleware,
     ROLE_USER,
     SESSION_COOKIE_NAME,
-    api_key_auth,
     create_authenticated_session,
 )
+from llm_gateway_core.middleware.request_logging import RequestLoggingASGIMiddleware
 from llm_gateway_core.services.active_requests import get_active_requests_registry
 from llm_gateway_core.services.ip_blocklist import IpBlockGuard
+from tests.runtime_test_support import bind_app_services
 
 
-def build_test_app() -> FastAPI:
+def build_test_app(**service_overrides: object) -> FastAPI:
     app = FastAPI()
-    app.middleware("http")(api_key_auth)
+    bind_app_services(app, **service_overrides)
+    app.add_middleware(ApiKeyAuthMiddleware)
+    app.add_middleware(RequestLoggingASGIMiddleware)
     app.include_router(auth_router)
 
     @app.get("/health")
     async def health():
         return {"status": "ok"}
 
-    @app.get("/healthz")
-    async def healthz():
-        return {"status": "ok"}
-
-    @app.head("/healthz")
-    async def healthz_head():
+    @app.head("/health")
+    async def health_head():
         return None
 
     @app.get("/static/test.js")
@@ -86,6 +89,26 @@ def build_test_app() -> FastAPI:
     return app
 
 
+def make_enabled_user_record(key_id: int = 7) -> ApiKeyRecord:
+    return ApiKeyRecord(
+        id=key_id,
+        name="enabled-user",
+        api_key="enabled-user-key",
+        budget_usd=None,
+        spent_usd=0.0,
+        rpm=None,
+        tpm=None,
+        disabled=False,
+    )
+
+
+def api_keys_db_with_record(record: ApiKeyRecord) -> MagicMock:
+    db = MagicMock(spec=ApiKeysDB)
+    db.get_by_key.return_value = None
+    db.get_by_id.return_value = record
+    return db
+
+
 class AuthMiddlewareTests(unittest.TestCase):
     def setUp(self):
         self.gateway_key_patchers = [
@@ -105,13 +128,47 @@ class AuthMiddlewareTests(unittest.TestCase):
 
     def test_public_paths_and_root_redirect_without_session(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
-        self.assertEqual(self.client.get("/healthz").status_code, 200)
-        self.assertEqual(self.client.head("/healthz").status_code, 200)
+        self.assertEqual(self.client.head("/health").status_code, 200)
         self.assertEqual(self.client.get("/static/test.js").status_code, 200)
 
         response = self.client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/auth/login?next=/v1/ui/usage-stats")
+
+    def test_generated_images_mount_requires_auth_and_blocks_traversal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            images_root = root / "images"
+            research_root = images_root / "research-1"
+            research_root.mkdir(parents=True)
+            expected = b"\x89PNG\r\n\x1a\nverified"
+            (research_root / "image.png").write_bytes(expected)
+            (root / "secret.png").write_bytes(b"must-not-leak")
+            app = build_test_app()
+            app.mount(
+                "/outputs/images",
+                StaticFiles(directory=images_root, check_dir=False),
+                name="test-outputs-images",
+            )
+
+            with TestClient(app) as client:
+                unauthenticated = client.get(
+                    "/outputs/images/research-1/image.png"
+                )
+                authenticated = client.get(
+                    "/outputs/images/research-1/image.png",
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+                traversal = client.get(
+                    "/outputs/images/%2e%2e/secret.png",
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(unauthenticated.status_code, 401)
+        self.assertEqual(authenticated.status_code, 200)
+        self.assertEqual(authenticated.content, expected)
+        self.assertEqual(traversal.status_code, 404)
+        self.assertNotEqual(traversal.content, b"must-not-leak")
 
     def test_html_pages_redirect_to_login_without_session_but_api_stays_401(self):
         response = self.client.get(
@@ -208,12 +265,36 @@ class AuthMiddlewareTests(unittest.TestCase):
             json={"api_key": "wrong-key", "next": "/v1/ui/usage-stats"},
         )
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json(), {"detail": "Invalid API Key"})
+        payload = response.json()
+        self.assertEqual(payload["detail"], "Invalid API Key")
+        self.assertEqual(payload["error"]["message"], "Invalid API Key")
+        self.assertEqual(payload["error"]["code"], "auth_invalid_api_key")
+        self.assertIn(f"{SESSION_COOKIE_NAME}=", response.headers["set-cookie"])
+        self.assertIn("Max-Age=0", response.headers["set-cookie"])
+
+    def test_login_rejects_malformed_request_with_stable_code(self):
+        requests = (
+            {"content": "{", "headers": {"Content-Type": "application/json"}},
+            {"json": []},
+        )
+
+        for request_kwargs in requests:
+            with self.subTest(request_kwargs=request_kwargs):
+                response = self.client.post("/auth/login", **request_kwargs)
+
+                self.assertEqual(response.status_code, 400)
+                payload = response.json()
+                self.assertEqual(payload["detail"], "Request body must be a JSON object")
+                self.assertEqual(
+                    payload["error"]["message"],
+                    "Request body must be a JSON object",
+                )
+                self.assertEqual(payload["error"]["code"], "auth_invalid_request")
+                self.assertNotIn("set-cookie", response.headers)
 
     def test_invalid_login_records_auth_invalid_rejection(self):
         mock_db = MagicMock(spec=RejectionsDB)
-        app = build_test_app()
-        app.state.rejections_db = mock_db
+        app = build_test_app(rejections_db=mock_db)
 
         with TestClient(app) as client:
             response = client.post(
@@ -231,9 +312,7 @@ class AuthMiddlewareTests(unittest.TestCase):
     def test_login_blocks_after_repeated_invalid_keys(self):
         guard = IpBlockGuard(max_failures=2, block_seconds=600.0)
         mock_db = MagicMock(spec=RejectionsDB)
-        app = build_test_app()
-        app.state.ip_block_guard = guard
-        app.state.rejections_db = mock_db
+        app = build_test_app(ip_block_guard=guard, rejections_db=mock_db)
 
         with TestClient(app) as client:
             for _ in range(2):
@@ -252,7 +331,14 @@ class AuthMiddlewareTests(unittest.TestCase):
             static_asset = client.get("/static/test.js")
 
         self.assertEqual(blocked.status_code, 429)
+        blocked_payload = blocked.json()
+        self.assertEqual(
+            blocked_payload["detail"],
+            "Too many failed authentication attempts. Try again later.",
+        )
+        self.assertEqual(blocked_payload["error"]["code"], "auth_rate_limited")
         self.assertEqual(blocked.headers.get("Retry-After"), "600")
+        self.assertNotIn("set-cookie", blocked.headers)
         self.assertEqual(login_page.status_code, 200)
         self.assertEqual(health.status_code, 200)
         self.assertEqual(static_asset.status_code, 200)
@@ -263,7 +349,7 @@ class AuthMiddlewareTests(unittest.TestCase):
     def test_disabled_login_records_key_disabled_without_blocking_ip(self):
         guard = IpBlockGuard(max_failures=1, block_seconds=600.0)
         mock_rejections_db = MagicMock(spec=RejectionsDB)
-        mock_api_keys_db = MagicMock()
+        mock_api_keys_db = MagicMock(spec=ApiKeysDB)
         mock_api_keys_db.get_by_key.return_value = ApiKeyRecord(
             id=7,
             name="disabled-key",
@@ -274,26 +360,46 @@ class AuthMiddlewareTests(unittest.TestCase):
             tpm=None,
             disabled=True,
         )
-        app = build_test_app()
-        app.state.api_keys_db = mock_api_keys_db
-        app.state.ip_block_guard = guard
-        app.state.rejections_db = mock_rejections_db
+        app = build_test_app(
+            api_keys_db=mock_api_keys_db,
+            ip_block_guard=guard,
+            rejections_db=mock_rejections_db,
+        )
+        app.state.api_keys_db = object()
+        app.state.ip_block_guard = object()
 
         with TestClient(app) as client:
             disabled_response = client.post("/auth/login", json={"api_key": "disabled-key"})
             valid_response = client.post("/auth/login", json={"api_key": "test-gateway-key"})
+        invalid_response = self.client.post("/auth/login", json={"api_key": "wrong-key"})
 
         self.assertEqual(disabled_response.status_code, 401)
-        self.assertEqual(disabled_response.json(), {"detail": "Invalid API Key"})
+        disabled_payload = disabled_response.json()
+        self.assertEqual(disabled_payload["detail"], "Invalid API Key")
+        self.assertEqual(disabled_payload["error"]["message"], "Invalid API Key")
+        self.assertEqual(
+            disabled_payload["error"]["code"],
+            "auth_invalid_api_key",
+        )
+        self.assertEqual(
+            disabled_payload["error"]["code"],
+            invalid_response.json()["error"]["code"],
+        )
+        self.assertIn(
+            f"{SESSION_COOKIE_NAME}=",
+            disabled_response.headers["set-cookie"],
+        )
+        self.assertIn("Max-Age=0", disabled_response.headers["set-cookie"])
         self.assertEqual(valid_response.status_code, 200)
         categories = [call.kwargs["category"] for call in mock_rejections_db.insert_rejection.call_args_list]
         self.assertEqual(categories, ["key_disabled"])
 
     def test_successful_login_resets_invalid_key_counter(self):
         guard = IpBlockGuard(max_failures=3, block_seconds=600.0)
-        app = build_test_app()
-        app.state.ip_block_guard = guard
-        app.state.rejections_db = MagicMock(spec=RejectionsDB)
+        app = build_test_app(
+            ip_block_guard=guard,
+            rejections_db=MagicMock(spec=RejectionsDB),
+        )
 
         with TestClient(app) as client:
             for _ in range(2):
@@ -370,12 +476,15 @@ class AuthMiddlewareTests(unittest.TestCase):
                 )
 
     def test_openrouter_free_models_status_is_master_only(self):
-        self.client.cookies.set(
-            SESSION_COOKIE_NAME,
-            create_authenticated_session(role=ROLE_USER, key_id=7),
-        )
+        record = make_enabled_user_record()
+        app = build_test_app(api_keys_db=api_keys_db_with_record(record))
+        with TestClient(app) as client:
+            client.cookies.set(
+                SESSION_COOKIE_NAME,
+                create_authenticated_session(role=ROLE_USER, key_id=record.id),
+            )
 
-        response = self.client.get("/v1/openrouter/free-models")
+            response = client.get("/v1/openrouter/free-models")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(
@@ -384,13 +493,16 @@ class AuthMiddlewareTests(unittest.TestCase):
         )
 
     def test_config_editor_legacy_and_eval_paths_are_master_only(self):
-        self.client.cookies.set(
-            SESSION_COOKIE_NAME,
-            create_authenticated_session(role=ROLE_USER, key_id=7),
-        )
+        record = make_enabled_user_record()
+        app = build_test_app(api_keys_db=api_keys_db_with_record(record))
+        with TestClient(app) as client:
+            client.cookies.set(
+                SESSION_COOKIE_NAME,
+                create_authenticated_session(role=ROLE_USER, key_id=record.id),
+            )
 
-        providers_response = self.client.post("/v1/ui/providers-config", content="[]")
-        eval_response = self.client.get("/v1/fallback-model-evals")
+            providers_response = client.post("/v1/ui/providers-config", content="[]")
+            eval_response = client.get("/v1/fallback-model-evals")
 
         self.assertEqual(providers_response.status_code, 403)
         self.assertEqual(eval_response.status_code, 403)
@@ -405,8 +517,7 @@ class AuthMiddlewareTests(unittest.TestCase):
 
     def test_unauthenticated_api_request_records_auth_invalid_rejection(self):
         mock_db = MagicMock(spec=RejectionsDB)
-        app = build_test_app()
-        app.state.rejections_db = mock_db
+        app = build_test_app(rejections_db=mock_db)
 
         with TestClient(app) as client:
             response = client.get("/v1/models")
@@ -419,8 +530,7 @@ class AuthMiddlewareTests(unittest.TestCase):
 
     def test_invalid_bearer_token_records_auth_invalid_rejection(self):
         mock_db = MagicMock(spec=RejectionsDB)
-        app = build_test_app()
-        app.state.rejections_db = mock_db
+        app = build_test_app(rejections_db=mock_db)
 
         with TestClient(app) as client:
             response = client.get(
@@ -436,10 +546,13 @@ class AuthMiddlewareTests(unittest.TestCase):
 
     def test_master_only_path_for_user_role_records_master_only_rejection(self):
         mock_db = MagicMock(spec=RejectionsDB)
-        app = build_test_app()
-        app.state.rejections_db = mock_db
+        record = make_enabled_user_record()
+        app = build_test_app(
+            api_keys_db=api_keys_db_with_record(record),
+            rejections_db=mock_db,
+        )
 
-        session = create_authenticated_session(role=ROLE_USER, key_id=7)
+        session = create_authenticated_session(role=ROLE_USER, key_id=record.id)
         with TestClient(app) as client:
             client.cookies.set(SESSION_COOKIE_NAME, session)
             response = client.get("/v1/openrouter/free-models")

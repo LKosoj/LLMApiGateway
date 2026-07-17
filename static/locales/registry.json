@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "defaultLocale": "en",
+  "locales": [
+    {
+      "code": "en",
+      "nativeLabel": "English",
+      "dir": "ltr"
+    },
+    {
+      "code": "ru",
+      "nativeLabel": "Русский",
+      "dir": "ltr"
+    }
+  ],
+  "namespaces": [
+    "common",
+    "auth",
+    "docs",
+    "editor",
+    "playground",
+    "usage",
+    "topology",
+    "api_keys",
+    "pricing",
+    "quota",
+    "rejections",
+    "translator"
+  ],
+  "pageNamespaces": {
+    "runtime": [
+      "common"
+    ],
+    "login": [
+      "common",
+      "auth"
+    ],
+    "docs": [
+      "common",
+      "docs"
+    ],
+    "rules-editor": [
+      "common",
+      "editor"
+    ],
+    "playground": [
+      "common",
+      "playground"
+    ],
+    "usage": [
+      "common",
+      "usage",
+      "topology"
+    ],
+    "api-keys": [
+      "common",
+      "api_keys"
+    ],
+    "pricing": [
+      "common",
+      "pricing"
+    ],
+    "quota": [
+      "common",
+      "quota"
+    ],
+    "rejections": [
+      "common",
+      "rejections"
+    ],
+    "translator": [
+      "common",
+      "translator"
+    ]
+  }
+}

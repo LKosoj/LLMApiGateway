@@ -7,27 +7,43 @@ receive a 403 enforced by the auth middleware via MASTER_ONLY_PREFIXES.
 from __future__ import annotations
 
 import json
-import logging
-from pathlib import Path
+import math
+from collections.abc import Mapping
 from typing import Any
 
+import json5
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from ...config.config_store import (
+    ConfigFile,
+    ConfigSourceBundle,
+    ConfigSourceError,
+)
 from ...config.paths import STATIC_DIR
 from ...middleware.auth import ROLE_MASTER
+from ...services.config_updates import (
+    ConfigRevision,
+    ConfigUpdateCoordinator,
+    ConfigUpdateError,
+    ConfigUpdateErrorCode,
+)
+from ...services.runtime_config import AppServices, RuntimeSnapshot
 from ...utils.html_cache import get_template
 from ...utils.usage_tracking import (
     ModelCostRates,
-    build_model_cost_rate_registry,
     calculate_model_cost_usd,
 )
-
-# Re-use the atomic write and JSON5 comment helpers from the rules editor.
-from .rules_editor import _backup_if_has_comments, _write_text_atomically
-
-logger = logging.getLogger(__name__)
+from .config_update_http import (
+    ConfigRequestInvalid,
+    RawConfigBody,
+    capture_config_update_runtime,
+    config_error_response,
+    config_response_headers,
+    parse_config_if_match,
+    read_raw_config_body,
+)
 
 admin_pricing_router = APIRouter()
 
@@ -42,6 +58,26 @@ class ModelPricing(BaseModel):
     model: str = Field(..., min_length=1)
     input_rate: float = Field(..., ge=0)
     output_rate: float = Field(..., ge=0)
+
+    @field_validator("provider", "model")
+    @classmethod
+    def validate_identifier(cls, value: str) -> str:
+        if not value or value != value.strip():
+            raise ValueError("pricing identifiers must be non-empty and untrimmed")
+        return value
+
+    @field_validator("input_rate", "output_rate", mode="before")
+    @classmethod
+    def validate_rate(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("pricing rates must be finite numbers")
+        try:
+            rate = float(value)
+        except (TypeError, ValueError):
+            return value
+        if not math.isfinite(rate):
+            raise ValueError("pricing rates must be finite numbers")
+        return value
 
 
 class PricingListResponse(BaseModel):
@@ -65,6 +101,36 @@ class CalculateResponse(BaseModel):
     output_rate: float
 
 
+class PricingPatchError(ValueError):
+    """Credential-safe failure while applying a full-list pricing update."""
+
+    def __init__(self) -> None:
+        super().__init__("Pricing update is invalid.")
+
+
+PRICING_UPDATE_OPENAPI = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/components/schemas/ModelPricing"
+                            },
+                        }
+                    },
+                },
+            }
+        },
+    }
+}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -79,28 +145,8 @@ def _require_master(request: Request) -> None:
         )
 
 
-def _get_config_loader(request: Request):
-    loader = getattr(request.app.state, "config_loader", None)
-    if loader is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="ConfigLoader not available",
-        )
-    return loader
-
-
-def _get_providers_path(request: Request) -> Path:
-    loader = _get_config_loader(request)
-    return loader.providers_path
-
-
-def _build_registry(request: Request) -> dict[tuple[str, str], ModelCostRates]:
-    loader = _get_config_loader(request)
-    return build_model_cost_rate_registry(loader.providers_config)
-
-
 def _pricing_items_from_registry(
-    registry: dict[tuple[str, str], ModelCostRates],
+    registry: Mapping[tuple[str, str], ModelCostRates],
 ) -> list[ModelPricing]:
     return [
         ModelPricing(
@@ -113,107 +159,186 @@ def _pricing_items_from_registry(
     ]
 
 
-def _current_pricing_keys(provider_list: list[Any]) -> set[tuple[str, str]]:
-    current_keys: set[tuple[str, str]] = set()
-    for entry in provider_list:
-        if not isinstance(entry, dict):
-            continue
-        for provider_name, details in entry.items():
-            if not isinstance(provider_name, str) or not isinstance(details, dict):
-                continue
-            models = details.get("models")
-            if not isinstance(models, dict):
-                continue
-            for model_name in models:
-                if isinstance(model_name, str):
-                    current_keys.add((provider_name, model_name))
-    return current_keys
-
-
-def _validate_pricing_payload_completeness(
-    provider_list: list[Any],
-    new_models_by_provider: dict[str, dict[str, dict[str, float]]],
-) -> None:
-    current_keys = _current_pricing_keys(provider_list)
-    if not current_keys:
-        return
-
-    payload_keys = {
-        (provider_name, model_name)
-        for provider_name, models in new_models_by_provider.items()
-        for model_name in models
-    }
-    missing_keys = sorted(current_keys - payload_keys)
-    if missing_keys:
-        missing_text = ", ".join(f"{provider}/{model}" for provider, model in missing_keys[:10])
-        if len(missing_keys) > 10:
-            missing_text += f", ... (+{len(missing_keys) - 10} more)"
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Pricing update payload is incomplete; missing existing model rates: {missing_text}",
-        )
-
-
-def _rewrite_providers_json(
-    providers_path: Path,
-    new_items: list[ModelPricing],
-) -> None:
-    """Update the `models` block for every provider in providers.json.
-
-    Preserves JSON5 comments via a backup (uses the same mechanism as
-    rules_editor). Writes atomically.
-    """
-    if not providers_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"providers.json not found at {providers_path}",
-        )
+def patch_provider_pricing(
+    source_text: str,
+    items: list[ModelPricing],
+) -> str:
+    """Apply a full pricing list without replacing unrelated provider metadata."""
+    if not isinstance(source_text, str) or not isinstance(items, list):
+        raise PricingPatchError
 
     try:
-        import json5 as _json5
-
-        raw = providers_path.read_text(encoding="utf-8")
-        provider_list: list[Any] = _json5.loads(raw)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to parse providers.json: {exc}",
-        ) from exc
-
+        provider_list = json5.loads(source_text)
+    except ValueError:
+        raise PricingPatchError from None
     if not isinstance(provider_list, list):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="providers.json root must be a list",
-        )
+        raise PricingPatchError
 
-    # Build lookup: provider_name -> {model_name: {input_rate, output_rate}}
-    new_models_by_provider: dict[str, dict[str, dict[str, float]]] = {}
-    for item in new_items:
-        new_models_by_provider.setdefault(item.provider, {})[item.model] = {
-            "input_rate": item.input_rate,
-            "output_rate": item.output_rate,
-        }
-
-    _validate_pricing_payload_completeness(provider_list, new_models_by_provider)
-
-    # Patch each provider entry in the list
+    providers: dict[str, dict[str, Any]] = {}
     for entry in provider_list:
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or len(entry) != 1:
+            raise PricingPatchError
+        provider_name, details = next(iter(entry.items()))
+        if (
+            not isinstance(provider_name, str)
+            or not provider_name
+            or not isinstance(details, dict)
+            or provider_name in providers
+        ):
+            raise PricingPatchError
+        models = details.get("models")
+        if "models" in details:
+            if not isinstance(models, dict):
+                raise PricingPatchError
+            if any(not isinstance(metadata, dict) for metadata in models.values()):
+                raise PricingPatchError
+        providers[provider_name] = details
+
+    rates_by_model: dict[tuple[str, str], tuple[float, float]] = {}
+    for item in items:
+        if not isinstance(item, ModelPricing):
+            raise PricingPatchError
+        if (
+            not isinstance(item.provider, str)
+            or not isinstance(item.model, str)
+            or not item.provider
+            or item.provider != item.provider.strip()
+            or not item.model
+            or item.model != item.model.strip()
+            or item.provider not in providers
+            or isinstance(item.input_rate, bool)
+            or isinstance(item.output_rate, bool)
+        ):
+            raise PricingPatchError
+        try:
+            input_rate = float(item.input_rate)
+            output_rate = float(item.output_rate)
+        except (TypeError, ValueError):
+            raise PricingPatchError from None
+        if (
+            not math.isfinite(input_rate)
+            or not math.isfinite(output_rate)
+            or input_rate < 0
+            or output_rate < 0
+        ):
+            raise PricingPatchError
+        key = (item.provider, item.model)
+        if key in rates_by_model:
+            raise PricingPatchError
+        rates_by_model[key] = (input_rate, output_rate)
+
+    for provider_name, details in providers.items():
+        models = details.get("models")
+        if not isinstance(models, dict):
             continue
-        for provider_name, details in entry.items():
-            if not isinstance(details, dict):
+        for model_name in tuple(models):
+            metadata = models[model_name]
+            if (provider_name, model_name) in rates_by_model:
                 continue
-            if provider_name in new_models_by_provider:
-                details["models"] = new_models_by_provider[provider_name]
-            else:
-                # Remove models block if provider has no rates in new list
-                details.pop("models", None)
+            metadata.pop("input_rate", None)
+            metadata.pop("output_rate", None)
+            if not metadata:
+                del models[model_name]
 
-    # Back up before overwriting in case file has JSON5 comments
-    _backup_if_has_comments(providers_path)
+    for (provider_name, model_name), (input_rate, output_rate) in rates_by_model.items():
+        details = providers[provider_name]
+        models = details.get("models")
+        if models is None:
+            models = {}
+            details["models"] = models
+        metadata = models.get(model_name)
+        if metadata is None:
+            metadata = {}
+            models[model_name] = metadata
+        metadata["input_rate"] = input_rate
+        metadata["output_rate"] = output_rate
 
-    new_content = json.dumps(provider_list, ensure_ascii=False, indent=2) + "\n"
-    _write_text_atomically(providers_path, new_content)
+    try:
+        return json.dumps(
+            provider_list,
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        ) + "\n"
+    except (TypeError, ValueError):
+        raise PricingPatchError from None
+
+
+def _snapshot_source_bundle(snapshot: RuntimeSnapshot) -> ConfigSourceBundle:
+    bundle = snapshot.config_loader.source_bundle
+    if not isinstance(bundle, ConfigSourceBundle):
+        raise ConfigUpdateError(ConfigUpdateErrorCode.UPDATE_UNAVAILABLE)
+    return bundle
+
+
+def _provider_source_text(snapshot: RuntimeSnapshot) -> str:
+    document = _snapshot_source_bundle(snapshot)[ConfigFile.PROVIDERS]
+    if not document.exists or document.content is None:
+        raise ConfigUpdateError(ConfigUpdateErrorCode.UPDATE_UNAVAILABLE)
+    content = document.content
+    if content.startswith(b"\xef\xbb\xbf"):
+        content = content[3:]
+    try:
+        return content.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise ConfigUpdateError(
+            ConfigUpdateErrorCode.UPDATE_UNAVAILABLE
+        ) from None
+
+
+def _pricing_json_response(
+    snapshot: RuntimeSnapshot,
+    payload: PricingListResponse,
+) -> JSONResponse:
+    return JSONResponse(
+        content=payload.model_dump(mode="json"),
+        headers=config_response_headers(snapshot, ConfigFile.PROVIDERS),
+    )
+
+
+async def _read_config_update_request(
+    request: Request,
+) -> tuple[ConfigRevision | None, RawConfigBody]:
+    expected_revision = parse_config_if_match(
+        request,
+        ConfigFile.PROVIDERS,
+    )
+    raw_body = await read_raw_config_body(request)
+    return expected_revision, raw_body
+
+
+def _decode_pricing_envelope(raw_body: RawConfigBody) -> Any:
+    try:
+        return json.loads(raw_body.validation_text)
+    except (json.JSONDecodeError, RecursionError):
+        raise ConfigRequestInvalid from None
+
+
+def _capture_config_update_base(
+    request: Request,
+    expected_revision: ConfigRevision | None,
+) -> tuple[AppServices, RuntimeSnapshot, ConfigUpdateCoordinator]:
+    services, snapshot = capture_config_update_runtime(request)
+    coordinator = services.config_update_coordinator
+    coordinator.check_base(
+        base_snapshot=snapshot,
+        config_file=ConfigFile.PROVIDERS,
+        expected_revision=expected_revision,
+    )
+    source_bundle = _snapshot_source_bundle(snapshot)
+    try:
+        current_bundle = source_bundle.recapture()
+    except ConfigSourceError:
+        raise ConfigUpdateError(
+            ConfigUpdateErrorCode.REVISION_CONFLICT
+        ) from None
+    if current_bundle != source_bundle:
+        raise ConfigUpdateError(ConfigUpdateErrorCode.REVISION_CONFLICT)
+    return services, snapshot, coordinator
+
+
+def _validation_failed() -> ConfigUpdateError:
+    return ConfigUpdateError(ConfigUpdateErrorCode.VALIDATION_FAILED)
 
 
 # ---------------------------------------------------------------------------
@@ -235,43 +360,63 @@ async def get_pricing_page(request: Request):
     response_model=PricingListResponse,
     tags=["Admin Pricing V1"],
 )
-async def get_pricing(request: Request) -> PricingListResponse:
+async def get_pricing(request: Request) -> JSONResponse:
     _require_master(request)
-    registry = _build_registry(request)
-    return PricingListResponse(items=_pricing_items_from_registry(registry))
+    try:
+        _services, snapshot = capture_config_update_runtime(request)
+        payload = PricingListResponse(
+            items=_pricing_items_from_registry(
+                snapshot.cost_rate_registry,
+            )
+        )
+        return _pricing_json_response(snapshot, payload)
+    except ConfigUpdateError as exc:
+        return config_error_response(exc)
 
 
 @admin_pricing_router.put(
     "/admin/pricing",
     response_model=PricingListResponse,
     tags=["Admin Pricing V1"],
+    openapi_extra=PRICING_UPDATE_OPENAPI,
 )
 async def update_pricing(
     request: Request,
-    payload: PricingUpdateRequest,
-) -> PricingListResponse:
+) -> JSONResponse:
     _require_master(request)
-    providers_path = _get_providers_path(request)
-
-    _rewrite_providers_json(providers_path, payload.items)
-
-    # Hot-reload: update providers_config in ConfigLoader
-    loader = _get_config_loader(request)
-    reloaded = loader.reload_providers_config()
-    if not reloaded:
-        logger.warning(
-            "Pricing saved to disk but hot-reload of providers_config failed; "
-            "restart may be required for changes to take effect."
+    try:
+        expected_revision, raw_body = await _read_config_update_request(
+            request
         )
+        envelope = _decode_pricing_envelope(raw_body)
+        _services, snapshot, coordinator = _capture_config_update_base(
+            request,
+            expected_revision,
+        )
+        try:
+            payload = PricingUpdateRequest.model_validate(envelope)
+            candidate_text = patch_provider_pricing(
+                _provider_source_text(snapshot),
+                payload.items,
+            )
+        except (PricingPatchError, ValidationError):
+            raise _validation_failed() from None
 
-    # Rebuild registry from freshly reloaded config
-    registry = build_model_cost_rate_registry(loader.providers_config)
-
-    # Update cost_rate_registry on app.state if it exists
-    if hasattr(request.app.state, "cost_rate_registry"):
-        request.app.state.cost_rate_registry = registry
-
-    return PricingListResponse(items=_pricing_items_from_registry(registry))
+        result = await coordinator.update(
+            base_snapshot=snapshot,
+            config_file=ConfigFile.PROVIDERS,
+            candidate_bytes=candidate_text.encode("utf-8"),
+            expected_revision=expected_revision,
+            comments_backup=True,
+        )
+        response_payload = PricingListResponse(
+            items=_pricing_items_from_registry(
+                result.snapshot.cost_rate_registry,
+            )
+        )
+        return _pricing_json_response(result.snapshot, response_payload)
+    except (ConfigRequestInvalid, ConfigUpdateError) as exc:
+        return config_error_response(exc)
 
 
 @admin_pricing_router.post(
@@ -282,11 +427,14 @@ async def update_pricing(
 async def calculate_cost(
     request: Request,
     payload: CalculateRequest,
-) -> CalculateResponse:
+) -> CalculateResponse | JSONResponse:
     _require_master(request)
-    registry = _build_registry(request)
+    try:
+        _services, snapshot = capture_config_update_runtime(request)
+    except ConfigUpdateError as exc:
+        return config_error_response(exc)
 
-    rates = registry.get((payload.provider, payload.model))
+    rates = snapshot.cost_rate_registry.get((payload.provider, payload.model))
     if rates is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

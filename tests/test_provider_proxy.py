@@ -5,7 +5,10 @@ import unittest
 from unittest.mock import patch
 
 from llm_gateway_core.config.loader import ProviderDetails, resolve_provider_proxy
-from main import create_proxy_http_clients
+from llm_gateway_core.services.http_client_factory import (
+    close_http_clients,
+    create_proxy_http_clients,
+)
 from tests._async_compat import run_async
 
 
@@ -50,7 +53,7 @@ class CreateProxyHttpClientsTests(unittest.TestCase):
         providers = {
             "openai": ProviderDetails(baseUrl="https://api.openai.com", apikey="key"),
         }
-        clients = create_proxy_http_clients(providers)
+        clients = run_async(create_proxy_http_clients(providers))
         self.assertEqual(clients, {})
 
     def test_creates_client_for_provider_with_proxy(self):
@@ -62,12 +65,10 @@ class CreateProxyHttpClientsTests(unittest.TestCase):
                 proxy="socks5://user:pass@host:1080",
             ),
         }
-        clients = create_proxy_http_clients(providers)
+        clients = run_async(create_proxy_http_clients(providers))
         self.assertIn("cloudru", clients)
         self.assertNotIn("openai", clients)
-        # Clean up
-        for c in clients.values():
-            run_async(c.aclose())
+        run_async(close_http_clients(clients))
 
     def test_resolves_proxy_from_env_var(self):
         providers = {
@@ -78,11 +79,9 @@ class CreateProxyHttpClientsTests(unittest.TestCase):
             ),
         }
         with patch.dict(os.environ, {"TEST_PROXY_URL": "socks5://resolved@host:1080"}):
-            clients = create_proxy_http_clients(providers)
+            clients = run_async(create_proxy_http_clients(providers))
         self.assertIn("cloudru", clients)
-        # Clean up
-        for c in clients.values():
-            run_async(c.aclose())
+        run_async(close_http_clients(clients))
 
 
 if __name__ == "__main__":

@@ -153,8 +153,11 @@ class SettingsEnvParsingTests(unittest.TestCase):
         with patch.dict(os.environ, {"TEST_PORT": "not_a_number"}):
             with self.assertRaises(ValueError) as ctx:
                 _get_positive_int_env("TEST_PORT", 9000)
-            self.assertIn("TEST_PORT", str(ctx.exception))
-            self.assertIn("not_a_number", str(ctx.exception))
+            self.assertEqual(
+                str(ctx.exception),
+                "key=TEST_PORT reason=positive_integer_required",
+            )
+            self.assertNotIn("not_a_number", str(ctx.exception))
 
     def test_negative_port_raises_clear_error(self):
         from llm_gateway_core.config.settings import _get_positive_int_env
@@ -180,38 +183,6 @@ class SettingsEnvParsingTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             result = _get_positive_int_env("TEST_MISSING_VAR", 42)
             self.assertEqual(result, 42)
-
-
-class ChatLoggingDbInstanceTests(unittest.TestCase):
-    """chat_logging must fail loudly when its TokensUsageDB was never bound.
-
-    Previously a silent ``TokensUsageDB()`` fallback meant typos in wiring
-    (lifespan forgetting to bind, or tests forgetting to stub) inserted into
-    an orphan SQLite file instead of surfacing the bug.
-    """
-
-    def test_require_tokens_usage_db_raises_when_unbound(self):
-        from llm_gateway_core.middleware import chat_logging
-
-        original_db = chat_logging.state.tokens_usage_db
-        try:
-            chat_logging.set_tokens_usage_db(None)
-            with self.assertRaises(RuntimeError):
-                chat_logging._require_tokens_usage_db()
-        finally:
-            chat_logging.set_tokens_usage_db(original_db)
-
-    def test_bound_db_is_returned(self):
-        from llm_gateway_core.middleware import chat_logging
-        from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
-
-        original_db = chat_logging.state.tokens_usage_db
-        sentinel_db = TokensUsageDB()
-        try:
-            chat_logging.set_tokens_usage_db(sentinel_db)
-            self.assertIs(chat_logging._require_tokens_usage_db(), sentinel_db)
-        finally:
-            chat_logging.set_tokens_usage_db(original_db)
 
 
 if __name__ == "__main__":

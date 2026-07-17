@@ -4,22 +4,56 @@ import secrets
 import time
 import hmac
 import hashlib
-from uuid import uuid4
+from typing import TYPE_CHECKING, NamedTuple, cast
 from urllib.parse import quote
 
 from fastapi import HTTPException, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.security import APIKeyHeader
 from starlette.routing import Match
+from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ..api.accounting_http import (
+    AccountingHttpUse,
+    accounting_error_response,
+    map_accounting_error,
+)
 from ..api.error_envelope import error_response
 from ..config.settings import settings
 from ..db.api_keys_db import ApiKeyRecord, ApiKeysDB
 from ..db.rejections_db import record_rejection
-from ..middleware.content_size import contains_request_body_too_large
-from ..services.access_control import UsdBudgetLedger
-from ..services.active_requests import get_active_requests_registry
+from ..middleware.content_size import (
+    RUNTIME_INDEPENDENT_PATHS,
+    UNMATCHED_ROUTE_STATE_KEY,
+)
+from ..middleware.request_logging import is_valid_request_id
+from ..middleware.response_observation import response_observation_published
+from ..middleware.accounting_admission import (
+    AccountingRequestContext,
+    get_accounting_request_context,
+    publish_accounting_request_context,
+    resolve_effective_http_route,
+    take_accounting_request_context,
+)
+from ..services import session_secret
+from ..services.accounting import (
+    AccountingError,
+    AccountingErrorCode,
+    AccountingReservation,
+    AccountingValidationError,
+    classify_billing_policy,
+)
+from ..services.accounting_service import AccountingService
+from ..services.active_requests import ActiveRequestsRegistry
+from ..services.deep_research_accounting import (
+    DEEP_RESEARCH_CONTEXT_TOKEN_PREFIX,
+    DeepResearchContextError,
+)
+from ..services.ip_blocklist import IpBlockGuard
 from ..utils.client_ip import get_client_ip
+
+if TYPE_CHECKING:
+    from ..services.runtime_config import AppServices
 
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 ANTHROPIC_API_KEY_HEADER_NAME = "x-api-key"
@@ -35,33 +69,36 @@ API_KEY_INVALID_DETAIL = "Invalid API Key"
 
 ROLE_MASTER = "master"
 ROLE_USER = "user"
-USD_BUDGET_RESERVATION_SUFFIXES = (
-    "/chat/completions",
-    "/responses",
-    "/messages",
-    "/embeddings",
-    "/rerank",
-    "/images",
-    "/images/generations",
-    "/images/edits",
-    "/audio/speech",
-    "/audio/transcriptions",
-    "/pdf/convert",
-    "/pdf/jobs",
-    "/web/search",
-    "/web/read",
-    "/web/research",
-    "/web/deep-research",
-    "/tavily/search",
-    "/tavily/extract",
-)
-CHAT_USAGE_RESERVATION_SUFFIXES = (
-    "/chat/completions",
-    "/responses",
-    "/messages",
+
+_DEEP_RESEARCH_CHILD_ROUTES = frozenset(
+    {
+        ("POST", "/v1/chat/completions"),
+        ("POST", "/v1/embeddings"),
+        ("POST", "/v1/images/generations"),
+    }
 )
 
-PUBLIC_EXACT_PATHS = {"/health", "/healthz", LOGIN_PATH}
+# Routes that have no billing policy but were rate-limited pre-refactor and
+# must keep going through _admit_rate_limit_only. This is deliberately an
+# allowlist, not "any policy-less route": dashboard routes such as
+# GET /v1/api/quota/keys or GET /v1/ui/usage-stats also have no billing
+# policy, are polled every few seconds by the UI, and share the same
+# RateLimiter partitioning (by key_id only, not by route) as billed routes --
+# forcing them through the rate limiter would let an open dashboard tab
+# exhaust the caller's real LLM request budget.
+_RATE_LIMIT_ONLY_ROUTES = frozenset(
+    {
+        ("GET", "/v1/audio/voices"),
+        ("POST", "/v1/messages/count_tokens"),
+        # anthropic_router is mounted twice (api/v1/__init__.py): once bare
+        # and once under prefix="/v1" for SDKs that already add their own
+        # /v1. Both registered route templates must be allowlisted, or the
+        # double-prefix path bypasses RPM/TPM entirely.
+        ("POST", "/v1/v1/messages/count_tokens"),
+    }
+)
+
+PUBLIC_EXACT_PATHS = {*RUNTIME_INDEPENDENT_PATHS, LOGIN_PATH}
 PUBLIC_PREFIXES = ("/static/",)
 OPTIONAL_AUTH_PATHS = {"/"}
 # Paths that accept X-Api-Key header (Anthropic SDK style authentication)
@@ -140,11 +177,10 @@ def _extract_bearer_token(auth_header: str) -> str:
 
 
 def _get_session_hmac_secret() -> bytes | None:
-    secret = settings.gateway_api_key
-    if not secret or not secret.strip():
+    secret = session_secret.get_session_secret(settings.gateway_api_key)
+    if secret is None:
         logging.error(SESSION_HMAC_CONFIGURATION_ERROR)
-        return None
-    return secret.encode("utf-8")
+    return secret
 
 
 def is_session_hmac_configured() -> bool:
@@ -239,6 +275,13 @@ def normalize_next_path(next_path: str | None) -> str:
     if not next_path or not next_path.startswith("/") or next_path.startswith("//"):
         return DEFAULT_UI_PATH
 
+    # Browsers normalize backslashes to forward slashes before resolving a
+    # Location header, so "/\evil.com" becomes a protocol-relative
+    # "//evil.com" redirect even though it passed the "//" check above.
+    # Control characters have no legitimate use in a same-site path either.
+    if any(char == "\\" or ord(char) < 0x20 or ord(char) == 0x7F for char in next_path):
+        return DEFAULT_UI_PATH
+
     if next_path == LOGIN_PATH or next_path.startswith(f"{LOGIN_PATH}?"):
         return DEFAULT_UI_PATH
 
@@ -262,8 +305,16 @@ def _is_html_navigation(request: Request) -> bool:
     return "text/html" in accept_header.lower()
 
 
-def _parse_session(session_id: str | None) -> tuple[str, int | None] | None:
-    """Return ``(role, key_id)`` for a valid session cookie, else ``None``.
+class _ParsedSession(NamedTuple):
+    role: str
+    key_id: int | None
+    nonce: str
+    expires_at: int
+    issued_at: int
+
+
+def _parse_session_claims(session_id: str | None) -> _ParsedSession | None:
+    """Return the validated claims for a session cookie, else ``None``.
 
     Accepts both the legacy 4-part format (master-only, no key id) and the
     extended 6-part format with role + key_id.
@@ -306,17 +357,25 @@ def _parse_session(session_id: str | None) -> tuple[str, int | None] | None:
 
     if not verify_session_hmac(signature, issued_at, expires_at, nonce, role, key_id):
         return None
-    return role, key_id
+    return _ParsedSession(
+        role=role, key_id=key_id, nonce=nonce, expires_at=expires_at, issued_at=issued_at
+    )
+
+
+def _parse_session(session_id: str | None) -> tuple[str, int | None] | None:
+    """Compatibility wrapper returning ``(role, key_id)`` for callers that
+    don't need the nonce/expiry claims."""
+    parsed = _parse_session_claims(session_id)
+    if parsed is None:
+        return None
+    return parsed.role, parsed.key_id
 
 
 def _has_valid_session(session_id: str | None) -> bool:
     return _parse_session(session_id) is not None
 
 
-async def _lookup_virtual_key(request: Request, token: str) -> ApiKeyRecord | None:
-    db: ApiKeysDB | None = getattr(request.app.state, "api_keys_db", None)
-    if db is None:
-        return None
+async def _lookup_virtual_key(db: ApiKeysDB, token: str) -> ApiKeyRecord | None:
     try:
         return await asyncio.to_thread(db.get_by_key, token)
     except Exception:
@@ -335,139 +394,234 @@ def _apply_virtual_key_auth(request: Request, record: ApiKeyRecord) -> None:
     request.state.api_key_record = record
 
 
-def _path_uses_usd_budget_reservation(path: str) -> bool:
-    normalized_path = path.rstrip("/")
-    return any(
-        normalized_path.endswith(suffix)
-        for suffix in USD_BUDGET_RESERVATION_SUFFIXES
-    )
-
-
-def _path_uses_chat_usage_reservation(path: str) -> bool:
-    normalized_path = path.rstrip("/")
-    return any(
-        normalized_path.endswith(suffix)
-        for suffix in CHAT_USAGE_RESERVATION_SUFFIXES
-    )
-
-
-def _get_usd_budget_ledger(request: Request) -> UsdBudgetLedger | None:
-    ledger = getattr(request.app.state, "usd_budget_ledger", None)
-    return ledger if isinstance(ledger, UsdBudgetLedger) else None
-
-
-def _reserve_usd_budget_if_needed(request: Request, path: str) -> None:
-    if not _path_uses_usd_budget_reservation(path):
-        return
-
-    record = getattr(request.state, "api_key_record", None)
-    if record is None or not record.budget_enforced():
-        return
-
-    ledger = _get_usd_budget_ledger(request)
-    if ledger is None:
-        return
-
-    ledger.sync_record(
-        record.id,
-        budget_usd=record.budget_usd,
-        spent_usd=record.spent_usd,
-    )
-    estimate = ledger.default_estimate_usd
-    if not ledger.reserve(record.id, estimate):
-        reserved_usd = ledger.reserved_for(record.id)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=(
-                f"API key budget of ${record.budget_usd:.4f} exhausted "
-                f"(spent ${record.spent_usd:.4f}, reserved ${reserved_usd:.4f})"
-            ),
-        )
-
-    request.state.usd_budget_reserved = True
-    request.state.usd_budget_finalized = False
-    request.state.usd_budget_reserved_key_id = record.id
-    request.state.usd_budget_reserved_estimate = estimate
-
-
-def _release_usd_budget_reservation(request: Request) -> None:
-    if not getattr(request.state, "usd_budget_reserved", False):
-        return
-    if getattr(request.state, "usd_budget_finalized", False):
-        return
-
-    ledger = _get_usd_budget_ledger(request)
-    key_id = getattr(request.state, "usd_budget_reserved_key_id", None)
-    reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
-    if ledger is not None and key_id is not None:
-        ledger.release(int(key_id), reserved_estimate)
-    request.state.usd_budget_finalized = True
-
-
-def _start_active_request_if_needed(request: Request, path: str) -> str | None:
-    if not _path_uses_usd_budget_reservation(path):
-        return None
-
-    request_id = getattr(request.state, "llmgateway_active_request_id", None)
-    if not isinstance(request_id, str) or not request_id:
-        request_id = getattr(request.state, "llmgateway_request_id", None)
-    if not isinstance(request_id, str) or not request_id:
-        request_id = str(uuid4())
-    request.state.llmgateway_active_request_id = request_id
-    x_title = request.headers.get("x-title")
-    if isinstance(x_title, str):
-        x_title = x_title.strip() or None
-
-    get_active_requests_registry(request.app).start(
-        request_id=request_id,
-        path=path,
-        api_key_id=getattr(request.state, "api_key_id", None),
-        gateway_model=getattr(request.state, "llmgateway_gateway_model", None),
-        operation=getattr(request.state, "llmgateway_operation", None),
-        x_title=x_title,
-    )
-    return request_id
-
-
-def _finish_active_request(request: Request, request_id: str | None) -> None:
-    if request_id:
-        get_active_requests_registry(request.app).finish(request_id)
-
-
-def _finish_active_request_with_response(
+def _apply_deep_research_context_auth(
     request: Request,
-    response: Response,
+    accounting_service: AccountingService,
+    token: str,
+) -> None:
+    route = resolve_effective_http_route(request.scope, request.app.router.routes)
+    if route is None or (route.method, route.route_template) not in _DEEP_RESEARCH_CHILD_ROUTES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=API_KEY_INVALID_DETAIL,
+        )
+    try:
+        resolved = accounting_service.resolve_deep_research_context(token)
+    except DeepResearchContextError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=API_KEY_INVALID_DETAIL,
+        ) from None
+
+    identity = resolved.auth_identity
+    request.state.llmgateway_deep_research_context_token = token
+    request.state.api_key_id = identity.api_key_id
+    if identity.api_key_id is None:
+        request.state.api_key_role = ROLE_MASTER
+        request.state.api_key_record = None
+        return
+    request.state.api_key_role = ROLE_USER
+    request.state.api_key_record = ApiKeyRecord(
+        id=identity.api_key_id,
+        name="deep-research-child",
+        api_key="",
+        budget_usd=None,
+        spent_usd=0.0,
+        rpm=None,
+        tpm=None,
+        allowed_models=list(identity.allowed_models),
+    )
+
+
+def _accounting_identity(
+    request: Request,
+) -> tuple[int | None, float | None, float, int | None, int | None]:
+    record = getattr(request.state, "api_key_record", None)
+    if record is None:
+        return None, None, 0.0, None, None
+    if not isinstance(record, ApiKeyRecord):
+        raise AccountingValidationError
+    budget_usd = record.budget_usd
+    if budget_usd is not None and budget_usd < 0:
+        budget_usd = None
+    return record.id, budget_usd, record.spent_usd, record.rpm, record.tpm
+
+
+async def _release_failed_admission(
+    accounting_service: AccountingService,
+    reservation: AccountingReservation,
+) -> None:
+    try:
+        await accounting_service.release(reservation)
+    except BaseException:
+        logging.exception("Accounting admission cleanup failed")
+
+
+def _admit_rate_limit_only(
+    request: Request,
+    services: "AppServices",
+) -> None:
+    """Enforce RPM/TPM for the _RATE_LIMIT_ONLY_ROUTES allowlist.
+
+    AccountingService.reserve() owns RPM/TPM together with budget for every
+    billed route. Routes without a policy skip reserve() entirely and
+    therefore never touch the rate limiter -- this restores that enforcement
+    for exactly the allowlisted routes (see the caller below), using the same
+    RateLimiter instance and admit/attribute pairing as reserve()/release()
+    so the sliding window stays consistent with billed routes, without
+    reserving budget or an accounting session slot.
+    """
+    record = getattr(request.state, "api_key_record", None)
+    if not isinstance(record, ApiKeyRecord):
+        return
+    if record.rpm is None and record.tpm is None:
+        return
+    request_id = getattr(request.state, "llmgateway_request_id", None)
+    if not is_valid_request_id(request_id):
+        raise AccountingValidationError
+    error = services.rate_limiter.admit_request(
+        request_id,
+        record.id,
+        rpm_limit=record.rpm,
+        tpm_limit=record.tpm,
+    )
+    if error is not None:
+        raise AccountingError(AccountingErrorCode.RATE_LIMITED)
+    request.state.llmgateway_rate_limit_admission_key_id = record.id
+
+
+async def _admit_accounting_if_needed(
+    request: Request,
+    services: "AppServices",
+) -> str | None:
+    route = resolve_effective_http_route(request.scope, request.app.router.routes)
+    if route is None:
+        return None
+    policy = classify_billing_policy(route.method, route.route_template)
+    if policy is None:
+        if (route.method, route.route_template) in _RATE_LIMIT_ONLY_ROUTES:
+            _admit_rate_limit_only(request, services)
+        return None
+    if get_accounting_request_context(request.scope) is not None:
+        raise AccountingValidationError
+
+    request_id = getattr(request.state, "llmgateway_request_id", None)
+    if not is_valid_request_id(request_id):
+        request.state.llmgateway_request_id = None
+        raise AccountingValidationError
+    accounting_service = services.accounting_service
+    if not isinstance(accounting_service, AccountingService):
+        raise AccountingValidationError
+
+    child_token = getattr(
+        request.state,
+        "llmgateway_deep_research_context_token",
+        None,
+    )
+    parent_event_id: str | None = None
+    if child_token is None:
+        api_key_id, budget_usd, spent_usd, rpm_limit, tpm_limit = (
+            _accounting_identity(request)
+        )
+        reservation = await accounting_service.reserve(
+            request_id=request_id,
+            api_key_id=api_key_id,
+            budget_usd=budget_usd,
+            spent_usd=spent_usd,
+            rpm_limit=rpm_limit,
+            tpm_limit=tpm_limit,
+            estimate_usd=services.usd_budget_ledger.default_estimate_usd,
+        )
+    else:
+        if not isinstance(child_token, str):
+            raise AccountingValidationError
+        child_admission = await accounting_service.reserve_deep_research_child(
+            child_token,
+            request_id=request_id,
+            estimate_usd=services.usd_budget_ledger.default_estimate_usd,
+        )
+        reservation = child_admission.reservation
+        api_key_id = reservation.api_key_id
+        parent_event_id = child_admission.parent_event_id
+
+    try:
+        context = AccountingRequestContext(
+            method=route.method,
+            route_template=route.route_template,
+            policy=policy,
+            request_id=request_id,
+            reservation=reservation,
+            parent_event_id=parent_event_id,
+        )
+        publish_accounting_request_context(request.scope, context)
+        x_title = request.headers.get("x-title")
+        if isinstance(x_title, str):
+            x_title = x_title.strip() or None
+        services.active_requests_registry.start(
+            request_id=request_id,
+            path=request.url.path,
+            api_key_id=api_key_id,
+            gateway_model=getattr(
+                request.state,
+                "llmgateway_gateway_model",
+                None,
+            ),
+            operation=policy.operation,
+            x_title=x_title,
+        )
+        request.state.llmgateway_active_request_id = request_id
+        return request_id
+    except BaseException as exc:
+        try:
+            take_accounting_request_context(request.scope)
+        except AccountingError:
+            logging.exception("Accounting context cleanup failed")
+        try:
+            services.active_requests_registry.finish(request_id)
+        except BaseException:
+            logging.exception("Active request admission cleanup failed")
+        await _release_failed_admission(accounting_service, reservation)
+        if isinstance(exc, AccountingError):
+            raise
+        if isinstance(exc, Exception):
+            raise AccountingError(AccountingErrorCode.ACCOUNTING_FAILED) from None
+        raise
+
+
+def _finish_active_request(
+    registry: ActiveRequestsRegistry,
     request_id: str | None,
-) -> Response:
-    if not request_id:
-        return response
-
-    if isinstance(response, StreamingResponse):
-        original_iterator = response.body_iterator
-
-        async def finishing_iterator():
-            try:
-                async for chunk in original_iterator:
-                    yield chunk
-            finally:
-                _finish_active_request(request, request_id)
-
-        response.body_iterator = finishing_iterator()
-        return response
-
-    _finish_active_request(request, request_id)
-    return response
+) -> None:
+    if request_id:
+        registry.finish(request_id)
 
 
-async def _authenticate_request(request: Request) -> tuple[bool, str | None]:
+async def _authenticate_request(
+    request: Request,
+    services: "AppServices",
+) -> tuple[bool, str | None]:
+    api_keys_db = services.api_keys_db
     auth_header = await api_key_header(request)
     if auth_header:
         api_key = _extract_bearer_token(auth_header)
+        if api_key.startswith(DEEP_RESEARCH_CONTEXT_TOKEN_PREFIX):
+            accounting_service = services.accounting_service
+            if not isinstance(accounting_service, AccountingService):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=API_KEY_INVALID_DETAIL,
+                )
+            _apply_deep_research_context_auth(
+                request,
+                accounting_service,
+                api_key,
+            )
+            return True, "deep-research-context"
         if _tokens_match(api_key, settings.gateway_api_key):
             request.state.api_key_role = ROLE_MASTER
             request.state.api_key_id = None
             return True, "bearer"
-        record = await _lookup_virtual_key(request, api_key)
+        record = await _lookup_virtual_key(api_keys_db, api_key)
         if record is not None:
             _apply_virtual_key_auth(request, record)
             return True, "bearer-virtual"
@@ -483,7 +637,7 @@ async def _authenticate_request(request: Request) -> tuple[bool, str | None]:
                 request.state.api_key_role = ROLE_MASTER
                 request.state.api_key_id = None
                 return True, "x-api-key"
-            record = await _lookup_virtual_key(request, api_key)
+            record = await _lookup_virtual_key(api_keys_db, api_key)
             if record is not None:
                 _apply_virtual_key_auth(request, record)
                 return True, "x-api-key-virtual"
@@ -498,29 +652,30 @@ async def _authenticate_request(request: Request) -> tuple[bool, str | None]:
         request.state.api_key_role = role
         request.state.api_key_id = key_id
         if role == ROLE_USER and key_id is not None:
-            db: ApiKeysDB | None = getattr(request.app.state, "api_keys_db", None)
-            if db is not None:
-                try:
-                    record = await asyncio.to_thread(db.get_by_id, key_id)
-                except Exception:
-                    logging.exception("Session key lookup failed")
-                    record = None
-                if record is None or record.disabled:
-                    if record is not None and record.disabled:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=API_KEY_DISABLED_DETAIL,
-                        )
-                    return False, None
-                request.state.api_key_record = record
+            try:
+                record = await asyncio.to_thread(api_keys_db.get_by_id, key_id)
+            except Exception:
+                logging.exception("Session key lookup failed")
+                record = None
+            if record is None or record.disabled:
+                if record is not None and record.disabled:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=API_KEY_DISABLED_DETAIL,
+                    )
+                return False, None
+            request.state.api_key_record = record
         return True, "session"
 
     return False, None
 
 
-async def _try_authenticate_request(request: Request) -> tuple[bool, str | None]:
+async def _try_authenticate_request(
+    request: Request,
+    services: "AppServices",
+) -> tuple[bool, str | None]:
     try:
-        return await _authenticate_request(request)
+        return await _authenticate_request(request, services)
     except HTTPException:
         return False, None
 
@@ -550,12 +705,8 @@ def _category_from_exc(exc: HTTPException) -> str:
     audit category.
 
     Scope: this only classifies rejections originating in ``api_key_auth``
-    itself — invalid/disabled keys during authentication and the USD-budget
-    *reservation* (the 429 from ``_reserve_usd_budget_if_needed``). Rejections
-    decided later in route handlers (``enforce_virtual_key_access``:
-    model-not-allowed, record-level budget, RPM/TPM rate limit) record their
-    own precise category via ``record_rejection`` and never reach here, so the
-    429 below maps to ``budget_exhausted`` rather than ``rate_limited``.
+    itself. Accounting admission failures use the credential-safe accounting
+    HTTP envelope instead.
     """
     if exc.status_code == status.HTTP_401_UNAUTHORIZED:
         return "auth_invalid"
@@ -565,9 +716,17 @@ def _category_from_exc(exc: HTTPException) -> str:
         return "auth_invalid"
     if exc.status_code == status.HTTP_403_FORBIDDEN:
         return "unauthorized"
-    if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-        return "budget_exhausted"
     return "unauthorized"
+
+
+# Only these two admission codes were ever audited pre-refactor (budget and
+# rate-limit exhaustion). Transient accounting states (ACCOUNTING_IN_FLIGHT,
+# BUDGET_RESET_IN_PROGRESS, ...) are availability issues, not governance
+# rejections attributable to the caller -- keep them out of the audit log.
+_AUDITED_ADMISSION_REJECTION_CATEGORIES: dict[AccountingErrorCode, str] = {
+    AccountingErrorCode.BUDGET_EXHAUSTED: "budget_exhausted",
+    AccountingErrorCode.RATE_LIMITED: "rate_limited",
+}
 
 
 def _ip_blocked_response(retry_after: int) -> JSONResponse:
@@ -578,11 +737,10 @@ def _ip_blocked_response(retry_after: int) -> JSONResponse:
     )
 
 
-def _note_auth_failure(request: Request) -> None:
+def _note_auth_failure(request: Request, guard: IpBlockGuard | None) -> None:
     """Count a failed authentication for the client IP and, when it crosses the
     threshold, audit the resulting block once (subsequent blocked requests are
     rejected silently to avoid flooding the rejection log)."""
-    guard = getattr(request.app.state, "ip_block_guard", None)
     if guard is None:
         return
     ip = get_client_ip(request)
@@ -607,8 +765,7 @@ def _note_auth_failure(request: Request) -> None:
         )
 
 
-def _note_auth_success(request: Request) -> None:
-    guard = getattr(request.app.state, "ip_block_guard", None)
+def _note_auth_success(request: Request, guard: IpBlockGuard | None) -> None:
     if guard is None:
         return
     ip = get_client_ip(request)
@@ -616,56 +773,63 @@ def _note_auth_success(request: Request) -> None:
         guard.register_success(ip)
 
 
-async def api_key_auth(request: Request, call_next):
-    """
-    FastAPI middleware to authenticate requests using either a Bearer token or
-    a server-side session referenced by an HttpOnly cookie.
-    """
-    if not _matches_registered_route(request):
-        return await call_next(request)
-
+async def _prepare_api_key_auth(
+    request: Request,
+    *,
+    path: str,
+    services: "AppServices",
+) -> tuple[Response | None, str | None]:
+    """Authenticate one request without crossing the downstream ASGI boundary."""
+    guard = services.ip_block_guard
     request.state.gateway_authenticated = False
     request.state.gateway_auth_source = None
-    request.state.api_key_role = ROLE_MASTER
+    # Default to no role rather than ROLE_MASTER: every `role == ROLE_MASTER`
+    # check downstream must observe an explicit grant, not this placeholder.
+    # Authentication always overwrites this before any endpoint runs.
+    request.state.api_key_role = None
     request.state.api_key_id = None
     request.state.api_key_record = None
-    request.state.usd_budget_reserved = False
-    request.state.usd_budget_finalized = False
-    request.state.usd_budget_reserved_key_id = None
-    request.state.usd_budget_reserved_estimate = 0.0
     request.state.llmgateway_active_request_id = None
-
-    path = request.url.path
+    request.state.llmgateway_deep_research_context_token = None
+    request.state.llmgateway_rate_limit_admission_key_id = None
 
     try:
         if not requires_api_key(path):
-            is_authenticated, auth_source = await _try_authenticate_request(request)
+            is_authenticated, auth_source = await _try_authenticate_request(
+                request,
+                services,
+            )
             request.state.gateway_authenticated = is_authenticated
             request.state.gateway_auth_source = auth_source
-            return await call_next(request)
+            return None, None
 
-        guard = getattr(request.app.state, "ip_block_guard", None)
         if guard is not None:
             client_ip = get_client_ip(request)
             if client_ip:
                 retry_after = guard.check_blocked(client_ip)
                 if retry_after is not None:
-                    return _ip_blocked_response(retry_after)
+                    return _ip_blocked_response(retry_after), None
 
-        is_authenticated, auth_source = await _authenticate_request(request)
+        is_authenticated, auth_source = await _authenticate_request(
+            request,
+            services,
+        )
         request.state.gateway_authenticated = is_authenticated
         request.state.gateway_auth_source = auth_source
 
         if is_authenticated:
-            _note_auth_success(request)
+            _note_auth_success(request, guard)
             if (
                 _is_master_only_path(path)
                 and getattr(request.state, "api_key_role", ROLE_MASTER) != ROLE_MASTER
             ):
                 if _is_html_navigation(request):
-                    return RedirectResponse(
-                        url=DEFAULT_UI_PATH,
-                        status_code=status.HTTP_303_SEE_OTHER,
+                    return (
+                        RedirectResponse(
+                            url=DEFAULT_UI_PATH,
+                            status_code=status.HTTP_303_SEE_OTHER,
+                        ),
+                        None,
                     )
                 record_rejection(
                     request,
@@ -673,20 +837,18 @@ async def api_key_auth(request: Request, call_next):
                     reason="This endpoint is reserved for the master API key",
                     category="master_only",
                 )
-                return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={"detail": "This endpoint is reserved for the master API key"},
+                return (
+                    JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "This endpoint is reserved for the master API key"},
+                    ),
+                    None,
                 )
-            _reserve_usd_budget_if_needed(request, path)
-            active_request_id = _start_active_request_if_needed(request, path)
-            try:
-                response = await call_next(request)
-            except Exception:
-                _finish_active_request(request, active_request_id)
-                raise
-            if not _path_uses_chat_usage_reservation(path):
-                _release_usd_budget_reservation(request)
-            return _finish_active_request_with_response(request, response, active_request_id)
+            active_request_id = await _admit_accounting_if_needed(
+                request,
+                services,
+            )
+            return None, active_request_id
 
         if _is_html_navigation(request):
             response = RedirectResponse(
@@ -694,7 +856,7 @@ async def api_key_auth(request: Request, call_next):
                 status_code=status.HTTP_303_SEE_OTHER,
             )
             clear_authenticated_session_cookie(response)
-            return response
+            return response, None
 
         record_rejection(
             request,
@@ -702,11 +864,13 @@ async def api_key_auth(request: Request, call_next):
             reason="Missing or invalid Authorization header",
             category="auth_invalid",
         )
-        _note_auth_failure(request)
-        return _unauthorized_api_response()
+        _note_auth_failure(request, guard)
+        return _unauthorized_api_response(), None
     except HTTPException as exc:
-        _finish_active_request(request, getattr(request.state, "llmgateway_active_request_id", None))
-        _release_usd_budget_reservation(request)
+        _finish_active_request(
+            services.active_requests_registry,
+            getattr(request.state, "llmgateway_active_request_id", None),
+        )
         logging.warning(f"Error in authentication. {exc.detail} (Status: {exc.status_code})")
         category = _category_from_exc(exc)
         record_rejection(
@@ -716,19 +880,198 @@ async def api_key_auth(request: Request, call_next):
             category=category,
         )
         if category == "auth_invalid":
-            _note_auth_failure(request)
+            _note_auth_failure(request, guard)
         if exc.status_code == status.HTTP_403_FORBIDDEN and exc.detail == API_KEY_DISABLED_DETAIL:
-            return _api_key_disabled_response(request)
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    except Exception as exc:
-        if contains_request_body_too_large(exc):
-            raise
-        _finish_active_request(request, getattr(request.state, "llmgateway_active_request_id", None))
-        _release_usd_budget_reservation(request)
-        logging.error(f"Internal server error: {exc}", exc_info=True)
-        return error_response(
-            request,
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error",
-            error_type="internal_error",
+            return _api_key_disabled_response(request), None
+        return (
+            JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}),
+            None,
         )
+    except AccountingError as exc:
+        _finish_active_request(
+            services.active_requests_registry,
+            getattr(request.state, "llmgateway_active_request_id", None),
+        )
+        category = _AUDITED_ADMISSION_REJECTION_CATEGORIES.get(exc.code)
+        if category is not None:
+            failure = map_accounting_error(exc, use=AccountingHttpUse.ADMISSION)
+            record_rejection(
+                request,
+                status_code=failure.status_code,
+                reason=failure.detail,
+                category=category,
+            )
+        return (
+            accounting_error_response(
+                request,
+                exc,
+                use=AccountingHttpUse.ADMISSION,
+            ),
+            None,
+        )
+    except Exception as exc:
+        _finish_active_request(
+            services.active_requests_registry,
+            getattr(request.state, "llmgateway_active_request_id", None),
+        )
+        logging.error(f"Internal server error: {exc}", exc_info=True)
+        return (
+            error_response(
+                request,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error",
+                error_type="internal_error",
+            ),
+            None,
+        )
+
+
+def _release_rate_limit_admission(
+    request: Request,
+    services: "AppServices",
+) -> None:
+    """Close the RateLimiter admission opened by _admit_rate_limit_only.
+
+    Mirrors AccountingService.release()'s internal
+    attribute_request_tokens(request_id, key_id, 0) call so a policy-less
+    route's admission never leaks a request_events entry.
+    """
+    key_id = getattr(request.state, "llmgateway_rate_limit_admission_key_id", None)
+    if key_id is None:
+        return
+    request_id = getattr(request.state, "llmgateway_request_id", None)
+    try:
+        services.rate_limiter.attribute_request_tokens(request_id, key_id, 0)
+    except BaseException:
+        logging.exception("Rate limit admission cleanup failed")
+
+
+async def _release_unclaimed_accounting_context(
+    request: Request,
+    services: "AppServices",
+) -> None:
+    try:
+        context = take_accounting_request_context(request.scope)
+    except BaseException:
+        logging.exception("Accounting context cleanup failed")
+        return
+    if context is None:
+        return
+    accounting_service = services.accounting_service
+    if not isinstance(accounting_service, AccountingService):
+        logging.error("Accounting context owner is unavailable during cleanup")
+        return
+    try:
+        released = await accounting_service.release(context.reservation)
+        if not isinstance(released, bool):
+            logging.error("Accounting context cleanup returned an invalid result")
+    except BaseException:
+        logging.exception("Accounting context cleanup failed")
+
+
+async def _cleanup_auth_ownership(
+    request: Request,
+    active_request_id: str | None,
+    services: "AppServices",
+) -> None:
+    _release_rate_limit_admission(request, services)
+    if response_observation_published(request.scope):
+        return
+    await _release_unclaimed_accounting_context(request, services)
+    try:
+        _finish_active_request(services.active_requests_registry, active_request_id)
+    except BaseException:
+        logging.exception("Active request cleanup failed")
+
+
+def _bypasses_runtime_services(request: Request) -> bool:
+    if request.url.path in RUNTIME_INDEPENDENT_PATHS:
+        return True
+    if _matches_registered_route(request):
+        return False
+    request.scope.setdefault("state", {})[UNMATCHED_ROUTE_STATE_KEY] = True
+    return True
+
+
+def _capture_app_services(request: Request) -> "AppServices":
+    return cast("AppServices", request.app.state.services)
+
+
+class ApiKeyAuthMiddleware:
+    """Pure-ASGI auth boundary that preserves downstream BaseException identity."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
+        if _bypasses_runtime_services(request):
+            await self.app(scope, receive, send)
+            return
+
+        services = _capture_app_services(request)
+        path = request.url.path
+        response, active_request_id = await _prepare_api_key_auth(
+            request,
+            path=path,
+            services=services,
+        )
+        if response is not None:
+            await response(scope, receive, send)
+            return
+
+        try:
+            await self.app(scope, receive, send)
+        except BaseException:
+            await _cleanup_auth_ownership(
+                request,
+                active_request_id,
+                services,
+            )
+            raise
+
+        await _cleanup_auth_ownership(
+            request,
+            active_request_id,
+            services,
+        )
+
+
+async def api_key_auth(request: Request, call_next):
+    """Compatibility adapter for direct functional-middleware callers."""
+    if _bypasses_runtime_services(request):
+        return await call_next(request)
+
+    services = _capture_app_services(request)
+    path = request.url.path
+    response, active_request_id = await _prepare_api_key_auth(
+        request,
+        path=path,
+        services=services,
+    )
+    if response is not None:
+        return response
+
+    try:
+        response = await call_next(request)
+    except BaseException:
+        await _cleanup_auth_ownership(
+            request,
+            active_request_id,
+            services,
+        )
+        raise
+
+    _release_rate_limit_admission(request, services)
+    await _release_unclaimed_accounting_context(request, services)
+    _finish_active_request(services.active_requests_registry, active_request_id)
+    return response

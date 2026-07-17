@@ -1,6 +1,11 @@
+import hashlib
 import json
 import logging
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote
 
 import httpx
@@ -8,21 +13,42 @@ from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from ...config.settings import settings
 from ...config.loader import ConfigLoader
+from ...services.accounting import AccountingError, AccountingValidationError
 from ...services.access_control import enforce_virtual_key_access
+from ...services.operation_accounting import (
+    OperationEventProvenance,
+    OperationTerminalObservation,
+    parse_upstream_operation_observation,
+)
 from ...services.payload_transform import apply_payload_transforms
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
+from ..accounting_http import AccountingHttpUse, accounting_error_response
+from .operation_accounting import (
+    OperationTerminalOwner,
+    finalize_buffered_operation,
+    release_operation,
+    release_operation_if_open,
+    take_operation_terminal_owner,
+)
 from .operation_proxy import (
     extract_downstream_error_detail,
     proxy_multipart_to_downstream,
-    record_operation_usage,
     request_duration_ms,
     sanitize_target_url_for_log,
     should_retry_operation_status,
     sleep_before_retry,
 )
-from .operation_runtime import serialize_upload_limited
+from .operation_runtime import (
+    ValidatedUpload,
+    admit_upload_processing,
+    validate_upload_limited,
+)
+
+if TYPE_CHECKING:
+    from ...services.runtime_config import AppServices, RuntimeSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -30,29 +56,24 @@ router = APIRouter()
 PDF_CONVERSIONS_SECTION = "pdf_conversions"
 PDF_CONVERSION_OPERATION = "pdf_conversion"
 PROTECTED_PDF_CUSTOM_PARAM_KEYS = frozenset({"file", "model"})
-PDF_JOB_TERMINAL_STATUSES = frozenset({"completed", "complete", "succeeded", "success", "done", "failed"})
+PDF_JOB_SUCCESS_STATUSES = frozenset({"completed", "complete", "succeeded", "success", "done"})
+PDF_JOB_CANONICAL_METHOD = "POST"
+PDF_JOB_CANONICAL_ROUTE = "/v1/pdf/jobs"
+MULTIPART_MAX_FIELDS = 64
+MULTIPART_MAX_SCALAR_PART_BYTES = 64 * 1024
 
 
 def _get_operation_runtime(
     request: Request,
-) -> tuple[OperationDispatcher, httpx.AsyncClient, ConfigLoader, dict]:
-    dispatcher: OperationDispatcher | None = getattr(request.app.state, "operation_dispatcher", None)
-    if dispatcher is None:
-        logger.error("OperationDispatcher not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Operation dispatcher not available.")
-
-    http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
-    if http_client is None:
-        logger.error("Shared httpx.AsyncClient not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Shared HTTP client not available.")
-
-    config_loader_instance: ConfigLoader | None = getattr(request.app.state, "config_loader", None)
-    if config_loader_instance is None:
-        logger.error("ConfigLoader not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Core configuration not available.")
-
-    proxy_http_clients: dict = getattr(request.app.state, "proxy_http_clients", {})
-    return dispatcher, http_client, config_loader_instance, proxy_http_clients
+) -> tuple[OperationDispatcher, httpx.AsyncClient, ConfigLoader, Mapping[str, httpx.AsyncClient]]:
+    services = cast("AppServices", request.app.state.services)
+    runtime_snapshot = cast("RuntimeSnapshot", request.state.runtime_snapshot)
+    return (
+        runtime_snapshot.operation_dispatcher,
+        services.http_client,
+        runtime_snapshot.config_loader,
+        runtime_snapshot.proxy_http_clients,
+    )
 
 
 def _append_scalar_form_value(payload: dict[str, object], field_name: str, field_value: object) -> None:
@@ -68,40 +89,52 @@ def _append_scalar_form_value(payload: dict[str, object], field_name: str, field
     payload[field_name] = [existing_value, field_value]
 
 
-async def _serialize_upload(value: UploadFile | StarletteUploadFile) -> tuple[str, bytes, str | None]:
-    return await serialize_upload_limited(value, default_filename="document.pdf", kind="pdf")
+async def _serialize_upload(
+    value: UploadFile | StarletteUploadFile,
+) -> ValidatedUpload:
+    return await validate_upload_limited(
+        value,
+        default_filename="document.pdf",
+        kind="pdf",
+        max_bytes=settings.pdf_upload_max_bytes,
+    )
 
 
+@asynccontextmanager
 async def _parse_pdf_multipart_request(
     request: Request,
-) -> tuple[str, dict[str, object], list[tuple[str, tuple[str, bytes, str | None]]]]:
+) -> AsyncIterator[tuple[str, dict[str, object], ValidatedUpload]]:
     content_type = request.headers.get("content-type", "").lower()
     if "multipart/form-data" not in content_type:
         raise HTTPException(status_code=400, detail="PDF conversion endpoint expects multipart/form-data.")
 
-    form = await request.form()
     scalar_fields: dict[str, object] = {}
-    upload_file: tuple[str, bytes, str | None] | None = None
+    upload_file: ValidatedUpload | None = None
 
-    for key, value in form.multi_items():
-        if isinstance(value, (UploadFile, StarletteUploadFile)):
-            if key != "file":
-                raise HTTPException(status_code=400, detail=f"Unsupported multipart file field '{key}'.")
-            if upload_file is not None:
-                raise HTTPException(status_code=400, detail="Only one 'file' is supported in request body.")
-            upload_file = await _serialize_upload(value)
-            continue
+    async with request.form(
+        max_files=1,
+        max_fields=MULTIPART_MAX_FIELDS,
+        max_part_size=MULTIPART_MAX_SCALAR_PART_BYTES,
+    ) as form:
+        for key, value in form.multi_items():
+            if isinstance(value, (UploadFile, StarletteUploadFile)):
+                if key != "file":
+                    raise HTTPException(status_code=400, detail=f"Unsupported multipart file field '{key}'.")
+                if upload_file is not None:
+                    raise HTTPException(status_code=400, detail="Only one 'file' is supported in request body.")
+                upload_file = await _serialize_upload(value)
+                continue
 
-        _append_scalar_form_value(scalar_fields, key, value.strip() if isinstance(value, str) else value)
+            _append_scalar_form_value(scalar_fields, key, value.strip() if isinstance(value, str) else value)
 
-    requested_model = scalar_fields.pop("model", None)
-    if not isinstance(requested_model, str) or not requested_model.strip():
-        raise HTTPException(status_code=400, detail="Missing 'model' in request body")
+        requested_model = scalar_fields.pop("model", None)
+        if not isinstance(requested_model, str) or not requested_model.strip():
+            raise HTTPException(status_code=400, detail="Missing 'model' in request body")
 
-    if upload_file is None:
-        raise HTTPException(status_code=400, detail="Missing 'file' in request body")
+        if upload_file is None:
+            raise HTTPException(status_code=400, detail="Missing 'file' in request body")
 
-    return requested_model.strip(), scalar_fields, [("file", upload_file)]
+        yield requested_model.strip(), scalar_fields, upload_file
 
 
 def _build_route_payload(request_payload: dict[str, object], route) -> dict[str, object]:
@@ -272,140 +305,255 @@ async def _resolve_pdf_route(request: Request, requested_model: str):
     return route, base_url, headers, effective_client, retry_count, retry_delay
 
 
-def _pdf_job_payload_has_terminal_usage(payload: object) -> bool:
-    if not isinstance(payload, dict):
+def _pdf_job_succeeded(payload: object) -> bool:
+    if not isinstance(payload, Mapping):
         return False
     status = payload.get("status")
-    if not isinstance(status, str) or status.strip().lower() not in PDF_JOB_TERMINAL_STATUSES:
-        return False
-    return isinstance(payload.get("usage"), dict)
+    return isinstance(status, str) and status.strip().lower() in PDF_JOB_SUCCESS_STATUSES
 
 
-def _payload_has_usage(payload: object) -> bool:
-    return isinstance(payload, dict) and isinstance(payload.get("usage"), dict)
+def _strict_pdf_job_id(value: object) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise AccountingValidationError
+    return value
 
 
-def _pdf_job_usage_idempotency_key(request: Request, *, gateway_model: str, job_id: str) -> str:
-    api_key_id = getattr(request.state, "api_key_id", None)
-    provider = getattr(request.state, "llmgateway_provider", None)
-    provider_model = getattr(request.state, "llmgateway_provider_model", None)
-    return "|".join(
-        [
-            "pdf_job_usage",
-            str(api_key_id if api_key_id is not None else "master"),
-            gateway_model,
-            str(provider or ""),
-            str(provider_model or ""),
-            job_id,
-        ]
-    )
+def _terminal_pdf_job_id(payload: object, *, expected_job_id: str | None) -> str:
+    if not isinstance(payload, Mapping):
+        raise AccountingValidationError
+    if expected_job_id is None:
+        return _strict_pdf_job_id(payload.get("id"))
+
+    normalized_expected = _strict_pdf_job_id(expected_job_id)
+    if "id" in payload and _strict_pdf_job_id(payload["id"]) != normalized_expected:
+        raise AccountingValidationError
+    return normalized_expected
 
 
-async def _record_pdf_job_usage_once(
-    request: Request,
+def _pdf_job_event_id(owner: OperationTerminalOwner, job_id: str) -> str:
+    api_key_id = owner.context.reservation.api_key_id
+    identity = api_key_id if api_key_id is not None else "master"
+    canonical_identity = json.dumps(
+        [identity, _strict_pdf_job_id(job_id)],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"pdf-job-{hashlib.sha256(canonical_identity).hexdigest()}"
+
+
+def _parse_pdf_terminal_observation(
+    owner: OperationTerminalOwner,
     payload: object,
     *,
     gateway_model: str,
-    job_id: str,
     duration_ms: int,
-) -> None:
-    if not _pdf_job_payload_has_terminal_usage(payload):
-        return
-    await record_operation_usage(
-        request,
-        payload if isinstance(payload, dict) else {},
+) -> OperationTerminalObservation:
+    if not isinstance(payload, Mapping):
+        raise AccountingValidationError
+    return parse_upstream_operation_observation(
+        payload,
+        policy=owner.context.policy,
         gateway_model=gateway_model,
-        operation=PDF_CONVERSION_OPERATION,
-        duration_ms=duration_ms,
-        idempotency_key=_pdf_job_usage_idempotency_key(
-            request,
-            gateway_model=gateway_model,
-            job_id=job_id,
+        provider=None,
+        model=None,
+        cost_rate_registry=owner.cost_rate_registry,
+        operation_cost_calculator_registry=(
+            owner.operation_cost_calculator_registry
         ),
+        occurred_at=datetime.now(timezone.utc),
+        duration_ms=duration_ms,
     )
+
+
+def _pdf_job_provenance(
+    owner: OperationTerminalOwner,
+    route,
+    *,
+    job_id: str,
+) -> OperationEventProvenance:
+    return OperationEventProvenance(
+        event_id=_pdf_job_event_id(owner, job_id),
+        method=PDF_JOB_CANONICAL_METHOD,
+        route_template=PDF_JOB_CANONICAL_ROUTE,
+        provider=route.provider,
+        model=route.model,
+    )
+
+
+async def _finalize_pdf_job_response(
+    owner: OperationTerminalOwner,
+    response: Response,
+    payload: object,
+    *,
+    route,
+    gateway_model: str,
+    expected_job_id: str | None,
+    duration_ms: int,
+) -> Response:
+    if not _pdf_job_succeeded(payload):
+        await release_operation(owner)
+        return response
+
+    job_id = _terminal_pdf_job_id(payload, expected_job_id=expected_job_id)
+    observation = _parse_pdf_terminal_observation(
+        owner,
+        payload,
+        gateway_model=gateway_model,
+        duration_ms=duration_ms,
+    )
+    return await finalize_buffered_operation(
+        owner,
+        response,
+        observation,
+        provenance=_pdf_job_provenance(owner, route, job_id=job_id),
+    )
+
+
+async def _run_pdf_accounting(
+    request: Request,
+    operation: Callable[[OperationTerminalOwner], Awaitable[object]],
+) -> object:
+    try:
+        owner = take_operation_terminal_owner(request)
+    except AccountingError as exc:
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMISSION,
+        )
+
+    try:
+        return await operation(owner)
+    except AccountingError as exc:
+        await release_operation_if_open(owner, primary_error=exc)
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMISSION,
+        )
+    except BaseException as exc:
+        await release_operation_if_open(owner, primary_error=exc)
+        raise
 
 
 @router.post("/pdf/convert")
 async def convert_pdf(request: Request):
-    requested_model, request_payload, files_payload = await _parse_pdf_multipart_request(request)
-    request_started_at = time.monotonic()
-    route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
-        request,
+    async with _parse_pdf_multipart_request(request) as (
         requested_model,
-    )
+        request_payload,
+        upload,
+    ):
 
-    response_payload, downstream_status_code = await proxy_multipart_to_downstream(
-        _join_downstream_path(base_url, "convert"),
-        headers,
-        _build_route_payload(request_payload, route),
-        files_payload,
-        effective_client,
-        retry_count=retry_count,
-        retry_delay=retry_delay,
-    )
+        async def operation(owner: OperationTerminalOwner) -> object:
+            request_started_at = time.monotonic()
+            route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
+                request,
+                requested_model,
+            )
+            async with admit_upload_processing(request, upload.size):
+                response_payload, downstream_status_code = await proxy_multipart_to_downstream(
+                    _join_downstream_path(base_url, "convert"),
+                    headers,
+                    _build_route_payload(request_payload, route),
+                    [("file", upload.as_multipart_file())],
+                    effective_client,
+                    retry_count=retry_count,
+                    retry_delay=retry_delay,
+                )
+            response = JSONResponse(
+                content=response_payload,
+                status_code=downstream_status_code,
+            )
+            observation = _parse_pdf_terminal_observation(
+                owner,
+                response_payload,
+                gateway_model=requested_model,
+                duration_ms=request_duration_ms(request_started_at),
+            )
+            return await finalize_buffered_operation(owner, response, observation)
 
-    await record_operation_usage(
-        request,
-        response_payload if isinstance(response_payload, dict) else {},
-        gateway_model=requested_model,
-        operation=PDF_CONVERSION_OPERATION,
-        duration_ms=request_duration_ms(request_started_at),
-    )
-    return JSONResponse(content=response_payload, status_code=downstream_status_code)
+        return await _run_pdf_accounting(request, operation)
 
 
 @router.post("/pdf/jobs")
 async def create_pdf_job(request: Request):
-    requested_model, request_payload, files_payload = await _parse_pdf_multipart_request(request)
-    request_started_at = time.monotonic()
-    route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
-        request,
+    async with _parse_pdf_multipart_request(request) as (
         requested_model,
-    )
+        request_payload,
+        upload,
+    ):
 
-    response_payload, downstream_status_code = await proxy_multipart_to_downstream(
-        _join_downstream_path(base_url, "jobs"),
-        headers,
-        _build_route_payload(request_payload, route),
-        files_payload,
-        effective_client,
-        retry_count=retry_count,
-        retry_delay=retry_delay,
-    )
+        async def operation(owner: OperationTerminalOwner) -> object:
+            request_started_at = time.monotonic()
+            route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
+                request,
+                requested_model,
+            )
+            async with admit_upload_processing(request, upload.size):
+                response_payload, downstream_status_code = await proxy_multipart_to_downstream(
+                    _join_downstream_path(base_url, "jobs"),
+                    headers,
+                    _build_route_payload(request_payload, route),
+                    [("file", upload.as_multipart_file())],
+                    effective_client,
+                    retry_count=retry_count,
+                    retry_delay=retry_delay,
+                )
+            response = JSONResponse(
+                content=response_payload,
+                status_code=downstream_status_code,
+            )
+            return await _finalize_pdf_job_response(
+                owner,
+                response,
+                response_payload,
+                route=route,
+                gateway_model=requested_model,
+                expected_job_id=None,
+                duration_ms=request_duration_ms(request_started_at),
+            )
 
-    if _payload_has_usage(response_payload):
-        await record_operation_usage(
-            request,
-            response_payload if isinstance(response_payload, dict) else {},
-            gateway_model=requested_model,
-            operation=PDF_CONVERSION_OPERATION,
-            duration_ms=request_duration_ms(request_started_at),
-        )
-    return JSONResponse(content=response_payload, status_code=downstream_status_code)
+        return await _run_pdf_accounting(request, operation)
 
 
 @router.get("/pdf/jobs/{job_id}")
 async def get_pdf_job(job_id: str, model: str, request: Request):
-    request_started_at = time.monotonic()
-    _route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(request, model)
-    response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
-        _join_downstream_path(base_url, "jobs", job_id),
-        headers,
-        effective_client,
-        retry_count=retry_count,
-        retry_delay=retry_delay,
-    )
-    if _is_json_content_type(content_type):
-        parsed_response = _parse_json_response_body(response_body)
-        await _record_pdf_job_usage_once(
+    async def operation(owner: OperationTerminalOwner) -> object:
+        request_started_at = time.monotonic()
+        route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
             request,
-            parsed_response,
-            gateway_model=model,
-            job_id=job_id,
-            duration_ms=request_duration_ms(request_started_at),
+            model,
         )
-        return JSONResponse(content=parsed_response, status_code=status_code)
-    return _response_from_raw_body(response_body, status_code, content_type, response_headers)
+        response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
+            _join_downstream_path(base_url, "jobs", job_id),
+            headers,
+            effective_client,
+            retry_count=retry_count,
+            retry_delay=retry_delay,
+        )
+        if _is_json_content_type(content_type):
+            parsed_response = _parse_json_response_body(response_body)
+            response = JSONResponse(content=parsed_response, status_code=status_code)
+            return await _finalize_pdf_job_response(
+                owner,
+                response,
+                parsed_response,
+                route=route,
+                gateway_model=model,
+                expected_job_id=job_id,
+                duration_ms=request_duration_ms(request_started_at),
+            )
+
+        response = _response_from_raw_body(
+            response_body,
+            status_code,
+            content_type,
+            response_headers,
+        )
+        await release_operation(owner)
+        return response
+
+    return await _run_pdf_accounting(request, operation)
 
 
 @router.get("/pdf/jobs/{job_id}/result")

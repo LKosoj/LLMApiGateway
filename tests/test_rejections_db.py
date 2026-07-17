@@ -8,12 +8,15 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from fastapi import FastAPI, Request
+
 import llm_gateway_core.db.rejections_db as rejections_db_module
+from llm_gateway_core.config.paths import resolve_db_dir
 from llm_gateway_core.db.rejections_db import RejectionsDB, record_rejection
 from tests._async_compat import run_async
+from tests.runtime_test_support import bind_app_services
 
 
 class _RejectionsDBTestBase(unittest.TestCase):
@@ -59,7 +62,7 @@ class RejectionsDBSchemaTests(_RejectionsDBTestBase):
         self.assertEqual(columns, expected)
 
     def test_init_db_adds_x_title_column_for_existing_table(self):
-        db_path = self._root / "db" / "legacy_rejections.db"
+        db_path = resolve_db_dir() / "legacy_rejections.db"
         conn = sqlite3.connect(db_path)
         conn.execute(
             """
@@ -247,63 +250,83 @@ class RejectionsDBCleanupTests(_RejectionsDBTestBase):
         self.assertEqual(total, 0)
 
 
-class RecordRejectionNoopTests(unittest.TestCase):
-    def test_noop_with_warning_when_no_db_in_state(self):
-        request = SimpleNamespace()
-        request.state = SimpleNamespace()
-        request.app = SimpleNamespace()
-        request.app.state = SimpleNamespace()  # no rejections_db attribute
-        request.client = SimpleNamespace(host="127.0.0.1")
-        request.url = SimpleNamespace(path="/v1/test")
-        request.method = "GET"
-
-        with self.assertLogs("llm_gateway_core.db.rejections_db", level="WARNING") as log_ctx:
-            record_rejection(request, status_code=401, reason="test", category="auth_invalid")
-
-        self.assertTrue(any("rejections_db" in msg for msg in log_ctx.output))
-
-    def test_record_rejection_calls_insert_when_db_present(self):
-        mock_db = MagicMock(spec=RejectionsDB)
-
-        request = SimpleNamespace()
-        request.state = SimpleNamespace(
-            llmgateway_request_id="req-abc",
-            llmgateway_active_request_id=None,
-            api_key_id=3,
-            gateway_auth_source="bearer-virtual",
+class RecordRejectionContainerTests(unittest.TestCase):
+    @staticmethod
+    def _request(app: FastAPI) -> Request:
+        request = Request(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "server": ("testserver", 80),
+                "client": ("10.0.0.1", 1234),
+                "scheme": "http",
+                "method": "POST",
+                "root_path": "",
+                "path": "/v1/chat/completions",
+                "raw_path": b"/v1/chat/completions",
+                "query_string": b"",
+                "headers": [(b"x-title", b" tgBot ")],
+                "app": app,
+                "state": {},
+            }
         )
-        request.app = SimpleNamespace()
-        request.app.state = SimpleNamespace(rejections_db=mock_db)
-        request.client = SimpleNamespace(host="10.0.0.1")
-        request.url = SimpleNamespace(path="/v1/chat/completions")
-        request.method = "POST"
-        request.headers = {"x-title": " tgBot "}
+        request.state.llmgateway_request_id = "req-abc"
+        request.state.llmgateway_active_request_id = None
+        request.state.api_key_id = 3
+        request.state.gateway_auth_source = "bearer-virtual"
+        return request
+
+    def test_missing_services_raises_without_warning_fallback(self):
+        app = FastAPI()
+        legacy_db = MagicMock(spec=RejectionsDB)
+        app.state.rejections_db = legacy_db
+        request = self._request(app)
+
+        with patch.object(rejections_db_module.logger, "warning") as warning:
+            with self.assertRaises(AttributeError):
+                record_rejection(
+                    request,
+                    status_code=401,
+                    reason="test",
+                    category="auth_invalid",
+                )
+
+        warning.assert_not_called()
+        legacy_db.insert_rejection.assert_not_called()
+
+    def test_record_rejection_uses_container_db_and_preserves_payload(self):
+        container_db = MagicMock(spec=RejectionsDB)
+        legacy_db = MagicMock(spec=RejectionsDB)
+        app = FastAPI()
+        app.state.rejections_db = legacy_db
+        bind_app_services(app, rejections_db=container_db)
+        request = self._request(app)
 
         record_rejection(request, status_code=429, reason="rate limit", category="rate_limited")
 
-        mock_db.insert_rejection.assert_called_once()
-        call_kwargs = mock_db.insert_rejection.call_args.kwargs
-        self.assertEqual(call_kwargs["category"], "rate_limited")
-        self.assertEqual(call_kwargs["status_code"], 429)
-        self.assertEqual(call_kwargs["api_key_id"], 3)
-        self.assertEqual(call_kwargs["x_title"], "tgBot")
-
-    def test_record_rejection_swallows_insert_exception(self):
-        mock_db = MagicMock(spec=RejectionsDB)
-        mock_db.insert_rejection.side_effect = RuntimeError("db is down")
-
-        request = SimpleNamespace()
-        request.state = SimpleNamespace(
-            llmgateway_request_id="req-err",
-            llmgateway_active_request_id=None,
-            api_key_id=7,
-            gateway_auth_source="bearer-virtual",
+        container_db.insert_rejection.assert_called_once_with(
+            request_id="req-abc",
+            api_key_id=3,
+            path="/v1/chat/completions",
+            method="POST",
+            client_ip="10.0.0.1",
+            status_code=429,
+            category="rate_limited",
+            reason="rate limit",
+            auth_source="bearer-virtual",
+            x_title="tgBot",
         )
-        request.app = SimpleNamespace()
-        request.app.state = SimpleNamespace(rejections_db=mock_db)
-        request.client = SimpleNamespace(host="10.0.0.2")
-        request.url = SimpleNamespace(path="/v1/chat/completions")
-        request.method = "POST"
+        legacy_db.insert_rejection.assert_not_called()
+
+    def test_record_rejection_swallows_container_insert_exception(self):
+        container_db = MagicMock(spec=RejectionsDB)
+        container_db.insert_rejection.side_effect = RuntimeError("db is down")
+        legacy_db = MagicMock(spec=RejectionsDB)
+        app = FastAPI()
+        app.state.rejections_db = legacy_db
+        bind_app_services(app, rejections_db=container_db)
+        request = self._request(app)
 
         # Must not raise even though insert_rejection blows up — the caller's
         # error response must not be suppressed by audit failures.
@@ -312,7 +335,8 @@ class RecordRejectionNoopTests(unittest.TestCase):
                 request, status_code=403, reason="boom", category="unauthorized"
             )
 
-        mock_db.insert_rejection.assert_called_once()
+        container_db.insert_rejection.assert_called_once()
+        legacy_db.insert_rejection.assert_not_called()
         self.assertTrue(any("record_rejection" in msg for msg in log_ctx.output))
 
 

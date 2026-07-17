@@ -177,6 +177,58 @@ textarea {
     font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Buttons ---------- */
+
+.primary-button,
+.secondary-button {
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    padding: 8px 16px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.primary-button {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-contrast);
+}
+
+.primary-button:hover:where(:not(:disabled)) {
+    border-color: var(--accent-hover);
+    background: var(--accent-hover);
+}
+
+.secondary-button {
+    border-color: var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
+}
+
+.secondary-button:hover:where(:not(:disabled)) {
+    border-color: var(--border-strong);
+    background: var(--bg-sunken);
+    color: var(--text-strong);
+}
+
+.primary-button:active:where(:not(:disabled)),
+.secondary-button:active:where(:not(:disabled)) {
+    transform: translateY(1px) scale(0.98);
+    box-shadow: none;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,

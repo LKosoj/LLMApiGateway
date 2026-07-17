@@ -7,26 +7,26 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.db.rejections_db import RejectionsDB
-from llm_gateway_core.middleware.auth import api_key_auth
+from llm_gateway_core.middleware.auth import ApiKeyAuthMiddleware
 from llm_gateway_core.services.ip_blocklist import IpBlockGuard
+from tests.runtime_test_support import bind_app_services
 
 
 def build_app(guard: IpBlockGuard | None) -> FastAPI:
     app = FastAPI()
-    app.middleware("http")(api_key_auth)
-    app.state.ip_block_guard = guard
-    app.state.rejections_db = MagicMock(spec=RejectionsDB)
+    bind_app_services(
+        app,
+        ip_block_guard=guard,
+        rejections_db=MagicMock(spec=RejectionsDB),
+    )
+    app.add_middleware(ApiKeyAuthMiddleware)
 
     @app.get("/health")
     async def health():
         return {"status": "ok"}
 
-    @app.get("/healthz")
-    async def healthz():
-        return {"status": "ok"}
-
-    @app.head("/healthz")
-    async def healthz_head():
+    @app.head("/health")
+    async def health_head():
         return None
 
     @app.get("/v1/models")
@@ -68,7 +68,7 @@ class IpBlockMiddlewareTests(unittest.TestCase):
     def test_block_trigger_is_audited_as_ip_blocked(self):
         guard = IpBlockGuard(max_failures=2, block_seconds=600.0)
         app = build_app(guard)
-        mock_db = app.state.rejections_db
+        mock_db = app.state.services.rejections_db
         with TestClient(app) as client:
             self._bad(client)
             self._bad(client)  # trips the block
@@ -84,7 +84,7 @@ class IpBlockMiddlewareTests(unittest.TestCase):
     def test_blocked_requests_do_not_flood_the_audit(self):
         guard = IpBlockGuard(max_failures=2, block_seconds=600.0)
         app = build_app(guard)
-        mock_db = app.state.rejections_db
+        mock_db = app.state.services.rejections_db
         with TestClient(app) as client:
             self._bad(client)
             self._bad(client)  # trips the block
@@ -116,7 +116,7 @@ class IpBlockMiddlewareTests(unittest.TestCase):
             self.assertEqual(client.get("/v1/models").status_code, 429)
             # /health does not require a key and must remain reachable.
             self.assertEqual(client.get("/health").status_code, 200)
-            self.assertEqual(client.head("/healthz").status_code, 200)
+            self.assertEqual(client.head("/health").status_code, 200)
 
     def test_no_guard_means_no_blocking(self):
         app = build_app(None)

@@ -1,0 +1,105 @@
+{
+  "page": {
+    "documentTitle": "LLM Gateway - API Keys",
+    "heading": "LLM Gateway - API Keys",
+    "description": "Manage virtual API keys. Each key may define its own budget (USD), RPM/TPM rate limits, and an optional list of allowed gateway models."
+  },
+  "toolbar": {
+    "refresh": "Refresh",
+    "create": "+ Create API Key"
+  },
+  "table": {
+    "loading": "Loading API keys…",
+    "empty": "No API keys yet. Create an API key to add one.",
+    "columns": {
+      "name": "Name",
+      "key": "Key",
+      "status": "Status",
+      "spentBudget": "Spent / Budget",
+      "reset": "Reset",
+      "rateLimits": "RPM / TPM",
+      "allowedModels": "Allowed Models",
+      "lastUsed": "Last used"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled"
+    },
+    "values": {
+      "unlimited": "Unlimited",
+      "allModels": "All",
+      "notAvailable": "—",
+      "keyId": "ID {id}",
+      "resetNone": "—",
+      "resetDaily": "Daily",
+      "resetMonthly": "Monthly",
+      "resetUnknown": "Unknown"
+    },
+    "actions": {
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "fullKeyTitle": "Open Edit to see the full key",
+    "scrollHint": "Scroll horizontally"
+  },
+  "modal": {
+    "createTitle": "Create API Key",
+    "editTitle": "Edit: {name}",
+    "keyNotice": {
+      "label": "API key value",
+      "description": "— the full value is available to master admins in this modal."
+    },
+    "fields": {
+      "name": "Name",
+      "budget": "Budget, USD",
+      "budgetPeriod": "Budget reset period",
+      "rpm": "RPM",
+      "tpm": "TPM",
+      "allowedModels": "Allowed Models",
+      "metadata": "Metadata",
+      "disabled": "Disabled",
+      "resetSpent": "Reset spent_usd to 0"
+    },
+    "hints": {
+      "budget": "(leave empty for no limit)",
+      "budgetPeriod": "(periodic reset of spent_usd at UTC boundary)",
+      "allowedModels": "(leave all unchecked to allow any)",
+      "metadata": "(JSON object, optional)"
+    },
+    "placeholders": {
+      "name": "e.g. team-backend",
+      "budget": "e.g. 10.00",
+      "rpm": "requests/min",
+      "tpm": "tokens/min",
+      "metadata": "'{'\"owner\": \"team-a\"'}'"
+    },
+    "budgetPeriods": {
+      "none": "No reset (cumulative)",
+      "daily": "Daily (resets at 00:00 UTC)",
+      "monthly": "Monthly (resets on the 1st, 00:00 UTC)"
+    },
+    "actions": {
+      "close": "Close",
+      "save": "Save"
+    }
+  },
+  "confirm": {
+    "delete": "Delete API key \"{name}\"? This cannot be undone."
+  },
+  "validation": {
+    "nameRequired": "Name is required.",
+    "invalidNumber": "Enter a valid number.",
+    "invalidInteger": "Enter a valid whole number.",
+    "metadataObject": "Metadata must be a JSON object.",
+    "invalidMetadata": "Metadata must contain valid JSON."
+  },
+  "status": {
+    "created": "API key \"{name}\" created.",
+    "updated": "API key \"{name}\" updated.",
+    "deleted": "API key \"{name}\" deleted."
+  },
+  "modelCatalogLoading": "Loading models…",
+  "modelCatalogEmpty": "No models detected. Use the Rules Editor to add models.",
+  "modelCatalogError": "Could not load models.",
+  "modelCatalogRetry": "Retry"
+}

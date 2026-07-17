@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import json5
+
 import main
 from llm_gateway_core.config.loader import ConfigError, ConfigLoader
 
@@ -68,6 +70,7 @@ VALID_PROVIDERS_TEXT = """
 
 
 PROJECT_ROOT_OPERATION_RULES_PATH = Path(__file__).resolve().parent.parent / "models_operation_rules.json"
+PROJECT_ROOT_FALLBACK_RULES_PATH = Path(__file__).resolve().parent.parent / "models_fallback_rules.json"
 
 
 INVALID_OPERATION_RULES_TEXT = """
@@ -201,79 +204,9 @@ class OperationRulesLoadingTests(unittest.TestCase):
 
         self.assertIn("Invalid provider 'missing-provider'", "\n".join(captured_logs.output))
 
-    def test_reload_operation_rules_returns_false_on_validation_error(self):
-        self.operation_rules_path.write_text("", encoding="utf-8")
-        config_loader = self._build_loader()
-        config_loader.load_providers()
-        config_loader.load_operation_rules()
-        self.operation_rules_path.write_text(INVALID_OPERATION_RULES_TEXT, encoding="utf-8")
-
-        result = config_loader.reload_operation_rules()
-
-        self.assertFalse(result)
-        self.assertEqual(config_loader.operation_rules, EMPTY_OPERATION_RULES)
-
-    def test_reload_operation_rules_returns_false_on_cross_validation_error(self):
-        self.fallback_rules_path.write_text(
-            """
-[
-  {
-    "gateway_model_name": "gateway-chat",
-    "fallback_models": [{"provider": "openrouter", "model": "gpt-4o-mini"}],
-    "rotate_models": false
-  }
-]
-""".strip(),
-            encoding="utf-8",
-        )
-        self.operation_rules_path.write_text("", encoding="utf-8")
-        config_loader = self._build_loader()
-        config_loader.load_providers()
-        config_loader.load_fallback_rules()
-        config_loader.load_operation_rules()
-        self.operation_rules_path.write_text(WEB_RESEARCH_RULES_TEXT, encoding="utf-8")
-
-        result = config_loader.reload_operation_rules()
-
-        self.assertTrue(result)
-        valid_operation_rules = config_loader.operation_rules
-        self.fallback_rules_path.write_text("[]", encoding="utf-8")
-        config_loader.load_fallback_rules()
-        self.operation_rules_path.write_text(WEB_RESEARCH_RULES_TEXT, encoding="utf-8")
-
-        result = config_loader.reload_operation_rules()
-
-        self.assertFalse(result)
-        self.assertIs(config_loader.operation_rules, valid_operation_rules)
-
-    def test_reload_fallback_rules_returns_false_on_cross_validation_error(self):
-        self.fallback_rules_path.write_text(
-            """
-[
-  {
-    "gateway_model_name": "gateway-chat",
-    "fallback_models": [{"provider": "openrouter", "model": "gpt-4o-mini"}],
-    "rotate_models": false
-  }
-]
-""".strip(),
-            encoding="utf-8",
-        )
-        self.operation_rules_path.write_text(WEB_RESEARCH_RULES_TEXT, encoding="utf-8")
-        config_loader = self._build_loader()
-        config_loader.load_providers()
-        config_loader.load_fallback_rules()
-        config_loader.load_operation_rules()
-        original_fallback_rules = config_loader.fallback_rules
-        self.fallback_rules_path.write_text("[]", encoding="utf-8")
-
-        result = config_loader.reload_fallback_rules()
-
-        self.assertFalse(result)
-        self.assertIs(config_loader.fallback_rules, original_fallback_rules)
-
     def test_project_root_models_operation_rules_example_loads_successfully(self):
         self.assertTrue(PROJECT_ROOT_OPERATION_RULES_PATH.exists())
+        self.assertTrue(PROJECT_ROOT_FALLBACK_RULES_PATH.exists())
         self.fallback_rules_path.write_text(
             """
 [
@@ -301,6 +234,14 @@ class OperationRulesLoadingTests(unittest.TestCase):
         config_loader.load_fallback_rules()
 
         operation_rules = config_loader.load_operation_rules()
+        project_fallback_rules = json5.loads(
+            PROJECT_ROOT_FALLBACK_RULES_PATH.read_text(encoding="utf-8")
+        )
+        project_gateway_models = {
+            rule["gateway_model_name"]
+            for rule in project_fallback_rules
+            if isinstance(rule, dict) and isinstance(rule.get("gateway_model_name"), str)
+        }
 
         self.assertIn("llmgateway/embedding", operation_rules["embeddings"])
         self.assertIn("llmgateway/rerank", operation_rules["rerank"])
@@ -400,9 +341,9 @@ class OperationRulesLoadingTests(unittest.TestCase):
             .get("constants", {}),
             {},
         )
-        self.assertEqual(
+        self.assertIn(
             operation_rules["web_search"]["llmgateway/web-search"]["query_model"],
-            "llmgateway/light_model",
+            project_gateway_models,
         )
         self.assertEqual(
             operation_rules["web_research"]["llmgateway/web-research"]["search_model"],

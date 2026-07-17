@@ -1,46 +1,5 @@
 """Tests for performance optimizations (issues #5, #7, #8, #9)."""
 
-import queue
-import threading
-
-
-class TestChunkQueuePutNowait:
-    """#5: Verify queue.put_nowait works correctly for stream chunk logging."""
-
-    def test_put_nowait_on_unbounded_queue(self):
-        """put_nowait on an unbounded queue (maxsize=0) never raises Full."""
-        q = queue.Queue(maxsize=0)
-        for i in range(500):
-            q.put_nowait(f"chunk_{i}".encode())
-        assert q.qsize() == 500
-
-    def test_put_nowait_is_consumed_by_thread(self):
-        """Chunks enqueued via put_nowait are consumed by a background thread."""
-        q = queue.Queue(maxsize=0)
-        results = []
-
-        def consumer():
-            while True:
-                item = q.get()
-                if item is None:
-                    break
-                results.append(item)
-                q.task_done()
-
-        t = threading.Thread(target=consumer)
-        t.start()
-
-        for i in range(100):
-            q.put_nowait(f"chunk_{i}")
-
-        q.put_nowait(None)  # sentinel
-        t.join(timeout=5)
-
-        assert len(results) == 100
-        assert results[0] == "chunk_0"
-        assert results[-1] == "chunk_99"
-
-
 class TestTiktokenCache:
     """#7: Verify _resolve_encoding uses lru_cache."""
 
@@ -129,8 +88,12 @@ class TestHttpxPoolLimits:
     """#9: Verify httpx connection pool limits are explicitly configured."""
 
     def test_shared_client_has_explicit_limits(self):
-        from main import create_shared_http_client, HTTP_CLIENT_MAX_CONNECTIONS
         import httpx
+        from llm_gateway_core.services.http_client_factory import (
+            HTTP_CLIENT_MAX_CONNECTIONS,
+            create_shared_http_client,
+        )
+
         client = create_shared_http_client()
         # Verify limits were passed (httpx stores them on the pool transport)
         transport = client._transport
@@ -139,7 +102,12 @@ class TestHttpxPoolLimits:
         assert pool._max_connections == HTTP_CLIENT_MAX_CONNECTIONS
 
     def test_pool_limits_function(self):
-        from main import _default_pool_limits, HTTP_CLIENT_MAX_CONNECTIONS, HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS
+        from llm_gateway_core.services.http_client_factory import (
+            HTTP_CLIENT_MAX_CONNECTIONS,
+            HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS,
+            _default_pool_limits,
+        )
+
         limits = _default_pool_limits()
         assert limits.max_connections == HTTP_CLIENT_MAX_CONNECTIONS
         assert limits.max_keepalive_connections == HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS

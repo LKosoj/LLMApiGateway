@@ -1,0 +1,65 @@
+{
+  "title": "Топология провайдеров",
+  "toolbar": {
+    "refreshAction": "Обновить",
+    "autoRefresh": "Автообновление (5 с)"
+  },
+  "legend": {
+    "healthyLabel": "работает",
+    "errorLabel": "ошибка",
+    "notConfiguredLabel": "не настроено",
+    "contextOverflow": "переполнение контекста"
+  },
+  "status": {
+    "loading": "Загрузка топологии…",
+    "loadFailed": "Не удалось загрузить топологию.",
+    "bundleFailed": "Не удалось загрузить визуализацию топологии.",
+    "retryAction": "Повторить"
+  },
+  "node": {
+    "steps": "{count, plural, one {# шаг} few {# шага} many {# шагов} other {# шага}}",
+    "active": "{count, plural, one {# активный запрос} few {# активных запроса} many {# активных запросов} other {# активного запроса}}",
+    "health": "Состояние: {value}",
+    "notConfiguredSuffix": "не настроено",
+    "penalty": "Штраф: {value}",
+    "aria": "Узел топологии {label}. {details}"
+  },
+  "health": {
+    "healthyLabel": "работает",
+    "errorLabel": "ошибка",
+    "invalidLabel": "не настроено"
+  },
+  "details": {
+    "healthLabel": "Состояние",
+    "configuredLabel": "Настроено",
+    "activeRequests": "Активные запросы",
+    "penaltyLabel": "Штраф",
+    "modelsLabel": "Модели",
+    "maxAttempts": "Максимум попыток",
+    "flagsLabel": "Флаги",
+    "contextOverflowLabel": "Переполнение контекста",
+    "fallbackChainLabel": "Цепочка резервных маршрутов",
+    "emptyChain": "— целей нет —",
+    "retry": "повторов: {count}",
+    "retryWithDelay": "повторов: {count} ({delay})",
+    "closeAction": "Закрыть"
+  },
+  "values": {
+    "yesLabel": "да",
+    "noLabel": "нет"
+  },
+  "edge": {
+    "contextOverflowShort": "контекст",
+    "aliasLabel": "псевдоним",
+    "fallbackLabel": "резервный маршрут",
+    "contextOverflowLabel": "переполнение контекста",
+    "aria": "Маршрут топологии от {source} к {target}: {kind}"
+  },
+  "controls": {
+    "groupLabel": "Управление топологией",
+    "zoomInAction": "Увеличить масштаб",
+    "zoomOutAction": "Уменьшить масштаб",
+    "fitViewAction": "Показать всю схему",
+    "toggleInteractivityAction": "Переключить интерактивность"
+  }
+}

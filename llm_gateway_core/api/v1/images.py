@@ -1,18 +1,31 @@
 import logging
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager, nullcontext
+from datetime import datetime, timezone
+from functools import partial
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from ..accounting_http import AccountingHttpUse, accounting_error_response
 from ...config.loader import ConfigLoader, OperationRoute
+from ...config.settings import IMAGE_UPLOAD_MAX_PARTS, settings
 from ...services.access_control import enforce_virtual_key_access
+from ...services.accounting import AccountingError
+from ...services.operation_accounting import (
+    OperationTerminalObservation,
+    parse_upstream_operation_observation,
+)
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from .image_adapters import (
     ImageDownstreamResponseError,
     ImageRouteConfigError,
     build_downstream_image_request,
+    estimate_image_request_processing_weight,
     normalize_downstream_image_response,
 )
 from .operation_proxy import (
@@ -20,10 +33,23 @@ from .operation_proxy import (
     proxy_json_to_downstream,
     proxy_multipart_to_downstream,
     read_json_request_body,
-    record_operation_usage,
     request_duration_ms,
 )
-from .operation_runtime import serialize_upload_limited
+from .operation_accounting import (
+    OperationTerminalOwner,
+    finalize_buffered_operation,
+    release_operation_if_open,
+    take_operation_terminal_owner,
+)
+from .operation_runtime import (
+    ValidatedUpload,
+    admit_upload_processing,
+    validate_upload_limited,
+    validate_upload_total,
+)
+
+if TYPE_CHECKING:
+    from ...services.runtime_config import AppServices, RuntimeSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -34,27 +60,23 @@ IMAGE_GENERATION_OPERATION = "images_generation"
 IMAGE_EDIT_OPERATION = "images_edit"
 IMAGE_FALLBACK_STATUS_CODES = frozenset({413, 503})
 TRUTHY_FORM_VALUES = frozenset({"1", "on", "true", "yes"})
+IMAGE_FORM_MAX_FILES = IMAGE_UPLOAD_MAX_PARTS
+IMAGE_FORM_MAX_FIELDS = 64
+IMAGE_FORM_MAX_PART_SIZE = 64 * 1024
+IMAGE_FORM_MAX_IMAGES = 4
 
 
-def _get_operation_runtime(request: Request) -> tuple[OperationDispatcher, httpx.AsyncClient, ConfigLoader, dict]:
-    dispatcher: OperationDispatcher | None = getattr(request.app.state, "operation_dispatcher", None)
-    if dispatcher is None:
-        logger.error("OperationDispatcher not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Operation dispatcher not available.")
-
-    http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
-    if http_client is None:
-        logger.error("Shared httpx.AsyncClient not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Shared HTTP client not available.")
-
-    config_loader_instance: ConfigLoader | None = getattr(request.app.state, "config_loader", None)
-    if config_loader_instance is None:
-        logger.error("ConfigLoader not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Core configuration not available.")
-
-    proxy_http_clients: dict = getattr(request.app.state, "proxy_http_clients", {})
-
-    return dispatcher, http_client, config_loader_instance, proxy_http_clients
+def _get_operation_runtime(
+    request: Request,
+) -> tuple[OperationDispatcher, httpx.AsyncClient, ConfigLoader, Mapping[str, httpx.AsyncClient]]:
+    services = cast("AppServices", request.app.state.services)
+    runtime_snapshot = cast("RuntimeSnapshot", request.state.runtime_snapshot)
+    return (
+        runtime_snapshot.operation_dispatcher,
+        services.http_client,
+        runtime_snapshot.config_loader,
+        runtime_snapshot.proxy_http_clients,
+    )
 
 
 def _should_try_next_image_route(exc: HTTPException, route_index: int, routes: list[OperationRoute]) -> bool:
@@ -132,59 +154,78 @@ def _is_truthy_form_value(value: object) -> bool:
     return False
 
 
-async def _serialize_upload(value: UploadFile | StarletteUploadFile) -> tuple[str, bytes, str | None]:
-    return await serialize_upload_limited(value, default_filename="upload.bin", kind="image")
+async def _validate_image_upload(
+    value: UploadFile | StarletteUploadFile,
+) -> ValidatedUpload:
+    return await validate_upload_limited(
+        value,
+        default_filename="upload.bin",
+        kind="image",
+        max_bytes=settings.image_upload_max_file_bytes,
+    )
 
 
+@asynccontextmanager
 async def _parse_multipart_edit_request(
     request: Request,
-) -> tuple[str, dict[str, object]]:
-    form = await request.form()
+) -> AsyncIterator[tuple[str, dict[str, object]]]:
     scalar_fields: dict[str, object] = {}
-    images: list[dict[str, object]] = []
-    mask: dict[str, object] | None = None
+    images: list[ValidatedUpload] = []
+    mask: ValidatedUpload | None = None
 
-    for key, value in form.multi_items():
-        if isinstance(value, (UploadFile, StarletteUploadFile)):
-            if key not in {"image", "image[]", "mask"}:
-                raise HTTPException(status_code=400, detail=f"Unsupported multipart file field '{key}'.")
+    async with request.form(
+        max_files=IMAGE_FORM_MAX_FILES,
+        max_fields=IMAGE_FORM_MAX_FIELDS,
+        max_part_size=IMAGE_FORM_MAX_PART_SIZE,
+    ) as form:
+        for key, value in form.multi_items():
+            if isinstance(value, (UploadFile, StarletteUploadFile)):
+                if key not in {"image", "image[]", "mask"}:
+                    raise HTTPException(status_code=400, detail=f"Unsupported multipart file field '{key}'.")
 
-            filename, content, content_type = await _serialize_upload(value)
-            serialized_upload = {
-                "filename": filename,
-                "bytes": content,
-                "content_type": content_type,
-            }
-            if key in {"image", "image[]"}:
-                images.append(serialized_upload)
-            else:
-                if mask is not None:
-                    raise HTTPException(status_code=400, detail="Only one 'mask' file is supported in request body.")
-                mask = serialized_upload
-            continue
+                if key in {"image", "image[]"}:
+                    if len(images) >= IMAGE_FORM_MAX_IMAGES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="At most four image files are supported in request body.",
+                        )
+                    images.append(await _validate_image_upload(value))
+                else:
+                    if mask is not None:
+                        raise HTTPException(status_code=400, detail="Only one 'mask' file is supported in request body.")
+                    mask = await _validate_image_upload(value)
+                continue
 
-        scalar_fields[key] = _parse_form_field_value(value)
+            scalar_fields[key] = _parse_form_field_value(value)
 
-    requested_model = scalar_fields.get("model")
-    if not isinstance(requested_model, str) or not requested_model:
-        raise HTTPException(status_code=400, detail="Missing 'model' in request body")
+        requested_model = scalar_fields.get("model")
+        if not isinstance(requested_model, str) or not requested_model:
+            raise HTTPException(status_code=400, detail="Missing 'model' in request body")
 
-    prompt = scalar_fields.get("prompt")
-    if not isinstance(prompt, str) or not prompt:
-        raise HTTPException(status_code=400, detail="Missing 'prompt' in request body")
+        prompt = scalar_fields.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            raise HTTPException(status_code=400, detail="Missing 'prompt' in request body")
 
-    if _is_truthy_form_value(scalar_fields.get("stream")):
-        raise HTTPException(status_code=400, detail="Image streaming is not supported.")
+        if _is_truthy_form_value(scalar_fields.get("stream")):
+            raise HTTPException(status_code=400, detail="Image streaming is not supported.")
 
-    if not images:
-        raise HTTPException(status_code=400, detail="Missing image file in request body")
+        if not images:
+            raise HTTPException(status_code=400, detail="Missing image file in request body")
 
-    normalized_payload = dict(scalar_fields)
-    normalized_payload["images"] = images
-    if mask is not None:
-        normalized_payload["mask"] = mask
+        uploads = [*images]
+        if mask is not None:
+            uploads.append(mask)
+        validate_upload_total(
+            uploads,
+            max_bytes=settings.image_upload_max_total_bytes,
+        )
 
-    return requested_model, normalized_payload
+        normalized_payload = dict(scalar_fields)
+        normalized_payload["images"] = images
+        if mask is not None:
+            normalized_payload["mask"] = mask
+
+        yield requested_model, normalized_payload
 
 
 async def _prepare_route_request(
@@ -247,12 +288,63 @@ async def _execute_prepared_request(
     )
 
 
+def _parse_image_terminal_observation(
+    owner: OperationTerminalOwner,
+    payload: Mapping[str, object],
+    *,
+    gateway_model: str,
+    route: OperationRoute,
+    duration_ms: int,
+) -> OperationTerminalObservation:
+    return parse_upstream_operation_observation(
+        payload,
+        policy=owner.context.policy,
+        gateway_model=gateway_model,
+        provider=route.provider,
+        model=route.model,
+        cost_rate_registry=owner.cost_rate_registry,
+        operation_cost_calculator_registry=(
+            owner.operation_cost_calculator_registry
+        ),
+        occurred_at=datetime.now(timezone.utc),
+        duration_ms=duration_ms,
+    )
+
+
+async def _run_image_accounting(
+    request: Request,
+    operation: Callable[[OperationTerminalOwner], Awaitable[object]],
+) -> object:
+    try:
+        owner = take_operation_terminal_owner(request)
+    except AccountingError as exc:
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMISSION,
+        )
+
+    try:
+        return await operation(owner)
+    except AccountingError as exc:
+        await release_operation_if_open(owner, primary_error=exc)
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMISSION,
+        )
+    except BaseException as exc:
+        await release_operation_if_open(owner, primary_error=exc)
+        raise
+
+
 async def _proxy_image_with_fallback(
     request: Request,
+    owner: OperationTerminalOwner,
     *,
     dispatcher: OperationDispatcher,
     config_loader_instance: ConfigLoader,
-    proxy_http_clients: dict,
+    proxy_http_clients: Mapping[str, httpx.AsyncClient],
     http_client: httpx.AsyncClient,
     routes: list[OperationRoute],
     requested_model: str,
@@ -287,6 +379,33 @@ async def _proxy_image_with_fallback(
                 gateway_model=requested_model,
                 operation_name=operation_name,
             )
+        except HTTPException as exc:
+            if _should_try_next_image_route(exc, route_index, routes):
+                _log_image_route_fallback(
+                    operation_label,
+                    requested_model,
+                    route,
+                    route_index,
+                    routes,
+                    exc,
+                )
+                continue
+            raise
+
+        processing_weight = estimate_image_request_processing_weight(
+            request_payload,
+            route,
+            operation_section,
+            source_transport=source_transport,
+        )
+        route_error: HTTPException | None = None
+        admission_context = (
+            admit_upload_processing(request, processing_weight)
+            if processing_weight is not None
+            else nullcontext()
+        )
+
+        async with admission_context:
             try:
                 prepared_request = build_downstream_image_request(
                     request_payload,
@@ -308,46 +427,69 @@ async def _proxy_image_with_fallback(
                 ) from exc
 
             effective_client = proxy_http_clients.get(route.provider, http_client)
-            downstream_json, downstream_status_code = await _execute_prepared_request(
-                prepared_request,
-                target_url=target_url,
-                headers=headers,
-                http_client=effective_client,
-                retry_count=retry_count,
-                retry_delay=retry_delay,
-            )
             try:
-                response_payload = normalize_downstream_image_response(downstream_json, route, request_payload)
-            except ImageRouteConfigError as exc:
-                logger.error(
-                    "Invalid %s response mapping for '%s': %s",
-                    operation_label.lower(),
-                    requested_model,
-                    exc,
-                    exc_info=True,
+                downstream_json, downstream_status_code = await _execute_prepared_request(
+                    prepared_request,
+                    target_url=target_url,
+                    headers=headers,
+                    http_client=effective_client,
+                    retry_count=retry_count,
+                    retry_delay=retry_delay,
                 )
-                raise HTTPException(
-                    status_code=500,
-                    detail="Internal server error: Invalid image route configuration.",
-                ) from exc
-            except ImageDownstreamResponseError as exc:
-                raise HTTPException(status_code=503, detail=f"Invalid downstream image response: {exc}") from exc
+                try:
+                    response_payload = normalize_downstream_image_response(
+                        downstream_json,
+                        route,
+                        request_payload,
+                    )
+                except ImageRouteConfigError as exc:
+                    logger.error(
+                        "Invalid %s response mapping for '%s': %s",
+                        operation_label.lower(),
+                        requested_model,
+                        exc,
+                        exc_info=True,
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Internal server error: Invalid image route configuration.",
+                    ) from exc
+                except ImageDownstreamResponseError as exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Invalid downstream image response: {exc}",
+                    ) from exc
+            except HTTPException as exc:
+                route_error = exc
+            else:
+                response = json_response(response_payload, downstream_status_code)
+                observation = _parse_image_terminal_observation(
+                    owner,
+                    downstream_json,
+                    gateway_model=requested_model,
+                    route=route,
+                    duration_ms=request_duration_ms(request_started_at),
+                )
+                return await finalize_buffered_operation(owner, response, observation)
 
-            await record_operation_usage(
-                request,
-                downstream_json,
-                gateway_model=requested_model,
-                operation=operation_name,
-                duration_ms=request_duration_ms(request_started_at),
+        if route_error is None:
+            raise RuntimeError("image route ended without a response or error")
+        if _should_try_next_image_route(route_error, route_index, routes):
+            _log_image_route_fallback(
+                operation_label,
+                requested_model,
+                route,
+                route_index,
+                routes,
+                route_error,
             )
-            return json_response(response_payload, downstream_status_code)
-        except HTTPException as exc:
-            if _should_try_next_image_route(exc, route_index, routes):
-                _log_image_route_fallback(operation_label, requested_model, route, route_index, routes, exc)
-                continue
-            raise
+            continue
+        raise route_error
 
-    raise HTTPException(status_code=503, detail=f"{operation_label} request failed after exhausting fallback routes.")
+    raise HTTPException(
+        status_code=503,
+        detail=f"{operation_label} request failed after exhausting fallback routes.",
+    )
 
 
 async def _proxy_images_generation(request: Request, route_path: str) -> object:
@@ -361,7 +503,8 @@ async def _proxy_images_generation(request: Request, route_path: str) -> object:
     if not routes:
         raise HTTPException(status_code=404, detail=f"No image generation route configured for model '{requested_model}'.")
 
-    return await _proxy_image_with_fallback(
+    operation = partial(
+        _proxy_image_with_fallback,
         request,
         dispatcher=dispatcher,
         config_loader_instance=config_loader_instance,
@@ -375,6 +518,7 @@ async def _proxy_images_generation(request: Request, route_path: str) -> object:
         operation_label="Image generation",
         source_transport="json",
     )
+    return await _run_image_accounting(request, operation)
 
 
 @router.post("/images/generations")
@@ -387,29 +531,22 @@ async def create_images(request: Request):
     return await _proxy_images_generation(request, "images endpoint")
 
 
-@router.post("/images/edits")
-async def create_images_edit(request: Request):
+async def _proxy_images_edit_payload(
+    request: Request,
+    requested_model: str,
+    request_payload: dict[str, object],
+    *,
+    source_transport: str,
+) -> object:
     dispatcher, http_client, config_loader_instance, proxy_http_clients = _get_operation_runtime(request)
-
-    content_type = request.headers.get("content-type", "").lower()
-    is_multipart = "multipart/form-data" in content_type
-
-    if is_multipart:
-        requested_model, request_payload = await _parse_multipart_edit_request(request)
-        source_transport = "multipart"
-    else:
-        request_body_json = await read_json_request_body(request, "images edit endpoint")
-        requested_model = _validate_edit_json_body(request_body_json)
-        request_payload = request_body_json
-        source_transport = "json"
-
     enforce_virtual_key_access(request, requested_model)
 
     routes = dispatcher.lookup_routes(IMAGE_EDITS_SECTION, requested_model)
     if not routes:
         raise HTTPException(status_code=404, detail=f"No image edit route configured for model '{requested_model}'.")
 
-    return await _proxy_image_with_fallback(
+    operation = partial(
+        _proxy_image_with_fallback,
         request,
         dispatcher=dispatcher,
         config_loader_instance=config_loader_instance,
@@ -422,4 +559,30 @@ async def create_images_edit(request: Request):
         operation_name=IMAGE_EDIT_OPERATION,
         operation_label="Image edit",
         source_transport=source_transport,
+    )
+    return await _run_image_accounting(request, operation)
+
+
+@router.post("/images/edits")
+async def create_images_edit(request: Request):
+    content_type = request.headers.get("content-type", "").lower()
+    if "multipart/form-data" in content_type:
+        async with _parse_multipart_edit_request(request) as (
+            requested_model,
+            request_payload,
+        ):
+            return await _proxy_images_edit_payload(
+                request,
+                requested_model,
+                request_payload,
+                source_transport="multipart",
+            )
+
+    request_body_json = await read_json_request_body(request, "images edit endpoint")
+    requested_model = _validate_edit_json_body(request_body_json)
+    return await _proxy_images_edit_payload(
+        request,
+        requested_model,
+        request_body_json,
+        source_transport="json",
     )

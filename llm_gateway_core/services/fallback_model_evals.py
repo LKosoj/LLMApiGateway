@@ -6,7 +6,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import httpx
@@ -19,6 +19,10 @@ from ..config.loader import (
     resolve_provider_config_api_key,
     resolve_provider_config_api_keys,
 )
+from ..utils.log_redaction import safe_exception_type_name
+
+if TYPE_CHECKING:
+    from .runtime_config import RuntimeLease
 from .payload_transform import apply_payload_transforms
 from .openrouter_free_models import (
     EVAL_SCORE_WEIGHT,
@@ -166,6 +170,23 @@ class FallbackModelEvalAlreadyRunning(RuntimeError):
     pass
 
 
+class FallbackModelEvalStateError(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
+class _FallbackEvalRuntimeContext:
+    runtime_lease: RuntimeLease = field(repr=False)
+    http_client: httpx.AsyncClient = field(repr=False)
+    _released: bool = field(default=False, init=False, repr=False)
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self.runtime_lease.release()
+        self._released = True
+
+
 class FallbackModelEvalService:
     def __init__(self, *, time_func=time.time) -> None:
         self._time_func = time_func
@@ -175,6 +196,8 @@ class FallbackModelEvalService:
         self._last_checked_at: str | None = None
         self._snapshot: FallbackModelEvalSnapshot | None = None
         self._task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stopping = False
 
     async def get_status(self) -> dict[str, Any]:
         async with self._lock:
@@ -210,17 +233,94 @@ class FallbackModelEvalService:
                 name="fallback-model-eval",
             )
 
+    async def start_eval_with_runtime(
+        self,
+        *,
+        runtime_lease: RuntimeLease,
+        http_client: httpx.AsyncClient,
+    ) -> None:
+        """Start a detached eval and own ``runtime_lease`` until task cleanup."""
+        context = _FallbackEvalRuntimeContext(
+            runtime_lease=runtime_lease,
+            http_client=http_client,
+        )
+        task_created = False
+        operation = None
+        start_gate = None
+        try:
+            if runtime_lease.released:
+                raise FallbackModelEvalStateError(
+                    "Fallback model eval runtime lease is unavailable."
+                )
+            loop = self._bind_loop()
+            async with self._lock:
+                if self._stopping:
+                    raise FallbackModelEvalStateError(
+                        "Fallback model eval service is stopping."
+                    )
+                if self._running:
+                    raise FallbackModelEvalAlreadyRunning(
+                        "Fallback model eval is already running."
+                    )
+
+                start_gate = loop.create_future()
+                operation = self._run_runtime_eval_after_commit(
+                    start_gate,
+                    context,
+                )
+                try:
+                    task = loop.create_task(
+                        operation,
+                        name="fallback-model-eval",
+                    )
+                    task_created = True
+                except BaseException:
+                    start_gate.cancel()
+                    operation.close()
+                    raise
+
+                if task.done():
+                    try:
+                        task.exception()
+                    except asyncio.CancelledError:
+                        pass
+                    start_gate.cancel()
+                    raise FallbackModelEvalStateError(
+                        "Fallback model eval task terminated before lifecycle commit."
+                    )
+
+                self._running = True
+                self._last_error = None
+                self._task = task
+                start_gate.set_result(None)
+        except BaseException:
+            if task_created and start_gate is not None and not start_gate.done():
+                start_gate.cancel()
+            context.release()
+            raise
+
     async def stop(self) -> None:
-        task = self._task
-        self._task = None
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        if self._loop is not None:
+            self._bind_loop()
+        current_task = asyncio.current_task()
         async with self._lock:
-            self._running = False
+            self._stopping = True
+            task = self._task
+        try:
+            if task is not None and task is not current_task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            async with self._lock:
+                if self._task is task:
+                    self._task = None
+                    self._running = False
+                elif self._task is None:
+                    self._running = False
+                self._stopping = False
 
     async def run_once(
         self,
@@ -261,6 +361,7 @@ class FallbackModelEvalService:
         http_client: httpx.AsyncClient,
         proxy_http_clients: dict[str, httpx.AsyncClient],
     ) -> None:
+        current_task = asyncio.current_task()
         try:
             await self.run_once(
                 providers_config=providers_config,
@@ -270,7 +371,64 @@ class FallbackModelEvalService:
             )
         finally:
             async with self._lock:
-                self._task = None
+                if self._task is current_task:
+                    self._task = None
+
+    async def _run_runtime_eval_after_commit(
+        self,
+        start_gate: asyncio.Future[None],
+        context: _FallbackEvalRuntimeContext,
+    ) -> None:
+        try:
+            await start_gate
+            await self._run_runtime_eval(context)
+        finally:
+            context.release()
+
+    async def _run_runtime_eval(
+        self,
+        context: _FallbackEvalRuntimeContext,
+    ) -> None:
+        current_task = asyncio.current_task()
+        runtime_snapshot = context.runtime_lease.snapshot
+        config_loader = runtime_snapshot.config_loader
+        try:
+            snapshot = await self._build_snapshot(
+                providers_config=config_loader.providers_config,
+                fallback_rules=config_loader.fallback_rules,
+                http_client=context.http_client,
+                proxy_http_clients=runtime_snapshot.proxy_http_clients,
+            )
+            async with self._lock:
+                self._snapshot = snapshot
+                self._last_checked_at = snapshot.updated_at
+                self._last_error = None
+        except Exception as exc:
+            logger.exception("Fallback model eval failed.")
+            error_type = safe_exception_type_name(exc)
+            async with self._lock:
+                self._last_checked_at = _utc_now_iso(self._time_func)
+                self._last_error = f"Fallback model eval failed ({error_type})."
+        finally:
+            async with self._lock:
+                if self._task is current_task:
+                    self._running = False
+                    self._task = None
+
+    def _bind_loop(self) -> asyncio.AbstractEventLoop:
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            raise FallbackModelEvalStateError(
+                "Fallback model eval lifecycle requires a running event loop."
+            ) from exc
+        if self._loop is None:
+            self._loop = running_loop
+        elif self._loop is not running_loop:
+            raise FallbackModelEvalStateError(
+                "FallbackModelEvalService cannot be reused on another event loop."
+            )
+        return running_loop
 
     async def _build_snapshot(
         self,

@@ -1,14 +1,14 @@
 import tempfile
 import unittest
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
-import main
-from llm_gateway_core.api.v1.rules_editor import MAX_COMMENT_BACKUPS
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.rules_editor_test_support import transactional_rules_editor_client
+
+
+EXPECTED_MAX_COMMENT_BACKUPS = 10
 
 
 VALID_PROVIDERS_TEXT_WITH_COMMENTS = """
@@ -54,16 +54,21 @@ class RulesEditorBackupVersioningTests(unittest.TestCase):
         self.providers_path.write_text(VALID_PROVIDERS_TEXT_WITH_COMMENTS, encoding="utf-8")
         self.rules_path.write_text(fallback_rules_with_comment(0), encoding="utf-8")
         self.operation_rules_path.write_text("{}", encoding="utf-8")
-        self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
+        self.fallback_provider_patcher = patch(
+            "llm_gateway_core.config.loader.settings.fallback_provider",
+            "openrouter",
+        )
         self.fallback_provider_patcher.start()
 
         self.config_loader = ConfigLoader(
             providers_filename=str(self.providers_path),
             fallback_rules_filename=str(self.rules_path),
             operation_rules_filename=str(self.operation_rules_path),
+            fusion_rules_filename=str(Path(self.temp_dir.name) / "models_fusion_rules.json"),
+            model_rules_filename=str(Path(self.temp_dir.name) / "models_model_rules.json"),
+            router_rules_filename=str(Path(self.temp_dir.name) / "models_router_rules.json"),
         )
-        self.config_loader.load_providers()
-        self.config_loader.load_fallback_rules()
+        self.config_loader.load_complete()
 
     def tearDown(self):
         self.fallback_provider_patcher.stop()
@@ -71,20 +76,11 @@ class RulesEditorBackupVersioningTests(unittest.TestCase):
 
     @contextmanager
     def _client(self):
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB"))
-            stack.enter_context(
-                patch("llm_gateway_core.api.v1.rules_editor._validate_provider_models", new=AsyncMock())
-            )
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
-
-            with TestClient(main.app) as client:
-                yield client
+        with transactional_rules_editor_client(self.config_loader) as (
+            client,
+            _runtime,
+        ):
+            yield client
 
     def test_structured_save_rotates_versioned_backups(self):
         payload = {
@@ -98,36 +94,36 @@ class RulesEditorBackupVersioningTests(unittest.TestCase):
                 }
             ]
         }
-        timestamps = [
-            f"2026-04-23T00:00:{index:02d}.000000Z"
-            for index in range(MAX_COMMENT_BACKUPS + 1)
-        ]
-
-        with self._client() as client, patch(
-            "llm_gateway_core.api.v1.rules_editor._backup_timestamp_utc",
-            side_effect=timestamps,
-        ):
-            for index in range(MAX_COMMENT_BACKUPS + 1):
-                self.rules_path.write_text(fallback_rules_with_comment(index), encoding="utf-8")
+        with self._client() as client:
+            for index in range(EXPECTED_MAX_COMMENT_BACKUPS + 1):
                 response = client.post(
                     "/v1/config/models-rules/structured",
                     json=payload,
                     headers={"Authorization": "Bearer test-gateway-key"},
                 )
                 self.assertEqual(response.status_code, 200, response.text)
+                if index < EXPECTED_MAX_COMMENT_BACKUPS:
+                    raw_response = client.post(
+                        "/v1/config/models-rules",
+                        content=fallback_rules_with_comment(index + 1),
+                        headers={"Content-Type": "text/plain"},
+                    )
+                    self.assertEqual(raw_response.status_code, 200, raw_response.text)
 
-        backup_names = sorted(
-            path.name
+        backups = sorted(
+            path
             for path in self.rules_path.parent.iterdir()
             if path.name.startswith("models_fallback_rules.json.bak.")
         )
-        expected_names = [
-            f"models_fallback_rules.json.bak.{timestamp}"
-            for timestamp in timestamps[1:]
-        ]
-        self.assertEqual(backup_names, expected_names)
-        self.assertEqual(len(backup_names), MAX_COMMENT_BACKUPS)
-        self.assertEqual(len(set(backup_names)), MAX_COMMENT_BACKUPS)
+        self.assertEqual(len(backups), EXPECTED_MAX_COMMENT_BACKUPS)
+        self.assertEqual(len({path.name for path in backups}), EXPECTED_MAX_COMMENT_BACKUPS)
+        self.assertEqual(
+            {path.read_text(encoding="utf-8") for path in backups},
+            {
+                fallback_rules_with_comment(index)
+                for index in range(1, EXPECTED_MAX_COMMENT_BACKUPS + 1)
+            },
+        )
 
 
 if __name__ == "__main__":

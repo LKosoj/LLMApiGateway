@@ -11,18 +11,30 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from .accounting import AccountingValidationError
 
 
 WINDOW_SECONDS = 60.0
+REQUEST_ALREADY_TERMINAL = "request already completed"
+
+
+@dataclass
+class _RateEvent:
+    timestamp: float
+    tokens: int
+    rpm: int
+    request_id: str | None = None
+    legacy: bool = False
 
 
 @dataclass
 class _KeyWindow:
-    # (timestamp, tokens) entries, one per recorded event
-    events: deque
+    events: deque[_RateEvent]
     rpm_count: int = 0
     tpm_tokens: int = 0
+    request_events: dict[str, _RateEvent | None] = field(default_factory=dict)
 
 
 class RateLimiter:
@@ -34,14 +46,18 @@ class RateLimiter:
 
     def _purge(self, key_id: int, state: _KeyWindow, now: float) -> bool:
         cutoff = now - self._window
-        while state.events and state.events[0][0] < cutoff:
-            _ts, tokens = state.events.popleft()
-            state.rpm_count -= 1
-            state.tpm_tokens -= tokens
-        if not state.events:
+        while state.events and state.events[0].timestamp < cutoff:
+            event = state.events.popleft()
+            state.rpm_count -= event.rpm
+            state.tpm_tokens -= event.tokens
+            if (
+                event.request_id is not None
+                and state.request_events.get(event.request_id) is event
+            ):
+                state.request_events.pop(event.request_id, None)
+        if not state.events and not state.request_events:
             self._by_key.pop(key_id, None)
-            return True
-        return False
+        return not state.events
 
     def check(self, key_id: int, *, rpm_limit: int | None, tpm_limit: int | None) -> str | None:
         """Return an error message when the limit is exceeded; else ``None``.
@@ -51,8 +67,8 @@ class RateLimiter:
         """
         if rpm_limit is None and tpm_limit is None:
             return None
-        now = self._time()
         with self._lock:
+            now = self._time()
             state = self._by_key.get(key_id)
             if state is None:
                 return None
@@ -88,8 +104,8 @@ class RateLimiter:
         """
         if key_id is None:
             return None
-        now = self._time()
         with self._lock:
+            now = self._time()
             state = self._by_key.get(key_id)
             if state is None:
                 state = _KeyWindow(events=deque())
@@ -103,10 +119,76 @@ class RateLimiter:
             # to make the deferred-enforcement path explicit.
             if tokens and tpm_limit is not None and tpm_limit > 0 and state.tpm_tokens >= tpm_limit:
                 return f"TPM limit of {tpm_limit} tokens/min exceeded"
-            state.events.append((now, int(tokens or 0)))
+            state.events.append(
+                _RateEvent(timestamp=now, tokens=int(tokens or 0), rpm=1, legacy=True)
+            )
             state.rpm_count += 1
             state.tpm_tokens += int(tokens or 0)
         return None
+
+    def admit_request(
+        self,
+        request_id: str,
+        key_id: int,
+        *,
+        rpm_limit: int | None,
+        tpm_limit: int | None,
+    ) -> str | None:
+        """Atomically admit and record one request identifier."""
+        if key_id is None:
+            return None
+        with self._lock:
+            now = self._time()
+            state = self._by_key.get(key_id)
+            if state is None:
+                state = _KeyWindow(events=deque())
+            else:
+                self._purge(key_id, state, now)
+
+            if request_id in state.request_events:
+                if state.request_events[request_id] is None:
+                    return None
+                return REQUEST_ALREADY_TERMINAL
+            if rpm_limit is not None and rpm_limit > 0 and state.rpm_count >= rpm_limit:
+                return f"RPM limit of {rpm_limit} requests/min exceeded"
+            if tpm_limit is not None and tpm_limit > 0 and state.tpm_tokens >= tpm_limit:
+                return f"TPM limit of {tpm_limit} tokens/min exceeded"
+
+            event = _RateEvent(timestamp=now, tokens=0, rpm=1)
+            state.events.append(event)
+            state.request_events[request_id] = None
+            state.rpm_count += 1
+            self._by_key[key_id] = state
+        return None
+
+    def attribute_request_tokens(self, request_id: str, key_id: int, tokens: int) -> bool:
+        """Attribute terminal tokens once without rechecking the TPM limit."""
+        if key_id is None:
+            return False
+        with self._lock:
+            now = self._time()
+            state = self._by_key.get(key_id)
+            if state is None:
+                return False
+            self._purge(key_id, state, now)
+            if request_id not in state.request_events:
+                return False
+            if state.request_events[request_id] is not None:
+                return False
+            if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+                raise AccountingValidationError from None
+
+            event = _RateEvent(
+                timestamp=now,
+                tokens=tokens,
+                rpm=0,
+                request_id=request_id,
+            )
+            state.events.append(event)
+            state.request_events[request_id] = event
+            state.tpm_tokens += tokens
+            self._by_key[key_id] = state
+            return True
 
     def record(self, key_id: int, tokens: int = 0) -> None:
         """Record a request (and optionally its token count) for *key_id*.
@@ -116,15 +198,17 @@ class RateLimiter:
         """
         if key_id is None:
             return
-        now = self._time()
         with self._lock:
+            now = self._time()
             state = self._by_key.get(key_id)
             if state is None:
                 state = _KeyWindow(events=deque())
                 self._by_key[key_id] = state
             if self._purge(key_id, state, now):
                 self._by_key[key_id] = state
-            state.events.append((now, int(tokens or 0)))
+            state.events.append(
+                _RateEvent(timestamp=now, tokens=int(tokens or 0), rpm=1, legacy=True)
+            )
             state.rpm_count += 1
             state.tpm_tokens += int(tokens or 0)
 
@@ -137,17 +221,19 @@ class RateLimiter:
         """
         if key_id is None or not tokens:
             return None
-        now = self._time()
         with self._lock:
+            now = self._time()
             state = self._by_key.get(key_id)
             if state is None or not state.events:
                 return None
             if self._purge(key_id, state, now):
                 return None
+            event = next((event for event in reversed(state.events) if event.legacy), None)
+            if event is None:
+                return None
             if tpm_limit is not None and tpm_limit > 0 and state.tpm_tokens + int(tokens) > tpm_limit:
                 return f"TPM limit of {tpm_limit} tokens/min exceeded"
-            ts, prev_tokens = state.events[-1]
-            state.events[-1] = (ts, prev_tokens + int(tokens))
+            event.tokens += int(tokens)
             state.tpm_tokens += int(tokens)
         return None
 
@@ -160,14 +246,14 @@ class RateLimiter:
         ``reset_in_seconds = window - oldest_event_age``.  Returns (0, 0, None)
         when *key_id* has no active window (None explicitly signals "empty window").
         """
-        now = self._time()
         with self._lock:
+            now = self._time()
             state = self._by_key.get(key_id)
             if state is None:
                 return 0, 0, None
             if self._purge(key_id, state, now):
                 return 0, 0, None
-            oldest_age = now - state.events[0][0] if state.events else None
+            oldest_age = now - state.events[0].timestamp if state.events else None
             return state.rpm_count, state.tpm_tokens, oldest_age
 
     def reset(self, key_id: int | None = None) -> None:

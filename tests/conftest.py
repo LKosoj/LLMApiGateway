@@ -4,11 +4,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.main_lifespan_boundary import find_main_lifespan_boundary_violations
+from tests.main_lifespan_import import get_main_import_isolation
+
 # Redirect the file handler to a writable temp directory when the production
 # ``logs/gateway.log`` is owned by root (common in shared dev environments).
 # configure_logging honors LLMGATEWAY_LOG_DIR when set.
 _temp_log_dir = tempfile.mkdtemp(prefix="llmgateway_test_logs_")
 os.environ.setdefault("LLMGATEWAY_LOG_DIR", _temp_log_dir)
+
 
 # Keep tests independent from optional config files that may exist in the
 # checkout and reference providers absent from a test's temp providers.json.
@@ -25,23 +29,50 @@ os.environ["ROUTER_RULES_FILENAME"] = str(_empty_router_rules)
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_orphan_sqlite_journals():
-    """Remove orphan SQLite WAL/SHM journals left in ``db/`` by test DBs.
+def _keep_tests_out_of_the_deployment_state_dir(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Give every test its own state directory instead of the deployment's.
 
-    Some tests delete only the main ``.db``/``.sqlite`` file in their teardown
-    but forget the ``-wal``/``-shm`` siblings. Running on a session-wide
-    autouse hook keeps the project-root ``db/`` directory clean even when an
-    individual test omits the cleanup.
+    This checkout is also a live deployment: a gateway runs from it and serves
+    from its ``db/``. A test that builds a DB without redirecting it resolves to
+    that same directory, so a plain ``pytest`` run wrote into the live
+    ``tokens_usage.db`` and left orphan test DBs behind. Worse, the directory
+    then has to stay group-writable for the suite to pass, and write access to
+    it is enough to replace ``session_secret.json`` and forge a master cookie —
+    the mode alone cannot protect a file whose directory the suite can write.
+
+    Per test, not per session: ``GATEWAY_DB_DIR`` outranks the
+    ``patch.object(module, "__file__", ...)`` redirect that many tests use, so
+    one shared directory would defeat their isolation and let their DBs bleed
+    into each other. A fresh directory each time preserves it instead.
+
+    A test that sets ``GATEWAY_DB_DIR`` itself still wins: this runs before the
+    test body, and ``monkeypatch`` restores the value afterwards either way.
     """
-    yield
-    db_dir = Path(__file__).resolve().parent.parent / "db"
-    if not db_dir.is_dir():
-        return
-    for entry in db_dir.iterdir():
-        name = entry.name
-        if not name.startswith("test_"):
-            continue
-        if name.endswith("-wal") or name.endswith("-shm"):
-            base = name[: -len("-wal")] if name.endswith("-wal") else name[: -len("-shm")]
-            if not (db_dir / base).exists():
-                entry.unlink(missing_ok=True)
+    monkeypatch.setenv(
+        "GATEWAY_DB_DIR",
+        str(tmp_path_factory.mktemp("gateway-state") / "db"),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _main_lifespan_storage_isolation():
+    """Verify the session owner without importing ``main`` eagerly."""
+    controller = get_main_import_isolation()
+    owner = controller.assert_integrity()
+    try:
+        yield owner
+    finally:
+        controller.assert_integrity()
+
+
+def pytest_collection_modifyitems() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    violations = find_main_lifespan_boundary_violations(repo_root)
+    if violations:
+        formatted = "\n".join(violations)
+        raise pytest.UsageError(
+            f"Production lifespan test isolation boundary was bypassed:\n{formatted}"
+        )

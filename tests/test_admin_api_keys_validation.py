@@ -18,13 +18,12 @@ from llm_gateway_core.api.v1.admin_api_keys import admin_api_keys_router
 from llm_gateway_core.db import api_keys_db as api_keys_db_module
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.middleware.auth import api_key_auth
-from llm_gateway_core.services.rate_limiter import RateLimiter
+from tests.runtime_test_support import bind_app_services
 
 
 def _build_app(db: ApiKeysDB) -> FastAPI:
     app = FastAPI()
-    app.state.api_keys_db = db
-    app.state.rate_limiter = RateLimiter()
+    bind_app_services(app, api_keys_db=db)
     app.middleware("http")(api_key_auth)
     app.include_router(auth_router)
     app.include_router(admin_api_keys_router, prefix="/v1")

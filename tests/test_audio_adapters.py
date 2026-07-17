@@ -10,6 +10,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from llm_gateway_core.api.v1.audio_adapters import (
+    AudioMaterializationTooLarge,
     _NvidiaRivaCapabilities,
     _build_nvidia_riva_recognition_config,
     _call_nvidia_riva_grpc_sync,
@@ -78,6 +79,11 @@ class _FakeRecognitionConfig:
             setattr(self, key, value)
 
 
+class _FakeStreamingRecognitionConfig:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+
+
 class _FakeRivaClient:
     RecognitionConfig = _FakeRecognitionConfig
 
@@ -100,6 +106,7 @@ def _install_fake_riva_client_module(fake_auth_class, fake_asr_service_class):
     riva_client_module.Auth = fake_auth_class
     riva_client_module.ASRService = fake_asr_service_class
     riva_client_module.RecognitionConfig = _FakeRecognitionConfig
+    riva_client_module.StreamingRecognitionConfig = _FakeStreamingRecognitionConfig
     riva_client_module.add_word_boosting_to_config = _FakeRivaClient.add_word_boosting_to_config
     riva_client_module.add_speaker_diarization_to_config = _FakeRivaClient.add_speaker_diarization_to_config
     riva_client_module.add_custom_configuration_to_config = _FakeRivaClient.add_custom_configuration_to_config
@@ -229,6 +236,44 @@ class AudioAdaptersTests(unittest.TestCase):
 
         self.assertEqual(raw_audio, b"\x00\x00" * 160)
         self.assertFalse(raw_audio.startswith(b"RIFF"))
+
+    def test_streaming_riva_branch_does_not_build_full_pcm_copy(self):
+        wav_bytes = self._build_wav_bytes()
+
+        class FakeAuth:
+            def __init__(self, **_kwargs) -> None:
+                pass
+
+        class FakeASRService:
+            def __init__(self, _auth) -> None:
+                pass
+
+            def streaming_response_generator(self, *, audio_chunks, streaming_config):
+                self.assert_streaming_config = streaming_config
+                list(audio_chunks)
+                return [_FakeResponse([])]
+
+        try:
+            with (
+                _install_fake_riva_client_module(FakeAuth, FakeASRService),
+                patch(
+                    "llm_gateway_core.api.v1.audio_adapters._extract_raw_pcm_audio_from_wav",
+                    side_effect=AssertionError("streaming must not materialize full PCM"),
+                ),
+            ):
+                response = _call_nvidia_riva_grpc_sync(
+                    grpc_uri="speech.example:50051",
+                    use_ssl=True,
+                    metadata=[],
+                    request_payload={"model": "test-model"},
+                    audio_bytes=wav_bytes,
+                    include_model=True,
+                    use_streaming=True,
+                )
+        finally:
+            _clear_nvidia_riva_grpc_client_cache()
+
+        self.assertEqual(response.results, [])
 
     def test_nvidia_riva_grpc_client_is_cached_by_route_auth_tuple(self):
         _clear_nvidia_riva_grpc_client_cache()
@@ -383,6 +428,25 @@ class AudioAdaptersTests(unittest.TestCase):
             context.exception.detail,
             "NVIDIA API Catalog audio routes require custom_headers.function-id.",
         )
+
+    def test_transcribe_with_nvidia_riva_grpc_rejects_audio_over_decoded_cap(self):
+        wav_bytes = self._build_wav_bytes()
+
+        with self.assertRaises(AudioMaterializationTooLarge) as context:
+            run_async(
+                transcribe_with_nvidia_riva_grpc(
+                    request_payload={"model": "nvidia/parakeet-1_1b-rnnt-multilingual-asr"},
+                    files_payload=[("file", ("sample.wav", wav_bytes, "audio/wav"))],
+                    provider_name="nvidia",
+                    provider_base_url="https://speech.example:50051",
+                    provider_api_key="NVIDIA-KEY",
+                    route_custom_headers={},
+                    target_path="/audio/transcriptions",
+                    decoded_audio_max_bytes=len(wav_bytes) - 1,
+                )
+            )
+
+        self.assertEqual(context.exception.status_code, 413)
 
     def test_transcribe_with_nvidia_riva_grpc_uses_streaming_for_api_catalog(self):
         captured_call_kwargs: dict[str, object] = {}

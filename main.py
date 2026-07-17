@@ -1,31 +1,71 @@
+from llm_gateway_core.services.single_process_bootstrap import (
+    SINGLE_APPLICATION_WORKER_COUNT,
+    SingleProcessLease,
+    validate_single_worker_environment,
+)
+
 import asyncio
 import logging
+import os
 import uvicorn
 import httpx
-from asyncio import create_task as asyncio_create_task
 from asyncio import sleep as scheduler_sleep
-from collections.abc import Mapping
-from fastapi import FastAPI, HTTPException, Request, Response
+from collections.abc import Awaitable, Callable
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path, PurePath
+from threading import Lock
+from typing import TypeVar
 
 # Import components from the new core structure
 from llm_gateway_core.config.settings import settings
-from llm_gateway_core.config.paths import OUTPUTS_IMAGES_DIR, PROJECT_ROOT, STATIC_DIR
-from llm_gateway_core.config.loader import ConfigLoader, resolve_provider_proxy
+from llm_gateway_core.config.paths import (
+    OUTPUTS_IMAGES_DIR,
+    PROJECT_ROOT,
+    STATIC_DIR,
+    resolve_db_dir,
+)
+from llm_gateway_core.config.config_store import AtomicConfigFileTransaction
+from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.config.placeholder_secrets import is_placeholder_secret
-from llm_gateway_core.build_info import build_headers
-from llm_gateway_core.services.image_retention import cleanup_old_images
+from llm_gateway_core.version import __version__
+from llm_gateway_core.services.image_retention import ImageRetentionService
+from llm_gateway_core.services.image_storage import (
+    GeneratedImageStorage,
+    prepare_default_images_root,
+)
+from llm_gateway_core.services.http_client_factory import (
+    close_http_clients,
+    create_shared_http_client,
+)
 from llm_gateway_core.utils.logging_setup import configure_logging
-from llm_gateway_core.middleware.request_logging import log_middleware_functional
-from llm_gateway_core.middleware.auth import api_key_auth # Functional middleware
-from llm_gateway_core.middleware.chat_logging import log_chat_completions # Functional middleware
-from llm_gateway_core.middleware.content_size import ContentSizeLimitMiddleware
+from llm_gateway_core.middleware.request_logging import (
+    RequestLoggingASGIMiddleware,
+    log_middleware_functional as log_middleware_functional,
+)
+from llm_gateway_core.middleware.auth import (
+    ApiKeyAuthMiddleware,
+    api_key_auth as api_key_auth,
+)
+from llm_gateway_core.middleware.chat_logging import prepare_chat_response_observation
+from llm_gateway_core.middleware.content_size import (
+    ContentLengthLimitMiddleware,
+    ContentSizeLimitMiddleware,
+)
+from llm_gateway_core.middleware.runtime_snapshot import (
+    RuntimeAvailabilityMiddleware,
+    RuntimeSnapshotMiddleware,
+)
+from llm_gateway_core.middleware.response_observation import (
+    ResponseObservationMiddleware,
+)
 from llm_gateway_core.api.error_envelope import error_response
 from llm_gateway_core.api.auth_ui import auth_router
+from llm_gateway_core.api.health import health_router
 from llm_gateway_core.api.v1 import router as api_v1_router
 from llm_gateway_core.api.v1.rules_editor import editor_router as api_v1_editor_router # Import the new editor router
 from llm_gateway_core.api.v1.stats import stats_router as api_v1_stats_router # Import the new stats router
@@ -35,20 +75,31 @@ from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
-from llm_gateway_core.services.provider_models import ProviderModelsService
+from llm_gateway_core.services import session_secret
 from llm_gateway_core.services.openrouter_free_models import OpenRouterFreeModelsService
 from llm_gateway_core.services.fallback_model_evals import FallbackModelEvalService
+from llm_gateway_core.services.health import HealthService
 from llm_gateway_core.services.model_availability import run_startup_model_verification
 from llm_gateway_core.services.access_control import UsdBudgetLedger
+from llm_gateway_core.services.accounting_service import AccountingService
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
+from llm_gateway_core.services.config_updates import ConfigUpdateCoordinator
+from llm_gateway_core.services.deep_research_process import DeepResearchProcessRunner
 from llm_gateway_core.services.rate_limiter import RateLimiter
 from llm_gateway_core.services.ip_blocklist import IpBlockGuard
-from llm_gateway_core.services.request_handler import OperationDispatcher
-from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
-from llm_gateway_core.services.router_model import RouterModelService
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState, fingerprint_api_key
 from llm_gateway_core.services.upstream_subscription_quota import UpstreamSubscriptionQuotaService
+from llm_gateway_core.services.runtime_candidate import build_runtime_candidate
+from llm_gateway_core.services.runtime_config import (
+    AppServices,
+    RuntimeGenerationManager,
+    RuntimeSnapshot,
+)
+from llm_gateway_core.services.task_supervisor import TaskSupervisor
+from llm_gateway_core.services.stream_observation import StreamObservationCapacity
 from llm_gateway_core.utils.html_cache import preload_templates
+from llm_gateway_core.utils.log_redaction import safe_exception_type_name
+from llm_gateway_core.services.upload_admission import UploadAdmission
 
 # --- Application Setup ---
 
@@ -56,12 +107,6 @@ from llm_gateway_core.utils.html_cache import preload_templates
 configure_logging()
 logger = logging.getLogger(__name__)
 
-HTTP_CLIENT_CONNECT_TIMEOUT_SECONDS = 30.0
-HTTP_CLIENT_READ_TIMEOUT_SECONDS = 500.0
-HTTP_CLIENT_WRITE_TIMEOUT_SECONDS = 60.0
-HTTP_CLIENT_POOL_TIMEOUT_SECONDS = 30.0
-HTTP_CLIENT_MAX_CONNECTIONS = 200
-HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS = 40
 USAGE_STATS_RETENTION_DAYS = 90
 USAGE_STATS_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 # Periodic budget reset is checked frequently so daily/monthly boundaries fire
@@ -69,6 +114,13 @@ USAGE_STATS_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 BUDGET_RESET_CHECK_INTERVAL_SECONDS = 60
 DEEP_RESEARCH_IMAGES_RETENTION_DAYS = 10
 DEEP_RESEARCH_IMAGES_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+_T = TypeVar("_T")
+
+
+def _prepare_source_outputs_images_dir() -> None:
+    if "GATEWAY_OUTPUTS_DIR" in os.environ:
+        return
+    prepare_default_images_root(PROJECT_ROOT, OUTPUTS_IMAGES_DIR)
 
 # Optional: Lifespan context manager for startup/shutdown events
 # (e.g., initializing database connections, closing clients)
@@ -83,56 +135,7 @@ def ensure_gateway_api_key_configured() -> None:
         raise RuntimeError(message)
 
 
-def _set_build_headers(response: Response) -> None:
-    response.headers.update(build_headers())
-
-
-def _default_timeout() -> httpx.Timeout:
-    return httpx.Timeout(
-        connect=HTTP_CLIENT_CONNECT_TIMEOUT_SECONDS,
-        read=HTTP_CLIENT_READ_TIMEOUT_SECONDS,
-        write=HTTP_CLIENT_WRITE_TIMEOUT_SECONDS,
-        pool=HTTP_CLIENT_POOL_TIMEOUT_SECONDS,
-    )
-
-
-def _default_pool_limits() -> httpx.Limits:
-    return httpx.Limits(
-        max_connections=HTTP_CLIENT_MAX_CONNECTIONS,
-        max_keepalive_connections=HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS,
-    )
-
-
-def create_shared_http_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=_default_timeout(),
-        limits=_default_pool_limits(),
-        http2=True,
-    )
-
-
-def create_proxy_http_clients(
-    providers_config: dict,
-) -> dict[str, httpx.AsyncClient]:
-    """Create dedicated httpx clients for providers that have a proxy configured."""
-    clients: dict[str, httpx.AsyncClient] = {}
-    if not isinstance(providers_config, dict):
-        return clients
-    for provider_name, details in providers_config.items():
-        proxy_url = resolve_provider_proxy(getattr(details, "proxy", None))
-        if proxy_url:
-            clients[provider_name] = httpx.AsyncClient(
-                proxy=proxy_url,
-                timeout=_default_timeout(),
-                limits=_default_pool_limits(),
-                http2=True,
-            )
-            logger.info("Created proxy HTTP client for provider '%s'.", provider_name)
-    return clients
-
-
 def resolve_write_batcher_db_path(tokens_usage_db: object) -> Path:
-    fallback_path = PROJECT_ROOT / "db" / "tokens_usage.db"
     db_path = getattr(tokens_usage_db, "db_path", None)
 
     if isinstance(db_path, PurePath):
@@ -140,6 +143,9 @@ def resolve_write_batcher_db_path(tokens_usage_db: object) -> Path:
     if isinstance(db_path, str) and db_path:
         return Path(db_path)
 
+    # Resolved here rather than up front: resolve_db_dir creates the directory,
+    # and the paths above need no such directory made for them.
+    fallback_path = resolve_db_dir() / "tokens_usage.db"
     if db_path is not None:
         logger.warning(
             "Ignoring unsupported tokens_usage_db.db_path value of type %s; using %s instead.",
@@ -164,18 +170,21 @@ async def run_usage_stats_cleanup_loop(
     )
     try:
         while True:
-            await asyncio.to_thread(
-                tokens_usage_db.cleanup_old_records,
-                retention_days=retention_days,
-            )
-            await asyncio.to_thread(
-                fallback_events_db.cleanup_old_records,
-                retention_days=retention_days,
-            )
-            await asyncio.to_thread(
-                rejections_db.cleanup_old_records,
-                retention_days=retention_days,
-            )
+            try:
+                await run_cancellation_resistant_thread_worker(
+                    tokens_usage_db.cleanup_old_records,
+                    retention_days=retention_days,
+                )
+                await run_cancellation_resistant_thread_worker(
+                    fallback_events_db.cleanup_old_records,
+                    retention_days=retention_days,
+                )
+                await run_cancellation_resistant_thread_worker(
+                    rejections_db.cleanup_old_records,
+                    retention_days=retention_days,
+                )
+            except Exception:
+                logger.exception("Usage statistics cleanup iteration failed.")
             await scheduler_sleep(interval_seconds)
     except asyncio.CancelledError:
         logger.info("Usage statistics cleanup task stopped.")
@@ -186,49 +195,70 @@ def start_usage_stats_cleanup_task(
     tokens_usage_db: TokensUsageDB,
     fallback_events_db: FallbackEventsDB,
     rejections_db: RejectionsDB,
+    *,
+    supervisor: TaskSupervisor,
 ) -> asyncio.Task:
-    return asyncio_create_task(
-        run_usage_stats_cleanup_loop(tokens_usage_db, fallback_events_db, rejections_db)
+    return supervisor.create_task(
+        run_usage_stats_cleanup_loop(tokens_usage_db, fallback_events_db, rejections_db),
+        name="usage-stats-cleanup",
     )
 
 
 async def run_deep_research_images_cleanup_loop(
-    images_root: Path,
+    image_retention_service: ImageRetentionService,
     *,
-    retention_days: int = DEEP_RESEARCH_IMAGES_RETENTION_DAYS,
     interval_seconds: float = DEEP_RESEARCH_IMAGES_CLEANUP_INTERVAL_SECONDS,
 ) -> None:
     logger.info(
-        "Deep research images cleanup task started. Root: %s. Interval: %s seconds. Retention: %s days.",
-        images_root,
+        "Deep research images cleanup task started. Interval: %s seconds.",
         interval_seconds,
-        retention_days,
     )
     try:
         while True:
+            await scheduler_sleep(interval_seconds)
             try:
-                deleted = await asyncio.to_thread(
-                    cleanup_old_images,
-                    images_root,
-                    retention_days,
+                snapshot = await run_cancellation_resistant_thread_worker(
+                    image_retention_service.run,
+                )
+                deleted = (
+                    snapshot.deleted_final
+                    + snapshot.deleted_temp
+                    + snapshot.deleted_dirs
                 )
                 if deleted:
-                    logger.info("Deep research images cleanup removed %s stale file(s).", deleted)
+                    logger.info(
+                        "Deep research images cleanup removed %s stale entry(s).",
+                        deleted,
+                    )
+                if snapshot.failures:
+                    logger.warning(
+                        "Deep research images cleanup completed with %s failure(s).",
+                        snapshot.failures,
+                    )
             except Exception:
                 logger.exception("Deep research images cleanup iteration failed.")
-            await scheduler_sleep(interval_seconds)
     except asyncio.CancelledError:
         logger.info("Deep research images cleanup task stopped.")
         raise
 
 
-def start_deep_research_images_cleanup_task(images_root: Path) -> asyncio.Task:
-    return asyncio_create_task(run_deep_research_images_cleanup_loop(images_root))
+def start_deep_research_images_cleanup_task(
+    image_retention_service: ImageRetentionService,
+    *,
+    supervisor: TaskSupervisor,
+    interval_seconds: float = DEEP_RESEARCH_IMAGES_CLEANUP_INTERVAL_SECONDS,
+) -> asyncio.Task:
+    return supervisor.create_task(
+        run_deep_research_images_cleanup_loop(
+            image_retention_service,
+            interval_seconds=interval_seconds,
+        ),
+        name="deep-research-images-cleanup",
+    )
 
 
 async def run_budget_reset_loop(
-    api_keys_db: ApiKeysDB,
-    usd_budget_ledger: UsdBudgetLedger,
+    accounting_service: AccountingService,
     *,
     interval_seconds: float = BUDGET_RESET_CHECK_INTERVAL_SECONDS,
 ) -> None:
@@ -239,19 +269,9 @@ async def run_budget_reset_loop(
     try:
         while True:
             try:
-                reset_records = await asyncio.to_thread(api_keys_db.reset_due_budgets)
-                for record in reset_records:
-                    usd_budget_ledger.reset_record(
-                        record.id,
-                        budget_usd=record.budget_usd,
-                        spent_usd=record.spent_usd,
-                    )
-                if reset_records:
-                    logger.info(
-                        "Periodic budget reset cleared spent_usd for %d key(s): %s",
-                        len(reset_records),
-                        ", ".join(str(record.id) for record in reset_records),
-                    )
+                await accounting_service.reset_due_budgets(
+                    now=datetime.now(timezone.utc),
+                )
             except Exception:
                 logger.exception("Periodic budget reset iteration failed.")
             await scheduler_sleep(interval_seconds)
@@ -261,208 +281,577 @@ async def run_budget_reset_loop(
 
 
 def start_budget_reset_task(
-    api_keys_db: ApiKeysDB,
-    usd_budget_ledger: UsdBudgetLedger,
+    accounting_service: AccountingService,
+    *,
+    supervisor: TaskSupervisor,
 ) -> asyncio.Task:
-    return asyncio_create_task(
-        run_budget_reset_loop(api_keys_db, usd_budget_ledger)
+    return supervisor.create_task(
+        run_budget_reset_loop(accounting_service),
+        name="budget-reset",
     )
+
+
+async def run_cancellation_resistant_thread_worker(
+    function: Callable[..., _T],
+    *args: object,
+    **kwargs: object,
+) -> _T:
+    """Finish one blocking worker before propagating parent cancellation."""
+    worker_coroutine = asyncio.to_thread(function, *args, **kwargs)
+    try:
+        worker_task = asyncio.get_running_loop().create_task(
+            worker_coroutine,
+            name="periodic-blocking-worker",
+        )
+    except BaseException:
+        worker_coroutine.close()
+        raise
+    cancellation: asyncio.CancelledError | None = None
+    while not worker_task.done():
+        try:
+            await asyncio.shield(worker_task)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+        except BaseException:
+            if worker_task.done():
+                # The exception is the worker's own outcome (it just
+                # finished); .result() below will safely reproduce it.
+                break
+            # Something other than our own cancellation interrupted this
+            # await while the worker is still running (for example
+            # GeneratorExit from the coroutine being closed). Do not call
+            # .result() on an unfinished task (raises InvalidStateError,
+            # masking the real exception) and do not swallow the original
+            # exception: hand the worker's eventual outcome to a
+            # done-callback so it is still retrieved and logged, then
+            # re-raise the original exception immediately.
+            worker_task.add_done_callback(_discard_worker_task_outcome)
+            raise
+
+    try:
+        result = worker_task.result()
+    except BaseException as worker_exc:
+        if cancellation is None:
+            raise
+        _log_cleanup_failure("periodic-blocking-worker", worker_exc)
+        raise cancellation
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
+def _discard_worker_task_outcome(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exception = task.exception()
+    if exception is not None:
+        _log_cleanup_failure("periodic-blocking-worker", exception)
+
+
+def _load_initial_config() -> ConfigLoader:
+    loader = ConfigLoader()
+    AtomicConfigFileTransaction.recover_pending(loader.configured_paths)
+    return loader.load_complete()
+
+
+def _log_cleanup_failure(resource: str, exception: BaseException) -> None:
+    logger.error(
+        "Resource cleanup failed: resource=%s exception_type=%s.",
+        resource,
+        safe_exception_type_name(exception),
+    )
+
+
+def _push_safe_cleanup(
+    stack: AsyncExitStack,
+    resource: str,
+    callback: Callable[[], Awaitable[object]],
+) -> None:
+    async def cleanup() -> None:
+        try:
+            await callback()
+        except BaseException as exc:
+            _log_cleanup_failure(resource, exc)
+
+    stack.push_async_callback(cleanup)
+
+
+async def _close_stream_observation_capacity(
+    capacity: StreamObservationCapacity,
+) -> None:
+    capacity.close(reason="lifespan_shutdown")
+
+
+async def _verify_stream_observation_capacity_drained(
+    capacity: StreamObservationCapacity,
+) -> None:
+    snapshot = capacity.snapshot
+    if snapshot.active_items or snapshot.active_bytes or snapshot.waiters:
+        raise RuntimeError("Stream observation capacity did not drain during shutdown.")
+
+
+async def _close_upload_admission(admission: UploadAdmission) -> None:
+    admission.close()
+
+
+async def _verify_upload_admission_drained(admission: UploadAdmission) -> None:
+    snapshot = admission.snapshot
+    if snapshot.active_bytes or snapshot.active_leases or snapshot.waiters:
+        raise RuntimeError("Upload admission did not drain during shutdown.")
+
+
+async def _drain_resource_stack(stack: AsyncExitStack) -> None:
+    drain_task = asyncio.get_running_loop().create_task(
+        stack.aclose(),
+        name="lifespan-resource-drain",
+    )
+    cancellation: asyncio.CancelledError | None = None
+    while not drain_task.done():
+        try:
+            await asyncio.shield(drain_task)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+    drain_task.result()
+    if cancellation is not None:
+        raise cancellation
+
+
+_MISSING_STATE_VALUE = object()
+
+
+class _TemporaryStateBinding:
+    def __init__(self, state: object) -> None:
+        self._state = state
+        self._previous_services: object = _MISSING_STATE_VALUE
+        self._owned_services: object = _MISSING_STATE_VALUE
+
+    def bind(self, services: AppServices) -> None:
+        self._previous_services = getattr(
+            self._state,
+            "services",
+            _MISSING_STATE_VALUE,
+        )
+        self._owned_services = services
+        self._set("services", services)
+
+    def _set(self, name: str, value: object) -> None:
+        setattr(self._state, name, value)
+
+    async def rollback(self) -> None:
+        owned_services = self._owned_services
+        previous_services = self._previous_services
+        if owned_services is _MISSING_STATE_VALUE:
+            return
+        try:
+            current_services = getattr(
+                self._state,
+                "services",
+                _MISSING_STATE_VALUE,
+            )
+            if current_services is not owned_services:
+                return
+            if previous_services is _MISSING_STATE_VALUE:
+                delattr(self._state, "services")
+            else:
+                setattr(self._state, "services", previous_services)
+        except BaseException as exc:
+            _log_cleanup_failure("app_state.services", exc)
+        finally:
+            self._previous_services = _MISSING_STATE_VALUE
+            self._owned_services = _MISSING_STATE_VALUE
+
+
+async def _build_initial_snapshot(
+    manager: RuntimeGenerationManager,
+    config_loader: ConfigLoader,
+    http_client: httpx.AsyncClient,
+) -> RuntimeSnapshot:
+    candidate = await build_runtime_candidate(
+        manager=manager,
+        generation=1,
+        config_loader=config_loader,
+        shared_http_client=http_client,
+    )
+    try:
+        return candidate.install_initial()
+    except BaseException:
+        try:
+            await candidate.close_unpublished()
+        except BaseException as cleanup_exc:
+            _log_cleanup_failure("initial-runtime-candidate", cleanup_exc)
+        raise
+
+
+_LIFESPAN_OWNER_ATTRIBUTE = "_llm_gateway_lifespan_owner"
+_LIFESPAN_OWNER_LOCK = Lock()
+_MISSING_LIFESPAN_OWNER = object()
+
+
+def _claim_lifespan_owner(state: object) -> tuple[object, bool, object]:
+    owner = object()
+    with _LIFESPAN_OWNER_LOCK:
+        previous = getattr(
+            state,
+            _LIFESPAN_OWNER_ATTRIBUTE,
+            _MISSING_LIFESPAN_OWNER,
+        )
+        if previous is not _MISSING_LIFESPAN_OWNER and previous is not None:
+            raise RuntimeError("Application lifespan is already active.")
+        marker_existed = previous is not _MISSING_LIFESPAN_OWNER
+        setattr(state, _LIFESPAN_OWNER_ATTRIBUTE, owner)
+    return owner, marker_existed, previous
+
+
+def _release_lifespan_owner(
+    state: object,
+    owner: object,
+    marker_existed: bool,
+    marker_previous: object,
+) -> None:
+    with _LIFESPAN_OWNER_LOCK:
+        current = getattr(
+            state,
+            _LIFESPAN_OWNER_ATTRIBUTE,
+            _MISSING_LIFESPAN_OWNER,
+        )
+        if current is not owner:
+            return
+        if marker_existed:
+            setattr(state, _LIFESPAN_OWNER_ATTRIBUTE, marker_previous)
+        else:
+            delattr(state, _LIFESPAN_OWNER_ATTRIBUTE)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("LLM Gateway v1.10: Application startup...")
-    ensure_gateway_api_key_configured()
-    usage_stats_cleanup_task: asyncio.Task | None = None
-    deep_research_images_cleanup_task: asyncio.Task | None = None
-    budget_reset_task: asyncio.Task | None = None
-
-    OUTPUTS_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Preload HTML templates into memory once at startup so UI requests don't
-    # hit the disk per-page-view.
-    preload_templates([
-        STATIC_DIR / "login.html",
-        STATIC_DIR / "usage-stats.html",
-        STATIC_DIR / "rules-editor.html",
-        STATIC_DIR / "web-playground.html",
-        STATIC_DIR / "gateway-docs.html",
-        STATIC_DIR / "translator-debug.html",
-        STATIC_DIR / "pricing.html",
-    ])
-
-    # Initialize ConfigLoader and load configurations
-    config_loader = ConfigLoader()
-    config_loader.load_providers()
-    config_loader.load_fallback_rules()
-    config_loader.load_model_rules()
-    config_loader.load_operation_rules()
-    config_loader.load_fusion_rules()
-    config_loader.load_router_rules()
-    config_loader.validate_fallback_operation_consistency()
-    app.state.config_loader = config_loader
-    app.state.operation_rules = config_loader.operation_rules
-    logger.info("Service configurations loaded and ConfigLoader attached to app.state.")
-
-    # Initialize DB instances (schema init is sync, runs before event loop yields)
-    tokens_usage_db = TokensUsageDB()
-    fallback_events_db = FallbackEventsDB()
-    rejections_db = RejectionsDB()
-
-    # Create and start the shared WriteBatcher for INSERT operations.
-    # All three DBs share the same underlying SQLite file (tokens_usage.db).
-    batcher_db_path = resolve_write_batcher_db_path(tokens_usage_db)
-    write_batcher = WriteBatcher(batcher_db_path)
-    await write_batcher.start()
-    for _db in (tokens_usage_db, fallback_events_db, rejections_db):
-        if hasattr(_db, "set_batcher"):
-            _db.set_batcher(write_batcher)
-
-    app.state.tokens_usage_db = tokens_usage_db
-    app.state.fallback_events_db = fallback_events_db
-    app.state.rejections_db = rejections_db
-    app.state.write_batcher = write_batcher
-
-    # ApiKeysDB lives in a separate SQLite file (``api_keys.db``) from the
-    # shared WriteBatcher (``tokens_usage.db``); binding the two would route
-    # ``UPDATE api_keys …`` into the wrong database and silently drop every
-    # spent_usd increment. ApiKeysDB falls back to direct synchronous writes
-    # from worker threads when no batcher is bound.
-    api_keys_db = ApiKeysDB()
-    app.state.api_keys_db = api_keys_db
-
-    usd_budget_ledger = UsdBudgetLedger()
-    app.state.usd_budget_ledger = usd_budget_ledger
-
-    app.state.active_requests_registry = ActiveRequestsRegistry()
-
-    rate_limiter = RateLimiter()
-    app.state.rate_limiter = rate_limiter
-
-    if settings.ip_block_enabled:
-        app.state.ip_block_guard = IpBlockGuard(
-            max_failures=settings.ip_block_max_failures,
-            block_seconds=settings.ip_block_duration_minutes * 60,
-        )
-        logger.info(
-            "IP brute-force guard ENABLED (block after %d consecutive auth failures for %d min).",
-            settings.ip_block_max_failures,
-            settings.ip_block_duration_minutes,
-        )
-    else:
-        app.state.ip_block_guard = None
-        logger.info("IP brute-force guard is DISABLED (IP_BLOCK_ENABLED=false).")
-
-    app.state.chat_model_failure_cooldowns = {}
-    app.state.upstream_routing_state = UpstreamRoutingState()
-
-    def resolve_legacy_rotation_scope(token: str) -> str | None:
-        if settings.gateway_api_key and token == settings.gateway_api_key:
-            return f"master:{fingerprint_api_key(token)}"
-        get_by_key = getattr(api_keys_db, "get_by_key", None)
-        if get_by_key is None:
-            return None
-        record = get_by_key(token)
-        if record is not None:
-            return f"user:{record.id}"
-        return None
-
-    model_rotation_db = ModelRotationDB(legacy_scope_resolver=resolve_legacy_rotation_scope)
-    app.state.model_rotation_db = model_rotation_db
-    logger.info("TokensUsageDB, FallbackEventsDB, RejectionsDB, ModelRotationDB, ApiKeysDB, RateLimiter and WriteBatcher initialized.")
-
-    http_client = create_shared_http_client()
-    app.state.http_client = http_client
-    logger.info("Shared httpx.AsyncClient initialized and attached to app.state.")
-
-    upstream_subscription_quota_service = UpstreamSubscriptionQuotaService(
-        http_client=http_client
-    )
-    app.state.upstream_subscription_quota_service = upstream_subscription_quota_service
-    logger.info("UpstreamSubscriptionQuotaService initialized and attached to app.state.")
-
-    proxy_http_clients = create_proxy_http_clients(config_loader.providers_config)
-    app.state.proxy_http_clients = proxy_http_clients
-
-    operation_dispatcher = OperationDispatcher(
-        config_loader.providers_config,
-        config_loader.operation_rules,
-        http_client,
-        model_rules=(
-            config_loader.model_rules
-            if isinstance(getattr(config_loader, "model_rules", None), Mapping)
-            else {}
-        ),
-    )
-    app.state.operation_dispatcher = operation_dispatcher
-    logger.info("OperationDispatcher initialized and attached to app.state.")
-
-    fusion_service = FusionEnsembleService(config_loader)
-    app.state.fusion_service = fusion_service
-    logger.info("FusionEnsembleService initialized and attached to app.state.")
-
-    router_model_service = RouterModelService(config_loader)
-    app.state.router_model_service = router_model_service
-    logger.info("RouterModelService initialized and attached to app.state.")
-
-    provider_models_service = ProviderModelsService()
-    app.state.provider_models_service = provider_models_service
-    logger.info("ProviderModelsService initialized and attached to app.state.")
-
-    openrouter_scoring_http_client = proxy_http_clients.get("openrouter", http_client)
-    openrouter_free_models_service = OpenRouterFreeModelsService()
-    app.state.openrouter_free_models_service = openrouter_free_models_service
-    await openrouter_free_models_service.start(
-        providers_config=config_loader.providers_config,
-        http_client=openrouter_scoring_http_client,
-    )
-
-    fallback_model_eval_service = FallbackModelEvalService()
-    app.state.fallback_model_eval_service = fallback_model_eval_service
-    logger.info("FallbackModelEvalService initialized and attached to app.state.")
-
-    await run_startup_model_verification(
-        mode=settings.verify_models_on_startup,
-        providers_config=config_loader.providers_config,
-        fallback_rules=config_loader.fallback_rules,
-        operation_rules=config_loader.operation_rules,
-        provider_models_service=provider_models_service,
-        http_client=http_client,
-    )
-
-    usage_stats_cleanup_task = start_usage_stats_cleanup_task(tokens_usage_db, fallback_events_db, rejections_db)
-    deep_research_images_cleanup_task = start_deep_research_images_cleanup_task(OUTPUTS_IMAGES_DIR)
-    budget_reset_task = start_budget_reset_task(api_keys_db, usd_budget_ledger)
-
+    validate_single_worker_environment(os.environ)
+    logger.info("LLM Gateway v%s: Application startup...", __version__)
+    state = app.state
+    owner, marker_existed, marker_previous = _claim_lifespan_owner(state)
+    resources = AsyncExitStack()
+    health_service: HealthService | None = None
     try:
+        ensure_gateway_api_key_configured()
+        raw_state_dir = resolve_db_dir()
+        raw_state_dir.mkdir(parents=True, exist_ok=True)
+        state_dir = raw_state_dir.resolve(strict=True)
+        single_process_lease = SingleProcessLease.acquire(state_dir)
+        _push_safe_cleanup(
+            resources,
+            "single-process-lease",
+            single_process_lease.close,
+        )
+        # Issue or load the cookie-signing secret while the lease is held, so a
+        # concurrent first start cannot have two processes mint rival secrets.
+        # Doing it at boot also means a state directory that is read-only or
+        # owned by another user fails the startup rather than looking healthy
+        # until the first person tries to log in.
+        session_secret.get_session_secret(settings.gateway_api_key)
+        config_loader = _load_initial_config()
+        _prepare_source_outputs_images_dir()
+        image_storage = GeneratedImageStorage(OUTPUTS_IMAGES_DIR)
+        image_storage.probe()
+        image_retention_service = ImageRetentionService(
+            image_storage,
+            DEEP_RESEARCH_IMAGES_RETENTION_DAYS,
+        )
+        await run_cancellation_resistant_thread_worker(
+            image_retention_service.run,
+        )
+        preload_templates([
+            STATIC_DIR / "login.html",
+            STATIC_DIR / "usage-stats.html",
+            STATIC_DIR / "rules-editor.html",
+            STATIC_DIR / "web-playground.html",
+            STATIC_DIR / "gateway-docs.html",
+            STATIC_DIR / "translator-debug.html",
+            STATIC_DIR / "pricing.html",
+        ])
+        http_client = create_shared_http_client()
+        _push_safe_cleanup(
+            resources,
+            "shared-http-client",
+            lambda: close_http_clients({"shared": http_client}),
+        )
+
+        tokens_usage_db = TokensUsageDB()
+        fallback_events_db = FallbackEventsDB()
+        rejections_db = RejectionsDB()
+        api_keys_db = ApiKeysDB()
+        usd_budget_ledger = UsdBudgetLedger()
+        active_requests_registry = ActiveRequestsRegistry()
+        rate_limiter = RateLimiter()
+        ip_block_guard = (
+            IpBlockGuard(
+                max_failures=settings.ip_block_max_failures,
+                block_seconds=settings.ip_block_duration_minutes * 60,
+            )
+            if settings.ip_block_enabled
+            else None
+        )
+        upstream_routing_state = UpstreamRoutingState()
+
+        write_batcher = WriteBatcher(
+            resolve_write_batcher_db_path(tokens_usage_db),
+            queue_maxsize=settings.write_batcher_queue_maxsize,
+        )
+        _push_safe_cleanup(resources, "write-batcher", write_batcher.stop)
+        await write_batcher.start()
+        for database in (tokens_usage_db, fallback_events_db, rejections_db):
+            if hasattr(database, "set_batcher"):
+                database.set_batcher(write_batcher)
+
+        accounting_service = AccountingService(
+            tokens_usage_db,
+            api_keys_db,
+            budget_ledger=usd_budget_ledger,
+            rate_limiter=rate_limiter,
+        )
+        # Deliberately not wrapped in _push_safe_cleanup: stop() raises when a
+        # charge stayed unsettled (e.g. a projection the sink kept rejecting),
+        # and that is money spent upstream but never recorded in the ledger.
+        # Swallowing it here would turn a real accounting debt into a silent
+        # shutdown.
+        resources.push_async_callback(accounting_service.stop)
+        await accounting_service.start()
+
+        def resolve_legacy_rotation_scope(token: str) -> str | None:
+            if settings.gateway_api_key and token == settings.gateway_api_key:
+                return f"master:{fingerprint_api_key(token)}"
+            get_by_key = getattr(api_keys_db, "get_by_key", None)
+            if get_by_key is None:
+                return None
+            record = get_by_key(token)
+            if record is not None:
+                return f"user:{record.id}"
+            return None
+
+        model_rotation_db = ModelRotationDB(
+            legacy_scope_resolver=resolve_legacy_rotation_scope
+        )
+        upstream_subscription_quota_service = UpstreamSubscriptionQuotaService(
+            http_client=http_client
+        )
+
+        runtime_manager = RuntimeGenerationManager()
+        _push_safe_cleanup(resources, "runtime-generation-manager", runtime_manager.shutdown)
+        initial_snapshot = await _build_initial_snapshot(
+            runtime_manager,
+            config_loader,
+            http_client,
+        )
+
+        openrouter_free_models_service = OpenRouterFreeModelsService()
+        _push_safe_cleanup(
+            resources,
+            "openrouter-free-models-service",
+            openrouter_free_models_service.stop,
+        )
+        await openrouter_free_models_service.start_runtime(
+            runtime_manager=runtime_manager,
+            shared_http_client=http_client,
+        )
+
+        fallback_model_eval_service = FallbackModelEvalService()
+        _push_safe_cleanup(
+            resources,
+            "fallback-model-eval-service",
+            fallback_model_eval_service.stop,
+        )
+
+        task_supervisor = TaskSupervisor()
+        stream_observation_capacity = StreamObservationCapacity(
+            max_items=settings.stream_chunk_queue_maxsize,
+            max_bytes=settings.stream_observation_buffer_max_bytes,
+        )
+        json_response_capacity = StreamObservationCapacity(
+            max_items=settings.stream_chunk_queue_maxsize,
+            max_bytes=settings.json_response_inflight_max_bytes,
+        )
+        upload_admission = UploadAdmission(
+            max_bytes=settings.upload_inflight_max_bytes,
+        )
+        _push_safe_cleanup(
+            resources,
+            "stream-observation-capacity-drain",
+            lambda: _verify_stream_observation_capacity_drained(
+                stream_observation_capacity
+            ),
+        )
+        _push_safe_cleanup(
+            resources,
+            "json-response-capacity-drain",
+            lambda: _verify_stream_observation_capacity_drained(
+                json_response_capacity
+            ),
+        )
+        _push_safe_cleanup(
+            resources,
+            "upload-admission-drain",
+            lambda: _verify_upload_admission_drained(upload_admission),
+        )
+        _push_safe_cleanup(resources, "task-supervisor", task_supervisor.close)
+        _push_safe_cleanup(
+            resources,
+            "stream-observation-capacity",
+            lambda: _close_stream_observation_capacity(
+                stream_observation_capacity
+            ),
+        )
+        _push_safe_cleanup(
+            resources,
+            "json-response-capacity",
+            lambda: _close_stream_observation_capacity(json_response_capacity),
+        )
+        _push_safe_cleanup(
+            resources,
+            "upload-admission",
+            lambda: _close_upload_admission(upload_admission),
+        )
+
+        config_update_coordinator = ConfigUpdateCoordinator(
+            runtime_manager=runtime_manager,
+            shared_http_client=http_client,
+            initial_snapshot=initial_snapshot,
+        )
+        _push_safe_cleanup(
+            resources,
+            "config-update-coordinator",
+            config_update_coordinator.close,
+        )
+        health_service = HealthService(
+            runtime_manager=runtime_manager,
+            config_update_coordinator=config_update_coordinator,
+            accounting_service=accounting_service,
+            write_batcher=write_batcher,
+            image_retention_service=image_retention_service,
+            database_paths=(
+                tokens_usage_db.db_path,
+                fallback_events_db.db_path,
+                rejections_db.db_path,
+                api_keys_db.db_path,
+                model_rotation_db.db_path,
+                write_batcher.db_path,
+            ),
+            task_supervisor=task_supervisor,
+        )
+
+        await run_startup_model_verification(
+            mode=settings.verify_models_on_startup,
+            providers_config=initial_snapshot.config_loader.providers_config,
+            fallback_rules=initial_snapshot.config_loader.fallback_rules,
+            operation_rules=initial_snapshot.config_loader.operation_rules,
+            provider_models_service=initial_snapshot.provider_models_service,
+            http_client=http_client,
+        )
+
+        start_usage_stats_cleanup_task(
+            tokens_usage_db,
+            fallback_events_db,
+            rejections_db,
+            supervisor=task_supervisor,
+        )
+        start_deep_research_images_cleanup_task(
+            image_retention_service,
+            supervisor=task_supervisor,
+        )
+        start_budget_reset_task(
+            accounting_service,
+            supervisor=task_supervisor,
+        )
+
+        deep_research_process_runner = DeepResearchProcessRunner(
+            capacity=settings.deep_research_process_capacity,
+            admission_timeout_seconds=(
+                settings.deep_research_admission_timeout_seconds
+            ),
+        )
+        await deep_research_process_runner.start()
+
+        state_binding: _TemporaryStateBinding | None = None
+        try:
+            services = AppServices(
+                runtime_manager=runtime_manager,
+                config_update_coordinator=config_update_coordinator,
+                http_client=http_client,
+                tokens_usage_db=tokens_usage_db,
+                fallback_events_db=fallback_events_db,
+                rejections_db=rejections_db,
+                api_keys_db=api_keys_db,
+                model_rotation_db=model_rotation_db,
+                write_batcher=write_batcher,
+                accounting_service=accounting_service,
+                health_service=health_service,
+                image_storage=image_storage,
+                image_retention_service=image_retention_service,
+                usd_budget_ledger=usd_budget_ledger,
+                active_requests_registry=active_requests_registry,
+                rate_limiter=rate_limiter,
+                ip_block_guard=ip_block_guard,
+                upstream_routing_state=upstream_routing_state,
+                upstream_subscription_quota_service=upstream_subscription_quota_service,
+                openrouter_free_models_service=openrouter_free_models_service,
+                fallback_model_eval_service=fallback_model_eval_service,
+                deep_research_process_runner=deep_research_process_runner,
+                upload_admission=upload_admission,
+                upload_admission_timeout_seconds=(
+                    settings.upload_admission_timeout_seconds
+                ),
+                stream_observation_capacity=stream_observation_capacity,
+                json_response_capacity=json_response_capacity,
+                stream_event_max_bytes=settings.stream_event_max_bytes,
+                json_response_max_bytes=settings.json_response_max_bytes,
+                task_supervisor=task_supervisor,
+            )
+            state_binding = _TemporaryStateBinding(state)
+            state_binding.bind(services)
+        except BaseException:
+            try:
+                await deep_research_process_runner.aclose()
+            except BaseException as cleanup_exc:
+                _log_cleanup_failure("deep-research-process-runner", cleanup_exc)
+            if state_binding is not None:
+                await state_binding.rollback()
+            raise
+        assert state_binding is not None
+        _push_safe_cleanup(resources, "application-state", state_binding.rollback)
+        _push_safe_cleanup(
+            resources,
+            "deep-research-process-runner",
+            deep_research_process_runner.aclose,
+        )
+        health_service.mark_ready()
+        logger.info("Application startup completed with runtime generation 1.")
         yield
-    finally:
+    except BaseException:
+        if health_service is not None:
+            health_service.mark_failed()
+        try:
+            await _drain_resource_stack(resources)
+        except BaseException as cleanup_exc:
+            _log_cleanup_failure("lifespan-resource-stack", cleanup_exc)
+        raise
+    else:
         logger.info("Application shutdown...")
-        if usage_stats_cleanup_task is not None:
-            usage_stats_cleanup_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await usage_stats_cleanup_task
-        if deep_research_images_cleanup_task is not None:
-            deep_research_images_cleanup_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await deep_research_images_cleanup_task
-        if budget_reset_task is not None:
-            budget_reset_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await budget_reset_task
-        openrouter_free_models_service = getattr(app.state, "openrouter_free_models_service", None)
-        if openrouter_free_models_service is not None:
-            await openrouter_free_models_service.stop()
-        fallback_model_eval_service = getattr(app.state, "fallback_model_eval_service", None)
-        if fallback_model_eval_service is not None:
-            await fallback_model_eval_service.stop()
-        await write_batcher.stop()
-        logger.info("WriteBatcher stopped — all pending writes flushed.")
-        for name, proxy_client in proxy_http_clients.items():
-            await proxy_client.aclose()
-            logger.info("Proxy HTTP client for '%s' closed.", name)
-        await http_client.aclose()
-        logger.info("Shared httpx.AsyncClient closed.")
+        if health_service is not None:
+            health_service.mark_stopping()
+        try:
+            await _drain_resource_stack(resources)
+        except BaseException as cleanup_exc:
+            _log_cleanup_failure("lifespan-resource-stack", cleanup_exc)
+            raise
+    finally:
+        try:
+            _release_lifespan_owner(
+                state,
+                owner,
+                marker_existed,
+                marker_previous,
+            )
+        except BaseException as marker_exc:
+            _log_cleanup_failure("lifespan-owner-marker", marker_exc)
 
 # Create FastAPI app instance
 STATIC_FILES_DIR = STATIC_DIR
@@ -471,7 +860,7 @@ STATIC_FILES_DIR.mkdir(parents=True, exist_ok=True) # Ensure static directory ex
 app = FastAPI(
     title="LLMGateway",
     description="A gateway for routing LLM requests with fallback and rotation.",
-    version="1.10",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -525,25 +914,35 @@ def configure_gateway_middleware(
     cors_allow_origins: list[str] | None = None,
     max_request_body_bytes: int | None = None,
 ) -> None:
-    # Starlette wraps middleware in reverse registration order: register the
-    # innermost layers first so inbound requests hit CORS/logging/auth before
-    # chat_logging can buffer request bodies.
+    # Starlette wraps middleware in reverse registration order. The layers
+    # below are registered inside-out so inbound requests hit CORS, request
+    # logging, the Content-Length guard, runtime availability, auth, aggregate
+    # body admission, and only then the runtime lease and endpoint layers.
     logger.info("Chat usage tracking is ENABLED.")
     if settings.log_chat_messages:
         logger.info("Chat message file logging is ENABLED.")
     else:
         logger.info("Chat message file logging is DISABLED.")
 
-    app.middleware("http")(log_chat_completions)
     app.middleware("http")(add_anthropic_version_header)
     app.middleware("http")(add_routing_diagnostic_headers)
+    app.add_middleware(
+        ResponseObservationMiddleware,
+        request_preparer=prepare_chat_response_observation,
+    )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
-    app.middleware("http")(api_key_auth)
+    app.add_middleware(RuntimeSnapshotMiddleware)
     app.add_middleware(
         ContentSizeLimitMiddleware,
         max_body_size=max_request_body_bytes or settings.max_request_body_bytes,
     )
-    app.middleware("http")(log_middleware_functional)
+    app.add_middleware(ApiKeyAuthMiddleware)
+    app.add_middleware(RuntimeAvailabilityMiddleware)
+    app.add_middleware(
+        ContentLengthLimitMiddleware,
+        max_body_size=max_request_body_bytes or settings.max_request_body_bytes,
+    )
+    app.add_middleware(RequestLoggingASGIMiddleware)
     configure_cors(app, cors_allow_origins)
 
 
@@ -578,6 +977,7 @@ configure_gateway_middleware(
 
 # Include auth/login and root redirect routes
 app.include_router(auth_router)
+app.include_router(health_router)
 # Include the main v1 API router
 app.include_router(api_v1_router, prefix="/v1")
 # Include the v1 editor API router, also under /v1 prefix
@@ -595,38 +995,28 @@ logger.info(f"Static files mounted from {STATIC_FILES_DIR}")
 # files (the middleware inspects the mount as a registered route).
 app.mount(
     "/outputs/images",
-    StaticFiles(directory=str(OUTPUTS_IMAGES_DIR)),
+    StaticFiles(directory=str(OUTPUTS_IMAGES_DIR), check_dir=False),
     name="outputs-images",
 )
 logger.info(f"Deep research images mounted from {OUTPUTS_IMAGES_DIR}")
 
-# --- Basic Health Check Endpoint ---
-@app.get("/health", tags=["Health"])
-async def health_check(response: Response):
-    """Basic health check endpoint."""
-    _set_build_headers(response)
-    return {"status": "ok"}
+def run_server() -> None:
+    validate_single_worker_environment(os.environ)
+    logger.info(
+        "Starting Uvicorn server on host %s port %s",
+        settings.gateway_host,
+        settings.gateway_port,
+    )
+    uvicorn.run(
+        "main:app",
+        host=settings.gateway_host,
+        port=settings.gateway_port,
+        reload=settings.debug_mode,
+        log_level=settings.log_level.lower(),
+        workers=SINGLE_APPLICATION_WORKER_COUNT,
+    )
 
-
-@app.get("/healthz", tags=["Health"])
-async def healthz_check(response: Response):
-    """Liveness endpoint intended for load balancers and container checks."""
-    _set_build_headers(response)
-    return {"status": "ok"}
-
-
-@app.head("/healthz", tags=["Health"])
-async def healthz_head():
-    """Header-only liveness endpoint."""
-    return Response(status_code=200, headers=build_headers())
 
 # --- Main Execution Block (for direct running) ---
 if __name__ == "__main__":
-    logger.info(f"Starting Uvicorn server on host {settings.gateway_host} port {settings.gateway_port}")
-    uvicorn.run(
-        "main:app", # Point to the app instance in this file
-        host=settings.gateway_host,
-        port=settings.gateway_port,
-        reload=settings.debug_mode, # Enable reload only in debug mode
-        log_level=settings.log_level.lower() # Pass the lowercase string name directly
-    )
+    run_server()

@@ -10,6 +10,9 @@ from fastapi.testclient import TestClient
 import main
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.services.request_handler import OperationDispatcher
+from tests.operation_accounting_test_support import (
+    install_embeddings_rerank_accounting_passthrough,
+)
 
 
 VALID_PROVIDERS_TEXT = """
@@ -116,20 +119,36 @@ class EmbeddingsApiTests(unittest.TestCase):
         fake_http_client = Mock()
         fake_http_client.post = AsyncMock(return_value=downstream_response)
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
             stack.enter_context(patch.object(main.settings, "fallback_provider", "openai"))
+            install_embeddings_rerank_accounting_passthrough(stack)
 
             with TestClient(main.app) as client:
-                dispatcher = getattr(client.app.state, "operation_dispatcher", None)
-                self.assertIsInstance(dispatcher, OperationDispatcher)
-                self.assertIs(client.app.state.http_client, fake_http_client)
-                yield client, dispatcher, fake_http_client
+                services = client.app.state.services
+                self.assertIs(services.http_client, fake_http_client)
+                lease = client.portal.call(services.runtime_manager.acquire_current)
+                try:
+                    dispatcher = lease.snapshot.operation_dispatcher
+                    self.assertIsInstance(dispatcher, OperationDispatcher)
+                    yield client, dispatcher, fake_http_client
+                finally:
+                    client.portal.call(lease.release)
 
     def test_embeddings_valid_request(self):
         downstream_payload = {
@@ -140,6 +159,7 @@ class EmbeddingsApiTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             route = dispatcher.lookup_route("embeddings", "gateway/embed-small")
             self.assertIsNotNone(route)
 
@@ -157,27 +177,7 @@ class EmbeddingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), downstream_payload)
         fake_http_client.post.assert_awaited_once()
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
-        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
-        self.assertIsInstance(call_args.pop("request_id"), str)
-        self.assertEqual(
-            call_args,
-            {
-                "prompt_tokens": 2,
-                "completion_tokens": 0,
-                "total_tokens": 2,
-                "reasoning_tokens": 0,
-                "cached_tokens": 0,
-                "cost": 0,
-                "cost_saved": 0,
-                "is_estimated": False,
-                "gateway_model": "gateway/embed-small",
-                "operation": "embeddings",
-                "provider": "openai",
-                "model": "text-embedding-3-small",
-            },
-        )
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_embeddings_missing_model(self):
         with self._client(_FakeDownstreamResponse({"unused": True})) as (client, dispatcher, fake_http_client):
@@ -258,6 +258,7 @@ class EmbeddingsApiTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             self.assertEqual(dispatcher.lookup_route("embeddings", "gateway/embed-small").model, "text-embedding-3-small")
 
             response = client.post(
@@ -269,27 +270,7 @@ class EmbeddingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), downstream_payload)
         fake_http_client.post.assert_awaited_once()
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
-        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
-        self.assertIsInstance(call_args.pop("request_id"), str)
-        self.assertEqual(
-            call_args,
-            {
-                "prompt_tokens": 2,
-                "completion_tokens": 0,
-                "total_tokens": 2,
-                "reasoning_tokens": 0,
-                "cached_tokens": 0,
-                "cost": 0,
-                "cost_saved": 0,
-                "is_estimated": False,
-                "gateway_model": "gateway/embed-small",
-                "operation": "embeddings",
-                "provider": "openai",
-                "model": "text-embedding-3-small",
-            },
-        )
+        tokens_usage_db.insert_usage.assert_not_called()
 
 
 if __name__ == "__main__":

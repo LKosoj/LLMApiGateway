@@ -1,5 +1,6 @@
 import json
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -9,10 +10,13 @@ from fastapi.testclient import TestClient
 
 import main
 from llm_gateway_core.api.v1 import chat as chat_api
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 def _build_fake_config_loader() -> Mock:
     fake_config_loader = Mock()
+    fake_config_loader.configured_paths = {}
+    fake_config_loader.operation_rules = {}
     fake_config_loader.providers_config = {
         "test-provider": SimpleNamespace(
             baseUrl="https://provider.example",
@@ -33,6 +37,8 @@ def _build_fake_config_loader() -> Mock:
     }
     fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
     fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+    fake_config_loader.load_operation_rules.return_value = {}
+    fake_config_loader.load_complete.return_value = fake_config_loader
     return fake_config_loader
 
 
@@ -108,6 +114,21 @@ def _build_streaming_openai_wrapped_json_response() -> StreamingResponse:
 
 
 class OpenAIResponsesTests(unittest.TestCase):
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        coordinator_patcher = patch(
+            "main.ConfigUpdateCoordinator",
+            return_value=config_update_coordinator,
+        )
+        coordinator_patcher.start()
+        self.addCleanup(coordinator_patcher.stop)
+
     def test_chat_module_exports_compatibility_routers(self):
         self.assertIsInstance(chat_api.responses_router, APIRouter)
         self.assertIsInstance(chat_api.anthropic_router, APIRouter)
@@ -136,7 +157,7 @@ class OpenAIResponsesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_translates_request_and_text_response(
         self,
@@ -291,19 +312,12 @@ class OpenAIResponsesTests(unittest.TestCase):
             ],
         )
 
-        _tokens_usage_db.return_value.insert_usage.assert_called_once()
-        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
-        self.assertEqual(usage_row["prompt_tokens"], 10)
-        self.assertEqual(usage_row["completion_tokens"], 5)
-        self.assertEqual(usage_row["total_tokens"], 15)
-        self.assertEqual(usage_row["cached_tokens"], 2)
-        self.assertEqual(usage_row["reasoning_tokens"], 1)
-        self.assertEqual(usage_row["cost"], 0.123)
-        self.assertFalse(usage_row.get("is_estimated", False))
+        _tokens_usage_db.return_value.insert_usage.assert_not_called()
+        self.accounting_service.release.assert_awaited_once()
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_translates_tool_response(
         self,
@@ -389,7 +403,7 @@ class OpenAIResponsesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_stream_translates_tool_events(
         self,
@@ -456,7 +470,7 @@ class OpenAIResponsesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_stream_error_chunk_emits_failed_event(
         self,
@@ -504,7 +518,7 @@ class OpenAIResponsesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_stream_preserves_split_utf8_chunks(
         self,
@@ -547,7 +561,7 @@ class OpenAIResponsesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_stream_preserves_unterminated_final_event(
         self,
@@ -594,7 +608,7 @@ class OpenAIResponsesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_stream_removes_wrapped_json_prefix_and_suffix(
         self,
@@ -651,7 +665,7 @@ class OpenAIResponsesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_responses_endpoint_stream_keeps_reasoning_and_visible_text_on_distinct_output_indices(
         self,

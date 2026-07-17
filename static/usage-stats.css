@@ -4,10 +4,6 @@
  * body.dark-mode overrides are kept only where translucency or
  * categorical colors have no token equivalent. */
 
-/* pricing.html links this file without theme.css — make tokens/fonts
- * available everywhere this scaffold is used. Duplicate loads are free. */
-@import url('theme.css');
-
 :root {
     /* Semantic aliases for container-level background (legacy) */
     --container-light: var(--bg-elevated, #ffffff);
@@ -359,7 +355,7 @@ tr:hover {
     background-color: transparent;
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text);
     border-radius: var(--radius-md);
     transition: background-color var(--transition-fast), color var(--transition-fast);
     margin: 0;
@@ -488,7 +484,7 @@ tr:hover {
     background-color: transparent;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text);
     border-radius: var(--radius-sm);
     transition: background-color var(--transition-fast), color var(--transition-fast);
     margin: 0;

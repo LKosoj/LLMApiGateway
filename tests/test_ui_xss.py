@@ -17,8 +17,9 @@ def test_web_playground_usage_values_are_escaped_before_inner_html_render():
         content = file.read()
 
     for field in ("prompt_tokens", "completion_tokens", "total_tokens", "credits"):
-        assert f"escapeHtml(usage.{field})" in content
-    assert "cost=${escapeHtml(usage.cost)}" in content
+        assert f"runtimeNumberSpan(usage.{field})" in content
+    assert 'runtimeNumberSpan(usage.cost, "currency")' in content
+    assert "${escapeHtml(text)}</span>" in content
 
 
 def test_xss_prevention_functional():
@@ -109,6 +110,8 @@ def test_xss_prevention_functional():
             return this._textContent;
         }
         addEventListener() {}
+        setAttribute() {}
+        removeAttribute() {}
     }
 
     global.document = {
@@ -129,6 +132,7 @@ def test_xss_prevention_functional():
     global.prompt = () => "mock-token";
     global.Theme = { attachToggle: () => {}, init: () => {}, get: () => ({ mode: 'system', effective: 'light' }), set: () => {}, cycle: () => {} };
     global.window = {
+        addEventListener: () => {},
         gatewayAuth: {
             apiFetch: async () => ({
                 ok: true,
@@ -136,7 +140,24 @@ def test_xss_prevention_functional():
                 status: 200,
                 statusText: "OK"
             })
-        }
+        },
+        gatewayI18n: {
+            ready: { then: (resolve) => resolve() },
+            t: (key, values = {}) => values.period || values.id || key,
+            formatNumber: (value) => String(value),
+            formatCurrency: (value) => String(value),
+            formatDate: (value) => String(value),
+            subscribe: () => () => {},
+        },
+        gatewayUi: {
+            createStatus: () => ({
+                clear: () => {},
+                polite: () => {},
+                error: () => {},
+                rerender: () => {},
+            }),
+            describeApiError: () => ({message: {key: 'error'}, rawDetail: null}),
+        },
     };
 
     let code = fs.readFileSync('static/usage-stats.js', 'utf8');

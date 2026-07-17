@@ -1,0 +1,65 @@
+{
+  "title": "Provider topology",
+  "toolbar": {
+    "refreshAction": "Refresh",
+    "autoRefresh": "Auto-refresh (5s)"
+  },
+  "legend": {
+    "healthyLabel": "ok",
+    "errorLabel": "error",
+    "notConfiguredLabel": "not configured",
+    "contextOverflow": "context overflow"
+  },
+  "status": {
+    "loading": "Loading topology…",
+    "loadFailed": "Could not load the topology.",
+    "bundleFailed": "Could not load the topology visualization.",
+    "retryAction": "Retry"
+  },
+  "node": {
+    "steps": "{count, plural, one {# step} other {# steps}}",
+    "active": "{count, plural, one {# active request} other {# active requests}}",
+    "health": "Health: {value}",
+    "notConfiguredSuffix": "not configured",
+    "penalty": "Penalty: {value}",
+    "aria": "Topology node {label}. {details}"
+  },
+  "health": {
+    "healthyLabel": "ok",
+    "errorLabel": "error",
+    "invalidLabel": "not configured"
+  },
+  "details": {
+    "healthLabel": "Health",
+    "configuredLabel": "Configured",
+    "activeRequests": "Active requests",
+    "penaltyLabel": "Penalty",
+    "modelsLabel": "Models",
+    "maxAttempts": "Max total attempts",
+    "flagsLabel": "Flags",
+    "contextOverflowLabel": "Context overflow",
+    "fallbackChainLabel": "Fallback chain",
+    "emptyChain": "— no targets —",
+    "retry": "retry: {count}",
+    "retryWithDelay": "retry: {count} ({delay})",
+    "closeAction": "Close"
+  },
+  "values": {
+    "yesLabel": "yes",
+    "noLabel": "no"
+  },
+  "edge": {
+    "contextOverflowShort": "ctx",
+    "aliasLabel": "alias",
+    "fallbackLabel": "fallback",
+    "contextOverflowLabel": "context overflow",
+    "aria": "Topology route from {source} to {target}: {kind}"
+  },
+  "controls": {
+    "groupLabel": "Topology controls",
+    "zoomInAction": "Zoom in",
+    "zoomOutAction": "Zoom out",
+    "fitViewAction": "Fit view",
+    "toggleInteractivityAction": "Toggle interactivity"
+  }
+}

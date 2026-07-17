@@ -1,28 +1,18 @@
-import hashlib
-import hmac
 import os
-import secrets
-import subprocess
-import time
 
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.ui_server_helpers import get_free_port, wait_for_gateway
+from tests.ui_server_helpers import (
+    create_authenticated_session,
+    get_free_port,
+    isolated_gateway_process,
+    wait_for_gateway,
+)
 
 
-def build_session_signature(issued_at: int, expires_at: int, nonce: str, gateway_api_key: str) -> str:
-    secret = gateway_api_key.encode("utf-8")
-    payload = f"{issued_at}.{expires_at}.{nonce}.master.".encode("utf-8")
-    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
-
-
-def create_authenticated_session(gateway_api_key: str) -> str:
-    issued_at = int(time.time())
-    expires_at = issued_at + 365 * 24 * 60 * 60
-    nonce = secrets.token_urlsafe(24)
-    signature = build_session_signature(issued_at, expires_at, nonce, gateway_api_key)
-    return f"{issued_at}.{expires_at}.{nonce}.master..{signature}"
+pytestmark = pytest.mark.browser
+FALLBACK_ETAG = f'"fallback_rules:sha256:{"a" * 64}"'
 
 
 @pytest.fixture(scope="function")
@@ -63,20 +53,9 @@ def server():
         env["LOG_LEVEL"] = "DEBUG"
         base_url = f"http://localhost:{port}"
 
-        proc = subprocess.Popen(
-            ["./.venv/bin/python", "main.py"],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-        wait_for_gateway(base_url, proc)
-
-        yield base_url
-
-        proc.terminate()
-        proc.wait()
+        with isolated_gateway_process(env=env, temp_path=temp_path) as proc:
+            wait_for_gateway(base_url, proc)
+            yield base_url
 
 
 def expand_first_card(page: Page, container_selector: str) -> None:
@@ -87,7 +66,7 @@ def expand_first_card(page: Page, container_selector: str) -> None:
 
 
 def test_audio_tab_is_visible(page: Page, server):
-    session = create_authenticated_session("test-key")
+    session = create_authenticated_session(server, "test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
@@ -98,12 +77,15 @@ def test_audio_tab_is_visible(page: Page, server):
 
 
 def test_create_and_save_audio_speech_route(page: Page, server):
-    session = create_authenticated_session("test-key")
+    session = create_authenticated_session(server, "test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.route(
         "**/v1/config/models-rules/structured",
-        lambda route: route.fulfill(json={"rules": [], "providers": ["openai"]}),
+        lambda route: route.fulfill(
+            json={"rules": [], "providers": ["openai"]},
+            headers={"ETag": FALLBACK_ETAG},
+        ),
     )
     page.route(
         "**/v1/config/providers/openai/models",
@@ -146,12 +128,15 @@ def test_create_and_save_audio_speech_route(page: Page, server):
 
 
 def test_create_and_save_audio_transcription_route(page: Page, server):
-    session = create_authenticated_session("test-key")
+    session = create_authenticated_session(server, "test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.route(
         "**/v1/config/models-rules/structured",
-        lambda route: route.fulfill(json={"rules": [], "providers": ["openai"]}),
+        lambda route: route.fulfill(
+            json={"rules": [], "providers": ["openai"]},
+            headers={"ETag": FALLBACK_ETAG},
+        ),
     )
     page.route(
         "**/v1/config/providers/openai/models",
@@ -167,7 +152,7 @@ def test_create_and_save_audio_transcription_route(page: Page, server):
     page.click("#addAudioTranscriptionButton")
     expect(page.locator("#audioTranscriptionsList .add-fallback-button")).to_have_text("Add Fallback Route")
     expect(page.locator("#audioTranscriptionsList .fallback-row-actions .danger-button")).to_have_text(
-        "Remove Fallback Route"
+        "Remove Route"
     )
     page.fill("#audioTranscriptionsList .gateway-model-input", "my-audio-model")
     page.select_option("#audioTranscriptionsList .provider-select", "openai")
@@ -198,12 +183,15 @@ def test_create_and_save_audio_transcription_route(page: Page, server):
 
 
 def test_create_and_save_nvidia_audio_transcription_route(page: Page, server):
-    session = create_authenticated_session("test-key")
+    session = create_authenticated_session(server, "test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.route(
         "**/v1/config/models-rules/structured",
-        lambda route: route.fulfill(json={"rules": [], "providers": ["openai", "nvidia"]}),
+        lambda route: route.fulfill(
+            json={"rules": [], "providers": ["openai", "nvidia"]},
+            headers={"ETag": FALLBACK_ETAG},
+        ),
     )
     page.route(
         "**/v1/config/providers/nvidia/models",

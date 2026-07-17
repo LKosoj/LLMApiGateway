@@ -1,105 +1,166 @@
 (function initGatewayDocs() {
     const { apiFetch } = window.gatewayAuth;
+    const i18n = window.gatewayI18n;
+    const catalogStatusElement = document.getElementById("catalogStatus");
+    const catalogStatusDetail = document.getElementById("catalogStatusDetail");
+    const freeTierStatusElement = document.getElementById("freeTierDocStatus");
+    const freeTierStatusDetail = document.getElementById("freeTierStatusDetail");
+    const catalogStatus = window.gatewayUi.createStatus(catalogStatusElement, {
+        rawDetailElement: catalogStatusDetail,
+    });
+    const freeTierStatus = window.gatewayUi.createStatus(freeTierStatusElement, {
+        rawDetailElement: freeTierStatusDetail,
+    });
+    const apiBase = `${window.location.origin}/v1`;
+    const freeTierCache = new Map();
+    const freeTierPending = new Map();
+    const catalogState = {
+        phase: "idle",
+        payload: null,
+        rawError: null,
+    };
+    let freeTierGeneration = 0;
+    let pendingLocaleUiState = null;
+    let unsubscribeLocale = null;
+    let destroyed = false;
 
     const GROUPS = [
         {
             key: "chat",
-            title: "Chat",
-            hint: "Модели из fallback rules для /v1/chat/completions, /v1/responses и /v1/messages.",
+            catalogKey: "chat",
         },
         {
             key: "embeddings",
-            title: "Embeddings",
-            hint: "Operation routes для /v1/embeddings.",
+            catalogKey: "embeddings",
         },
         {
             key: "rerank",
-            title: "Rerank",
-            hint: "Operation routes для /v1/rerank и внутреннего ранжирования web research.",
+            catalogKey: "rerank",
         },
         {
             key: "images",
-            title: "Images",
-            hint: "Модели генерации и редактирования для /v1/images*.",
+            catalogKey: "images",
         },
         {
             key: "audio_transcription",
-            title: "Audio",
-            hint: "Модели транскрибации для /v1/audio/transcriptions.",
+            catalogKey: "audioTranscription",
         },
         {
             key: "audio_speech",
-            title: "Speech",
-            hint: "Модели генерации речи для /v1/audio/speech и /v1/audio/voices.",
+            catalogKey: "audioSpeech",
         },
         {
             key: "pdf_conversion",
-            title: "PDF",
-            hint: "Модели конвертации PDF для /v1/pdf/*.",
+            catalogKey: "pdfConversion",
         },
         {
             key: "web_search",
-            title: "Web search",
-            hint: "Сервисные модели для /v1/web/search.",
+            catalogKey: "webSearch",
         },
         {
             key: "web_read",
-            title: "Web read",
-            hint: "Сервисные модели для /v1/web/read.",
+            catalogKey: "webRead",
         },
         {
             key: "web_research",
-            title: "Web research",
-            hint: "Сервисные модели, связывающие search/read/rerank/analysis.",
+            catalogKey: "webResearch",
         },
         {
             key: "web_deep_research",
-            title: "Deep research",
-            hint: "Сервисные модели GPT Researcher с LLM, embedding и image-настройками gateway.",
+            catalogKey: "webDeepResearch",
         },
     ];
+    const GROUPS_BY_KEY = new Map(GROUPS.map((group) => [group.key, group]));
 
-    function setStatus(message, className) {
-        const status = document.getElementById("catalogStatus");
-        if (!status) return;
-        status.textContent = message;
-        status.classList.remove("ready", "error");
-        if (className) status.classList.add(className);
+    function setStatus(message, state = "busy", rawDetail = null) {
+        catalogStatusElement.classList.remove("ready");
+        catalogStatusDetail.hidden = rawDetail === null;
+        if (state === "error") {
+            if (rawDetail === null) catalogStatus.error(message);
+            else catalogStatus.error(message, { rawDetail });
+        } else if (state === "ready") {
+            catalogStatus.polite(message);
+            catalogStatusElement.classList.add("ready");
+        } else {
+            catalogStatus.busy(message);
+        }
     }
 
-    function setFreeTierStatus(message, className) {
-        const status = document.getElementById("freeTierDocStatus");
-        if (!status) return;
-        status.textContent = message || "";
-        status.hidden = !message;
-        status.classList.remove("ready", "error");
-        if (className) status.classList.add(className);
+    function setFreeTierStatus(message, state = "busy", rawDetail = null) {
+        if (!message) {
+            freeTierStatus.clear();
+            freeTierStatusElement.hidden = true;
+            freeTierStatusDetail.hidden = true;
+            return;
+        }
+        freeTierStatusElement.hidden = false;
+        freeTierStatusDetail.hidden = rawDetail === null;
+        if (state === "error") {
+            if (rawDetail === null) freeTierStatus.error(message);
+            else freeTierStatus.error(message, { rawDetail });
+        } else {
+            freeTierStatus.busy(message);
+        }
+    }
+
+    function renderApiBase() {
+        document.querySelectorAll("[data-docs-api-base]").forEach((element) => {
+            element.textContent = apiBase;
+        });
+    }
+
+    function isLoopbackHostname(hostname) {
+        const normalized = hostname
+            .toLowerCase()
+            .replace(/^\[|\]$/g, "")
+            .replace(/\.$/, "");
+        return normalized === "localhost"
+            || normalized.endsWith(".localhost")
+            || normalized === "::1"
+            || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+    }
+
+    function renderTransportWarning() {
+        const warning = document.getElementById("insecureTransportWarning");
+        if (!warning) return;
+        const shouldWarn = window.location.protocol === "http:"
+            && !isLoopbackHostname(window.location.hostname);
+        warning.hidden = !shouldWarn;
+        warning.textContent = shouldWarn
+            ? i18n.t("docs:transport.insecureHttpWarning")
+            : "";
     }
 
     function setupDocsTabs() {
-        const buttons = document.querySelectorAll(".docs-tab-button");
-        const panels = {
-            api: document.getElementById("apiDocsPanel"),
-            "free-tier": document.getElementById("freeTierDocsPanel"),
-        };
-        buttons.forEach((button) => {
-            button.addEventListener("click", () => {
-                const tab = button.dataset.docsTab || "api";
-                buttons.forEach((item) => {
-                    const isActive = item === button;
-                    item.classList.toggle("active", isActive);
-                    item.setAttribute("aria-selected", isActive ? "true" : "false");
-                });
-                Object.entries(panels).forEach(([key, panel]) => {
-                    if (!panel) return;
-                    const isActive = key === tab;
-                    panel.hidden = !isActive;
-                    panel.classList.toggle("active", isActive);
-                });
-                if (tab === "free-tier") {
-                    loadFreeTierDoc();
-                }
+        const buttons = Array.from(document.querySelectorAll(".docs-tab-button"));
+        const tabList = buttons[0]?.closest('[role="tablist"]');
+        const panels = [
+            document.getElementById("apiDocsPanel"),
+            document.getElementById("freeTierDocsPanel"),
+        ];
+        if (!tabList || panels.some((panel) => !panel)) return;
+
+        const activateDocsTab = async (context) => {
+            buttons.forEach((button) => {
+                button.classList.toggle("active", button === context.tab);
             });
+            panels.forEach((panel) => {
+                panel.classList.toggle("active", panel === context.panel);
+            });
+            if (context.key === "free-tier") {
+                await loadFreeTierDoc(context);
+            } else {
+                invalidateFreeTierLoads();
+            }
+        };
+
+        window.gatewayUi.createTabs(tabList, {
+            activation: "manual",
+            getKey: (button) => button.dataset.docsTab || "api",
+            initialKey: "api",
+            onActivate: activateDocsTab,
+            onReselect: activateDocsTab,
+            panels,
         });
     }
 
@@ -107,6 +168,8 @@
         const chip = document.createElement("span");
         chip.className = "model-chip";
         chip.textContent = name;
+        chip.lang = "und";
+        chip.dir = "auto";
 
         const model = modelsById.get(name);
         if (model) {
@@ -313,28 +376,167 @@
         }
     }
 
-    let freeTierDocLoaded = false;
-    async function loadFreeTierDoc() {
-        if (freeTierDocLoaded) return;
-        setFreeTierStatus("Загрузка free-tier каталога...");
-        try {
-            const response = await apiFetch("/v1/ui/docs/free-tier-providers.md");
+    function freeTierPanelIsActive() {
+        const panel = document.getElementById("freeTierDocsPanel");
+        return Boolean(panel && !panel.hidden && panel.classList.contains("active"));
+    }
+
+    function abortPendingDocsExcept(locale = null) {
+        for (const [pendingLocale, request] of freeTierPending) {
+            if (pendingLocale === locale) continue;
+            freeTierPending.delete(pendingLocale);
+            request.controller.abort();
+        }
+    }
+
+    function invalidateFreeTierLoads() {
+        freeTierGeneration += 1;
+        abortPendingDocsExcept();
+    }
+
+    function requestFreeTierDoc(locale) {
+        if (freeTierCache.has(locale)) {
+            return Promise.resolve(freeTierCache.get(locale));
+        }
+        const pending = freeTierPending.get(locale);
+        if (pending) return pending.promise;
+
+        const request = {
+            controller: new AbortController(),
+            promise: null,
+        };
+        request.promise = window.fetch(
+            `/static/locales/${encodeURIComponent(locale)}/free-tier-providers.md`,
+            {
+                credentials: "same-origin",
+                signal: request.controller.signal,
+            },
+        ).then(async (response) => {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
-            renderMarkdown(await response.text());
-            freeTierDocLoaded = true;
-            setFreeTierStatus("");
-        } catch (error) {
-            setFreeTierStatus(`Каталог free-tier недоступен: ${error.message}`, "error");
-            const container = document.getElementById("freeTierMarkdown");
-            if (container) {
-                container.replaceChildren();
-                const message = document.createElement("p");
-                message.className = "markdown-error";
-                message.textContent = "Проверьте, что файл examples/free-tier-providers.md существует и доступен gateway.";
-                container.appendChild(message);
+            const markdown = await response.text();
+            if (!markdown.trim()) {
+                throw new Error("empty document");
             }
+            freeTierCache.set(locale, markdown);
+            return markdown;
+        }).finally(() => {
+            if (freeTierPending.get(locale) === request) {
+                freeTierPending.delete(locale);
+            }
+        });
+        freeTierPending.set(locale, request);
+        return request.promise;
+    }
+
+    function freeTierLoadIsCurrent(locale, generation, activationContext) {
+        const pageStateIsCurrent = !destroyed
+            && generation === freeTierGeneration
+            && i18n.currentLocale === locale
+            && freeTierPanelIsActive();
+        if (!pageStateIsCurrent || !activationContext) return pageStateIsCurrent;
+        return !(activationContext.signal.aborted || !activationContext.isCurrent());
+    }
+
+    function renderFreeTierError() {
+        const container = document.getElementById("freeTierMarkdown");
+        if (!container) return;
+        container.replaceChildren();
+        const message = document.createElement("p");
+        message.className = "markdown-error";
+        message.textContent = i18n.t("docs:freeTier.errorHint");
+        container.appendChild(message);
+    }
+
+    function captureLocaleUiState() {
+        const container = document.getElementById("freeTierMarkdown");
+        const panel = document.getElementById("freeTierDocsPanel");
+        const activeElement = document.activeElement;
+        return {
+            activeElement,
+            focusWasInMarkdown: Boolean(container && activeElement && container.contains(activeElement)),
+            panelScrollLeft: panel?.scrollLeft || 0,
+            panelScrollTop: panel?.scrollTop || 0,
+            restored: false,
+            retryTimer: null,
+            windowScrollX: window.scrollX,
+            windowScrollY: window.scrollY,
+        };
+    }
+
+    function restoreLocaleUiState(state) {
+        if (!state) return;
+        const panel = document.getElementById("freeTierDocsPanel");
+        const panelIsUnchanged = !state.restored || (
+            panel?.scrollLeft === state.panelScrollLeft
+            && panel?.scrollTop === state.panelScrollTop
+        );
+        if (panel && panelIsUnchanged) {
+            panel.scrollLeft = state.panelScrollLeft;
+            panel.scrollTop = state.panelScrollTop;
+        }
+        if (!state.focusTarget) {
+            state.focusTarget = state.activeElement?.isConnected
+                ? state.activeElement
+                : document.querySelector('[data-docs-tab="free-tier"]');
+        }
+        const currentFocus = document.activeElement;
+        if (
+            state.focusTarget
+            && (!state.restored || currentFocus === document.body || currentFocus === state.focusTarget)
+            && !state.focusTarget.disabled
+        ) {
+            state.focusTarget.focus({ preventScroll: true });
+        }
+        const scrollIsUnchanged = !state.restored || (
+            window.scrollX === state.windowScrollX
+            && window.scrollY === state.windowScrollY
+        );
+        if (scrollIsUnchanged) {
+            window.scrollTo({
+                behavior: "instant",
+                left: state.windowScrollX,
+                top: state.windowScrollY,
+            });
+        }
+        state.restored = true;
+        if (state.focusTarget?.disabled && state.retryTimer === null) {
+            state.retryTimer = window.setTimeout(() => {
+                state.retryTimer = null;
+                restoreLocaleUiState(state);
+            }, 0);
+        }
+    }
+
+    async function loadFreeTierDoc(activationContext, localeUiState = null) {
+        try {
+            await i18n.ready;
+        } catch {
+            return;
+        }
+        if (destroyed || !freeTierPanelIsActive()) return;
+        const locale = i18n.currentLocale;
+        const generation = ++freeTierGeneration;
+        abortPendingDocsExcept(locale);
+        setFreeTierStatus(i18n.t("docs:freeTier.loading"));
+        document.getElementById("freeTierMarkdown")?.replaceChildren();
+        restoreLocaleUiState(localeUiState);
+        try {
+            const markdown = await requestFreeTierDoc(locale);
+            if (!freeTierLoadIsCurrent(locale, generation, activationContext)) return;
+            renderMarkdown(markdown);
+            setFreeTierStatus("");
+            restoreLocaleUiState(localeUiState);
+        } catch (error) {
+            if (!freeTierLoadIsCurrent(locale, generation, activationContext)) return;
+            setFreeTierStatus(
+                i18n.t("docs:freeTier.unavailable"),
+                "error",
+                error.message,
+            );
+            renderFreeTierError();
+            restoreLocaleUiState(localeUiState);
         }
     }
 
@@ -342,6 +544,9 @@
         const container = document.getElementById("modelCatalog");
         if (!container) return;
 
+        catalogState.phase = "ready";
+        catalogState.payload = payload;
+        catalogState.rawError = null;
         container.replaceChildren();
         const groups = payload.groups || {};
         const modelsById = new Map((payload.models || []).map((model) => [model.id, model]));
@@ -349,20 +554,21 @@
         GROUPS.forEach((group) => {
             const panel = document.createElement("article");
             panel.className = "model-group";
+            panel.dataset.catalogGroup = group.key;
 
             const title = document.createElement("h3");
-            title.textContent = group.title;
+            title.dataset.catalogCopy = "title";
             panel.appendChild(title);
 
             const hint = document.createElement("p");
-            hint.textContent = group.hint;
+            hint.dataset.catalogCopy = "hint";
             panel.appendChild(hint);
 
             const names = groups[group.key] || [];
             if (names.length === 0) {
                 const empty = document.createElement("span");
                 empty.className = "model-empty";
-                empty.textContent = "Нет сконфигурированных gateway-моделей.";
+                empty.dataset.catalogCopy = "empty";
                 panel.appendChild(empty);
             } else {
                 const list = document.createElement("div");
@@ -374,10 +580,52 @@
             container.appendChild(panel);
         });
 
-        setStatus(`Загружено gateway-моделей: ${(payload.models || []).length}`, "ready");
+        renderCatalogLocale();
+    }
+
+    function renderCatalogStatus() {
+        if (catalogState.phase === "loading") {
+            setStatus(i18n.t("docs:catalog.loading"));
+        } else if (catalogState.phase === "ready") {
+            setStatus(
+                i18n.t("docs:catalog.ready", {
+                    count: (catalogState.payload?.models || []).length,
+                }),
+                "ready",
+            );
+        } else if (catalogState.phase === "error") {
+            setStatus(
+                i18n.t("docs:catalog.unavailable"),
+                "error",
+                catalogState.rawError,
+            );
+        }
+    }
+
+    function renderCatalogLocale() {
+        const container = document.getElementById("modelCatalog");
+        if (!container) return;
+        container.querySelectorAll("[data-catalog-group]").forEach((panel) => {
+            const group = GROUPS_BY_KEY.get(panel.dataset.catalogGroup);
+            if (!group) return;
+            const prefix = `docs:catalog.groups.${group.catalogKey}`;
+            const title = panel.querySelector('[data-catalog-copy="title"]');
+            const hint = panel.querySelector('[data-catalog-copy="hint"]');
+            const empty = panel.querySelector('[data-catalog-copy="empty"]');
+            if (title) title.textContent = i18n.t(`${prefix}.title`);
+            if (hint) hint.textContent = i18n.t(`${prefix}.hint`);
+            if (empty) empty.textContent = i18n.t("docs:catalog.empty");
+        });
+        const errorHint = container.querySelector("[data-catalog-error-hint]");
+        if (errorHint) errorHint.textContent = i18n.t("docs:catalog.errorHint");
+        renderCatalogStatus();
     }
 
     async function loadCatalog() {
+        catalogState.phase = "loading";
+        catalogState.payload = null;
+        catalogState.rawError = null;
+        setStatus(i18n.t("docs:catalog.loading"));
         try {
             const response = await apiFetch("/v1/ui/docs/models");
             if (!response.ok) {
@@ -385,17 +633,59 @@
             }
             renderCatalog(await response.json());
         } catch (error) {
-            setStatus(`Каталог моделей недоступен: ${error.message}`, "error");
+            catalogState.phase = "error";
+            catalogState.payload = null;
+            catalogState.rawError = error.message;
+            setStatus(i18n.t("docs:catalog.unavailable"), "error", error.message);
             const container = document.getElementById("modelCatalog");
             if (container) {
-                container.textContent = "Откройте Rules Editor или проверьте, что gateway загрузил конфигурацию.";
+                const hint = document.createElement("p");
+                hint.dataset.catalogErrorHint = "";
+                hint.textContent = i18n.t("docs:catalog.errorHint");
+                container.replaceChildren(hint);
             }
+        }
+    }
+
+    function rerenderLocale() {
+        const uiState = pendingLocaleUiState || captureLocaleUiState();
+        pendingLocaleUiState = null;
+        renderCatalogLocale();
+        renderTransportWarning();
+        freeTierStatus.rerender();
+        if (freeTierPanelIsActive()) {
+            void loadFreeTierDoc(null, uiState);
+        } else {
+            invalidateFreeTierLoads();
+            restoreLocaleUiState(uiState);
+        }
+    }
+
+    function captureLocaleChange(event) {
+        if (event.target?.id === "localeSelect") {
+            pendingLocaleUiState = captureLocaleUiState();
         }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
         Theme.attachToggle("darkModeToggle");
+        renderApiBase();
         setupDocsTabs();
-        loadCatalog();
+        document.addEventListener("change", captureLocaleChange, { capture: true });
+        void i18n.ready.then(
+            () => {
+                if (destroyed) return;
+                renderTransportWarning();
+                void loadCatalog();
+                unsubscribeLocale = i18n.subscribe(rerenderLocale);
+            },
+            () => undefined,
+        );
+        window.addEventListener("beforeunload", () => {
+            destroyed = true;
+            unsubscribeLocale?.();
+            document.removeEventListener("change", captureLocaleChange, { capture: true });
+            invalidateFreeTierLoads();
+        });
     });
 })();

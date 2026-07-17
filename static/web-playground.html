@@ -1,96 +1,68 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-i18n-page="playground">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway - Playground</title>
+    <title data-i18n="playground:page.documentTitle">LLM Gateway - Playground</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/editor.css">
     <link rel="stylesheet" href="/static/web-playground.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
     <script src="/static/theme.js"></script>
 </head>
 <body>
     <div class="top-nav">
         <div class="top-nav-content">
-            <a href="/v1/ui/docs" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
-                Docs
-            </a>
-            <a href="/v1/ui/usage-stats" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-                Usage Statistics
-            </a>
-            <a href="/v1/ui/quota" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                Quota
-            </a>
-            <a href="/v1/ui/rules-editor" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
-                Rules Editor
-            </a>
-            <a href="/v1/ui/playground" class="nav-button active" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
-                Playground
-            </a>
-            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
-                API Keys
-            </a>
-            <a href="/v1/ui/rejections" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Rejections
-            </a>
-            <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                Translator Debug
-            </a>
-            <a href="/v1/ui/pricing" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                Pricing
-            </a>
-            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
-                <span class="icon-placeholder"></span>
-            </button>
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
         </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
     </div>
     <div class="container">
-        <h1>Playground <span class="page-version">(admin testing)</span></h1>
+        <h1><span data-i18n="playground:page.heading">Playground</span> <span class="page-version" data-i18n="playground:page.adminTesting">(admin testing)</span></h1>
         <p class="playground-intro">
-            Runs configured operation routes from <code>models_operation_rules.json</code>:
-            web, speech-to-text, text-to-speech, images and PDF conversion.
+            <span data-i18n="playground:page.introBeforeConfig">Runs configured operation routes from</span>
+            <code>models_operation_rules.json</code><span data-i18n="playground:page.introAfterConfig">:
+            web, speech-to-text, text-to-speech, images and PDF conversion.</span>
         </p>
 
-        <div class="tabs playground-section-tabs">
-            <button type="button" class="tab-button active" data-playground-section-tab="web">Web</button>
-            <button type="button" class="tab-button" data-playground-section-tab="chat">Chat</button>
-            <button type="button" class="tab-button" data-playground-section-tab="audio-transcription">Speech to Text</button>
-            <button type="button" class="tab-button" data-playground-section-tab="audio-speech">Text to Speech</button>
-            <button type="button" class="tab-button" data-playground-section-tab="image-generation">Image Generation</button>
-            <button type="button" class="tab-button" data-playground-section-tab="image-edit">Image Editing</button>
-            <button type="button" class="tab-button" data-playground-section-tab="pdf-conversion">PDF Conversion</button>
+        <div class="tabs playground-section-tabs" role="tablist">
+            <button type="button" class="tab-button active" data-playground-section-tab="web" role="tab" data-i18n="playground:tabs.web">Web</button>
+            <button type="button" class="tab-button" data-playground-section-tab="chat" role="tab" data-i18n="playground:tabs.chat">Chat</button>
+            <button type="button" class="tab-button" data-playground-section-tab="audio-transcription" role="tab" data-i18n="playground:tabs.audioTranscription">Speech to Text</button>
+            <button type="button" class="tab-button" data-playground-section-tab="audio-speech" role="tab" data-i18n="playground:tabs.audioSpeech">Text to Speech</button>
+            <button type="button" class="tab-button" data-playground-section-tab="image-generation" role="tab" data-i18n="playground:tabs.imageGeneration">Image Generation</button>
+            <button type="button" class="tab-button" data-playground-section-tab="image-edit" role="tab" data-i18n="playground:tabs.imageEdit">Image Editing</button>
+            <button type="button" class="tab-button" data-playground-section-tab="pdf-conversion" role="tab" data-i18n="playground:tabs.pdfConversion">PDF Conversion</button>
         </div>
 
-        <section class="playground-section" data-playground-section-panel="chat" hidden>
+        <section class="playground-section" data-playground-section-panel="chat" role="tabpanel" hidden>
             <section class="playground-panel">
                 <form class="playground-form" id="simpleChatForm" autocomplete="off">
                     <div class="field-group">
-                        <label for="chatModel">Gateway model</label>
+                        <label for="chatModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                         <select id="chatModel" name="model" required></select>
                     </div>
                     <div class="field-group fusion-options" id="chatFusionOptions" hidden>
                         <label class="fusion-checkbox">
                             <input type="checkbox" id="chatFusionDetails" checked>
-                            <span>Fusion: include panel answers &amp; analysis (<code>include_details</code>)</span>
+                            <span><span data-i18n="playground:labels.fusionDetails">Fusion: include panel answers &amp; analysis</span> (<code>include_details</code>)</span>
                         </label>
                     </div>
                     <div class="field-group">
-                        <label for="simpleChatInput">Message</label>
+                        <label for="simpleChatInput" data-i18n="playground:labels.message">Message</label>
                         <textarea id="simpleChatInput" name="message" rows="4" required></textarea>
                     </div>
                     <div class="playground-actions">
-                        <button type="submit" class="secondary-button run-button">Send message</button>
-                        <button type="button" class="secondary-button reset-button" id="resetSimpleChatButton">Reset chat</button>
+                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.sendMessage">Send message</button>
+                        <button type="button" class="secondary-button reset-button" id="resetSimpleChatButton" data-i18n="playground:actions.resetChat">Reset chat</button>
                         <span class="playground-status" data-status-for="chat"></span>
                     </div>
                 </form>
@@ -98,88 +70,88 @@
             </section>
         </section>
 
-        <section class="playground-section" data-playground-section-panel="web">
-            <div class="tabs web-operation-tabs">
-                <button type="button" class="tab-button active" data-web-tab="search">Search</button>
-                <button type="button" class="tab-button" data-web-tab="read">Read</button>
-                <button type="button" class="tab-button" data-web-tab="tavily-search">Tavily Search</button>
-                <button type="button" class="tab-button" data-web-tab="tavily-extract">Tavily Extract</button>
-                <button type="button" class="tab-button" data-web-tab="research">Research</button>
-                <button type="button" class="tab-button" data-web-tab="deep-research">Deep Research</button>
+        <section class="playground-section" data-playground-section-panel="web" role="tabpanel">
+            <div class="tabs web-operation-tabs" role="tablist">
+                <button type="button" class="tab-button active" data-web-tab="search" role="tab" data-i18n="playground:tabs.search">Search</button>
+                <button type="button" class="tab-button" data-web-tab="read" role="tab" data-i18n="playground:tabs.read">Read</button>
+                <button type="button" class="tab-button" data-web-tab="tavily-search" role="tab" data-i18n="playground:tabs.tavilySearch">Tavily Search</button>
+                <button type="button" class="tab-button" data-web-tab="tavily-extract" role="tab" data-i18n="playground:tabs.tavilyExtract">Tavily Extract</button>
+                <button type="button" class="tab-button" data-web-tab="research" role="tab" data-i18n="playground:tabs.research">Research</button>
+                <button type="button" class="tab-button" data-web-tab="deep-research" role="tab" data-i18n="playground:tabs.deepResearch">Deep Research</button>
             </div>
 
-        <section class="playground-panel" data-web-panel="search">
+        <section class="playground-panel" data-web-panel="search" role="tabpanel">
             <form class="playground-form" id="searchForm" autocomplete="off">
                 <div class="field-group">
-                    <label for="searchModel">Gateway model</label>
+                    <label for="searchModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                     <select id="searchModel" name="model" required></select>
                 </div>
                 <div class="field-group">
-                    <label for="searchQuery">Query</label>
+                    <label for="searchQuery" data-i18n="playground:labels.query">Query</label>
                     <input id="searchQuery" name="query" type="text" placeholder="latest EU AI Act updates" required>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="searchMaxResults">Max results (1–20)</label>
+                        <label for="searchMaxResults" data-i18n="playground:labels.maxResults">Max results (1–20)</label>
                         <input id="searchMaxResults" name="max_results" type="number" min="1" max="20" value="10">
                     </div>
                     <div class="field-group">
-                        <label for="searchNumQueries">Query rewrites (1–5)</label>
+                        <label for="searchNumQueries" data-i18n="playground:labels.queryRewrites">Query rewrites (1–5)</label>
                         <input id="searchNumQueries" name="num_queries" type="number" min="1" max="5" value="1">
                     </div>
                     <div class="field-group">
-                        <label for="searchLanguage">Language</label>
+                        <label for="searchLanguage" data-i18n="playground:labels.language">Language</label>
                         <input id="searchLanguage" name="language" type="text" value="ru" maxlength="8">
                     </div>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="searchReadModel">Read model for raw content</label>
+                        <label for="searchReadModel" data-i18n="playground:labels.readModelRaw">Read model for raw content</label>
                         <select id="searchReadModel" name="read_model"></select>
                     </div>
                     <div class="field-group">
-                        <label for="searchIncludeRawContent">Raw content</label>
+                        <label for="searchIncludeRawContent" data-i18n="playground:labels.rawContent">Raw content</label>
                         <select id="searchIncludeRawContent" name="include_raw_content">
-                            <option value="" selected>off</option>
+                            <option value="" selected data-i18n="playground:options.off">off</option>
                             <option value="markdown">markdown</option>
                             <option value="text">text</option>
                         </select>
                     </div>
                     <label class="toggle-field">
                         <input id="searchIncludeImages" name="include_images" type="checkbox">
-                        Include images
+                        <span data-i18n="playground:labels.includeImages">Include images</span>
                     </label>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="searchIncludeDomains">Include domains</label>
+                        <label for="searchIncludeDomains" data-i18n="playground:labels.includeDomains">Include domains</label>
                         <input id="searchIncludeDomains" name="include_domains" type="text" placeholder="example.com, docs.example.com">
                     </div>
                     <div class="field-group">
-                        <label for="searchExcludeDomains">Exclude domains</label>
+                        <label for="searchExcludeDomains" data-i18n="playground:labels.excludeDomains">Exclude domains</label>
                         <input id="searchExcludeDomains" name="exclude_domains" type="text" placeholder="spam.example">
                     </div>
                 </div>
                 <div class="playground-actions">
-                    <button type="submit" class="primary-button run-button">Run search</button>
+                    <button type="submit" class="primary-button run-button" data-i18n="playground:actions.runSearch">Run search</button>
                     <span class="playground-status" data-status-for="search"></span>
                 </div>
             </form>
             <div class="playground-result" data-result-for="search" hidden></div>
         </section>
 
-        <section class="playground-panel" data-web-panel="read" hidden>
+        <section class="playground-panel" data-web-panel="read" role="tabpanel" hidden>
             <form class="playground-form" id="readForm" autocomplete="off">
                 <div class="field-group">
-                    <label for="readModel">Gateway model</label>
+                    <label for="readModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                     <select id="readModel" name="model" required></select>
                 </div>
                 <div class="field-group">
-                    <label for="readUrl">URL</label>
+                    <label for="readUrl" data-i18n="playground:labels.url">URL</label>
                     <input id="readUrl" name="url" type="url" placeholder="https://example.com/article" required>
                 </div>
                 <div class="field-group">
-                    <label for="readFormat">Output format</label>
+                    <label for="readFormat" data-i18n="playground:labels.outputFormat">Output format</label>
                     <select id="readFormat" name="format">
                         <option value="markdown" selected>markdown</option>
                         <option value="text">text</option>
@@ -187,85 +159,85 @@
                 </div>
                     <label class="toggle-field">
                         <input id="readIncludeImages" name="include_images" type="checkbox">
-                    Include images
+                    <span data-i18n="playground:labels.includeImages">Include images</span>
                 </label>
                 <div class="playground-actions">
-                    <button type="submit" class="secondary-button run-button">Fetch and parse</button>
+                    <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.fetchRead">Fetch and parse</button>
                     <span class="playground-status" data-status-for="read"></span>
                 </div>
             </form>
             <div class="playground-result" data-result-for="read" hidden></div>
         </section>
 
-        <section class="playground-panel" data-web-panel="tavily-search" hidden>
+        <section class="playground-panel" data-web-panel="tavily-search" role="tabpanel" hidden>
             <form class="playground-form" id="tavilySearchForm" autocomplete="off">
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="tavilySearchModel">Search model</label>
+                        <label for="tavilySearchModel" data-i18n="playground:labels.searchModel">Search model</label>
                         <select id="tavilySearchModel" name="model" required></select>
                     </div>
                     <div class="field-group">
-                        <label for="tavilySearchReadModel">Read model for raw content</label>
+                        <label for="tavilySearchReadModel" data-i18n="playground:labels.readModelRaw">Read model for raw content</label>
                         <select id="tavilySearchReadModel" name="read_model"></select>
                     </div>
                 </div>
                 <div class="field-group">
-                    <label for="tavilySearchQuery">Query</label>
+                    <label for="tavilySearchQuery" data-i18n="playground:labels.query">Query</label>
                     <input id="tavilySearchQuery" name="query" type="text" placeholder="LLM gateway web search" required>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="tavilySearchMaxResults">Max results (1–20)</label>
+                        <label for="tavilySearchMaxResults" data-i18n="playground:labels.maxResults">Max results (1–20)</label>
                         <input id="tavilySearchMaxResults" name="max_results" type="number" min="1" max="20" value="5">
                     </div>
                     <div class="field-group">
-                        <label for="tavilySearchLanguage">Language</label>
+                        <label for="tavilySearchLanguage" data-i18n="playground:labels.language">Language</label>
                         <input id="tavilySearchLanguage" name="language" type="text" value="en" maxlength="8">
                     </div>
                     <div class="field-group">
-                        <label for="tavilySearchIncludeRawContent">Raw content</label>
+                        <label for="tavilySearchIncludeRawContent" data-i18n="playground:labels.rawContent">Raw content</label>
                         <select id="tavilySearchIncludeRawContent" name="include_raw_content">
-                            <option value="" selected>off</option>
+                            <option value="" selected data-i18n="playground:options.off">off</option>
                             <option value="markdown">markdown</option>
                             <option value="text">text</option>
                         </select>
                     </div>
                     <label class="toggle-field">
                         <input id="tavilySearchIncludeImages" name="include_images" type="checkbox">
-                        Include images
+                        <span data-i18n="playground:labels.includeImages">Include images</span>
                     </label>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="tavilySearchIncludeDomains">Include domains</label>
+                        <label for="tavilySearchIncludeDomains" data-i18n="playground:labels.includeDomains">Include domains</label>
                         <input id="tavilySearchIncludeDomains" name="include_domains" type="text" placeholder="example.com, docs.example.com">
                     </div>
                     <div class="field-group">
-                        <label for="tavilySearchExcludeDomains">Exclude domains</label>
+                        <label for="tavilySearchExcludeDomains" data-i18n="playground:labels.excludeDomains">Exclude domains</label>
                         <input id="tavilySearchExcludeDomains" name="exclude_domains" type="text" placeholder="spam.example">
                     </div>
                 </div>
                 <div class="playground-actions">
-                    <button type="submit" class="secondary-button run-button">Run Tavily search</button>
+                    <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.runTavilySearch">Run Tavily search</button>
                     <span class="playground-status" data-status-for="tavily-search"></span>
                 </div>
             </form>
             <div class="playground-result" data-result-for="tavily-search" hidden></div>
         </section>
 
-        <section class="playground-panel" data-web-panel="tavily-extract" hidden>
+        <section class="playground-panel" data-web-panel="tavily-extract" role="tabpanel" hidden>
             <form class="playground-form" id="tavilyExtractForm" autocomplete="off">
                 <div class="field-group">
-                    <label for="tavilyExtractModel">Read model</label>
+                    <label for="tavilyExtractModel" data-i18n="playground:labels.readModel">Read model</label>
                     <select id="tavilyExtractModel" name="model" required></select>
                 </div>
                 <div class="field-group">
-                    <label for="tavilyExtractUrls">URLs</label>
+                    <label for="tavilyExtractUrls" data-i18n="playground:labels.urls">URLs</label>
                     <textarea id="tavilyExtractUrls" name="urls" data-array="lines" rows="4" placeholder="https://example.com/article&#10;https://example.com/another" required></textarea>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="tavilyExtractFormat">Output format</label>
+                        <label for="tavilyExtractFormat" data-i18n="playground:labels.outputFormat">Output format</label>
                         <select id="tavilyExtractFormat" name="format">
                             <option value="markdown" selected>markdown</option>
                             <option value="text">text</option>
@@ -273,116 +245,116 @@
                     </div>
                     <label class="toggle-field">
                         <input id="tavilyExtractIncludeImages" name="include_images" type="checkbox">
-                        Include images
+                        <span data-i18n="playground:labels.includeImages">Include images</span>
                     </label>
                 </div>
                 <div class="playground-actions">
-                    <button type="submit" class="secondary-button run-button">Run Tavily extract</button>
+                    <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.runTavilyExtract">Run Tavily extract</button>
                     <span class="playground-status" data-status-for="tavily-extract"></span>
                 </div>
             </form>
             <div class="playground-result" data-result-for="tavily-extract" hidden></div>
         </section>
 
-        <section class="playground-panel" data-web-panel="research" hidden>
+        <section class="playground-panel" data-web-panel="research" role="tabpanel" hidden>
             <form class="playground-form" id="researchForm" autocomplete="off">
                 <div class="field-group">
-                    <label for="researchModel">Gateway model</label>
+                    <label for="researchModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                     <select id="researchModel" name="model" required></select>
                 </div>
                 <div class="field-group">
-                    <label for="researchQuery">Query</label>
+                    <label for="researchQuery" data-i18n="playground:labels.query">Query</label>
                     <input id="researchQuery" name="query" type="text" required>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="researchMaxResults">Max results per language (1–20)</label>
+                        <label for="researchMaxResults" data-i18n="playground:labels.maxResultsLanguage">Max results per language (1–20)</label>
                         <input id="researchMaxResults" name="max_results" type="number" min="1" max="20" value="10">
-                        <p class="field-help">Limits search candidates collected for each selected search language.</p>
+                        <p class="field-help" data-i18n="playground:help.researchMaxResults">Limits search candidates collected for each selected search language.</p>
                     </div>
                     <div class="field-group">
-                        <label for="researchMaxArticles">Max articles per language (1–10)</label>
+                        <label for="researchMaxArticles" data-i18n="playground:labels.maxArticlesLanguage">Max articles per language (1–10)</label>
                         <input id="researchMaxArticles" name="max_articles" type="number" min="1" max="10" value="8">
-                        <p class="field-help">Caps downloaded articles selected for analysis after content reranking.</p>
+                        <p class="field-help" data-i18n="playground:help.researchMaxArticles">Caps downloaded articles selected for analysis after content reranking.</p>
                     </div>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="researchNumQueries">Query rewrites (1–5)</label>
-                        <input id="researchNumQueries" name="num_queries" type="number" min="1" max="5" placeholder="default">
-                        <p class="field-help">Overrides rewrite count; blank keeps ru=2 and en/zh=3.</p>
+                        <label for="researchNumQueries" data-i18n="playground:labels.queryRewrites">Query rewrites (1–5)</label>
+                        <input id="researchNumQueries" name="num_queries" type="number" min="1" max="5" placeholder="default" data-i18n-placeholder="playground:placeholders.default">
+                        <p class="field-help" data-i18n="playground:help.researchRewrites">Overrides rewrite count; blank keeps ru=2 and en/zh=3.</p>
                     </div>
                     <div class="field-group">
-                        <label for="researchLanguage">Language</label>
+                        <label for="researchLanguage" data-i18n="playground:labels.language">Language</label>
                         <select id="researchLanguage" name="language">
-                            <option value="all" selected>all</option>
+                            <option value="all" selected data-i18n="playground:options.all">all</option>
                             <option value="ru">ru</option>
                             <option value="en">en</option>
                             <option value="zh">zh</option>
                         </select>
-                        <p class="field-help">Selects source-search languages, not the final answer language.</p>
+                        <p class="field-help" data-i18n="playground:help.researchLanguage">Selects source-search languages, not the final answer language.</p>
                     </div>
                     <div class="field-group">
-                        <label for="researchOutputLanguage">Output language</label>
+                        <label for="researchOutputLanguage" data-i18n="playground:labels.outputLanguage">Output language</label>
                         <select id="researchOutputLanguage" name="output_language">
                             <option value="ru" selected>ru</option>
                             <option value="en">en</option>
                             <option value="zh">zh</option>
                         </select>
-                        <p class="field-help">Controls the language used for the synthesized final report.</p>
+                        <p class="field-help" data-i18n="playground:help.researchOutputLanguage">Controls the language used for the synthesized final report.</p>
                     </div>
                     <div class="field-group">
-                        <label for="researchFormat">Article format</label>
+                        <label for="researchFormat" data-i18n="playground:labels.articleFormat">Article format</label>
                         <select id="researchFormat" name="format">
                             <option value="markdown" selected>markdown</option>
                             <option value="text">text</option>
                         </select>
-                        <p class="field-help">Controls the format requested from the page reader before analysis.</p>
+                        <p class="field-help" data-i18n="playground:help.researchArticleFormat">Controls the format requested from the page reader before analysis.</p>
                     </div>
                 </div>
                 <div class="playground-actions">
-                    <button type="submit" class="secondary-button run-button">Run research</button>
+                    <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.runResearch">Run research</button>
                     <span class="playground-status" data-status-for="research"></span>
                 </div>
             </form>
             <div class="playground-result" data-result-for="research" hidden></div>
         </section>
 
-        <section class="playground-panel" data-web-panel="deep-research" hidden>
+        <section class="playground-panel" data-web-panel="deep-research" role="tabpanel" hidden>
             <form class="playground-form" id="deepResearchForm" autocomplete="off">
                 <div class="field-group">
-                    <label for="deepResearchModel">Gateway model</label>
+                    <label for="deepResearchModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                     <select id="deepResearchModel" name="model" required></select>
                 </div>
                 <div class="field-group">
-                    <label for="deepResearchQuery">Query</label>
+                    <label for="deepResearchQuery" data-i18n="playground:labels.query">Query</label>
                     <input id="deepResearchQuery" name="query" type="text" required>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="deepResearchMaxWords">Max words (200–8000)</label>
+                        <label for="deepResearchMaxWords" data-i18n="playground:labels.maxWords">Max words (200–8000)</label>
                         <input id="deepResearchMaxWords" name="max_words" type="number" min="200" max="8000" value="2500">
                     </div>
                     <div class="field-group">
-                        <label for="deepResearchBreadth">Breadth (1–10)</label>
+                        <label for="deepResearchBreadth" data-i18n="playground:labels.breadth">Breadth (1–10)</label>
                         <input id="deepResearchBreadth" name="breadth" type="number" min="1" max="10" value="4">
                     </div>
                     <div class="field-group">
-                        <label for="deepResearchDepth">Depth (1–5)</label>
+                        <label for="deepResearchDepth" data-i18n="playground:labels.depth">Depth (1–5)</label>
                         <input id="deepResearchDepth" name="depth" type="number" min="1" max="5" value="2">
                     </div>
                     <div class="field-group">
-                        <label for="deepResearchConcurrency">Concurrency (1–10)</label>
+                        <label for="deepResearchConcurrency" data-i18n="playground:labels.concurrency">Concurrency (1–10)</label>
                         <input id="deepResearchConcurrency" name="concurrency" type="number" min="1" max="10" value="6">
                     </div>
                 </div>
                 <div class="field-row">
                     <div class="field-group">
-                        <label for="deepResearchLanguage">Language</label>
+                        <label for="deepResearchLanguage" data-i18n="playground:labels.language">Language</label>
                         <input id="deepResearchLanguage" name="language" type="text" value="ru" maxlength="8">
                     </div>
                     <div class="field-group">
-                        <label for="deepResearchFormat">Format</label>
+                        <label for="deepResearchFormat" data-i18n="playground:labels.outputFormat">Format</label>
                         <select id="deepResearchFormat" name="format">
                             <option value="markdown" selected>markdown</option>
                             <option value="text">text</option>
@@ -390,11 +362,16 @@
                     </div>
                     <label class="toggle-field">
                         <input id="deepResearchImageGeneration" name="image_generation" type="checkbox">
-                        Generate illustrations (images)
+                        <span data-i18n="playground:labels.generateIllustrations">Generate illustrations (images)</span>
                     </label>
+                    <p
+                        class="field-help"
+                        data-generated-images-retention-hint
+                        data-i18n="playground:help.generatedImagesRetention"
+                    >Locally published PNGs are stored in protected server storage and removed after 10 days; Docker Compose keeps them across restart and recreate. Provider-hosted URLs follow the provider's lifecycle.</p>
                 </div>
                 <div class="playground-actions">
-                    <button type="submit" class="secondary-button run-button">Run deep research</button>
+                    <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.runDeepResearch">Run deep research</button>
                     <span class="playground-status" data-status-for="deep-research"></span>
                 </div>
             </form>
@@ -403,28 +380,28 @@
 
         </section>
 
-        <section class="playground-section" data-playground-section-panel="audio-speech" hidden>
+        <section class="playground-section" data-playground-section-panel="audio-speech" role="tabpanel" hidden>
             <section class="playground-panel">
                 <form class="playground-form" id="audioSpeechForm" autocomplete="off">
                     <div class="field-group">
-                        <label for="audioSpeechModel">Gateway model</label>
+                        <label for="audioSpeechModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                         <select id="audioSpeechModel" name="model" required></select>
                     </div>
                     <div class="field-group">
-                        <label for="audioSpeechInput">Input text</label>
+                        <label for="audioSpeechInput" data-i18n="playground:labels.inputText">Input text</label>
                         <textarea id="audioSpeechInput" name="input" rows="5" required></textarea>
                     </div>
                     <div class="field-row">
                         <div class="field-group">
-                            <label for="audioSpeechVoice">Voice</label>
+                            <label for="audioSpeechVoice" data-i18n="playground:labels.voice">Voice</label>
                             <select id="audioSpeechVoice" name="voice">
-                                <option value="" selected>Select a model first</option>
+                                <option value="" selected data-i18n="playground:models.selectFirst">Select a model first</option>
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="audioSpeechLanguage">Language</label>
+                            <label for="audioSpeechLanguage" data-i18n="playground:labels.language">Language</label>
                             <select id="audioSpeechLanguage" name="language">
-                                <option value="" selected>provider default</option>
+                                <option value="" selected data-i18n="playground:options.providerDefault">provider default</option>
                                 <option value="ru">ru</option>
                                 <option value="en">en</option>
                                 <option value="zh">zh</option>
@@ -438,7 +415,7 @@
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="audioSpeechFormat">Response format</label>
+                            <label for="audioSpeechFormat" data-i18n="playground:labels.responseFormat">Response format</label>
                             <select id="audioSpeechFormat" name="response_format">
                                 <option value="mp3" selected>mp3</option>
                                 <option value="wav">wav</option>
@@ -448,12 +425,12 @@
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="audioSpeechSpeed">Speed</label>
+                            <label for="audioSpeechSpeed" data-i18n="playground:labels.speed">Speed</label>
                             <input id="audioSpeechSpeed" name="speed" type="number" min="0.25" max="4" step="0.05" placeholder="1">
                         </div>
                     </div>
                     <div class="playground-actions">
-                        <button type="submit" class="secondary-button run-button">Generate speech</button>
+                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.generateSpeech">Generate speech</button>
                         <span class="playground-status" data-status-for="audio-speech"></span>
                     </div>
                 </form>
@@ -461,22 +438,22 @@
             </section>
         </section>
 
-        <section class="playground-section" data-playground-section-panel="audio-transcription" hidden>
+        <section class="playground-section" data-playground-section-panel="audio-transcription" role="tabpanel" hidden>
             <section class="playground-panel">
                 <form class="playground-form" id="audioTranscriptionForm" autocomplete="off">
                     <div class="field-group">
-                        <label for="audioTranscriptionModel">Gateway model</label>
+                        <label for="audioTranscriptionModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                         <select id="audioTranscriptionModel" name="model" required></select>
                     </div>
                     <div class="field-group">
-                        <label for="audioTranscriptionFile">Audio file</label>
+                        <label for="audioTranscriptionFile" data-i18n="playground:labels.audioFile">Audio file</label>
                         <input id="audioTranscriptionFile" name="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.webm" required>
                     </div>
                     <div class="field-row">
                         <div class="field-group">
-                            <label for="audioTranscriptionLanguage">Language</label>
+                            <label for="audioTranscriptionLanguage" data-i18n="playground:labels.language">Language</label>
                             <select id="audioTranscriptionLanguage" name="language">
-                                <option value="" selected>auto</option>
+                                <option value="" selected data-i18n="playground:options.auto">auto</option>
                                 <option value="ru">ru</option>
                                 <option value="en">en</option>
                                 <option value="zh">zh</option>
@@ -490,7 +467,7 @@
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="audioTranscriptionFormat">Response format</label>
+                            <label for="audioTranscriptionFormat" data-i18n="playground:labels.responseFormat">Response format</label>
                             <select id="audioTranscriptionFormat" name="response_format">
                                 <option value="json" selected>json</option>
                                 <option value="text">text</option>
@@ -499,16 +476,16 @@
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="audioTranscriptionTemperature">Temperature</label>
+                            <label for="audioTranscriptionTemperature" data-i18n="playground:labels.temperature">Temperature</label>
                             <input id="audioTranscriptionTemperature" name="temperature" type="number" min="0" max="1" step="0.05" placeholder="0">
                         </div>
                     </div>
                     <div class="field-group">
-                        <label for="audioTranscriptionPrompt">Prompt</label>
+                        <label for="audioTranscriptionPrompt" data-i18n="playground:labels.prompt">Prompt</label>
                         <textarea id="audioTranscriptionPrompt" name="prompt" rows="3"></textarea>
                     </div>
                     <div class="playground-actions">
-                        <button type="submit" class="secondary-button run-button">Transcribe audio</button>
+                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.transcribeAudio">Transcribe audio</button>
                         <span class="playground-status" data-status-for="audio-transcription"></span>
                     </div>
                 </form>
@@ -516,22 +493,22 @@
             </section>
         </section>
 
-        <section class="playground-section" data-playground-section-panel="image-generation" hidden>
+        <section class="playground-section" data-playground-section-panel="image-generation" role="tabpanel" hidden>
             <section class="playground-panel">
                 <form class="playground-form" id="imageGenerationForm" autocomplete="off">
                     <div class="field-group">
-                        <label for="imageGenerationModel">Gateway model</label>
+                        <label for="imageGenerationModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                         <select id="imageGenerationModel" name="model" required></select>
                     </div>
                     <div class="field-group">
-                        <label for="imageGenerationPrompt">Prompt</label>
+                        <label for="imageGenerationPrompt" data-i18n="playground:labels.prompt">Prompt</label>
                         <textarea id="imageGenerationPrompt" name="prompt" rows="5" required></textarea>
                     </div>
                     <div class="field-row">
                         <div class="field-group">
-                            <label for="imageGenerationSize">Size</label>
+                            <label for="imageGenerationSize" data-i18n="playground:labels.size">Size</label>
                             <select id="imageGenerationSize" name="size">
-                                <option value="" selected>provider default</option>
+                                <option value="" selected data-i18n="playground:options.providerDefault">provider default</option>
                                 <option value="1024x1024">1024x1024</option>
                                 <option value="1024x1536">1024x1536</option>
                                 <option value="1536x1024">1536x1024</option>
@@ -540,20 +517,20 @@
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="imageGenerationCount">Images</label>
+                            <label for="imageGenerationCount" data-i18n="playground:labels.images">Images</label>
                             <input id="imageGenerationCount" name="n" type="number" min="1" max="4" value="1">
                         </div>
                         <div class="field-group">
-                            <label for="imageGenerationFormat">Response format</label>
+                            <label for="imageGenerationFormat" data-i18n="playground:labels.responseFormat">Response format</label>
                             <select id="imageGenerationFormat" name="response_format">
-                                <option value="" selected>provider default</option>
+                                <option value="" selected data-i18n="playground:options.providerDefault">provider default</option>
                                 <option value="url">url</option>
                                 <option value="b64_json">b64_json</option>
                             </select>
                         </div>
                     </div>
                     <div class="playground-actions">
-                        <button type="submit" class="secondary-button run-button">Generate images</button>
+                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.generateImages">Generate images</button>
                         <span class="playground-status" data-status-for="image-generation"></span>
                     </div>
                 </form>
@@ -561,32 +538,32 @@
             </section>
         </section>
 
-        <section class="playground-section" data-playground-section-panel="image-edit" hidden>
+        <section class="playground-section" data-playground-section-panel="image-edit" role="tabpanel" hidden>
             <section class="playground-panel">
                 <form class="playground-form" id="imageEditForm" autocomplete="off">
                     <div class="field-group">
-                        <label for="imageEditModel">Gateway model</label>
+                        <label for="imageEditModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                         <select id="imageEditModel" name="model" required></select>
                     </div>
                     <div class="field-group">
-                        <label for="imageEditPrompt">Prompt</label>
+                        <label for="imageEditPrompt" data-i18n="playground:labels.prompt">Prompt</label>
                         <textarea id="imageEditPrompt" name="prompt" rows="4" required></textarea>
                     </div>
                     <div class="field-row">
                         <div class="field-group">
-                            <label for="imageEditFiles">Images (up to 4)</label>
+                            <label for="imageEditFiles" data-i18n="playground:labels.imagesUpToFour">Images (up to 4)</label>
                             <input id="imageEditFiles" name="image[]" type="file" accept="image/*" multiple required data-max-files="4">
                         </div>
                         <div class="field-group">
-                            <label for="imageEditMask">Mask</label>
+                            <label for="imageEditMask" data-i18n="playground:labels.mask">Mask</label>
                             <input id="imageEditMask" name="mask" type="file" accept="image/*">
                         </div>
                     </div>
                     <div class="field-row">
                         <div class="field-group">
-                            <label for="imageEditSize">Size</label>
+                            <label for="imageEditSize" data-i18n="playground:labels.size">Size</label>
                             <select id="imageEditSize" name="size">
-                                <option value="" selected>provider default</option>
+                                <option value="" selected data-i18n="playground:options.providerDefault">provider default</option>
                                 <option value="1024x1024">1024x1024</option>
                                 <option value="1024x1536">1024x1536</option>
                                 <option value="1536x1024">1536x1024</option>
@@ -595,20 +572,20 @@
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="imageEditCount">Images</label>
+                            <label for="imageEditCount" data-i18n="playground:labels.images">Images</label>
                             <input id="imageEditCount" name="n" type="number" min="1" max="4" value="1">
                         </div>
                         <div class="field-group">
-                            <label for="imageEditFormat">Response format</label>
+                            <label for="imageEditFormat" data-i18n="playground:labels.responseFormat">Response format</label>
                             <select id="imageEditFormat" name="response_format">
-                                <option value="" selected>provider default</option>
+                                <option value="" selected data-i18n="playground:options.providerDefault">provider default</option>
                                 <option value="url">url</option>
                                 <option value="b64_json">b64_json</option>
                             </select>
                         </div>
                     </div>
                     <div class="playground-actions">
-                        <button type="submit" class="secondary-button run-button">Edit images</button>
+                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.editImages">Edit images</button>
                         <span class="playground-status" data-status-for="image-edit"></span>
                     </div>
                 </form>
@@ -616,20 +593,20 @@
             </section>
         </section>
 
-        <section class="playground-section" data-playground-section-panel="pdf-conversion" hidden>
+        <section class="playground-section" data-playground-section-panel="pdf-conversion" role="tabpanel" hidden>
             <section class="playground-panel">
                 <form class="playground-form" id="pdfConversionForm" autocomplete="off">
                     <div class="field-group">
-                        <label for="pdfConversionModel">Gateway model</label>
+                        <label for="pdfConversionModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
                         <select id="pdfConversionModel" name="model" required></select>
                     </div>
                     <div class="field-group">
-                        <label for="pdfConversionFile">PDF file</label>
+                        <label for="pdfConversionFile" data-i18n="playground:labels.pdfFile">PDF file</label>
                         <input id="pdfConversionFile" name="file" type="file" accept="application/pdf,.pdf" required>
                     </div>
                     <div class="field-row">
                         <div class="field-group">
-                            <label for="pdfConversionOutput">Output</label>
+                            <label for="pdfConversionOutput" data-i18n="playground:labels.output">Output</label>
                             <select id="pdfConversionOutput" name="output">
                                 <option value="both" selected>DOCX + MD</option>
                                 <option value="docx">DOCX</option>
@@ -637,22 +614,22 @@
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="pdfConversionLanguage">OCR languages</label>
+                            <label for="pdfConversionLanguage" data-i18n="playground:labels.ocrLanguages">OCR languages</label>
                             <input id="pdfConversionLanguage" name="language" type="text" value="rus+eng">
                         </div>
                         <div class="field-group">
-                            <label for="pdfConversionTargetLanguage">Translate to</label>
+                            <label for="pdfConversionTargetLanguage" data-i18n="playground:labels.translateTo">Translate to</label>
                             <select id="pdfConversionTargetLanguage" name="target_language">
-                                <option value="" selected>No translation</option>
-                                <option value="Russian">Russian</option>
-                                <option value="English">English</option>
-                                <option value="German">German</option>
-                                <option value="French">French</option>
-                                <option value="Spanish">Spanish</option>
+                                <option value="" selected data-i18n="playground:options.noTranslation">No translation</option>
+                                <option value="Russian" data-i18n="playground:options.russian">Russian</option>
+                                <option value="English" data-i18n="playground:options.english">English</option>
+                                <option value="German" data-i18n="playground:options.german">German</option>
+                                <option value="French" data-i18n="playground:options.french">French</option>
+                                <option value="Spanish" data-i18n="playground:options.spanish">Spanish</option>
                             </select>
                         </div>
                         <div class="field-group">
-                            <label for="pdfConversionMathOcr">Math OCR</label>
+                            <label for="pdfConversionMathOcr" data-i18n="playground:labels.mathOcr">Math OCR</label>
                             <select id="pdfConversionMathOcr" name="math_ocr_provider">
                                 <option value="off" selected>off</option>
                                 <option value="mathpix">mathpix</option>
@@ -662,24 +639,24 @@
                     </div>
                     <div class="field-row">
                         <div class="field-group">
-                            <label for="pdfConversionFormulaPages">Formula pages</label>
-                            <input id="pdfConversionFormulaPages" name="formulas_max_pages" type="number" min="1" placeholder="auto">
+                            <label for="pdfConversionFormulaPages" data-i18n="playground:labels.formulaPages">Formula pages</label>
+                            <input id="pdfConversionFormulaPages" name="formulas_max_pages" type="number" min="1" placeholder="auto" data-i18n-placeholder="playground:placeholders.auto">
                         </div>
                         <div class="field-group">
-                            <label for="pdfConversionMaxPages">Max pages</label>
-                            <input id="pdfConversionMaxPages" name="max_pages" type="number" min="1" placeholder="provider limit">
+                            <label for="pdfConversionMaxPages" data-i18n="playground:labels.maxPages">Max pages</label>
+                            <input id="pdfConversionMaxPages" name="max_pages" type="number" min="1" placeholder="provider limit" data-i18n-placeholder="playground:placeholders.providerLimit">
                         </div>
                         <div class="field-group">
-                            <label for="pdfConversionPassword">PDF password</label>
+                            <label for="pdfConversionPassword" data-i18n="playground:labels.pdfPassword">PDF password</label>
                             <input id="pdfConversionPassword" name="password" type="password" autocomplete="off">
                         </div>
                         <label class="toggle-field">
                             <input id="pdfConversionPreprocessSave" name="ocr_preprocess_save" type="checkbox">
-                            Save preprocessed PDF
+                            <span data-i18n="playground:labels.savePreprocessedPdf">Save preprocessed PDF</span>
                         </label>
                     </div>
                     <div class="playground-actions">
-                        <button type="submit" class="secondary-button run-button">Start conversion job</button>
+                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.startPdfConversion">Start conversion job</button>
                         <span class="playground-status" data-status-for="pdf-conversion"></span>
                     </div>
                 </form>
@@ -690,14 +667,9 @@
 
     <script src="/static/vendor/marked.min.js"></script>
     <script src="/static/vendor/purify.min.js"></script>
-    <script src="/static/ui-core.js"></script>
-    <script src="/static/shared-nav.js"></script>
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
     <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
     <script src="/static/web-playground.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            Theme.attachToggle('darkModeToggle');
-        });
-    </script>
 </body>
 </html>

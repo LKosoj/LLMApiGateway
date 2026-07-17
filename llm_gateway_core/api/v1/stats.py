@@ -1,11 +1,14 @@
 import asyncio
 import logging
 import httpx
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, cast
+
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
-# Import the TokensUsageDB
 from llm_gateway_core.config.loader import (
     ANTHROPIC_API_VERSION,
     resolve_provider_api_key_value,
@@ -13,17 +16,19 @@ from llm_gateway_core.config.loader import (
     resolve_provider_config_api_keys,
 )
 from llm_gateway_core.config.paths import STATIC_DIR
-from llm_gateway_core.db.api_keys_db import ApiKeyRecord, ApiKeysDB
-from llm_gateway_core.db.tokens_usage_db import TokensUsageDB, validate_usage_records_pagination
-from llm_gateway_core.db.fallback_events_db import FallbackEventsDB, validate_fallback_records_pagination
-from llm_gateway_core.db.rejections_db import RejectionsDB, VALID_CATEGORIES
+from llm_gateway_core.db.api_keys_db import ApiKeyRecord
+from llm_gateway_core.db.tokens_usage_db import validate_usage_records_pagination
+from llm_gateway_core.db.fallback_events_db import validate_fallback_records_pagination
+from llm_gateway_core.db.rejections_db import VALID_CATEGORIES
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
-from llm_gateway_core.services.active_requests import get_active_requests_registry
-from llm_gateway_core.services.provider_auth import resolve_provider_auth_headers
-from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState, fingerprint_api_key
+from llm_gateway_core.services.upstream_routing_state import fingerprint_api_key
 from llm_gateway_core.utils.api_keys import split_api_keys
 from llm_gateway_core.utils.html_cache import get_template
 from llm_gateway_core.utils.ttl_cache import AsyncTtlCache
+
+if TYPE_CHECKING:
+    from llm_gateway_core.config.loader import ConfigLoader
+    from llm_gateway_core.services.runtime_config import AppServices, RuntimeSnapshot
 
 stats_router = APIRouter()
 
@@ -50,6 +55,14 @@ ANALYTICS_RANGES = {
     "12m": timedelta(days=365),
 }
 ANALYTICS_BUCKETS = {"hour", "day", "week", "month"}
+
+
+def _capture_app_services(request: Request) -> "AppServices":
+    return cast("AppServices", request.app.state.services)
+
+
+def _capture_runtime_snapshot(request: Request) -> "RuntimeSnapshot":
+    return cast("RuntimeSnapshot", request.state.runtime_snapshot)
 
 
 def _effective_api_key_filter(request: Request) -> int | None:
@@ -241,10 +254,7 @@ async def get_aggregated_stats(request: Request, period: str, api_key_id: int | 
     """
     Fetches aggregated token usage statistics by the specified period and model.
     """
-    tokens_usage_db: TokensUsageDB = request.app.state.tokens_usage_db
-    if not tokens_usage_db:
-        logging.error("TokensUsageDB not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: TokensUsageDB not available.")
+    tokens_usage_db = _capture_app_services(request).tokens_usage_db
 
     try:
         # Validate period input
@@ -289,16 +299,15 @@ async def get_usage_records(
     """
     Fetches the latest token usage records with pagination.
     """
-    tokens_usage_db: TokensUsageDB = request.app.state.tokens_usage_db
-    if not tokens_usage_db:
-        logging.error("TokensUsageDB not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: TokensUsageDB not available.")
+    services = _capture_app_services(request)
+    tokens_usage_db = services.tokens_usage_db
+    active_requests_registry = services.active_requests_registry
 
     try:
         limit, offset = validate_usage_records_pagination(limit, offset)
         api_key_id_filter = _effective_api_key_filter(request)
 
-        active_records = get_active_requests_registry(request.app).list_records(
+        active_records = active_requests_registry.list_records(
             api_key_id=api_key_id_filter
         )
         active_count = len(active_records)
@@ -354,18 +363,12 @@ async def get_analytics_dashboard(
     rejection_status_code: int | None = None,
 ):
     """Return a full scoped analytics payload for the usage statistics UI."""
-    tokens_usage_db: TokensUsageDB | None = getattr(request.app.state, "tokens_usage_db", None)
-    fallback_events_db: FallbackEventsDB | None = getattr(request.app.state, "fallback_events_db", None)
-    rejections_db: RejectionsDB | None = getattr(request.app.state, "rejections_db", None)
-    api_keys_db: ApiKeysDB | None = getattr(request.app.state, "api_keys_db", None)
-    if tokens_usage_db is None:
-        raise HTTPException(status_code=500, detail="Internal server error: TokensUsageDB not available.")
-    if fallback_events_db is None:
-        raise HTTPException(status_code=500, detail="Internal server error: FallbackEventsDB not available.")
-    if rejections_db is None:
-        raise HTTPException(status_code=500, detail="Internal server error: RejectionsDB not available.")
-    if api_keys_db is None:
-        raise HTTPException(status_code=500, detail="Internal server error: ApiKeysDB not available.")
+    services = _capture_app_services(request)
+    tokens_usage_db = services.tokens_usage_db
+    fallback_events_db = services.fallback_events_db
+    rejections_db = services.rejections_db
+    api_keys_db = services.api_keys_db
+    active_requests_registry = services.active_requests_registry
 
     start_date, end_date, resolved_bucket = _resolve_analytics_window(range_name, bucket)
     role, api_key_id_filter, api_key_unattributed, scope_name = _resolve_analytics_scope(
@@ -470,7 +473,7 @@ async def get_analytics_dashboard(
     usage_data, filter_options, fallback_data = results[:3]
     rejection_data = results[3] if include_rejections else _empty_rejection_dashboard()
 
-    active_records = get_active_requests_registry(request.app).list_records(
+    active_records = active_requests_registry.list_records(
         api_key_id=api_key_id_filter if not api_key_unattributed else None
     )
     if api_key_unattributed:
@@ -597,13 +600,6 @@ def _get_period_start_date(period: str) -> datetime | None:
     return None
 
 
-def _get_upstream_routing_state(request: Request) -> UpstreamRoutingState:
-    upstream_state = getattr(request.app.state, "upstream_routing_state", None)
-    if not isinstance(upstream_state, UpstreamRoutingState):
-        raise HTTPException(status_code=500, detail="Internal server error: upstream routing state not available.")
-    return upstream_state
-
-
 def _iter_fallback_targets(fallback_rules: dict):
     for config in fallback_rules.values():
         if not isinstance(config, dict):
@@ -616,59 +612,8 @@ def _iter_fallback_targets(fallback_rules: dict):
             yield context_rule
 
 
-def _build_health_probe_request(*args):
-    if len(args) == 3:
-        provider_config, model, api_key = args
-        return _build_health_probe_request_static(provider_config, model, api_key)
-    return _build_health_probe_request_async(*args)
-
-
-def _build_health_probe_request_static(provider_config, model: str, api_key: str | None):
+def _build_health_probe_request(provider_config, model: str, api_key: str | None):
     auth_headers = resolve_provider_config_auth_headers(provider_config, api_key)
-    if getattr(provider_config, "type", "openai") == "anthropic":
-        return (
-            f"{provider_config.baseUrl.rstrip('/')}/v1/messages",
-            {
-                "Content-Type": "application/json",
-                "anthropic-version": ANTHROPIC_API_VERSION,
-                **auth_headers,
-            },
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": "Reply with OK."}],
-                "max_tokens": 1,
-            },
-        )
-    return (
-        f"{provider_config.baseUrl.rstrip('/')}/chat/completions",
-        {
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
-            "X-Title": "LLMGateway Upstream Health",
-            **auth_headers,
-        },
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": "Reply with OK."}],
-            "max_tokens": 1,
-            "temperature": 0,
-        },
-    )
-
-
-async def _build_health_probe_request_async(
-    request: Request,
-    provider_name: str,
-    provider_config,
-    model: str,
-    api_key: str | None,
-):
-    auth_headers = await resolve_provider_auth_headers(
-        request,
-        provider_name=provider_name,
-        provider_config=provider_config,
-        api_key=api_key,
-    )
     if getattr(provider_config, "type", "openai") == "anthropic":
         return (
             f"{provider_config.baseUrl.rstrip('/')}/v1/messages",
@@ -727,6 +672,62 @@ def _resolve_health_probe_api_keys(provider_config, pool_name: str | None) -> li
     return api_keys
 
 
+@dataclass(frozen=True, slots=True)
+class _HealthProbeTarget:
+    provider: str
+    model: str
+    upstream_key_fingerprint: str
+    url: str
+    headers: dict[str, str]
+    payload: dict[str, Any]
+    http_client: httpx.AsyncClient
+
+
+def _materialize_health_probe_targets(
+    config_loader: "ConfigLoader",
+    proxy_http_clients: Mapping[str, httpx.AsyncClient],
+    shared_http_client: httpx.AsyncClient,
+) -> tuple[_HealthProbeTarget, ...]:
+    targets: list[_HealthProbeTarget] = []
+    seen_targets: set[tuple[str, str, str]] = set()
+    for rule in _iter_fallback_targets(config_loader.fallback_rules):
+        provider_name = rule.get("provider")
+        provider_model = rule.get("model")
+        if not provider_name or not provider_model:
+            continue
+        provider_config = config_loader.providers_config.get(provider_name)
+        if provider_config is None:
+            continue
+        api_keys = _resolve_health_probe_api_keys(
+            provider_config,
+            rule.get("upstream_key_pool"),
+        )
+        effective_client = proxy_http_clients.get(provider_name, shared_http_client)
+        for api_key in api_keys:
+            key_fingerprint = fingerprint_api_key(api_key)
+            target_key = (provider_name, provider_model, key_fingerprint)
+            if target_key in seen_targets:
+                continue
+            seen_targets.add(target_key)
+            target_url, headers, payload = _build_health_probe_request(
+                provider_config,
+                provider_model,
+                api_key,
+            )
+            targets.append(
+                _HealthProbeTarget(
+                    provider=provider_name,
+                    model=provider_model,
+                    upstream_key_fingerprint=key_fingerprint,
+                    url=target_url,
+                    headers=dict(headers),
+                    payload=dict(payload),
+                    http_client=effective_client,
+                )
+            )
+    return tuple(targets)
+
+
 @stats_router.get("/api/fallback-stats/{period}", response_class=JSONResponse, tags=["Fallback Analytics API"])
 async def get_fallback_stats(request: Request, period: str):
     """
@@ -736,10 +737,7 @@ async def get_fallback_stats(request: Request, period: str):
     if not _is_master_caller(request):
         raise HTTPException(status_code=403, detail="Fallback analytics are available only to the master API key.")
 
-    fallback_events_db: FallbackEventsDB = getattr(request.app.state, "fallback_events_db", None)
-    if not fallback_events_db:
-        logging.error("FallbackEventsDB not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: FallbackEventsDB not available.")
+    fallback_events_db = _capture_app_services(request).fallback_events_db
 
     try:
         if period not in ['hour', 'day', 'week', 'month']:
@@ -772,10 +770,7 @@ async def get_fallback_records(request: Request, limit: int = 25, offset: int = 
     if not _is_master_caller(request):
         raise HTTPException(status_code=403, detail="Fallback analytics are available only to the master API key.")
 
-    fallback_events_db: FallbackEventsDB = getattr(request.app.state, "fallback_events_db", None)
-    if not fallback_events_db:
-        logging.error("FallbackEventsDB not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: FallbackEventsDB not available.")
+    fallback_events_db = _capture_app_services(request).fallback_events_db
 
     try:
         limit, offset = validate_fallback_records_pagination(limit, offset)
@@ -794,7 +789,7 @@ async def get_fallback_records(request: Request, limit: int = 25, offset: int = 
 async def get_upstream_status(request: Request):
     if not _is_master_caller(request):
         raise HTTPException(status_code=403, detail="Upstream status is available only to the master API key.")
-    upstream_state = _get_upstream_routing_state(request)
+    upstream_state = _capture_app_services(request).upstream_routing_state
     return JSONResponse(content={"rows": upstream_state.get_status_rows()})
 
 
@@ -803,66 +798,51 @@ async def run_upstream_health_checks(request: Request):
     if not _is_master_caller(request):
         raise HTTPException(status_code=403, detail="Upstream health checks are available only to the master API key.")
 
-    upstream_state = _get_upstream_routing_state(request)
-    config_loader = getattr(request.app.state, "config_loader", None)
-    http_client = getattr(request.app.state, "http_client", None)
-    if config_loader is None or http_client is None:
-        raise HTTPException(status_code=500, detail="Internal server error: runtime configuration not available.")
+    services = _capture_app_services(request)
+    runtime_snapshot = _capture_runtime_snapshot(request)
+    upstream_state = services.upstream_routing_state
+    targets = _materialize_health_probe_targets(
+        runtime_snapshot.config_loader,
+        runtime_snapshot.proxy_http_clients,
+        services.http_client,
+    )
 
-    proxy_http_clients = getattr(request.app.state, "proxy_http_clients", {}) or {}
     checked_rows: list[dict] = []
-    seen_targets: set[tuple[str, str, str]] = set()
-    for rule in _iter_fallback_targets(config_loader.fallback_rules):
-        provider_name = rule.get("provider")
-        provider_model = rule.get("model")
-        if not provider_name or not provider_model:
-            continue
-        provider_config = config_loader.providers_config.get(provider_name)
-        if provider_config is None:
-            continue
-        api_keys = _resolve_health_probe_api_keys(provider_config, rule.get("upstream_key_pool"))
-        effective_client = proxy_http_clients.get(provider_name, http_client)
-        for api_key in api_keys:
-            key_fingerprint = fingerprint_api_key(api_key)
-            target_key = (provider_name, provider_model, key_fingerprint)
-            if target_key in seen_targets:
-                continue
-            seen_targets.add(target_key)
-            target_url, headers, payload = await _build_health_probe_request(
-                request,
-                provider_name,
-                provider_config,
-                provider_model,
-                api_key,
+    for target in targets:
+        health_status = "error"
+        last_error = None
+        try:
+            response = await target.http_client.post(
+                target.url,
+                headers=target.headers,
+                json=target.payload,
+                timeout=15.0,
             )
-            health_status = "error"
-            last_error = None
-            try:
-                response = await effective_client.post(
-                    target_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=15.0,
-                )
-                if response.status_code < 400:
-                    health_status = "healthy"
-                elif response.status_code in {401, 403}:
-                    health_status = "invalid"
-                    last_error = f"HTTP {response.status_code}"
-                else:
-                    last_error = f"HTTP {response.status_code}"
-            except httpx.HTTPError as exc:
-                last_error = exc.__class__.__name__
-            upstream_state.mark_health(provider_name, provider_model, key_fingerprint, health_status, last_error)
-            checked_rows.append(
-                {
-                    "provider": provider_name,
-                    "model": provider_model,
-                    "upstream_key_fingerprint": key_fingerprint,
-                    "health_status": health_status,
-                    "last_error": last_error,
-                }
-            )
+            if response.status_code < 400:
+                health_status = "healthy"
+            elif response.status_code in {401, 403}:
+                health_status = "invalid"
+                last_error = f"HTTP {response.status_code}"
+            else:
+                last_error = f"HTTP {response.status_code}"
+        except httpx.HTTPError as exc:
+            last_error = exc.__class__.__name__
+        upstream_state.mark_health(
+            target.provider,
+            target.model,
+            target.upstream_key_fingerprint,
+            health_status,
+            last_error,
+        )
+        checked_rows.append(
+            {
+                "provider": target.provider,
+                "model": target.model,
+                "upstream_key_fingerprint": target.upstream_key_fingerprint,
+                "health_status": health_status,
+                "last_error": last_error,
+            }
+        )
 
     return JSONResponse(content={"checked": len(checked_rows), "rows": checked_rows})
 
@@ -872,10 +852,7 @@ async def get_upstream_stats(request: Request, period: str, api_key_id: int | No
     if not _is_master_caller(request):
         raise HTTPException(status_code=403, detail="Upstream analytics are available only to the master API key.")
 
-    fallback_events_db: FallbackEventsDB = getattr(request.app.state, "fallback_events_db", None)
-    if not fallback_events_db:
-        logging.error("FallbackEventsDB not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: FallbackEventsDB not available.")
+    fallback_events_db = _capture_app_services(request).fallback_events_db
 
     try:
         if period not in ['hour', 'day', 'week', 'month']:

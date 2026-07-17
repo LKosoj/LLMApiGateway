@@ -39,6 +39,35 @@ _DEFINITION_KEYS = ("definitions", "$defs")
 _MAX_SCHEMA_DEPTH = 64
 
 
+def _copy_schema_tree(value: Any) -> Any:
+    """Copy a JSON-like tree without consuming the Python call stack."""
+    if not isinstance(value, (dict, list)):
+        return copy.deepcopy(value)
+
+    root: dict[Any, Any] | list[Any] = {} if isinstance(value, dict) else []
+    memo: dict[int, dict[Any, Any] | list[Any]] = {id(value): root}
+    pending: list[tuple[dict[Any, Any] | list[Any], dict[Any, Any] | list[Any]]] = [
+        (value, root)
+    ]
+    while pending:
+        source, target = pending.pop()
+        items = source.items() if isinstance(source, dict) else enumerate(source)
+        for key, item in items:
+            if isinstance(item, (dict, list)):
+                copied = memo.get(id(item))
+                if copied is None:
+                    copied = {} if isinstance(item, dict) else []
+                    memo[id(item)] = copied
+                    pending.append((item, copied))
+            else:
+                copied = copy.deepcopy(item)
+            if isinstance(target, dict):
+                target[copy.deepcopy(key)] = copied
+            else:
+                target.append(copied)
+    return root
+
+
 def _flatten_type_union(schema: dict[str, Any]) -> None:
     """Collapse ``{"type": ["string", "null"]}`` into the non-null variant."""
     t = schema.get("type")
@@ -181,7 +210,7 @@ def normalize_tool_schema(schema: Any) -> Any:
         return None
     if not isinstance(schema, (dict, list)):
         return schema
-    return _normalize_schema(copy.deepcopy(schema))
+    return _normalize_schema(_copy_schema_tree(schema))
 
 
 def normalize_openai_tools(tools: Any) -> Any:
@@ -193,12 +222,12 @@ def normalize_openai_tools(tools: Any) -> Any:
         if not isinstance(tool, dict):
             normalized.append(tool)
             continue
-        tool_copy = copy.deepcopy(tool)
+        tool_copy = _copy_schema_tree(tool)
         function = tool_copy.get("function")
         if isinstance(function, dict):
             parameters = function.get("parameters")
             if isinstance(parameters, dict):
-                function["parameters"] = _normalize_schema(copy.deepcopy(parameters))
+                function["parameters"] = _normalize_schema(parameters)
         normalized.append(tool_copy)
     return normalized
 
@@ -212,9 +241,9 @@ def normalize_anthropic_tools(tools: Any) -> Any:
         if not isinstance(tool, dict):
             normalized.append(tool)
             continue
-        tool_copy = copy.deepcopy(tool)
+        tool_copy = _copy_schema_tree(tool)
         input_schema = tool_copy.get("input_schema")
         if isinstance(input_schema, dict):
-            tool_copy["input_schema"] = _normalize_schema(copy.deepcopy(input_schema))
+            tool_copy["input_schema"] = _normalize_schema(input_schema)
         normalized.append(tool_copy)
     return normalized

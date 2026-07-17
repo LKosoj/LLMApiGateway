@@ -30,6 +30,7 @@ CONTEXT_OVERFLOW_ERROR_MESSAGE_PATTERNS = (
     "prompt is too long",
     "input is too long",
     "reduce the length of the messages",
+    "context overflow",
 )
 CONTEXT_OVERFLOW_CONTEXT_MARKERS = ("exceed", "maximum", "limit", "overflow", "too long")
 CONTEXT_OVERFLOW_TOKEN_VALUE_PATTERN = re.compile(r"\b[0-9][0-9,._]*\s*[km]?\s+tokens?\b")

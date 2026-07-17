@@ -6,7 +6,6 @@ import unittest
 import sys
 
 from llm_gateway_core.services.tool_schema_normalizer import (
-    _MAX_SCHEMA_DEPTH,
     _normalize_schema,
     normalize_anthropic_tools,
     normalize_openai_tools,
@@ -213,24 +212,42 @@ class NormalizeAnthropicToolsTests(unittest.TestCase):
 
 
 class NormalizeDepthLimitTests(unittest.TestCase):
-    def test_depth_guard_stops_recursion_past_limit(self):
-        """A schema deeper than ``_MAX_SCHEMA_DEPTH`` must not blow the stack.
-
-        We call ``_normalize_schema`` directly to isolate the normalizer's
-        own recursion from the ``copy.deepcopy`` in ``normalize_tool_schema``
-        (``deepcopy`` has its own Python-level recursion limit that is a
-        separate concern from the normalizer's depth guard).
-        """
-        depth = _MAX_SCHEMA_DEPTH * 4
+    @staticmethod
+    def _deep_schema() -> dict:
+        depth = sys.getrecursionlimit() + 100
         schema: dict = {"type": "object"}
         node = schema
         for _ in range(depth):
             child: dict = {"type": "object"}
             node["items"] = child
             node = child
-        # Must not raise ``RecursionError``.
-        out = _normalize_schema(schema)
+        return schema
+
+    def test_normalize_tool_schema_handles_input_past_recursion_limit(self):
+        schema = self._deep_schema()
+
+        out = normalize_tool_schema(schema)
+
         self.assertIsInstance(out, dict)
+        self.assertIsNot(out, schema)
+
+    def test_normalize_openai_tools_handles_input_past_recursion_limit(self):
+        schema = self._deep_schema()
+
+        out = normalize_openai_tools(
+            [{"type": "function", "function": {"name": "deep", "parameters": schema}}]
+        )
+
+        self.assertIsInstance(out[0]["function"]["parameters"], dict)
+        self.assertIsNot(out[0]["function"]["parameters"], schema)
+
+    def test_normalize_anthropic_tools_handles_input_past_recursion_limit(self):
+        schema = self._deep_schema()
+
+        out = normalize_anthropic_tools([{"name": "deep", "input_schema": schema}])
+
+        self.assertIsInstance(out[0]["input_schema"], dict)
+        self.assertIsNot(out[0]["input_schema"], schema)
 
     def test_ref_prescan_does_not_recurse_on_deep_schema(self):
         depth = sys.getrecursionlimit() + 100

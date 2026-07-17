@@ -3,12 +3,20 @@ import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 import main
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
+from tests.images_audio_accounting_test_support import (
+    install_images_audio_accounting_passthrough,
+)
+from tests.operation_accounting_test_support import (
+    install_embeddings_rerank_accounting_passthrough,
+)
 
 WAV_BYTES = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
 
@@ -141,13 +149,21 @@ class OperationRulesIntegrationTests(unittest.TestCase):
 
     @contextmanager
     def _client(self):
-        fake_http_client = Mock()
+        fake_http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(500, json={"unused": True})
+            )
+        )
         fake_http_client.post = AsyncMock(return_value=_FakeDownstreamResponse({"unused": True}))
-        fake_http_client.aclose = AsyncMock()
 
         with ExitStack() as stack:
+            install_main_chat_accounting_double(stack)
+            install_embeddings_rerank_accounting_passthrough(stack)
+            install_images_audio_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))

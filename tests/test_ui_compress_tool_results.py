@@ -17,7 +17,8 @@ def test_compress_tool_results_checkbox_exists_in_build_rule_card():
 def test_compress_tool_results_label_text():
     """The label for the checkbox should describe the RTK feature."""
     content = _read_editor_js()
-    assert "Compress tool result outputs (RTK)" in content
+    assert "bindLocalizedText(compressToolResultsLabel" in content
+    assert "editor:toggles.compressTools" in content
 
 
 def test_compress_tool_results_in_normalize_rule_card():

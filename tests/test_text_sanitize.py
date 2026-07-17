@@ -109,7 +109,8 @@ class TestJson5SurrogateNormalization:
 
     def test_parse_stream_chunk_json_normalizes_surrogate_pairs(self):
         chunk_json = _parse_stream_chunk_json(
-            'data: {"choices":[{"delta":{"content":"\\ud83d\\ude00"}}]}'
+            'data: {"choices":[{"delta":{"content":"\\ud83d\\ude00"}}]}',
+            max_event_bytes=1024,
         )
 
         assert chunk_json["choices"][0]["delta"]["content"] == "😀"

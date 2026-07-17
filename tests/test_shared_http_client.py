@@ -1,5 +1,7 @@
 import asyncio
 import copy
+import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -9,9 +11,12 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 import main
-from tests._async_compat import run_async
+from llm_gateway_core.services import http_client_factory
 from llm_gateway_core.agents.deep_research import DeepResearchManager
 from llm_gateway_core.services.request_handler import make_llm_request
+from llm_gateway_core.services.stream_observation import StreamObservationCapacity
+from tests._async_compat import run_async
+from tests.test_lifespan_app_services import _lifespan_environment
 
 
 class _FakeResponse:
@@ -32,9 +37,13 @@ class _FakeStreamResponse:
     async def aread(self):
         return b""
 
-    async def aiter_bytes(self):
+    async def aiter_raw(self, *, chunk_size=None):
         for chunk in self._chunks:
-            yield chunk
+            if chunk_size is None:
+                yield chunk
+                continue
+            for offset in range(0, len(chunk), chunk_size):
+                yield chunk[offset:offset + chunk_size]
 
 
 class _FakeStreamContextManager:
@@ -57,16 +66,27 @@ async def _collect_streaming_response_body(response: StreamingResponse) -> bytes
     return b"".join(body)
 
 
+async def _wait_for_mock_call(mock: Mock) -> None:
+    for _attempt in range(20):
+        if mock.called:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"{mock!r} was not called")
+
+
 async def _make_stream_request_and_collect(
     fake_client: Mock,
     request_payload: dict,
 ) -> tuple[StreamingResponse | None, str | None, bytes | None]:
+    capacity = StreamObservationCapacity(max_items=4, max_bytes=4096)
     response_data, error_detail = await make_llm_request(
         fake_client,
         "https://example.com/chat/completions",
         {"Content-Type": "application/json"},
         request_payload,
         True,
+        stream_observation_capacity=capacity,
+        stream_event_max_bytes=1024,
     )
 
     collected = None
@@ -96,7 +116,7 @@ class SharedHttpClientTests(unittest.TestCase):
                         interval_seconds=3600,
                     )
                 )
-                await asyncio.sleep(0)
+                await _wait_for_mock_call(fake_rejections_db.cleanup_old_records)
                 fake_tokens_usage_db.cleanup_old_records.assert_called_once_with(retention_days=90)
                 fake_fallback_events_db.cleanup_old_records.assert_called_once_with(retention_days=90)
                 fake_rejections_db.cleanup_old_records.assert_called_once_with(retention_days=90)
@@ -106,50 +126,63 @@ class SharedHttpClientTests(unittest.TestCase):
 
         run_async(scenario())
 
-    def test_run_budget_reset_loop_resets_due_keys_and_syncs_ledger(self):
-        reset_record = Mock(id=42, budget_usd=10.0, spent_usd=0.0)
-        fake_api_keys_db = Mock()
-        fake_api_keys_db.reset_due_budgets.return_value = [reset_record]
-        fake_ledger = Mock()
-
-        async def fake_to_thread(func, *args, **kwargs):
-            return func(*args, **kwargs)
+    def test_run_budget_reset_loop_delegates_to_accounting_service(self):
+        accounting_service = Mock()
+        accounting_service.reset_due_budgets = AsyncMock()
 
         async def scenario():
-            with patch("asyncio.to_thread", side_effect=fake_to_thread):
-                reset_task = asyncio.create_task(
-                    main.run_budget_reset_loop(
-                        fake_api_keys_db,
-                        fake_ledger,
-                        interval_seconds=3600,
-                    )
+            reset_task = asyncio.create_task(
+                main.run_budget_reset_loop(
+                    accounting_service,
+                    interval_seconds=3600,
                 )
-                await asyncio.sleep(0)
-                fake_api_keys_db.reset_due_budgets.assert_called_once_with()
-                fake_ledger.reset_record.assert_called_once_with(
-                    42, budget_usd=10.0, spent_usd=0.0
-                )
-                reset_task.cancel()
-                with self.assertRaises(asyncio.CancelledError):
-                    await reset_task
+            )
+            await _wait_for_mock_call(accounting_service.reset_due_budgets)
+            accounting_service.reset_due_budgets.assert_awaited_once()
+            moment = accounting_service.reset_due_budgets.await_args.kwargs["now"]
+            self.assertIsNotNone(moment.tzinfo)
+            self.assertEqual(moment.utcoffset().total_seconds(), 0)
+            reset_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await reset_task
 
         run_async(scenario())
 
     def test_create_shared_http_client_configures_finite_timeouts(self):
         http_client = main.create_shared_http_client()
-        self.assertEqual(http_client.timeout.connect, main.HTTP_CLIENT_CONNECT_TIMEOUT_SECONDS)
-        self.assertEqual(main.HTTP_CLIENT_READ_TIMEOUT_SECONDS, 500.0)
-        self.assertEqual(http_client.timeout.read, main.HTTP_CLIENT_READ_TIMEOUT_SECONDS)
-        self.assertEqual(http_client.timeout.write, main.HTTP_CLIENT_WRITE_TIMEOUT_SECONDS)
-        self.assertEqual(http_client.timeout.pool, main.HTTP_CLIENT_POOL_TIMEOUT_SECONDS)
+        self.assertEqual(
+            http_client.timeout.connect,
+            http_client_factory.HTTP_CLIENT_CONNECT_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(http_client_factory.HTTP_CLIENT_READ_TIMEOUT_SECONDS, 500.0)
+        self.assertEqual(
+            http_client.timeout.read,
+            http_client_factory.HTTP_CLIENT_READ_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            http_client.timeout.write,
+            http_client_factory.HTTP_CLIENT_WRITE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            http_client.timeout.pool,
+            http_client_factory.HTTP_CLIENT_POOL_TIMEOUT_SECONDS,
+        )
         run_async(http_client.aclose())
 
-    def test_resolve_write_batcher_db_path_ignores_mock_db_path(self):
-        fake_tokens_usage_db = Mock()
+    def test_resolve_write_batcher_db_path_falls_back_to_the_configured_state_dir(self):
+        """A db_path that is not a path sends the batcher to GATEWAY_DB_DIR.
 
-        resolved = main.resolve_write_batcher_db_path(fake_tokens_usage_db)
+        The fallback used to name the checkout's own ``db/`` outright, so a
+        deployment that moved its state elsewhere still got its usage writes
+        aimed back at the source tree.
+        """
+        fake_tokens_usage_db = Mock()  # db_path is an auto-created Mock, not a path
 
-        self.assertEqual(resolved, main.PROJECT_ROOT / "db" / "tokens_usage.db")
+        with tempfile.TemporaryDirectory() as state_dir:
+            with patch.dict(os.environ, {"GATEWAY_DB_DIR": state_dir}):
+                resolved = main.resolve_write_batcher_db_path(fake_tokens_usage_db)
+
+            self.assertEqual(resolved, Path(state_dir) / "tokens_usage.db")
 
     def test_resolve_write_batcher_db_path_accepts_real_path(self):
         fake_tokens_usage_db = Mock()
@@ -159,81 +192,17 @@ class SharedHttpClientTests(unittest.TestCase):
 
         self.assertEqual(resolved, Path("/tmp/custom-tokens-usage.db"))
 
-    @patch.object(main.ConfigLoader, "load_providers")
-    @patch.object(main.ConfigLoader, "load_fallback_rules")
-    @patch.object(main.ConfigLoader, "load_model_rules")
-    @patch.object(main.ConfigLoader, "load_fusion_rules")
-    @patch.object(main.ConfigLoader, "load_router_rules")
-    @patch.object(main.ConfigLoader, "load_operation_rules")
-    @patch("main.start_usage_stats_cleanup_task")
-    @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
-    def test_lifespan_creates_and_closes_shared_http_client_once(
-        self,
-        async_client_ctor,
-        _tokens_usage_db,
-        start_usage_stats_cleanup_task,
-        _load_operation_rules,
-        _load_router_rules,
-        _load_fusion_rules,
-        _load_model_rules,
-        _load_fallback_rules,
-        _load_providers,
-    ):
-        class _FakeCleanupTask:
-            def __init__(self):
-                self.cancel_called = False
-
-            def cancel(self):
-                self.cancel_called = True
-
-            def __await__(self):
-                async def _done():
-                    return None
-
-                return _done().__await__()
-
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-        async_client_ctor.return_value = fake_http_client
-        fake_cleanup_task = _FakeCleanupTask()
-        start_usage_stats_cleanup_task.return_value = fake_cleanup_task
-
-        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+    def test_lifespan_creates_and_closes_shared_http_client_once(self):
+        with _lifespan_environment() as env:
             with TestClient(main.app) as client:
-                self.assertIs(client.app.state.http_client, fake_http_client)
-                self.assertEqual(
-                    client.app.state.operation_rules,
-                    {
-                        "embeddings": {},
-                        "rerank": {},
-                        "images_generations": {},
-                        "images_edits": {},
-                        "audio_speech": {},
-                        "audio_transcriptions": {},
-                        "pdf_conversions": {},
-                        "web_search": {},
-                        "web_read": {},
-                        "web_research": {},
-                        "web_deep_research": {},
-                    },
-                )
-                self.assertEqual(
-                    client.app.state.write_batcher._db_path,
-                    main.PROJECT_ROOT / "db" / "tokens_usage.db",
-                )
-                async_client_ctor.assert_called_once()
-                # start_usage_stats_cleanup_task is called with tokens_usage_db and fallback_events_db
-                start_usage_stats_cleanup_task.assert_called_once()
-                call_args = start_usage_stats_cleanup_task.call_args
-                self.assertIs(call_args[0][0], _tokens_usage_db.return_value)
-                _load_operation_rules.assert_called_once()
-                _load_fusion_rules.assert_called_once()
-                _load_router_rules.assert_called_once()
-                _load_model_rules.assert_called_once()
+                services = client.app.state.services
+                self.assertIs(services.http_client, env.shared_clients[0])
+                self.assertEqual(services.task_supervisor.task_count, 3)
+                self.assertEqual(services.runtime_manager.current_generation, 1)
 
-        self.assertTrue(fake_cleanup_task.cancel_called)
-        fake_http_client.aclose.assert_awaited_once()
+        self.assertTrue(services.task_supervisor.closed)
+        self.assertEqual(services.task_supervisor.task_count, 0)
+        env.shared_clients[0].aclose.assert_awaited_once()
 
     def test_make_llm_request_uses_injected_client(self):
         fake_client = Mock(spec=httpx.AsyncClient)
@@ -278,6 +247,11 @@ class SharedHttpClientTests(unittest.TestCase):
                 {"Content-Type": "application/json"},
                 request_payload,
                 True,
+                stream_observation_capacity=StreamObservationCapacity(
+                    max_items=4,
+                    max_bytes=4096,
+                ),
+                stream_event_max_bytes=1024,
             )
         )
 
@@ -365,11 +339,16 @@ class SharedHttpClientTests(unittest.TestCase):
                 {"Content-Type": "application/json"},
                 {"model": "demo-model", "messages": [{"role": "user", "content": "hello"}]},
                 True,
+                stream_observation_capacity=StreamObservationCapacity(
+                    max_items=4,
+                    max_bytes=4096,
+                ),
+                stream_event_max_bytes=1024,
             )
         )
 
         self.assertIsNone(response_data)
-        self.assertEqual(error_detail, "boom")
+        self.assertEqual(error_detail, "Upstream request failed with HTTP status 400.")
         self.assertTrue(stream_context.exited)
 
     def test_make_llm_request_stream_preserves_keepalive_before_first_data(self):
@@ -514,6 +493,18 @@ class DeepResearchWorkerHttpClientTests(unittest.TestCase):
 
             async def write_report(self):
                 return "report"
+
+            def get_costs(self):
+                return self.costs
+
+            def get_research_sources(self):
+                return self.sources
+
+            def get_source_urls(self):
+                return self.source_urls
+
+            def get_research_context(self):
+                return self.context
 
             def _generate_research_id(self):
                 return "rid"

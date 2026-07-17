@@ -13,7 +13,7 @@
 }
 
 .keys-table-wrap::after {
-    content: "Scroll horizontally";
+    content: attr(data-scroll-hint);
     position: sticky;
     right: 8px;
     bottom: 6px;
@@ -25,6 +25,10 @@
     color: var(--text-muted);
     font-size: 12px;
     box-shadow: var(--shadow-sm);
+}
+
+.message-detail:empty {
+    display: none;
 }
 
 .keys-table {
@@ -41,6 +45,10 @@
     text-align: left;
     vertical-align: top;
     font-size: 14px;
+}
+
+.keys-table th {
+    color: var(--text);
 }
 
 .keys-table code {
@@ -65,7 +73,7 @@
 }
 
 .badge-active {
-    color: var(--success);
+    color: var(--text);
     background: var(--success-soft);
 }
 

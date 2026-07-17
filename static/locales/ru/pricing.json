@@ -1,0 +1,57 @@
+{
+  "pageTitle": "LLM Gateway — Тарифы",
+  "heading": "Тарифы LLM Gateway",
+  "productVersionLabel": "Версия продукта",
+  "editor": {
+    "title": "Редактор",
+    "addRow": "Добавить строку",
+    "save": "Сохранить изменения",
+    "hintPrefix": "Тарифы указаны в",
+    "hintUnit": "долларах США за 1 миллион токенов",
+    "hintMiddle": ". Изменения атомарно записываются в",
+    "providersFile": "providers.json",
+    "hintSuffix": ".",
+    "empty": "Тарифы не настроены. Добавьте строки с тарифами для моделей.",
+    "table": {
+      "provider": "Провайдер",
+      "model": "Модель",
+      "inputRate": "Входной тариф ($/1 млн)",
+      "outputRate": "Выходной тариф ($/1 млн)",
+      "delete": "Удалить"
+    }
+  },
+  "calculator": {
+    "title": "Калькулятор",
+    "model": "Модель",
+    "selectModel": "— выберите модель —",
+    "promptTokens": "Токены запроса",
+    "completionTokens": "Токены ответа",
+    "calculate": "Рассчитать",
+    "result": {
+      "model": "Модель:",
+      "input": "Вход:",
+      "output": "Выход:",
+      "ratePerMillion": "{amount}/1 млн"
+    }
+  },
+  "validation": {
+    "providerRequired": "Строка {row}: провайдер не должен быть пустым",
+    "modelRequired": "Строка {row}: модель не должна быть пустой",
+    "inputRateInvalid": "Строка {row}: input_rate должен быть >= 0",
+    "outputRateInvalid": "Строка {row}: output_rate должен быть >= 0"
+  },
+  "status": {
+    "mustLoad": "Перед сохранением необходимо загрузить тарифы",
+    "saved": "Тарифы успешно сохранены",
+    "selectModel": "Выберите модель"
+  },
+  "contract": {
+    "missingEtag": "В ответе с тарифами отсутствует ETag",
+    "invalidShape": "Ответ с тарифами имеет неверную структуру"
+  },
+  "conflict": {
+    "title": "Тарифы изменились на сервере",
+    "message": "Локальные правки сохранены. Загружайте актуальные данные, только если готовы отказаться от этих правок.",
+    "reload": "Загрузить заново и сбросить правки"
+  }
+}

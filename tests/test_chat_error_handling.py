@@ -1,10 +1,12 @@
 import unittest
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
 import main
 from tests._async_compat import run_async
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 from llm_gateway_core.services.request_handler import make_llm_request
 
 
@@ -28,8 +30,23 @@ class _NullJsonResponse:
 
 
 class ChatErrorHandlingTests(unittest.TestCase):
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack,
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        coordinator_patcher = patch(
+            "main.ConfigUpdateCoordinator",
+            return_value=config_update_coordinator,
+        )
+        coordinator_patcher.start()
+        self.addCleanup(coordinator_patcher.stop)
+
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_missing_provider_returns_safe_503_response(
         self,
@@ -38,6 +55,8 @@ class ChatErrorHandlingTests(unittest.TestCase):
         _tokens_usage_db,
     ):
         fake_config_loader = Mock()
+        fake_config_loader.configured_paths = {}
+        fake_config_loader.operation_rules = {}
         fake_config_loader.providers_config = {}
         fake_config_loader.fallback_rules = {
             "gateway-model": {
@@ -53,6 +72,8 @@ class ChatErrorHandlingTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_operation_rules.return_value = {}
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -138,7 +159,7 @@ class ChatErrorHandlingTests(unittest.TestCase):
         self.assertIn("type=list", error_detail)
 
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_missing_model_returns_validation_400_without_internal_error(
         self,
@@ -147,10 +168,14 @@ class ChatErrorHandlingTests(unittest.TestCase):
         _tokens_usage_db,
     ):
         fake_config_loader = Mock()
+        fake_config_loader.configured_paths = {}
+        fake_config_loader.operation_rules = {}
         fake_config_loader.providers_config = {}
         fake_config_loader.fallback_rules = {}
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_operation_rules.return_value = {}
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()

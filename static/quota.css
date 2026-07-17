@@ -124,6 +124,33 @@ h1 {
     margin-top: 20px;
 }
 
+.quota-status-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 36px;
+    margin-top: 16px;
+}
+
+#quota-status[data-status-kind="error"] {
+    color: var(--error);
+}
+
+.quota-retry {
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    padding: 7px 12px;
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.quota-retry:hover {
+    border-color: var(--accent-hover);
+}
+
 .quota-card {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
@@ -255,7 +282,7 @@ h1 {
     padding: 2px 7px;
     border-radius: var(--radius-sm);
     background: var(--bg-sunken);
-    color: var(--text-muted);
+    color: var(--text);
     white-space: nowrap;
 }
 

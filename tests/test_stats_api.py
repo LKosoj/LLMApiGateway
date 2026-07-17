@@ -1,16 +1,23 @@
 import unittest
-from contextlib import ExitStack, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-import main
 from llm_gateway_core.api.v1 import stats as stats_module
-from llm_gateway_core.middleware.auth import ROLE_USER, SESSION_COOKIE_NAME, create_authenticated_session
+from llm_gateway_core.middleware.auth import (
+    ROLE_USER,
+    SESSION_COOKIE_NAME,
+    ApiKeyAuthMiddleware,
+    create_authenticated_session,
+)
+from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
+from tests.runtime_test_support import installed_runtime
 
 
 class _FakeTokensUsageDB:
@@ -194,6 +201,11 @@ class _FakeRejectionsDB:
 
 class StatsApiPaginationTests(unittest.TestCase):
     def setUp(self):
+        self._clear_caches()
+        self.addCleanup(self._clear_caches)
+
+    @staticmethod
+    def _clear_caches() -> None:
         stats_module._usage_stats_cache.invalidate()
         stats_module._fallback_stats_cache.invalidate()
         stats_module._upstream_stats_cache.invalidate()
@@ -205,25 +217,34 @@ class StatsApiPaginationTests(unittest.TestCase):
         fake_api_keys_db: _FakeApiKeysDB | None = None,
         fake_fallback_events_db: _FakeFallbackEventsDB | None = None,
         fake_rejections_db: _FakeRejectionsDB | None = None,
+        active_requests_registry: ActiveRequestsRegistry | None = None,
     ):
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-        fake_config_loader = Mock()
-        fake_config_loader.load_providers.return_value = {}
-        fake_config_loader.load_fallback_rules.return_value = {}
         fallback_events_db = fake_fallback_events_db or _FakeFallbackEventsDB()
+        service_overrides = {
+            "tokens_usage_db": fake_tokens_usage_db,
+            "fallback_events_db": fallback_events_db,
+            "rejections_db": fake_rejections_db or _FakeRejectionsDB(),
+        }
+        if fake_api_keys_db is not None:
+            service_overrides["api_keys_db"] = fake_api_keys_db
+        if active_requests_registry is not None:
+            service_overrides["active_requests_registry"] = active_requests_registry
 
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=fake_config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB", return_value=fake_tokens_usage_db))
-            stack.enter_context(patch("main.FallbackEventsDB", return_value=fallback_events_db))
-            stack.enter_context(patch("main.RejectionsDB", return_value=fake_rejections_db or _FakeRejectionsDB()))
-            if fake_api_keys_db is not None:
-                stack.enter_context(patch("main.ApiKeysDB", return_value=fake_api_keys_db))
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            async with installed_runtime(app, **service_overrides):
+                yield
 
-            with TestClient(main.app) as client:
+        app = FastAPI(lifespan=lifespan)
+        app.include_router(stats_module.stats_router, prefix="/v1")
+        app.add_middleware(RuntimeSnapshotMiddleware)
+        app.add_middleware(ApiKeyAuthMiddleware)
+
+        with patch(
+            "llm_gateway_core.middleware.auth.settings.gateway_api_key",
+            "test-gateway-key",
+        ):
+            with TestClient(app) as client:
                 yield client
 
     def test_usage_records_returns_400_for_negative_limit_and_offset(self):
@@ -277,8 +298,13 @@ class StatsApiPaginationTests(unittest.TestCase):
 
     def test_usage_records_without_authenticated_role_fails_closed(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
-        app = FastAPI()
-        app.state.tokens_usage_db = fake_tokens_usage_db
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            async with installed_runtime(app, tokens_usage_db=fake_tokens_usage_db):
+                yield
+
+        app = FastAPI(lifespan=lifespan)
         app.include_router(stats_module.stats_router, prefix="/v1")
 
         with TestClient(app) as client:
@@ -325,26 +351,28 @@ class StatsApiPaginationTests(unittest.TestCase):
     def test_usage_records_include_running_requests_before_completed_records(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
-        with self._client(fake_tokens_usage_db) as client:
-            active_requests = ActiveRequestsRegistry()
-            active_requests.start(
-                request_id="req-running",
-                path="/v1/chat/completions",
-                api_key_id=7,
-                gateway_model="llmgateway/qwen",
-                operation="chat",
-            )
-            active_requests.update(
-                "req-running",
-                provider="openrouter",
-                model="qwen/qwen3",
-                upstream_key_fingerprint="fp-upstream",
-                prompt_tokens=42,
-                total_tokens=42,
-                is_estimated=True,
-            )
-            client.app.state.active_requests_registry = active_requests
+        active_requests = ActiveRequestsRegistry()
+        active_requests.start(
+            request_id="req-running",
+            path="/v1/chat/completions",
+            api_key_id=7,
+            gateway_model="llmgateway/qwen",
+            operation="chat",
+        )
+        active_requests.update(
+            "req-running",
+            provider="openrouter",
+            model="qwen/qwen3",
+            upstream_key_fingerprint="fp-upstream",
+            prompt_tokens=42,
+            total_tokens=42,
+            is_estimated=True,
+        )
 
+        with self._client(
+            fake_tokens_usage_db,
+            active_requests_registry=active_requests,
+        ) as client:
             response = client.get(
                 "/v1/api/usage-records?limit=2&offset=0&api_key_id=7",
                 headers={"Authorization": "Bearer test-gateway-key"},
@@ -369,17 +397,19 @@ class StatsApiPaginationTests(unittest.TestCase):
     def test_usage_records_pagination_offsets_past_running_requests(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
-        with self._client(fake_tokens_usage_db) as client:
-            active_requests = ActiveRequestsRegistry()
-            active_requests.start(
-                request_id="req-running",
-                path="/v1/embeddings",
-                api_key_id=None,
-                gateway_model="gateway-embeddings",
-                operation="embeddings",
-            )
-            client.app.state.active_requests_registry = active_requests
+        active_requests = ActiveRequestsRegistry()
+        active_requests.start(
+            request_id="req-running",
+            path="/v1/embeddings",
+            api_key_id=None,
+            gateway_model="gateway-embeddings",
+            operation="embeddings",
+        )
 
+        with self._client(
+            fake_tokens_usage_db,
+            active_requests_registry=active_requests,
+        ) as client:
             response = client.get(
                 "/v1/api/usage-records?limit=2&offset=1",
                 headers={"Authorization": "Bearer test-gateway-key"},
@@ -512,7 +542,9 @@ class StatsApiPaginationTests(unittest.TestCase):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
         with self._client(fake_tokens_usage_db) as client:
-            client.app.state.upstream_routing_state.mark_health(
+            upstream_state = client.app.state.services.upstream_routing_state
+            client.app.state.upstream_routing_state = Mock()
+            upstream_state.mark_health(
                 "openrouter",
                 "deepseek/deepseek-r1:free",
                 "abc123",
@@ -536,23 +568,24 @@ class StatsApiPaginationTests(unittest.TestCase):
         fake_fallback_events_db = _FakeFallbackEventsDB()
         fake_rejections_db = _FakeRejectionsDB()
 
+        active_requests = ActiveRequestsRegistry()
+        active_requests.start(
+            request_id="req-running",
+            path="/v1/chat/completions",
+            api_key_id=7,
+            gateway_model="gateway-model",
+            operation="chat",
+            x_title="tgBot",
+        )
+        active_requests.update("req-running", provider="openrouter", model="qwen")
+
         with self._client(
             fake_tokens_usage_db,
             _FakeApiKeysDB(valid_key_id=7),
             fake_fallback_events_db=fake_fallback_events_db,
             fake_rejections_db=fake_rejections_db,
+            active_requests_registry=active_requests,
         ) as client:
-            active_requests = ActiveRequestsRegistry()
-            active_requests.start(
-                request_id="req-running",
-                path="/v1/chat/completions",
-                api_key_id=7,
-                gateway_model="gateway-model",
-                operation="chat",
-                x_title="tgBot",
-            )
-            active_requests.update("req-running", provider="openrouter", model="qwen")
-            client.app.state.active_requests_registry = active_requests
             response = client.get(
                 "/v1/api/analytics-dashboard"
                 "?range=7d&bucket=day&api_key_id=7&operation=chat"

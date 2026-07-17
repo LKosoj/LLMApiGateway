@@ -1,0 +1,14 @@
+{
+  "name": "llmgateway-rules-editor-bundle",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministic Rules Editor browser bundle.",
+  "scripts": {
+    "build": "esbuild src/index.mjs --bundle --format=iife --target=es2020 --legal-comments=none --charset=utf8 --banner:js=\"/* Generated from frontend/editor/src; do not edit directly. */\" --outfile=../../static/editor.js",
+    "check": "python3 ../../scripts/check_editor_bundle.py",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}

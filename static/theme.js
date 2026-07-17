@@ -146,34 +146,45 @@
 
     // Registry of attached toggle elements
     var _toggles = [];
+    var _translator = null;
 
-    function _buttonLabel(mode, effective) {
-        // Compact text symbols plus title/aria-label keep the button self-explanatory.
-        var ariaMap = {
-            light: 'Switch to dark mode',
-            dark:  'Switch to system mode',
-            system: 'Switch to light mode'
+    function _buttonLabel(mode, translator) {
+        var keyMap = {
+            light: 'common:theme.switchToDark',
+            dark: 'common:theme.switchToSystem',
+            system: 'common:theme.switchToLight'
         };
+        if (!Object.prototype.hasOwnProperty.call(keyMap, mode)) {
+            throw new Error('Theme: invalid mode "' + mode + '"');
+        }
+        var aria = null;
+        if (translator !== null) {
+            aria = translator(keyMap[mode]);
+            if (typeof aria !== 'string' || aria.length === 0) {
+                throw new Error('Theme: translation must be a non-empty string for ' + keyMap[mode]);
+            }
+        }
         return {
-            text: LABELS[mode] || mode,
-            icon: ICONS[mode] || mode,
-            aria: ariaMap[mode] || 'Toggle theme'
+            text: LABELS[mode],
+            icon: ICONS[mode],
+            aria: aria
         };
     }
 
-    function _updateToggleEl(el, mode, effective) {
-        var lbl = _buttonLabel(mode, effective);
-        el.setAttribute('aria-label', lbl.aria);
-        el.setAttribute('title', lbl.aria);
+    function _updateToggleEl(el, mode, label) {
+        if (label.aria !== null) {
+            el.setAttribute('aria-label', label.aria);
+            el.setAttribute('title', label.aria);
+        }
         el.setAttribute('data-theme-mode', mode);
-        el.textContent = lbl.text;
+        el.textContent = label.text;
     }
 
     function _updateAllToggles() {
         var mode = _read();
-        var eff = _effective(mode);
+        var label = _buttonLabel(mode, _translator);
         _toggles.forEach(function (el) {
-            _updateToggleEl(el, mode, eff);
+            _updateToggleEl(el, mode, label);
         });
     }
 
@@ -195,6 +206,7 @@
             if (mode !== 'light' && mode !== 'dark' && mode !== 'system') {
                 throw new Error('Theme.set: invalid mode "' + mode + '"');
             }
+            _buttonLabel(mode, _translator);
             _write(mode);
             var eff = _effective(mode);
             _apply(eff);
@@ -208,6 +220,18 @@
             var idx = CYCLE_ORDER.indexOf(current);
             var next = CYCLE_ORDER[(idx + 1) % CYCLE_ORDER.length];
             Theme.set(next);
+        },
+
+        setTranslator: function (translator) {
+            if (typeof translator !== 'function') {
+                throw new TypeError('Theme.setTranslator: translator must be a function');
+            }
+            var mode = _read();
+            var label = _buttonLabel(mode, translator);
+            _translator = translator;
+            _toggles.forEach(function (el) {
+                _updateToggleEl(el, mode, label);
+            });
         },
 
         attachToggle: function (elementId) {
@@ -227,8 +251,7 @@
 
             // Set initial label
             var mode = _read();
-            var eff = _effective(mode);
-            _updateToggleEl(el, mode, eff);
+            _updateToggleEl(el, mode, _buttonLabel(mode, _translator));
         }
     };
 

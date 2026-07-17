@@ -35,51 +35,156 @@
     ];
     const BLOB_URLS = new Map();
     const VOICE_CACHE = new Map();
+    let voiceRequestToken = 0;
     const CHAT_CONTEXT_LIMIT = 20;
+    const i18n = window.gatewayI18n;
+    const KEYS = Object.freeze({
+        modelsEmpty: "models.empty",
+        modelsFusionSuffix: "models.fusionSuffix",
+        modelsSelectFirst: "models.selectFirst",
+        modelsLoadingVoices: "models.loadingVoices",
+        modelsVoiceUnavailable: "models.voiceUnavailable",
+        providerDefault: "options.providerDefault",
+        voiceCatalogEmpty: "status.voiceCatalogEmpty",
+        voiceLoadFailed: "status.voiceLoadFailed",
+        selectModelFirst: "status.selectModelFirst",
+        enterMessage: "status.enterMessage",
+        running: "status.running",
+        uploadingPdf: "status.uploadingPdf",
+        pdfRunning: "status.pdfRunning",
+        error: "status.error",
+        done: "status.done",
+        chatDone: "status.chatDone",
+        pdfFailed: "status.pdfFailed",
+        pdfDone: "status.pdfDone",
+        requestFailed: "status.requestFailed",
+        chatReset: "status.chatReset",
+        modelsLoadFailed: "status.modelsLoadFailed",
+        tooManyFiles: "status.tooManyFiles",
+    });
     let simpleChatMessages = [];
     let fusionModelNames = new Set();
+    let pendingLocaleUiState = null;
+    let unsubscribeLocale = null;
     const { apiFetch } = window.gatewayAuth;
 
-    function activateSection(name) {
-        const tabList = SECTION_BUTTONS[0]?.closest(".tabs");
-        if (tabList) tabList.setAttribute("role", "tablist");
-        SECTION_BUTTONS.forEach((btn) => {
-            const isActive = btn.dataset.playgroundSectionTab === name;
-            btn.classList.toggle("active", isActive);
-            btn.setAttribute("role", "tab");
-            btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    function translate(key, values = {}) {
+        return i18n.t(`playground:${key}`, values);
+    }
+
+    function numberText(value) {
+        const number = Number(value);
+        return i18n.formatNumber(Number.isFinite(number) ? number : 0);
+    }
+
+    function currencyText(value) {
+        return i18n.formatCurrency(Number(value), "USD", {
+            minimumFractionDigits: 6,
+            maximumFractionDigits: 6,
         });
-        SECTION_PANELS.forEach((panel) => {
-            panel.hidden = panel.dataset.playgroundSectionPanel !== name;
-            panel.setAttribute("role", "tabpanel");
-        });
-        if (name === "audio-speech") {
-            refreshAudioVoiceSelect();
+    }
+
+    function runtimeNumberSpan(value, style = "decimal") {
+        const number = Number(value);
+        if (!Number.isFinite(number)) {
+            return `<span lang="und" dir="auto">${escapeHtml(value)}</span>`;
         }
+        const text = style === "currency" ? currencyText(number) : numberText(number);
+        return `<span data-playground-number="${style}" data-playground-number-value="${escapeHtml(
+            number
+        )}">${escapeHtml(text)}</span>`;
     }
 
-    function activateWebTab(name) {
-        const tabList = WEB_TAB_BUTTONS[0]?.closest(".tabs");
-        if (tabList) tabList.setAttribute("role", "tablist");
-        WEB_TAB_BUTTONS.forEach((btn) => {
-            const isActive = btn.dataset.webTab === name;
-            btn.classList.toggle("active", isActive);
-            btn.setAttribute("role", "tab");
-            btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    function durationSpan(value) {
+        const seconds = Number(value);
+        if (!Number.isFinite(seconds)) return "";
+        return `<span data-playground-duration data-playground-duration-value="${escapeHtml(
+            seconds
+        )}">${escapeHtml(formatDuration(seconds))}</span>`;
+    }
+
+    function updateRuntimeFormats() {
+        document.querySelectorAll("[data-playground-number]").forEach((element) => {
+            const number = Number(element.dataset.playgroundNumberValue);
+            element.textContent = element.dataset.playgroundNumber === "currency"
+                ? currencyText(number)
+                : numberText(number);
         });
-        WEB_TAB_PANELS.forEach((panel) => {
-            panel.hidden = panel.dataset.webPanel !== name;
-            panel.setAttribute("role", "tabpanel");
+        document.querySelectorAll("[data-playground-duration]").forEach((element) => {
+            element.textContent = formatDuration(Number(element.dataset.playgroundDurationValue));
         });
     }
 
-    SECTION_BUTTONS.forEach((btn) => {
-        btn.addEventListener("click", () => activateSection(btn.dataset.playgroundSectionTab));
-    });
+    function translatedSpan(key, values = {}) {
+        return `<span data-playground-i18n="${escapeHtml(key)}" data-playground-i18n-values="${escapeHtml(
+            JSON.stringify(values)
+        )}">${escapeHtml(translate(key, values))}</span>`;
+    }
 
-    WEB_TAB_BUTTONS.forEach((btn) => {
-        btn.addEventListener("click", () => activateWebTab(btn.dataset.webTab));
-    });
+    function updateDynamicTranslations() {
+        document.querySelectorAll("[data-playground-i18n]").forEach((element) => {
+            let values = {};
+            try {
+                values = JSON.parse(element.dataset.playgroundI18nValues || "{}");
+            } catch (_error) {
+                values = {};
+            }
+            element.textContent = translate(element.dataset.playgroundI18n, values);
+        });
+        document.querySelectorAll("[data-playground-i18n-aria]").forEach((element) => {
+            element.setAttribute("aria-label", translate(element.dataset.playgroundI18nAria));
+        });
+    }
+
+    function setupPlaygroundTabs() {
+        const sectionTabList = SECTION_BUTTONS[0]?.closest('[role="tablist"]');
+        const webTabList = WEB_TAB_BUTTONS[0]?.closest('[role="tablist"]');
+        const sectionPanels = SECTION_BUTTONS.map((button) => (
+            SECTION_PANELS.find((panel) => (
+                panel.dataset.playgroundSectionPanel === button.dataset.playgroundSectionTab
+            ))
+        ));
+        const webPanels = WEB_TAB_BUTTONS.map((button) => (
+            WEB_TAB_PANELS.find((panel) => panel.dataset.webPanel === button.dataset.webTab)
+        ));
+        if (
+            !sectionTabList
+            || !webTabList
+            || sectionPanels.some((panel) => !panel)
+            || webPanels.some((panel) => !panel)
+        ) return;
+
+        const activateSection = async (context) => {
+            SECTION_BUTTONS.forEach((button) => {
+                button.classList.toggle("active", button === context.tab);
+            });
+            if (context.key === "audio-speech") {
+                await refreshAudioVoiceSelect(context);
+            }
+        };
+        const activateWebTab = (context) => {
+            WEB_TAB_BUTTONS.forEach((button) => {
+                button.classList.toggle("active", button === context.tab);
+            });
+        };
+
+        window.gatewayUi.createTabs(sectionTabList, {
+            activation: "manual",
+            getKey: (button) => button.dataset.playgroundSectionTab,
+            initialKey: "web",
+            onActivate: activateSection,
+            onReselect: activateSection,
+            panels: sectionPanels,
+        });
+        window.gatewayUi.createTabs(webTabList, {
+            activation: "manual",
+            getKey: (button) => button.dataset.webTab,
+            initialKey: "search",
+            onActivate: activateWebTab,
+            onReselect: activateWebTab,
+            panels: webPanels,
+        });
+    }
 
     async function loadModels() {
         const response = await apiFetch("/v1/ui/playground/models");
@@ -94,7 +199,8 @@
         if (!models || models.length === 0) {
             const opt = document.createElement("option");
             opt.value = "";
-            opt.textContent = "— No models configured —";
+            opt.dataset.playgroundOptionKey = KEYS.modelsEmpty;
+            opt.textContent = translate(KEYS.modelsEmpty);
             opt.disabled = true;
             opt.selected = true;
             select.appendChild(opt);
@@ -106,19 +212,21 @@
             const opt = document.createElement("option");
             opt.value = name;
             const isFusion = fusionSet && fusionSet.has(name);
-            opt.textContent = isFusion ? `${name} · Fusion` : name;
+            opt.dataset.playgroundModelLabel = name;
+            opt.textContent = isFusion ? `${name} · ${translate(KEYS.modelsFusionSuffix)}` : name;
             if (isFusion) opt.dataset.fusion = "true";
             select.appendChild(opt);
         });
     }
 
-    function setVoiceSelectState(text, disabled) {
+    function setVoiceSelectState(key, disabled) {
         const select = document.getElementById("audioSpeechVoice");
         if (!select) return;
         select.innerHTML = "";
         const opt = document.createElement("option");
         opt.value = "";
-        opt.textContent = text;
+        opt.dataset.playgroundOptionKey = key;
+        opt.textContent = translate(key);
         opt.selected = true;
         select.appendChild(opt);
         select.disabled = Boolean(disabled);
@@ -146,7 +254,8 @@
         select.innerHTML = "";
         const defaultOpt = document.createElement("option");
         defaultOpt.value = "";
-        defaultOpt.textContent = "provider default";
+        defaultOpt.dataset.playgroundOptionKey = KEYS.providerDefault;
+        defaultOpt.textContent = translate(KEYS.providerDefault);
         defaultOpt.selected = true;
         select.appendChild(defaultOpt);
         (voices || [])
@@ -162,21 +271,31 @@
         select.disabled = false;
     }
 
-    async function refreshAudioVoiceSelect() {
+    async function refreshAudioVoiceSelect(activationContext = null) {
+        const requestToken = ++voiceRequestToken;
+        const isStale = () => (
+            requestToken !== voiceRequestToken
+            || (activationContext && (activationContext.signal.aborted || !activationContext.isCurrent()))
+        );
         const modelSelect = document.getElementById("audioSpeechModel");
         const model = modelSelect && !modelSelect.disabled ? modelSelect.value : "";
         if (!model) {
-            setVoiceSelectState("Select a model first", true);
+            setVoiceSelectState(KEYS.modelsSelectFirst, true);
             return;
         }
         if (VOICE_CACHE.has(model)) {
             populateVoiceSelect(VOICE_CACHE.get(model));
             return;
         }
-        setVoiceSelectState("Loading voices...", true);
+        setVoiceSelectState(KEYS.modelsLoadingVoices, true);
         try {
-            const response = await apiFetch(`/v1/audio/voices?model=${encodeURIComponent(model)}`);
+            const response = await apiFetch(
+                `/v1/audio/voices?model=${encodeURIComponent(model)}`,
+                activationContext ? {signal: activationContext.signal} : undefined,
+            );
+            if (isStale()) return;
             const payload = await response.json().catch(() => ({}));
+            if (isStale()) return;
             if (!response.ok) {
                 const detail = payload && typeof payload === "object" ? (payload.detail || JSON.stringify(payload)) : "";
                 throw new Error(detail || `status ${response.status}`);
@@ -184,10 +303,12 @@
             const voices = Array.isArray(payload.data) ? payload.data : [];
             VOICE_CACHE.set(model, voices);
             populateVoiceSelect(voices);
-            setStatus("audio-speech", voices.length ? "" : "Voice catalog is empty; provider default will be used.", false);
+            if (voices.length) clearStatus("audio-speech");
+            else setStatus("audio-speech", KEYS.voiceCatalogEmpty, false);
         } catch (err) {
-            setVoiceSelectState("Voice list unavailable", true);
-            setStatus("audio-speech", `Failed to load voices: ${err.message || err}`, true);
+            if (isStale()) return;
+            setVoiceSelectState(KEYS.modelsVoiceUnavailable, true);
+            setStatus("audio-speech", KEYS.voiceLoadFailed, true, {}, err.message || err);
         }
     }
 
@@ -199,11 +320,71 @@
         });
     }
 
-    function setStatus(kind, text, isError) {
+    function renderStatusElement(el) {
+        const key = el.dataset.statusKey;
+        if (!key) return;
+        let values = {};
+        try {
+            values = JSON.parse(el.dataset.statusValues || "{}");
+        } catch (_error) {
+            values = {};
+        }
+        const summary = el.querySelector(".playground-status-summary");
+        if (summary) summary.textContent = translate(key, values);
+    }
+
+    function setStatus(kind, key, isError, values = {}, detail = null) {
         const el = document.querySelector(`[data-status-for="${kind}"]`);
         if (!el) return;
-        el.textContent = text || "";
+        el.dataset.statusKey = key;
+        el.dataset.statusValues = JSON.stringify(values);
+        let summary = el.querySelector(".playground-status-summary");
+        if (!summary) {
+            summary = document.createElement("span");
+            summary.className = "playground-status-summary";
+            el.appendChild(summary);
+        }
+        let rawDetail = el.querySelector(".playground-status-detail");
+        if (detail != null && String(detail)) {
+            if (!rawDetail) {
+                rawDetail = document.createElement("span");
+                rawDetail.className = "playground-status-detail";
+                rawDetail.lang = "und";
+                rawDetail.dir = "auto";
+                el.append(" — ", rawDetail);
+            }
+            rawDetail.textContent = String(detail);
+        } else if (rawDetail) {
+            rawDetail.previousSibling?.remove();
+            rawDetail.remove();
+        }
+        renderStatusElement(el);
         el.classList.toggle("error", Boolean(isError));
+    }
+
+    function clearStatus(kind) {
+        const el = document.querySelector(`[data-status-for="${kind}"]`);
+        if (!el) return;
+        delete el.dataset.statusKey;
+        delete el.dataset.statusValues;
+        el.textContent = "";
+        el.classList.remove("error");
+    }
+
+    function rerenderStatuses() {
+        document.querySelectorAll("[data-status-key]").forEach(renderStatusElement);
+    }
+
+    function updateModelOptionTranslations() {
+        document.querySelectorAll("option[data-playground-option-key]").forEach((option) => {
+            option.textContent = translate(option.dataset.playgroundOptionKey);
+        });
+        document.querySelectorAll("option[data-playground-model-label]").forEach((option) => {
+            const name = option.dataset.playgroundModelLabel;
+            option.textContent = option.dataset.fusion === "true"
+                ? `${name} · ${translate(KEYS.modelsFusionSuffix)}`
+                : name;
+        });
     }
 
     function setResult(kind, html) {
@@ -271,9 +452,10 @@
         return url;
     }
 
-    function renderDownloadLink(url, fileName, label) {
+    function renderDownloadLink(url, fileName, labelKey = "results.download", labelValues = {}) {
         if (!url) return "";
-        return `<a class="download-link" href="${escapeHtml(url)}" download="${escapeHtml(fileName)}">${escapeHtml(label || "Download")}</a>`;
+        const linkLabel = translatedSpan(labelKey, labelValues);
+        return `<a class="download-link" href="${escapeHtml(url)}" download="${escapeHtml(fileName)}">${linkLabel}</a>`;
     }
 
     function extensionFromContentType(contentType, fallback) {
@@ -303,20 +485,27 @@
     function renderUsage(usage) {
         if (!usage) return "";
         const parts = [];
-        if (usage.prompt_tokens != null) parts.push(`prompt=${escapeHtml(usage.prompt_tokens)}`);
-        if (usage.completion_tokens != null) parts.push(`completion=${escapeHtml(usage.completion_tokens)}`);
-        if (usage.total_tokens != null) parts.push(`total=${escapeHtml(usage.total_tokens)}`);
-        if (usage.cost != null) {
-            const cost = Number(usage.cost);
-            parts.push(Number.isFinite(cost) ? `cost=$${cost.toFixed(6)}` : `cost=${escapeHtml(usage.cost)}`);
+        if (usage.prompt_tokens != null) {
+            parts.push(`${translatedSpan("results.usagePrompt")}: ${runtimeNumberSpan(usage.prompt_tokens)}`);
         }
-        if (usage.credits != null) parts.push(`credits=${escapeHtml(usage.credits)}`);
+        if (usage.completion_tokens != null) {
+            parts.push(`${translatedSpan("results.usageCompletion")}: ${runtimeNumberSpan(usage.completion_tokens)}`);
+        }
+        if (usage.total_tokens != null) {
+            parts.push(`${translatedSpan("results.usageTotal")}: ${runtimeNumberSpan(usage.total_tokens)}`);
+        }
+        if (usage.cost != null) {
+            parts.push(`${translatedSpan("results.usageCost")}: ${runtimeNumberSpan(usage.cost, "currency")}`);
+        }
+        if (usage.credits != null) {
+            parts.push(`${translatedSpan("results.usageCredits")}: ${runtimeNumberSpan(usage.credits)}`);
+        }
         if (parts.length === 0) return "";
-        return `<div class="result-meta"><span>Usage: ${parts.join(" · ")}</span></div>`;
+        return `<div class="result-meta"><span>${translatedSpan("results.usage")}: ${parts.join(" · ")}</span></div>`;
     }
 
     function renderRawDetails(payload) {
-        return `<details class="raw-details"><summary>Raw JSON response</summary><pre class="raw-json">${escapeHtml(
+        return `<details class="raw-details"><summary>${translatedSpan("results.rawJson")}</summary><pre class="raw-json">${escapeHtml(
             JSON.stringify(payload, null, 2)
         )}</pre></details>`;
     }
@@ -343,7 +532,7 @@
                 : "";
             return `
                 <article class="chat-message ${role}">
-                    <div class="chat-role">${role === "assistant" ? "Assistant" : "User"}</div>
+                    <div class="chat-role">${translatedSpan(role === "assistant" ? "results.assistant" : "results.user")}</div>
                     <div class="chat-content">${content}</div>
                     ${fusionBlock}
                 </article>
@@ -359,19 +548,19 @@
         return `${escapeHtml(String(provider))}/${escapeHtml(String(model))}`;
     }
 
-    function renderFusionList(title, values) {
+    function renderFusionList(titleKey, values) {
         if (!Array.isArray(values) || values.length === 0) return "";
         const items = values.map((value) => `<li>${escapeHtml(String(value))}</li>`).join("");
-        return `<div class="fusion-analysis-section"><h4>${escapeHtml(title)}</h4><ul>${items}</ul></div>`;
+        return `<div class="fusion-analysis-section"><h4>${translatedSpan(titleKey)}</h4><ul>${items}</ul></div>`;
     }
 
     function renderFusionAnalysis(analysis) {
         if (!analysis || typeof analysis !== "object") return "";
         if (typeof analysis.raw === "string") {
-            return `<div class="fusion-analysis-section"><h4>Analysis (raw)</h4><pre class="raw-json">${escapeHtml(analysis.raw)}</pre></div>`;
+            return `<div class="fusion-analysis-section"><h4>${translatedSpan("results.analysisRaw")}</h4><pre class="raw-json">${escapeHtml(analysis.raw)}</pre></div>`;
         }
         if (typeof analysis.error === "string") {
-            return `<div class="fusion-analysis-section"><h4>Analysis unavailable</h4><p>${escapeHtml(analysis.error)}</p></div>`;
+            return `<div class="fusion-analysis-section"><h4>${translatedSpan("results.analysisUnavailable")}</h4><p>${escapeHtml(analysis.error)}</p></div>`;
         }
         const insights = Array.isArray(analysis.per_model_insights)
             ? analysis.per_model_insights
@@ -381,10 +570,10 @@
                 .filter(Boolean)
             : [];
         return [
-            renderFusionList("Agreements", analysis.agreements),
-            renderFusionList("Disputes", analysis.disputes),
-            renderFusionList("Per-model insights", insights),
-            renderFusionList("Blind spots", analysis.blind_spots),
+            renderFusionList("results.agreements", analysis.agreements),
+            renderFusionList("results.disputes", analysis.disputes),
+            renderFusionList("results.perModelInsights", insights),
+            renderFusionList("results.blindSpots", analysis.blind_spots),
         ].join("");
     }
 
@@ -392,28 +581,28 @@
         if (!Array.isArray(panel) || panel.length === 0) return "";
         const rows = panel.map((member, index) => {
             if (!member || typeof member !== "object") return "";
-            const label = `Model ${index + 1} (${renderFusionAttribution(member)})`;
+            const label = `${translatedSpan("results.modelMember", {number: index + 1})} (${renderFusionAttribution(member)})`;
             let body;
             if (typeof member.error === "string") {
-                body = `<p class="fusion-panel-error">Error: ${escapeHtml(member.error)}</p>`;
+                body = `<p class="fusion-panel-error">${translatedSpan("results.error")}: ${escapeHtml(member.error)}</p>`;
             } else if (typeof member.content === "string") {
                 body = `<div class="fusion-panel-content">${renderMarkdown(member.content)}</div>`;
             } else {
-                body = `<p class="fusion-panel-content muted">(answer hidden — enable include_details)</p>`;
+                body = `<p class="fusion-panel-content muted">${translatedSpan("results.answerHidden")}</p>`;
             }
             return `<details class="fusion-panel-item"><summary>${label}</summary>${body}</details>`;
         }).join("");
-        return `<div class="fusion-panel-section"><h4>Panel answers</h4>${rows}</div>`;
+        return `<div class="fusion-panel-section"><h4>${translatedSpan("results.panelAnswers")}</h4>${rows}</div>`;
     }
 
     function renderFusionBlock(fusion) {
         if (!fusion || typeof fusion !== "object") return "";
-        const attribution = `Main: ${renderFusionAttribution(fusion.main)} · Judge: ${renderFusionAttribution(fusion.judge)}`;
+        const attribution = `${translatedSpan("results.main")}: ${renderFusionAttribution(fusion.main)} · ${translatedSpan("results.judge")}: ${renderFusionAttribution(fusion.judge)}`;
         const analysis = renderFusionAnalysis(fusion.analysis);
         const panel = renderFusionPanel(fusion.panel);
         return `
             <details class="fusion-block">
-                <summary>Fusion ensemble · panel &amp; analysis</summary>
+                <summary>${translatedSpan("results.fusionSummary")}</summary>
                 <div class="fusion-meta">${attribution}</div>
                 ${analysis}
                 ${panel}
@@ -445,63 +634,63 @@
             .map((img) => (typeof img === "string" ? img : img && img.url))
             .filter(Boolean);
         if (links.length === 0) return "";
-        return `<div class="images-summary">Images: ${links
+        return `<div class="images-summary">${translatedSpan("results.images")}: ${links
             .map((url) => renderExternalLink(url, url))
             .join(" ")}</div>`;
     }
 
     function renderSearchResult(payload) {
         const hits = Array.isArray(payload.data) ? payload.data : [];
-        const meta = `<div class="result-meta"><span>Model: <code>${escapeHtml(payload.model)}</code></span>` +
-            `<span>Results: ${hits.length}</span></div>`;
+        const meta = `<div class="result-meta"><span>${translatedSpan("results.model")}: <code>${escapeHtml(payload.model)}</code></span>` +
+            `<span>${translatedSpan("results.resultCount", {count: hits.length})}</span></div>`;
         const items = hits.length === 0
-            ? "<p><em>No results.</em></p>"
+            ? `<p><em>${translatedSpan("results.noResults")}</em></p>`
             : hits.map((h) => `
                 <div class="search-hit">
                     ${renderExternalLink(h.url, h.title || h.url)}
                     <div class="snippet">${escapeHtml(h.snippet || "")}</div>
                     ${renderImagesSummary(h.images)}
-                    ${h.raw_content ? `<details class="raw-content-details"><summary>Raw content</summary><div class="markdown-render">${renderMarkdown(h.raw_content)}</div></details>` : ""}
+                    ${h.raw_content ? `<details class="raw-content-details"><summary>${translatedSpan("results.rawContent")}</summary><div class="markdown-render">${renderMarkdown(h.raw_content)}</div></details>` : ""}
                 </div>
             `).join("");
-        return `<h3>Search results</h3>${meta}${items}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+        return `<h3>${translatedSpan("results.searchTitle")}</h3>${meta}${items}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
     function renderReadResult(payload) {
-        const meta = `<div class="result-meta"><span>Model: <code>${escapeHtml(payload.model)}</code></span>` +
-            `<span>URL: ${renderExternalLink(payload.url, payload.url)}</span></div>`;
+        const meta = `<div class="result-meta"><span>${translatedSpan("results.model")}: <code>${escapeHtml(payload.model)}</code></span>` +
+            `<span>${translatedSpan("results.url")}: ${renderExternalLink(payload.url, payload.url)}</span></div>`;
         const title = payload.title ? `<h4>${escapeHtml(payload.title)}</h4>` : "";
         const body = `<div class="markdown-render">${renderMarkdown(payload.content || "")}</div>`;
-        return `<h3>Fetched article</h3>${meta}${title}${renderImagesSummary(payload.images)}${body}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+        return `<h3>${translatedSpan("results.fetchedArticle")}</h3>${meta}${title}${renderImagesSummary(payload.images)}${body}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
     function renderTavilySearchResult(payload) {
         const hits = Array.isArray(payload.results) ? payload.results : [];
-        const meta = `<div class="result-meta"><span>Results: ${hits.length}</span>` +
-            `<span>Response time: ${escapeHtml(payload.response_time || "")}s</span></div>`;
+        const meta = `<div class="result-meta"><span>${translatedSpan("results.resultCount", {count: hits.length})}</span>` +
+            `<span>${translatedSpan("results.responseTime")}: ${runtimeNumberSpan(payload.response_time)} ${translatedSpan("results.secondsUnit")}</span></div>`;
         const topImages = renderImagesSummary(payload.images);
         const items = hits.length === 0
-            ? "<p><em>No results.</em></p>"
+            ? `<p><em>${translatedSpan("results.noResults")}</em></p>`
             : hits.map((h) => `
                 <div class="search-hit">
                     ${renderExternalLink(h.url, h.title || h.url)}
                     <div class="snippet">${escapeHtml(h.content || "")}</div>
-                    <div class="result-meta"><span>Score: ${escapeHtml(h.score || "")}</span></div>
+                    <div class="result-meta"><span>${translatedSpan("results.score")}: ${runtimeNumberSpan(h.score)}</span></div>
                     ${renderImagesSummary(h.images)}
-                    ${h.raw_content ? `<details class="raw-content-details"><summary>Raw content</summary><div class="markdown-render">${renderMarkdown(h.raw_content)}</div></details>` : ""}
+                    ${h.raw_content ? `<details class="raw-content-details"><summary>${translatedSpan("results.rawContent")}</summary><div class="markdown-render">${renderMarkdown(h.raw_content)}</div></details>` : ""}
                 </div>
             `).join("");
-        return `<h3>Tavily search results</h3>${meta}${topImages}${items}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+        return `<h3>${translatedSpan("results.tavilySearchTitle")}</h3>${meta}${topImages}${items}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
     function renderTavilyExtractResult(payload) {
         const results = Array.isArray(payload.results) ? payload.results : [];
         const failed = Array.isArray(payload.failed_results) ? payload.failed_results : [];
-        const meta = `<div class="result-meta"><span>Results: ${results.length}</span>` +
-            `<span>Failed: ${failed.length}</span>` +
-            `<span>Response time: ${escapeHtml(payload.response_time || "")}s</span></div>`;
+        const meta = `<div class="result-meta"><span>${translatedSpan("results.resultCount", {count: results.length})}</span>` +
+            `<span>${translatedSpan("results.failedCount", {count: failed.length})}</span>` +
+            `<span>${translatedSpan("results.responseTime")}: ${runtimeNumberSpan(payload.response_time)} ${translatedSpan("results.secondsUnit")}</span></div>`;
         const items = results.length === 0
-            ? "<p><em>No extracted pages.</em></p>"
+            ? `<p><em>${translatedSpan("results.noExtractedPages")}</em></p>`
             : results.map((item) => `
                 <div class="search-hit">
                     ${renderExternalLink(item.url, item.url)}
@@ -510,20 +699,20 @@
                 </div>
             `).join("");
         const failures = failed.length
-            ? `<h4>Failed URLs</h4><ul class="sources-list">${failed
+            ? `<h4>${translatedSpan("results.failedUrls")}</h4><ul class="sources-list">${failed
                 .map((item) => `<li>${escapeHtml(item.url)} — ${escapeHtml(item.error || "")}</li>`)
                 .join("")}</ul>`
             : "";
-        return `<h3>Tavily extract results</h3>${meta}${items}${failures}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+        return `<h3>${translatedSpan("results.tavilyExtractTitle")}</h3>${meta}${items}${failures}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
     function renderResearchResult(payload) {
-        const meta = `<div class="result-meta"><span>Model: <code>${escapeHtml(payload.model)}</code></span>` +
-            `<span>Sources: ${(payload.sources || []).length}</span>` +
-            `<span>Articles: ${(payload.articles || []).length}</span></div>`;
+        const meta = `<div class="result-meta"><span>${translatedSpan("results.model")}: <code>${escapeHtml(payload.model)}</code></span>` +
+            `<span>${translatedSpan("results.sourcesCount", {count: (payload.sources || []).length})}</span>` +
+            `<span>${translatedSpan("results.articlesCount", {count: (payload.articles || []).length})}</span></div>`;
         const output = `<div class="markdown-render">${renderMarkdown(payload.output || "")}</div>`;
         const sources = (payload.sources || []).length
-            ? `<h4>Sources</h4><ul class="sources-list">${payload.sources
+            ? `<h4>${translatedSpan("results.sources")}</h4><ul class="sources-list">${payload.sources
                 .map((src) => {
                     const url = typeof src === "string" ? src : (src.url || "");
                     const title = typeof src === "string" ? src : (src.title || src.url || "");
@@ -531,7 +720,7 @@
                 })
                 .join("")}</ul>`
             : "";
-        return `<h3>Research output</h3>${meta}${output}${sources}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+        return `<h3>${translatedSpan("results.researchTitle")}</h3>${meta}${output}${sources}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
     function renderImageGallery(images) {
@@ -545,22 +734,22 @@
             </figure>
         `).join("");
         if (!cards) return "";
-        return `<h4>Generated illustrations (${images.length})</h4><div class="images-gallery">${cards}</div>`;
+        return `<h4>${translatedSpan("results.generatedIllustrations", {count: images.length})}</h4><div class="images-gallery">${cards}</div>`;
     }
 
     function renderDeepResearchResult(payload) {
         const images = Array.isArray(payload.images) ? payload.images : [];
-        const meta = `<div class="result-meta"><span>Model: <code>${escapeHtml(payload.model)}</code></span>` +
-            `<span>Sources: ${(payload.source_urls || []).length}</span>` +
-            `<span>Images: ${images.length}</span></div>`;
+        const meta = `<div class="result-meta"><span>${translatedSpan("results.model")}: <code>${escapeHtml(payload.model)}</code></span>` +
+            `<span>${translatedSpan("results.sourcesCount", {count: (payload.source_urls || []).length})}</span>` +
+            `<span>${translatedSpan("results.imagesCount", {count: images.length})}</span></div>`;
         const output = `<div class="markdown-render">${renderMarkdown(payload.output || "")}</div>`;
         const gallery = renderImageGallery(images);
         const sources = (payload.source_urls || []).length
-            ? `<h4>Source URLs</h4><ul class="sources-list">${payload.source_urls
+            ? `<h4>${translatedSpan("results.sourceUrls")}</h4><ul class="sources-list">${payload.source_urls
                 .map((url) => `<li>${renderExternalLink(url, url)}</li>`)
                 .join("")}</ul>`
             : "";
-        return `<h3>Deep research report</h3>${meta}${output}${gallery}${sources}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+        return `<h3>${translatedSpan("results.deepResearchTitle")}</h3>${meta}${output}${gallery}${sources}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
     function dataImageUrl(item) {
@@ -570,41 +759,41 @@
         return "";
     }
 
-    function renderImageOperationResult(payload, title) {
+    function renderImageOperationResult(payload, titleKey) {
         const items = Array.isArray(payload.data) ? payload.data : [];
         const cards = items.map((item, index) => {
             const src = dataImageUrl(item);
             if (!src) return "";
             const caption = item.revised_prompt || item.prompt || "";
-            const fileName = `${title.toLowerCase().includes("edit") ? "edited" : "generated"}-image-${index + 1}.png`;
+            const fileName = `${titleKey.includes("edited") ? "edited" : "generated"}-image-${index + 1}.png`;
             return `
                 <figure class="image-card">
                     <img src="${escapeHtml(src)}" alt="${escapeHtml(caption)}" loading="lazy">
                     ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
-                    ${renderDownloadLink(src, fileName, "Download image")}
+                    ${renderDownloadLink(src, fileName, "results.downloadImage")}
                 </figure>
             `;
         }).filter(Boolean).join("");
-        const gallery = cards ? `<div class="images-gallery">${cards}</div>` : "<p><em>No image payloads in response.</em></p>";
-        return `<h3>${escapeHtml(title)}</h3>${gallery}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+        const gallery = cards ? `<div class="images-gallery">${cards}</div>` : `<p><em>${translatedSpan("results.noImagePayloads")}</em></p>`;
+        return `<h3>${translatedSpan(titleKey)}</h3>${gallery}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
     function renderAudioSpeechResult(blobUrl, contentType, sizeBytes, fileName) {
-        return `<h3>Generated speech</h3>` +
-            `<div class="result-meta"><span>Content-Type: <code>${escapeHtml(contentType || "audio/mpeg")}</code></span>` +
-            `<span>Bytes: ${Number(sizeBytes || 0).toLocaleString()}</span></div>` +
-            `<div class="result-actions">${renderDownloadLink(blobUrl, fileName || "speech.mp3", "Download audio")}</div>` +
+        return `<h3>${translatedSpan("results.generatedSpeechTitle")}</h3>` +
+            `<div class="result-meta"><span>${translatedSpan("results.contentType")}: <code>${escapeHtml(contentType || "audio/mpeg")}</code></span>` +
+            `<span>${translatedSpan("results.bytes", {count: Number(sizeBytes || 0)})}</span></div>` +
+            `<div class="result-actions">${renderDownloadLink(blobUrl, fileName || "speech.mp3", "results.downloadAudio")}</div>` +
             `<audio class="audio-player" controls src="${escapeHtml(blobUrl)}"></audio>`;
     }
 
-    function renderPlainOrJsonResult(payload, title, download) {
-        const actions = download ? `<div class="result-actions">${renderDownloadLink(download.url, download.fileName, download.label)}</div>` : "";
+    function renderPlainOrJsonResult(payload, titleKey, download) {
+        const actions = download ? `<div class="result-actions">${renderDownloadLink(download.url, download.fileName, download.labelKey)}</div>` : "";
         if (payload && typeof payload === "object" && !payload.__plainText) {
             const text = payload.text || payload.output || payload.content || "";
             const body = text ? `<div class="markdown-render">${renderMarkdown(text)}</div>` : "";
-            return `<h3>${escapeHtml(title)}</h3>${actions}${body}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
+            return `<h3>${translatedSpan(titleKey)}</h3>${actions}${body}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
         }
-        return `<h3>${escapeHtml(title)}</h3>${actions}<pre class="raw-json">${escapeHtml(payload && payload.text ? payload.text : "")}</pre>`;
+        return `<h3>${translatedSpan(titleKey)}</h3>${actions}<pre class="raw-json">${escapeHtml(payload && payload.text ? payload.text : "")}</pre>`;
     }
 
     function formatDuration(seconds) {
@@ -612,8 +801,8 @@
         const total = Math.max(0, Math.round(Number(seconds)));
         const minutes = Math.floor(total / 60);
         const rest = total % 60;
-        if (minutes <= 0) return `${rest}s`;
-        return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+        if (minutes <= 0) return translate("results.durationSeconds", {seconds: rest});
+        return translate("results.durationMinutes", {minutes, seconds: rest});
     }
 
     function normalizePercent(value) {
@@ -631,8 +820,8 @@
                 const artifact = encodeURIComponent(String(item.artifact));
                 const href = `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}/download/${artifact}?model=${encodeURIComponent(model)}`;
                 const fileName = item.filename || `${item.artifact}`;
-                const label = item.label ? `Download ${item.label}` : "Download artifact";
-                return renderDownloadLink(href, fileName, label);
+                const labelKey = item.label ? "results.downloadNamedArtifact" : "results.downloadArtifact";
+                return renderDownloadLink(href, fileName, labelKey, {name: item.label || ""});
             })
             .filter(Boolean)
             .join("");
@@ -658,21 +847,21 @@
         const sections = [];
         if (result.markdown) {
             sections.push(
-                `<details class="raw-content-details"><summary>Markdown preview</summary><div class="markdown-render">${renderMarkdown(
+                `<details class="raw-content-details"><summary>${translatedSpan("results.markdownPreview")}</summary><div class="markdown-render">${renderMarkdown(
                     String(result.markdown).slice(0, 12000)
                 )}</div></details>`
             );
         }
         if (result.ocr_preview) {
             sections.push(
-                `<details class="raw-content-details"><summary>OCR preview</summary><pre class="raw-json">${escapeHtml(
+                `<details class="raw-content-details"><summary>${translatedSpan("results.ocrPreview")}</summary><pre class="raw-json">${escapeHtml(
                     String(result.ocr_preview)
                 )}</pre></details>`
             );
         }
         if (result.mathpix_preview) {
             sections.push(
-                `<details class="raw-content-details"><summary>Math OCR preview</summary><pre class="raw-json">${escapeHtml(
+                `<details class="raw-content-details"><summary>${translatedSpan("results.mathOcrPreview")}</summary><pre class="raw-json">${escapeHtml(
                     typeof result.mathpix_preview === "string"
                         ? result.mathpix_preview
                         : JSON.stringify(result.mathpix_preview, null, 2)
@@ -700,22 +889,22 @@
 
     function renderPdfJob(job, model, result) {
         const percent = normalizePercent(job && job.percent);
-        const elapsed = formatDuration(job && job.elapsed_seconds);
-        const eta = formatDuration(job && job.eta_seconds);
+        const elapsed = durationSpan(job && job.elapsed_seconds);
+        const eta = durationSpan(job && job.eta_seconds);
         const metaItems = [
-            `Status: <code>${escapeHtml((job && job.status) || "queued")}</code>`,
-            `Stage: <code>${escapeHtml((job && job.stage) || "")}</code>`,
-            `Progress: ${Math.round(percent)}%`,
+            `${translatedSpan("results.status")}: <code>${escapeHtml((job && job.status) || "queued")}</code>`,
+            `${translatedSpan("results.stage")}: <code>${escapeHtml((job && job.stage) || "")}</code>`,
+            translatedSpan("results.progress", {percent: Math.round(percent)}),
         ];
-        if (job && job.current != null && job.total != null) metaItems.push(`Pages: ${escapeHtml(job.current)}/${escapeHtml(job.total)}`);
-        if (elapsed) metaItems.push(`Elapsed: ${escapeHtml(elapsed)}`);
-        if (eta) metaItems.push(`ETA: ${escapeHtml(eta)}`);
+        if (job && job.current != null && job.total != null) metaItems.push(`${translatedSpan("results.pages")}: ${runtimeNumberSpan(job.current)}/${runtimeNumberSpan(job.total)}`);
+        if (elapsed) metaItems.push(`${translatedSpan("results.elapsed")}: ${elapsed}`);
+        if (eta) metaItems.push(`${translatedSpan("results.eta")}: ${eta}`);
         const meta = `<div class="result-meta">${metaItems.map((item) => `<span>${item}</span>`).join("")}</div>`;
         const message = job && job.message ? `<p>${escapeHtml(job.message)}</p>` : "";
-        const meter = `<div class="progress-meter" aria-label="PDF conversion progress"><span style="width: ${percent}%"></span></div>`;
+        const meter = `<div class="progress-meter" aria-label="${escapeHtml(translate("results.pdfProgressAria"))}" data-playground-i18n-aria="results.pdfProgressAria"><span style="width: ${percent}%"></span></div>`;
         const downloads = renderPdfDownloadLinks(job, model);
         const preview = renderPdfResultPreview(result);
-        return `<h3>PDF conversion job</h3>${downloads}${meta}${meter}${message}${renderPdfProgressEvents(job)}${preview}${renderRawDetails({
+        return `<h3>${translatedSpan("results.pdfTitle")}</h3>${downloads}${meta}${meter}${message}${renderPdfProgressEvents(job)}${preview}${renderRawDetails({
             job: redactPdfBinaryFields(job),
             result: redactPdfBinaryFields(result),
         })}`;
@@ -750,6 +939,13 @@
         return data;
     }
 
+    function createLocalizedValidationError(statusKey, statusValues) {
+        const error = new Error();
+        error.statusKey = statusKey;
+        error.statusValues = statusValues;
+        return error;
+    }
+
     function readMultipartFormData(form) {
         const formData = new FormData();
         for (const el of Array.from(form.elements)) {
@@ -758,7 +954,10 @@
                 const files = Array.from(el.files || []);
                 const maxFiles = Number(el.dataset.maxFiles || 0);
                 if (maxFiles > 0 && files.length > maxFiles) {
-                    throw new Error(`Select no more than ${maxFiles} files for ${el.name}.`);
+                    throw createLocalizedValidationError(KEYS.tooManyFiles, {
+                        count: maxFiles,
+                        field: el.name,
+                    });
                 }
                 files.forEach((file) => formData.append(el.name, file, file.name));
                 continue;
@@ -800,7 +999,7 @@
             return {
                 url: createDownloadUrl(kind, payloadDownloadText(payload, rawText), contentType || "text/plain"),
                 fileName: `transcription.${extension}`,
-                label: "Download transcription",
+                labelKey: "results.downloadTranscription",
             };
         }
         return null;
@@ -809,12 +1008,12 @@
     async function submitRequest(kind, url, form, renderer) {
         const body = readFormData(form);
         if (!body.model) {
-            setStatus(kind, "Select a model first.", true);
+            setStatus(kind, KEYS.selectModelFirst, true);
             return;
         }
         const button = form.querySelector(".run-button");
         button.disabled = true;
-        setStatus(kind, "Running…", false);
+        setStatus(kind, KEYS.running, false);
         const startedAt = performance.now();
         try {
             const response = await apiFetch(url, {
@@ -831,15 +1030,15 @@
             }
             if (!response.ok) {
                 const detail = typeof payload === "object" && payload ? (payload.detail || JSON.stringify(payload)) : String(payload);
-                setStatus(kind, `Error ${response.status}: ${detail}`, true);
+                setStatus(kind, KEYS.error, true, {status: response.status}, detail);
                 setResult(kind, `<pre class="raw-json">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`);
                 return;
             }
             const durationMs = Math.round(performance.now() - startedAt);
-            setStatus(kind, `Done in ${(durationMs / 1000).toFixed(2)}s`, false);
+            setStatus(kind, KEYS.done, false, {seconds: durationMs / 1000});
             setResult(kind, renderer(payload));
         } catch (err) {
-            setStatus(kind, `Request failed: ${err.message || err}`, true);
+            setStatus(kind, KEYS.requestFailed, true, {}, err.message || err);
         } finally {
             button.disabled = false;
         }
@@ -850,11 +1049,11 @@
         const input = form.elements.message;
         const content = input ? String(input.value || "").trim() : "";
         if (!model) {
-            setStatus("chat", "Select a model first.", true);
+            setStatus("chat", KEYS.selectModelFirst, true);
             return;
         }
         if (!content) {
-            setStatus("chat", "Enter a message.", true);
+            setStatus("chat", KEYS.enterMessage, true);
             return;
         }
 
@@ -864,7 +1063,7 @@
         ]);
         const button = form.querySelector(".run-button");
         button.disabled = true;
-        setStatus("chat", "Running…", false);
+        setStatus("chat", KEYS.running, false);
         const startedAt = performance.now();
         try {
             // Only standard {role, content} fields go upstream; any locally
@@ -892,7 +1091,7 @@
             }
             if (!response.ok) {
                 const detail = typeof payload === "object" && payload ? (payload.detail || JSON.stringify(payload)) : String(payload);
-                setStatus("chat", `Error ${response.status}: ${detail}`, true);
+                setStatus("chat", KEYS.error, true, {status: response.status}, detail);
                 return;
             }
 
@@ -908,9 +1107,13 @@
             if (input) input.value = "";
             renderSimpleChatTranscript();
             const durationMs = Math.round(performance.now() - startedAt);
-            setStatus("chat", `Done in ${(durationMs / 1000).toFixed(2)}s · context ${simpleChatMessages.length}/${CHAT_CONTEXT_LIMIT}`, false);
+            setStatus("chat", KEYS.chatDone, false, {
+                seconds: durationMs / 1000,
+                count: simpleChatMessages.length,
+                limit: CHAT_CONTEXT_LIMIT,
+            });
         } catch (err) {
-            setStatus("chat", `Request failed: ${err.message || err}`, true);
+            setStatus("chat", KEYS.requestFailed, true, {}, err.message || err);
         } finally {
             button.disabled = false;
         }
@@ -921,16 +1124,22 @@
         let body;
         try {
             body = readMultipartFormData(form);
-        } catch (err) {
-            setStatus(kind, err.message || String(err), true);
+        } catch (error) {
+            setStatus(
+                kind,
+                error.statusKey || KEYS.requestFailed,
+                true,
+                error.statusValues || {},
+                error.statusKey ? null : (error.message || String(error)),
+            );
             return;
         }
         if (!body.get("model")) {
-            setStatus(kind, "Select a model first.", true);
+            setStatus(kind, KEYS.selectModelFirst, true);
             return;
         }
         button.disabled = true;
-        setStatus(kind, "Running…", false);
+        setStatus(kind, KEYS.running, false);
         const startedAt = performance.now();
         try {
             const response = await apiFetch(url, {
@@ -951,16 +1160,16 @@
             }
             if (!response.ok) {
                 const detail = payload && typeof payload === "object" ? (payload.detail || payload.text || JSON.stringify(payload)) : String(payload);
-                setStatus(kind, `Error ${response.status}: ${detail}`, true);
+                setStatus(kind, KEYS.error, true, {status: response.status}, detail);
                 setResult(kind, `<pre class="raw-json">${escapeHtml(typeof payload === "string" ? payload : JSON.stringify(payload, null, 2))}</pre>`);
                 return;
             }
             const durationMs = Math.round(performance.now() - startedAt);
-            setStatus(kind, `Done in ${(durationMs / 1000).toFixed(2)}s`, false);
+            setStatus(kind, KEYS.done, false, {seconds: durationMs / 1000});
             const download = buildMultipartDownload(kind, form, payload, text, contentType);
             setResult(kind, renderer(payload, download));
         } catch (err) {
-            setStatus(kind, `Request failed: ${err.message || err}`, true);
+            setStatus(kind, KEYS.requestFailed, true, {}, err.message || err);
         } finally {
             button.disabled = false;
         }
@@ -991,18 +1200,24 @@
         let body;
         try {
             body = readMultipartFormData(form);
-        } catch (err) {
-            setStatus(kind, err.message || String(err), true);
+        } catch (error) {
+            setStatus(
+                kind,
+                error.statusKey || KEYS.requestFailed,
+                true,
+                error.statusValues || {},
+                error.statusKey ? null : (error.message || String(error)),
+            );
             return;
         }
         const model = String(body.get("model") || "").trim();
         if (!model) {
-            setStatus(kind, "Select a model first.", true);
+            setStatus(kind, KEYS.selectModelFirst, true);
             return;
         }
 
         button.disabled = true;
-        setStatus(kind, "Uploading PDF…", false);
+        setStatus(kind, KEYS.uploadingPdf, false);
         const startedAt = performance.now();
         try {
             let job = await fetchPdfJobJson("/v1/pdf/jobs", {
@@ -1016,14 +1231,26 @@
                 job = await fetchPdfJobJson(
                     `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}?model=${encodeURIComponent(model)}`
                 );
-                setStatus(kind, `${job.message || job.status || "Running"} · ${Math.round(normalizePercent(job.percent))}%`, false);
+                setStatus(
+                    kind,
+                    KEYS.pdfRunning,
+                    false,
+                    {percent: Math.round(normalizePercent(job.percent))},
+                    job.message || job.status || null,
+                );
                 setResult(kind, renderPdfJob(job, model));
             }
 
             const durationMs = Math.round(performance.now() - startedAt);
             if (job.status === "failed") {
                 const detail = job.error ? JSON.stringify(job.error) : (job.message || "Conversion failed");
-                setStatus(kind, `Failed in ${(durationMs / 1000).toFixed(2)}s: ${detail}`, true);
+                setStatus(
+                    kind,
+                    KEYS.pdfFailed,
+                    true,
+                    {seconds: durationMs / 1000},
+                    detail,
+                );
                 setResult(kind, renderPdfJob(job, model));
                 return;
             }
@@ -1035,10 +1262,13 @@
                 );
             }
             const downloadCount = Array.isArray(job.downloads) ? job.downloads.length : 0;
-            setStatus(kind, `Done in ${(durationMs / 1000).toFixed(2)}s · downloads: ${downloadCount}`, downloadCount === 0);
+            setStatus(kind, KEYS.pdfDone, downloadCount === 0, {
+                seconds: durationMs / 1000,
+                count: downloadCount,
+            });
             setResult(kind, renderPdfJob(job, model, result));
         } catch (err) {
-            setStatus(kind, `Request failed: ${err.message || err}`, true);
+            setStatus(kind, KEYS.requestFailed, true, {}, err.message || err);
         } finally {
             button.disabled = false;
         }
@@ -1047,12 +1277,12 @@
     async function submitAudioSpeechRequest(kind, url, form) {
         const body = readFormData(form);
         if (!body.model) {
-            setStatus(kind, "Select a model first.", true);
+            setStatus(kind, KEYS.selectModelFirst, true);
             return;
         }
         const button = form.querySelector(".run-button");
         button.disabled = true;
-        setStatus(kind, "Running…", false);
+        setStatus(kind, KEYS.running, false);
         const startedAt = performance.now();
         try {
             const response = await apiFetch(url, {
@@ -1070,7 +1300,7 @@
                     payload = {detail: text};
                 }
                 const detail = payload.detail || JSON.stringify(payload);
-                setStatus(kind, `Error ${response.status}: ${detail}`, true);
+                setStatus(kind, KEYS.error, true, {status: response.status}, detail);
                 setResult(kind, `<pre class="raw-json">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`);
                 return;
             }
@@ -1079,10 +1309,10 @@
             const extension = body.response_format || extensionFromContentType(contentType, "mp3");
             const fileName = `speech.${extension}`;
             const durationMs = Math.round(performance.now() - startedAt);
-            setStatus(kind, `Done in ${(durationMs / 1000).toFixed(2)}s`, false);
+            setStatus(kind, KEYS.done, false, {seconds: durationMs / 1000});
             setResult(kind, renderAudioSpeechResult(blobUrl, contentType, blob.size, fileName));
         } catch (err) {
-            setStatus(kind, `Request failed: ${err.message || err}`, true);
+            setStatus(kind, KEYS.requestFailed, true, {}, err.message || err);
         } finally {
             button.disabled = false;
         }
@@ -1120,7 +1350,7 @@
                 const input = form.elements.message;
                 if (input) input.value = "";
                 renderSimpleChatTranscript();
-                setStatus("chat", "Chat reset.", false);
+                setStatus("chat", KEYS.chatReset, false);
             });
         }
     }
@@ -1152,9 +1382,64 @@
         });
     }
 
+    function captureLocaleUiState() {
+        const activeElement = document.activeElement;
+        const scrollElements = Array.from(document.querySelectorAll(
+            ".playground-result, .chat-transcript"
+        ));
+        return {
+            activeElement,
+            selectionStart: typeof activeElement?.selectionStart === "number"
+                ? activeElement.selectionStart
+                : null,
+            selectionEnd: typeof activeElement?.selectionEnd === "number"
+                ? activeElement.selectionEnd
+                : null,
+            windowX: window.scrollX,
+            windowY: window.scrollY,
+            scrollPositions: scrollElements.map((element) => ({
+                element,
+                left: element.scrollLeft,
+                top: element.scrollTop,
+            })),
+        };
+    }
+
+    function restoreLocaleUiState(state) {
+        state.scrollPositions.forEach(({element, left, top}) => {
+            if (!element.isConnected) return;
+            element.scrollLeft = left;
+            element.scrollTop = top;
+        });
+        window.scrollTo(state.windowX, state.windowY);
+        if (state.activeElement?.isConnected) {
+            state.activeElement.focus({preventScroll: true});
+            if (state.selectionStart !== null && typeof state.activeElement.setSelectionRange === "function") {
+                state.activeElement.setSelectionRange(state.selectionStart, state.selectionEnd);
+            }
+        }
+    }
+
+    function rerenderLocale() {
+        const uiState = pendingLocaleUiState || captureLocaleUiState();
+        pendingLocaleUiState = null;
+        updateDynamicTranslations();
+        updateRuntimeFormats();
+        updateModelOptionTranslations();
+        rerenderStatuses();
+        restoreLocaleUiState(uiState);
+    }
+
+    function captureLocaleChange(event) {
+        if (event.target?.id === "localeSelect") {
+            pendingLocaleUiState = captureLocaleUiState();
+        }
+    }
+
     async function bootstrap() {
-        activateSection("web");
-        activateWebTab("search");
+        await i18n.ready;
+        Theme.attachToggle("darkModeToggle");
+        setupPlaygroundTabs();
         wireSimpleChatForm();
         wireForm("search", "searchForm", "/v1/web/search", renderSearchResult);
         wireForm("read", "readForm", "/v1/web/read", renderReadResult);
@@ -1165,9 +1450,11 @@
         wireAudioVoiceCatalog();
         wireAudioSpeechForm();
         wirePdfConversionForm();
-        wireMultipartForm("audio-transcription", "audioTranscriptionForm", "/v1/audio/transcriptions", (payload, download) => renderPlainOrJsonResult(payload, "Transcription result", download));
-        wireForm("image-generation", "imageGenerationForm", "/v1/images/generations", (payload) => renderImageOperationResult(payload, "Generated images"));
-        wireMultipartForm("image-edit", "imageEditForm", "/v1/images/edits", (payload) => renderImageOperationResult(payload, "Edited images"));
+        wireMultipartForm("audio-transcription", "audioTranscriptionForm", "/v1/audio/transcriptions", (payload, download) => renderPlainOrJsonResult(payload, "results.transcriptionTitle", download));
+        wireForm("image-generation", "imageGenerationForm", "/v1/images/generations", (payload) => renderImageOperationResult(payload, "results.generatedImagesTitle"));
+        wireMultipartForm("image-edit", "imageEditForm", "/v1/images/edits", (payload) => renderImageOperationResult(payload, "results.editedImagesTitle"));
+        document.addEventListener("change", captureLocaleChange, {capture: true});
+        unsubscribeLocale = i18n.subscribe(rerenderLocale);
         try {
             const models = await loadModels();
             fusionModelNames = new Set(models.fusion || []);
@@ -1178,10 +1465,15 @@
             syncChatFusionOptions();
         } catch (err) {
             STATUS_KINDS.forEach((kind) => {
-                setStatus(kind, `Failed to load models: ${err.message || err}`, true);
+                setStatus(kind, KEYS.modelsLoadFailed, true, {}, err.message || err);
             });
         }
     }
+
+    window.addEventListener("beforeunload", () => {
+        unsubscribeLocale?.();
+        document.removeEventListener("change", captureLocaleChange, {capture: true});
+    });
 
     if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", bootstrap);

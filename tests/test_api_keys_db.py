@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from llm_gateway_core.config.paths import resolve_db_dir
 from llm_gateway_core.db import api_keys_db as api_keys_db_module
 from llm_gateway_core.db.api_keys_db import (
     API_KEY_PREFIX,
@@ -371,12 +372,7 @@ class ResetDueBudgetsTests(_ApiKeysDBTestBase):
 
 class BudgetPeriodMigrationTests(unittest.TestCase):
     def test_legacy_database_gets_period_columns(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        db_dir = root / "db"
-        os.makedirs(db_dir, exist_ok=True)
-        legacy_path = db_dir / "legacy_api_keys.db"
+        legacy_path = resolve_db_dir() / "legacy_api_keys.db"
 
         # Build an old-style table that predates the periodic-budget columns.
         with sqlite3.connect(legacy_path) as conn:
@@ -404,14 +400,6 @@ class BudgetPeriodMigrationTests(unittest.TestCase):
                 ("legacy", "lgk_legacy", 1.0, 0, "2026-01-01T00:00:00"),
             )
             conn.commit()
-
-        path_patch = patch.object(
-            api_keys_db_module,
-            "__file__",
-            str(root / "llm_gateway_core" / "db" / "api_keys_db.py"),
-        )
-        path_patch.start()
-        self.addCleanup(path_patch.stop)
 
         db = ApiKeysDB(db_filename="legacy_api_keys.db")
         with sqlite3.connect(db.db_path) as conn:

@@ -2,16 +2,20 @@ import asyncio
 import io
 import logging
 import subprocess
+import tempfile
 import threading
 import time
 import wave
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
 from ...config.loader import AUDIO_TRANSCRIPTIONS_DEFAULT_TARGET_PATH
+from ...config.settings import settings
+from .operation_runtime import MultipartFilePayload
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,17 @@ NVIDIA_RIVA_ALLOWED_PAYLOAD_KEYS = frozenset(
 NVIDIA_RIVA_RETRYABLE_STATUS_CODES = frozenset({"deadline_exceeded", "internal", "resource_exhausted", "unavailable"})
 NVIDIA_RIVA_GRPC_CLIENT_CACHE_TTL_SECONDS = 600.0
 NVIDIA_RIVA_GRPC_CLIENT_CACHE_MAX_ENTRIES = 64
+_T = TypeVar("_T")
+
+
+class AudioMaterializationTooLarge(HTTPException):
+    """Local audio expansion limit; never eligible for provider fallback."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=413,
+            detail="Normalized audio exceeds the configured processing limit.",
+        )
 
 
 @dataclass
@@ -234,15 +249,26 @@ def _detect_wav_audio_specs(audio_bytes: bytes) -> tuple[int, int] | None:
         return None
 
 
-def _extract_raw_pcm_audio_from_wav(audio_bytes: bytes) -> bytes:
+def _extract_raw_pcm_audio_from_wav(
+    audio_bytes: bytes,
+    *,
+    max_bytes: int | None = None,
+) -> bytes:
     try:
         with wave.open(io.BytesIO(audio_bytes), "rb") as wave_file:
-            return wave_file.readframes(wave_file.getnframes())
+            frame_count = wave_file.getnframes()
+            if max_bytes is not None:
+                expected_size = frame_count * wave_file.getnchannels() * wave_file.getsampwidth()
+                _ensure_audio_materialization_limit(expected_size, max_bytes)
+            pcm_bytes = wave_file.readframes(frame_count)
     except (wave.Error, EOFError) as exc:
         raise HTTPException(
             status_code=500,
             detail="Internal server error: NVIDIA audio route expected normalized WAV input.",
         ) from exc
+    if max_bytes is not None:
+        _ensure_audio_materialization_limit(len(pcm_bytes), max_bytes)
+    return pcm_bytes
 
 
 def _build_nvidia_riva_verbose_json(
@@ -404,7 +430,9 @@ def resolve_nvidia_riva_grpc_target(provider_base_url: str) -> tuple[str, bool, 
     return uri, split_result.scheme == "https", uri == NVIDIA_RIVA_API_CATALOG_GRPC_URI
 
 
-def _extract_audio_bytes(files_payload: list[tuple[str, tuple[str, bytes, str | None]]]) -> bytes:
+def _extract_audio_bytes(
+    files_payload: Sequence[tuple[str, MultipartFilePayload]],
+) -> bytes:
     if not files_payload:
         raise HTTPException(status_code=400, detail="Missing 'file' in request body")
 
@@ -415,38 +443,150 @@ def _extract_audio_bytes(files_payload: list[tuple[str, tuple[str, bytes, str | 
     if len(file_payload) < 2:
         raise HTTPException(status_code=400, detail="Invalid multipart file payload for NVIDIA audio route.")
 
-    return file_payload[1]
+    content = file_payload[1]
+    if isinstance(content, bytes):
+        return content
 
-
-def _convert_audio_bytes_to_wav(audio_bytes: bytes) -> bytes:
     try:
-        result = subprocess.run(
+        content.seek(0)
+        audio_bytes = content.read()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error: audio upload is unavailable.",
+        ) from exc
+    finally:
+        try:
+            content.seek(0)
+        except (OSError, ValueError):
+            pass
+
+    if not isinstance(audio_bytes, bytes):
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error: invalid audio upload stream.",
+        )
+    return audio_bytes
+
+
+def _ensure_audio_materialization_limit(audio_size: int, max_bytes: int) -> None:
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+        raise ValueError("decoded_audio_max_bytes must be a positive integer")
+    if audio_size > max_bytes:
+        raise AudioMaterializationTooLarge
+
+
+_FFMPEG_CONVERSION_TIMEOUT_SECONDS = 60.0
+
+
+def _kill_ffmpeg_on_timeout(process: subprocess.Popen, timed_out: threading.Event) -> None:
+    timed_out.set()
+    process.kill()
+
+
+def _convert_audio_bytes_to_wav(audio_bytes: bytes, *, max_bytes: int) -> bytes:
+    _ensure_audio_materialization_limit(0, max_bytes)
+    input_file = None
+    error_file = None
+    try:
+        input_file = tempfile.TemporaryFile()
+        error_file = tempfile.TemporaryFile()
+        input_file.write(audio_bytes)
+        input_file.seek(0)
+        process = subprocess.Popen(
             ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "wav", "pipe:1"],
-            input=audio_bytes,
+            stdin=input_file,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
+            stderr=error_file,
         )
     except FileNotFoundError as exc:
+        if input_file is not None:
+            input_file.close()
+        if error_file is not None:
+            error_file.close()
         raise HTTPException(
             status_code=500,
             detail="NVIDIA audio route requires 'ffmpeg' in PATH to convert non-WAV audio.",
         ) from exc
+    except BaseException:
+        if input_file is not None:
+            input_file.close()
+        if error_file is not None:
+            error_file.close()
+        raise
 
-    if result.returncode != 0 or not result.stdout:
+    # Without a wall-clock deadline, a stalled/adversarial ffmpeg invocation would
+    # block the worker thread (and its blocking stdout.read()) forever. The
+    # watchdog kills the process after a fixed timeout; killing it closes the
+    # stdout pipe, which unblocks the read loop below with a normal EOF.
+    timed_out = threading.Event()
+    watchdog = threading.Timer(
+        _FFMPEG_CONVERSION_TIMEOUT_SECONDS, _kill_ffmpeg_on_timeout, args=(process, timed_out)
+    )
+    watchdog.start()
+
+    converted_chunks: list[bytes] = []
+    converted_size = 0
+    try:
+        if process.stdout is None:
+            raise RuntimeError("ffmpeg stdout pipe was not created")
+        while True:
+            chunk = process.stdout.read(min(1024 * 1024, max_bytes + 1 - converted_size))
+            if not chunk:
+                break
+            converted_size += len(chunk)
+            if converted_size > max_bytes:
+                process.kill()
+                process.wait()
+                raise AudioMaterializationTooLarge
+            converted_chunks.append(chunk)
+        return_code = process.wait()
+        error_file.seek(0)
+        error_detail = error_file.read(4096)
+    finally:
+        watchdog.cancel()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        if process.stdout is not None:
+            process.stdout.close()
+        input_file.close()
+        error_file.close()
+
+    converted_audio_bytes = b"".join(converted_chunks)
+
+    # threading.Timer.cancel() is best-effort: if the watchdog already passed
+    # its internal check and called _kill_ffmpeg_on_timeout before cancel()
+    # above could stop it, timed_out can end up set even though the
+    # conversion actually finished in time (return_code 0, real bytes
+    # collected; kill()/wait() on an already-terminated process are harmless
+    # no-ops). Only treat this as a timeout when the process outcome itself
+    # shows it was actually killed / produced nothing, so that race can't
+    # turn a successful conversion into a 504.
+    if timed_out.is_set() and (return_code is None or return_code < 0 or not converted_audio_bytes):
+        raise HTTPException(
+            status_code=504,
+            detail="Audio conversion timed out while running ffmpeg.",
+        )
+
+    if return_code != 0 or not converted_audio_bytes:
         raise HTTPException(
             status_code=400,
             detail="Unsupported audio format for NVIDIA audio route; failed to convert input to WAV.",
         )
 
-    return result.stdout
+    if error_detail:
+        logger.debug("ffmpeg audio conversion completed with diagnostic output.")
+    return converted_audio_bytes
 
 
-def _normalize_audio_bytes_for_nvidia(audio_bytes: bytes) -> bytes:
+def _normalize_audio_bytes_for_nvidia(audio_bytes: bytes, *, max_bytes: int) -> bytes:
     if _detect_wav_audio_specs(audio_bytes) is not None:
+        _ensure_audio_materialization_limit(len(audio_bytes), max_bytes)
         return audio_bytes
 
-    converted_audio_bytes = _convert_audio_bytes_to_wav(audio_bytes)
+    converted_audio_bytes = _convert_audio_bytes_to_wav(audio_bytes, max_bytes=max_bytes)
+    _ensure_audio_materialization_limit(len(converted_audio_bytes), max_bytes)
     if _detect_wav_audio_specs(converted_audio_bytes) is None:
         raise HTTPException(
             status_code=500,
@@ -457,11 +597,46 @@ def _normalize_audio_bytes_for_nvidia(audio_bytes: bytes) -> bytes:
     return converted_audio_bytes
 
 
-async def _normalize_audio_bytes_for_nvidia_async(audio_bytes: bytes) -> bytes:
+async def _run_owned_blocking(
+    func: Callable[..., _T],
+    /,
+    *args: object,
+    **kwargs: object,
+) -> _T:
+    """Keep a blocking worker owned until it really stops, even on cancellation."""
+    worker = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        try:
+            worker.result()
+        except BaseException:
+            logger.warning(
+                "Blocking NVIDIA audio worker failed while request cancellation was pending. error_type=%s",
+                type(worker.exception()).__name__ if not worker.cancelled() else "CancelledError",
+            )
+        raise
+
+
+async def _normalize_audio_bytes_for_nvidia_async(
+    audio_bytes: bytes,
+    *,
+    max_bytes: int,
+) -> bytes:
     if _detect_wav_audio_specs(audio_bytes) is not None:
+        _ensure_audio_materialization_limit(len(audio_bytes), max_bytes)
         return audio_bytes
 
-    return await asyncio.to_thread(_normalize_audio_bytes_for_nvidia, audio_bytes)
+    return await _run_owned_blocking(
+        _normalize_audio_bytes_for_nvidia,
+        audio_bytes,
+        max_bytes=max_bytes,
+    )
 
 
 def _iter_wav_audio_chunks(audio_bytes: bytes, *, chunk_n_frames: int = 1600):
@@ -709,6 +884,7 @@ def _call_nvidia_riva_grpc_sync(
     audio_bytes: bytes,
     include_model: bool,
     use_streaming: bool,
+    decoded_audio_max_bytes: int | None = None,
 ):
     try:
         import riva.client as riva_client
@@ -744,7 +920,6 @@ def _call_nvidia_riva_grpc_sync(
         audio_bytes,
         include_model=include_model,
     )
-    raw_audio_bytes = _extract_raw_pcm_audio_from_wav(audio_bytes)
     if effective_use_streaming:
         streaming_config = riva_client.StreamingRecognitionConfig(config=config, interim_results=False)
         responses = asr_service.streaming_response_generator(
@@ -753,6 +928,15 @@ def _call_nvidia_riva_grpc_sync(
         )
         return _collect_streaming_recognize_responses(responses)
 
+    materialization_limit = (
+        settings.audio_decoded_max_bytes
+        if decoded_audio_max_bytes is None
+        else decoded_audio_max_bytes
+    )
+    raw_audio_bytes = _extract_raw_pcm_audio_from_wav(
+        audio_bytes,
+        max_bytes=materialization_limit,
+    )
     return asr_service.offline_recognize(raw_audio_bytes, config)
 
 
@@ -829,7 +1013,7 @@ def _resolve_nvidia_api_catalog_request_payload(
 async def transcribe_with_nvidia_riva_grpc(
     *,
     request_payload: dict[str, object],
-    files_payload: list[tuple[str, tuple[str, bytes, str | None]]],
+    files_payload: Sequence[tuple[str, MultipartFilePayload]],
     provider_name: str,
     provider_base_url: str,
     provider_api_key: str | None,
@@ -837,6 +1021,7 @@ async def transcribe_with_nvidia_riva_grpc(
     target_path: str,
     retry_count: int = 0,
     retry_delay: float = 0.0,
+    decoded_audio_max_bytes: int | None = None,
 ) -> AudioAdapterResponse:
     if target_path != AUDIO_TRANSCRIPTIONS_DEFAULT_TARGET_PATH:
         raise HTTPException(
@@ -858,7 +1043,16 @@ async def transcribe_with_nvidia_riva_grpc(
             detail="NVIDIA API Catalog audio routes require custom_headers.function-id.",
         )
 
-    audio_bytes = await _normalize_audio_bytes_for_nvidia_async(_extract_audio_bytes(files_payload))
+    materialization_limit = (
+        settings.audio_decoded_max_bytes
+        if decoded_audio_max_bytes is None
+        else decoded_audio_max_bytes
+    )
+    _ensure_audio_materialization_limit(0, materialization_limit)
+    audio_bytes = await _normalize_audio_bytes_for_nvidia_async(
+        _extract_audio_bytes(files_payload),
+        max_bytes=materialization_limit,
+    )
     metadata = _build_nvidia_riva_metadata(provider_api_key, route_custom_headers)
     total_attempts = retry_count + 1
     attempt_number = 0
@@ -873,13 +1067,14 @@ async def transcribe_with_nvidia_riva_grpc(
                 attempt_number,
                 total_attempts,
             )
-            response = await asyncio.to_thread(
+            response = await _run_owned_blocking(
                 _call_nvidia_riva_grpc_sync,
                 grpc_uri=grpc_uri,
                 use_ssl=use_ssl,
                 metadata=metadata,
                 request_payload=request_payload,
                 audio_bytes=audio_bytes,
+                decoded_audio_max_bytes=materialization_limit,
                 include_model=not is_api_catalog,
                 use_streaming=is_api_catalog,
             )

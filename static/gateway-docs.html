@@ -1,132 +1,106 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en" data-i18n-page="docs">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway - Documentation</title>
+    <title data-i18n="docs:page.documentTitle">LLM Gateway - Documentation</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/usage-stats.css">
     <link rel="stylesheet" href="/static/gateway-docs.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
     <script src="/static/theme.js"></script>
 </head>
 <body class="docs-page">
     <div class="top-nav">
         <div class="top-nav-content">
-            <a href="/v1/ui/docs" class="nav-button active">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
-                Docs
-            </a>
-            <a href="/v1/ui/usage-stats" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-                Usage Statistics
-            </a>
-            <a href="/v1/ui/quota" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                Quota
-            </a>
-            <a href="/v1/ui/rules-editor" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                Rules Editor
-            </a>
-            <a href="/v1/ui/playground" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
-                Playground
-            </a>
-            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
-                API Keys
-            </a>
-            <a href="/v1/ui/rejections" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Rejections
-            </a>
-            <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                Translator Debug
-            </a>
-            <a href="/v1/ui/pricing" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                Pricing
-            </a>
-            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
-                <span class="icon-placeholder"></span>
-            </button>
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
         </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
     </div>
 
     <main class="container docs-container">
         <header class="docs-header">
             <div>
                 <p class="docs-kicker">LLM Gateway</p>
-                <h1>Документация по подключению моделей</h1>
+                <h1 data-i18n="docs:page.heading">Документация по подключению моделей</h1>
                 <p class="docs-lead">
-                    Что указывать в <code>model</code>, какие endpoint'ы вызывать и какие параметры поддерживает каждый сервис.
-                    Внутренние провайдеры и маршруты на этой странице не нужны: клиент работает только с gateway API.
+                    <span data-i18n="docs:page.leadBeforeModel">Что указывать в</span> <code>model</code><span data-i18n="docs:page.leadAfterModel">, какие endpoint'ы вызывать и какие параметры поддерживает каждый сервис. Внутренние провайдеры и маршруты на этой странице не нужны: клиент работает только с gateway API.</span>
                 </p>
+                <div id="insecureTransportWarning" class="docs-transport-warning" role="note" hidden></div>
             </div>
-            <div class="docs-status" id="catalogStatus">Загрузка каталога моделей...</div>
+            <div class="docs-status-block">
+                <div class="docs-status" id="catalogStatus" data-i18n="docs:catalog.loading">Загрузка каталога моделей...</div>
+                <div id="catalogStatusDetail" class="docs-status-detail" data-i18n-raw-detail hidden></div>
+            </div>
         </header>
 
-        <div class="docs-tabs" role="tablist" aria-label="Разделы документации">
+        <div class="docs-tabs" role="tablist" aria-label="Documentation sections" data-i18n-aria-label="docs:tabs.ariaLabel">
             <button class="docs-tab-button active" type="button" role="tab" aria-selected="true" aria-controls="apiDocsPanel" data-docs-tab="api">
-                Gateway API
+                <span data-i18n="docs:tabs.api">Gateway API</span>
             </button>
             <button class="docs-tab-button" type="button" role="tab" aria-selected="false" aria-controls="freeTierDocsPanel" data-docs-tab="free-tier">
-                Free-tier Providers
+                <span data-i18n="docs:tabs.freeTier">Free-tier Providers</span>
             </button>
         </div>
 
         <div id="apiDocsPanel" class="docs-tab-panel active" role="tabpanel">
-        <nav class="docs-toc" aria-label="Разделы документации">
-            <a href="#models">Модели</a>
-            <a href="#auth">Авторизация</a>
-            <a href="#text">Text</a>
-            <a href="#rerank">Rerank</a>
-            <a href="#embeddings">Embeddings</a>
-            <a href="#images">Images</a>
-            <a href="#audio">Audio</a>
-            <a href="#pdf">PDF</a>
-            <a href="#web">Web</a>
-            <a href="#playground">Playground</a>
-            <a href="#keys">Доступ</a>
+        <nav class="docs-toc" aria-label="Documentation sections" data-i18n-aria-label="docs:tabs.ariaLabel">
+            <a href="#models"><span data-i18n="docs:toc.models">Модели</span></a>
+            <a href="#auth"><span data-i18n="docs:toc.auth">Авторизация</span></a>
+            <a href="#text"><span data-i18n="docs:toc.text">Text</span></a>
+            <a href="#rerank"><span data-i18n="docs:toc.rerank">Rerank</span></a>
+            <a href="#embeddings"><span data-i18n="docs:toc.embeddings">Embeddings</span></a>
+            <a href="#images"><span data-i18n="docs:toc.images">Images</span></a>
+            <a href="#audio"><span data-i18n="docs:toc.audio">Audio</span></a>
+            <a href="#pdf"><span data-i18n="docs:toc.pdf">PDF</span></a>
+            <a href="#web"><span data-i18n="docs:toc.web">Web</span></a>
+            <a href="#playground"><span data-i18n="docs:toc.playground">Playground</span></a>
+            <a href="#keys"><span data-i18n="docs:toc.keys">Доступ</span></a>
         </nav>
 
         <section id="models" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Gateway model names</p>
-                <h2>Какие имена моделей использовать</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.models.kicker">Gateway model names</span></p>
+                <h2><span data-i18n="docs:sections.models.heading">Какие имена моделей использовать</span></h2>
             </div>
             <p>
-                Во всех запросах указывайте gateway-имя модели из каталога ниже. Это не обязательно совпадает с именем
-                модели у провайдера. Каталог строится из текущей конфигурации gateway и не делает внешних запросов.
+                <span data-i18n="docs:sections.models.text001">Во всех запросах указывайте gateway-имя модели из каталога ниже. Это не обязательно совпадает с именем
+                модели у провайдера. Каталог строится из текущей конфигурации gateway и не делает внешних запросов.</span>
             </p>
-            <div id="modelCatalog" class="model-catalog" aria-live="polite"></div>
+            <div id="modelCatalog" class="model-catalog"></div>
         </section>
 
         <section id="auth" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Base URL</p>
-                <h2>Авторизация и базовый URL</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.auth.kicker">Base URL</span></p>
+                <h2><span data-i18n="docs:sections.auth.heading">Авторизация и базовый URL</span></h2>
             </div>
             <div class="docs-grid two-columns">
                 <div class="docs-panel">
-                    <h3>OpenAI-compatible API</h3>
+                    <h3><span data-i18n="docs:sections.auth.subheading">OpenAI-compatible API</span></h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>Base URL</code><span class="param-label required">обязательно</span></th><td><code>http://89.124.76.219:9000/v1</code> — базовый адрес для OpenAI-compatible клиентов.</td></tr>
-                            <tr><th><code>Authorization</code><span class="param-label required">обязательно</span></th><td>Передавайте <code>Authorization: Bearer &lt;GATEWAY_API_KEY или lgk_...&gt;</code>.</td></tr>
-                            <tr><th><code>GET /models</code><span class="param-label">опционально</span></th><td>Запрос каталога моделей, доступных текущему ключу.</td></tr>
+                            <tr><th><code>Base URL</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><code><span data-docs-api-base></span></code> <span data-i18n="docs:sections.auth.text001">— базовый адрес для OpenAI-compatible клиентов.</span></td></tr>
+                            <tr><th><code>Authorization</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.auth.text002">Передавайте</span> <code>Authorization: Bearer &lt;GATEWAY_API_KEY или lgk_...&gt;</code>.</td></tr>
+                            <tr><th><code>GET /models</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.auth.text003">Запрос каталога моделей, доступных текущему ключу.</span></td></tr>
                         </tbody>
                     </table>
                 </div>
                 <div class="docs-panel">
-                    <h3>Anthropic-compatible API</h3>
+                    <h3><span data-i18n="docs:sections.auth.subheading2">Anthropic-compatible API</span></h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>Endpoint</code><span class="param-label required">обязательно</span></th><td>Используйте <code>POST /v1/messages</code>.</td></tr>
-                            <tr><th><code>X-Api-Key</code><span class="param-label required">обязательно</span></th><td>Anthropic-style ключ. Также можно использовать обычный Bearer-заголовок.</td></tr>
-                            <tr><th><code>anthropic-version</code><span class="param-label">опционально</span></th><td>Версия Anthropic API, если её требует ваш клиент или SDK.</td></tr>
+                            <tr><th><code>Endpoint</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.auth.text004">Используйте</span> <code>POST /v1/messages</code>.</td></tr>
+                            <tr><th><code>X-Api-Key</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.auth.text005">Anthropic-style ключ. Также можно использовать обычный Bearer-заголовок.</span></td></tr>
+                            <tr><th><code>anthropic-version</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.auth.text006">Версия Anthropic API, если её требует ваш клиент или SDK.</span></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -135,23 +109,23 @@
 
         <section id="text" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Text generation</p>
-                <h2>Chat, Responses и Messages</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.text.kicker">Text generation</span></p>
+                <h2><span data-i18n="docs:sections.text.heading">Chat, Responses и Messages</span></h2>
             </div>
             <div class="service-grid">
                 <article class="service-card">
                     <h3>POST /v1/chat/completions</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из каталога chat-моделей.</td></tr>
-                            <tr><th><code>messages</code><span class="param-label required">обязательно</span></th><td>Массив сообщений в OpenAI Chat Completions формате.</td></tr>
-                            <tr><th><code>stream</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, ответ возвращается потоково.</td></tr>
-                            <tr><th><code>temperature</code><span class="param-label">опционально</span></th><td>Управляет вариативностью ответа.</td></tr>
-                            <tr><th><code>max_tokens</code><span class="param-label">опционально</span></th><td>Ограничивает длину ответа модели.</td></tr>
-                            <tr><th><code>response_format</code><span class="param-label">опционально</span></th><td>Используйте для JSON-ответов, если выбранная модель это поддерживает.</td></tr>
-                            <tr><th><code>tools</code><span class="param-label">опционально</span></th><td>Описание инструментов, доступных модели.</td></tr>
-                            <tr><th><code>tool_choice</code><span class="param-label">опционально</span></th><td>Управляет выбором инструмента моделью.</td></tr>
-                            <tr><th>Ответ</th><td>OpenAI-compatible chat completion с <code>choices[]</code> и <code>usage</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.text.text001">Gateway-модель из каталога chat-моделей.</span></td></tr>
+                            <tr><th><code>messages</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.text.text002">Массив сообщений в OpenAI Chat Completions формате.</span></td></tr>
+                            <tr><th><code>stream</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text003">Если</span> <code>true</code><span data-i18n="docs:sections.text.text004">, ответ возвращается потоково.</span></td></tr>
+                            <tr><th><code>temperature</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text005">Управляет вариативностью ответа.</span></td></tr>
+                            <tr><th><code>max_tokens</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text006">Ограничивает длину ответа модели.</span></td></tr>
+                            <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text007">Используйте для JSON-ответов, если выбранная модель это поддерживает.</span></td></tr>
+                            <tr><th><code>tools</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text008">Описание инструментов, доступных модели.</span></td></tr>
+                            <tr><th><code>tool_choice</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text009">Управляет выбором инструмента моделью.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.text.text010">OpenAI-compatible chat completion с</span> <code>choices[]</code> <span data-i18n="docs:sections.text.text011">и</span> <code>usage</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -159,15 +133,15 @@
                     <h3>POST /v1/responses</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из каталога chat-моделей.</td></tr>
-                            <tr><th><code>input</code><span class="param-label required">обязательно</span></th><td>Строка, массив сообщений или structured input в Responses API формате.</td></tr>
-                            <tr><th><code>instructions</code><span class="param-label">опционально</span></th><td>Системные инструкции для модели.</td></tr>
-                            <tr><th><code>text.format</code><span class="param-label">опционально</span></th><td>Формат текстового ответа, например JSON-схема.</td></tr>
-                            <tr><th><code>tools</code><span class="param-label">опционально</span></th><td>Инструменты, доступные Responses API запросу.</td></tr>
-                            <tr><th><code>tool_choice</code><span class="param-label">опционально</span></th><td>Правило выбора инструмента.</td></tr>
-                            <tr><th><code>max_output_tokens</code><span class="param-label">опционально</span></th><td>Ограничивает длину output.</td></tr>
-                            <tr><th><code>stream</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, ответ возвращается потоково.</td></tr>
-                            <tr><th>Ответ</th><td>OpenAI Responses-compatible объект с output и usage.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.text.text012">Gateway-модель из каталога chat-моделей.</span></td></tr>
+                            <tr><th><code>input</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.text.text013">Строка, массив сообщений или structured input в Responses API формате.</span></td></tr>
+                            <tr><th><code>instructions</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text014">Системные инструкции для модели.</span></td></tr>
+                            <tr><th><code>text.format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text015">Формат текстового ответа, например JSON-схема.</span></td></tr>
+                            <tr><th><code>tools</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text016">Инструменты, доступные Responses API запросу.</span></td></tr>
+                            <tr><th><code>tool_choice</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text017">Правило выбора инструмента.</span></td></tr>
+                            <tr><th><code>max_output_tokens</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text018">Ограничивает длину output.</span></td></tr>
+                            <tr><th><code>stream</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text019">Если</span> <code>true</code><span data-i18n="docs:sections.text.text020">, ответ возвращается потоково.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.text.text021">OpenAI Responses-compatible объект с output и usage.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -175,15 +149,15 @@
                     <h3>POST /v1/messages</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из каталога chat-моделей.</td></tr>
-                            <tr><th><code>messages</code><span class="param-label required">обязательно</span></th><td>Массив сообщений в Anthropic Messages формате.</td></tr>
-                            <tr><th><code>max_tokens</code><span class="param-label required">обязательно</span></th><td>Максимальная длина ответа для Anthropic-compatible вызова.</td></tr>
-                            <tr><th><code>system</code><span class="param-label">опционально</span></th><td>Системная инструкция.</td></tr>
-                            <tr><th><code>stream</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, ответ возвращается потоково.</td></tr>
-                            <tr><th><code>temperature</code><span class="param-label">опционально</span></th><td>Управляет вариативностью ответа.</td></tr>
-                            <tr><th><code>top_p</code> / <code>top_k</code><span class="param-label">опционально</span></th><td>Дополнительные параметры сэмплинга.</td></tr>
-                            <tr><th><code>stop_sequences</code><span class="param-label">опционально</span></th><td>Строки, на которых нужно остановить генерацию.</td></tr>
-                            <tr><th>Ответ</th><td>Anthropic-compatible message response.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.text.text022">Gateway-модель из каталога chat-моделей.</span></td></tr>
+                            <tr><th><code>messages</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.text.text023">Массив сообщений в Anthropic Messages формате.</span></td></tr>
+                            <tr><th><code>max_tokens</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.text.text024">Максимальная длина ответа для Anthropic-compatible вызова.</span></td></tr>
+                            <tr><th><code>system</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text025">Системная инструкция.</span></td></tr>
+                            <tr><th><code>stream</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text026">Если</span> <code>true</code><span data-i18n="docs:sections.text.text027">, ответ возвращается потоково.</span></td></tr>
+                            <tr><th><code>temperature</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text028">Управляет вариативностью ответа.</span></td></tr>
+                            <tr><th><code>top_p</code> / <code>top_k</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text029">Дополнительные параметры сэмплинга.</span></td></tr>
+                            <tr><th><code>stop_sequences</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.text.text030">Строки, на которых нужно остановить генерацию.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.text.text031">Anthropic-compatible message response.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -192,26 +166,26 @@
 
         <section id="rerank" class="docs-section highlight-section">
             <div class="section-heading">
-                <p class="docs-kicker">Reranker</p>
-                <h2>Rerank: параметры вызова</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.rerank.kicker">Reranker</span></p>
+                <h2><span data-i18n="docs:sections.rerank.heading">Rerank: параметры вызова</span></h2>
             </div>
             <div class="service-grid">
                 <article class="service-card">
                     <h3>POST /v1/rerank</h3>
-                    <p class="service-note">Используйте rerank, когда нужно отсортировать документы по релевантности к запросу.</p>
+                    <p class="service-note"><span data-i18n="docs:sections.rerank.text001">Используйте rerank, когда нужно отсортировать документы по релевантности к запросу.</span></p>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из группы <b>Rerank</b> в каталоге.</td></tr>
-                            <tr><th><code>query</code><span class="param-label required">обязательно</span></th><td>Запрос, относительно которого ранжируются документы.</td></tr>
-                            <tr><th><code>documents</code><span class="param-label required">обязательно</span></th><td>Массив строк с документами-кандидатами.</td></tr>
-                            <tr><th><code>top_n</code><span class="param-label">опционально</span></th><td>Сколько лучших результатов вернуть. Если не задано, возвращается весь список.</td></tr>
-                            <tr><th><code>return_documents</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, в ответ добавляется текст исходного документа.</td></tr>
-                            <tr><th>Ответ</th><td><code>data[]</code> с <code>index</code>, <code>score</code> и, если просили, <code>document</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.rerank.text002">Gateway-модель из группы</span> <b><span data-i18n="docs:sections.rerank.text003">Rerank</span></b> <span data-i18n="docs:sections.rerank.text004">в каталоге.</span></td></tr>
+                            <tr><th><code>query</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.rerank.text005">Запрос, относительно которого ранжируются документы.</span></td></tr>
+                            <tr><th><code>documents</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.rerank.text006">Массив строк с документами-кандидатами.</span></td></tr>
+                            <tr><th><code>top_n</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.rerank.text007">Сколько лучших результатов вернуть. Если не задано, возвращается весь список.</span></td></tr>
+                            <tr><th><code>return_documents</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.rerank.text008">Если</span> <code>true</code><span data-i18n="docs:sections.rerank.text009">, в ответ добавляется текст исходного документа.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><code>data[]</code> <span data-i18n="docs:sections.rerank.text010">с</span> <code>index</code>, <code>score</code> <span data-i18n="docs:sections.rerank.text011">и, если просили,</span> <code>document</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
             </div>
-            <pre><code>curl -s http://89.124.76.219:9000/v1/rerank \
+            <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/rerank \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -225,25 +199,25 @@
     "top_n": 2,
     "return_documents": true
   }'</code></pre>
-            <p>В отдельных конфигурациях ответ может быть в Jina-совместимом поле <code>results[]</code>.</p>
+            <p><span data-i18n="docs:sections.rerank.text012">В отдельных конфигурациях ответ может быть в Jina-совместимом поле</span> <code>results[]</code>.</p>
         </section>
 
         <section id="embeddings" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Vector search</p>
-                <h2>Embeddings</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.embeddings.kicker">Vector search</span></p>
+                <h2><span data-i18n="docs:sections.embeddings.heading">Embeddings</span></h2>
             </div>
             <div class="service-grid">
                 <article class="service-card">
                     <h3>POST /v1/embeddings</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из группы embeddings.</td></tr>
-                            <tr><th><code>input</code><span class="param-label required">обязательно</span></th><td>Строка или массив строк, для которых нужны векторы.</td></tr>
-                            <tr><th><code>encoding_format</code><span class="param-label">опционально</span></th><td>Формат вектора, например <code>float</code> или <code>base64</code>.</td></tr>
-                            <tr><th><code>dimensions</code><span class="param-label">опционально</span></th><td>Желаемая размерность embedding, если модель поддерживает изменение размерности.</td></tr>
-                            <tr><th><code>user</code><span class="param-label">опционально</span></th><td>Идентификатор пользователя на стороне клиента.</td></tr>
-                            <tr><th>Ответ</th><td>OpenAI-compatible embeddings response с <code>data[]</code> и <code>usage</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.embeddings.text001">Gateway-модель из группы embeddings.</span></td></tr>
+                            <tr><th><code>input</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.embeddings.text002">Строка или массив строк, для которых нужны векторы.</span></td></tr>
+                            <tr><th><code>encoding_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.embeddings.text003">Формат вектора, например</span> <code>float</code> <span data-i18n="docs:sections.embeddings.text004">или</span> <code>base64</code>.</td></tr>
+                            <tr><th><code>dimensions</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.embeddings.text005">Желаемая размерность embedding, если модель поддерживает изменение размерности.</span></td></tr>
+                            <tr><th><code>user</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.embeddings.text006">Идентификатор пользователя на стороне клиента.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.embeddings.text007">OpenAI-compatible embeddings response с</span> <code>data[]</code> <span data-i18n="docs:sections.embeddings.text008">и</span> <code>usage</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -252,21 +226,21 @@
 
         <section id="images" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Image API</p>
-                <h2>Images generation и edits</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.images.kicker">Image API</span></p>
+                <h2><span data-i18n="docs:sections.images.heading">Images generation и edits</span></h2>
             </div>
             <div class="service-grid">
                 <article class="service-card">
                     <h3>POST /v1/images/generations<br>POST /v1/images</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из группы image generation.</td></tr>
-                            <tr><th><code>prompt</code><span class="param-label required">обязательно</span></th><td>Описание изображения, которое нужно сгенерировать.</td></tr>
-                            <tr><th><code>size</code><span class="param-label">опционально</span></th><td>Размер изображения, например <code>1024x1024</code>.</td></tr>
-                            <tr><th><code>n</code><span class="param-label">опционально</span></th><td>Сколько изображений запросить.</td></tr>
-                            <tr><th><code>response_format</code><span class="param-label">опционально</span></th><td>Формат возврата изображения, например URL или base64, если это поддерживает провайдер.</td></tr>
-                            <tr><th><code>quality</code> / <code>style</code><span class="param-label">опционально</span></th><td>Дополнительные параметры качества и стиля, если модель их поддерживает.</td></tr>
-                            <tr><th>Ответ</th><td>OpenAI-compatible image response с <code>data[]</code>. Streaming не поддерживается.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.images.text001">Gateway-модель из группы image generation.</span></td></tr>
+                            <tr><th><code>prompt</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.images.text002">Описание изображения, которое нужно сгенерировать.</span></td></tr>
+                            <tr><th><code>size</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text003">Размер изображения, например</span> <code>1024x1024</code>.</td></tr>
+                            <tr><th><code>n</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text004">Сколько изображений запросить.</span></td></tr>
+                            <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text005">Формат возврата изображения, например URL или base64, если это поддерживает провайдер.</span></td></tr>
+                            <tr><th><code>quality</code> / <code>style</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text006">Дополнительные параметры качества и стиля, если модель их поддерживает.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.images.text007">OpenAI-compatible image response с</span> <code>data[]</code><span data-i18n="docs:sections.images.text008">. Streaming не поддерживается.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -274,14 +248,14 @@
                     <h3>POST /v1/images/edits</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из группы image edits.</td></tr>
-                            <tr><th><code>prompt</code><span class="param-label required">обязательно</span></th><td>Описание того, как нужно изменить изображение.</td></tr>
-                            <tr><th><code>images</code><span class="param-label required">обязательно</span></th><td>Изображения в JSON-запросе. Для multipart используйте поля <code>image</code> или <code>image[]</code>.</td></tr>
-                            <tr><th><code>mask</code><span class="param-label">опционально</span></th><td>Маска редактирования для multipart-запроса.</td></tr>
-                            <tr><th><code>size</code><span class="param-label">опционально</span></th><td>Размер итогового изображения.</td></tr>
-                            <tr><th><code>n</code><span class="param-label">опционально</span></th><td>Сколько вариантов вернуть.</td></tr>
-                            <tr><th><code>response_format</code><span class="param-label">опционально</span></th><td>Формат возврата результата.</td></tr>
-                            <tr><th>Ответ</th><td>OpenAI-compatible image response с <code>data[]</code>. Streaming не поддерживается.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.images.text009">Gateway-модель из группы image edits.</span></td></tr>
+                            <tr><th><code>prompt</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.images.text010">Описание того, как нужно изменить изображение.</span></td></tr>
+                            <tr><th><code>images</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.images.text011">Изображения в JSON-запросе. Для multipart используйте поля</span> <code>image</code> <span data-i18n="docs:sections.images.text012">или</span> <code>image[]</code>.</td></tr>
+                            <tr><th><code>mask</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text013">Маска редактирования для multipart-запроса.</span></td></tr>
+                            <tr><th><code>size</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text014">Размер итогового изображения.</span></td></tr>
+                            <tr><th><code>n</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text015">Сколько вариантов вернуть.</span></td></tr>
+                            <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.images.text016">Формат возврата результата.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.images.text017">OpenAI-compatible image response с</span> <code>data[]</code><span data-i18n="docs:sections.images.text018">. Streaming не поддерживается.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -290,21 +264,21 @@
 
         <section id="audio" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Speech</p>
-                <h2>Audio</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.audio.kicker">Speech</span></p>
+                <h2><span data-i18n="docs:sections.audio.heading">Audio</span></h2>
             </div>
             <div class="service-grid">
                 <article class="service-card">
                     <h3>POST /v1/audio/speech</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>Content-Type</code><span class="param-label required">обязательно</span></th><td>Используйте <code>application/json</code>.</td></tr>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из группы audio speech.</td></tr>
-                            <tr><th><code>input</code><span class="param-label required">обязательно</span></th><td>Текст, который нужно озвучить.</td></tr>
-                            <tr><th><code>voice</code><span class="param-label">опционально</span></th><td>Голос downstream TTS-сервиса, если он поддерживает выбор голоса.</td></tr>
-                            <tr><th><code>response_format</code><span class="param-label">опционально</span></th><td>Формат аудио, например <code>mp3</code> или <code>wav</code>.</td></tr>
-                            <tr><th><code>speed</code><span class="param-label">опционально</span></th><td>Скорость речи, если поддерживается моделью.</td></tr>
-                            <tr><th>Ответ</th><td>Raw audio bytes с downstream <code>content-type</code>. Streaming не поддерживается.</td></tr>
+                            <tr><th><code>Content-Type</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text001">Используйте</span> <code>application/json</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text002">Gateway-модель из группы audio speech.</span></td></tr>
+                            <tr><th><code>input</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text003">Текст, который нужно озвучить.</span></td></tr>
+                            <tr><th><code>voice</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text004">Голос downstream TTS-сервиса, если он поддерживает выбор голоса.</span></td></tr>
+                            <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text005">Формат аудио, например</span> <code>mp3</code> <span data-i18n="docs:sections.audio.text006">или</span> <code>wav</code>.</td></tr>
+                            <tr><th><code>speed</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text007">Скорость речи, если поддерживается моделью.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.audio.text008">Raw audio bytes с downstream</span> <code>content-type</code><span data-i18n="docs:sections.audio.text009">. Streaming не поддерживается.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -312,8 +286,8 @@
                     <h3>GET /v1/audio/voices</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label">опционально</span></th><td>Gateway-модель из группы audio speech. Если не передать, gateway вернёт каталог по всем доступным TTS-моделям.</td></tr>
-                            <tr><th>Ответ</th><td>JSON со списком голосов. Известные Silero-голоса дополняются <code>gender</code> и <code>language</code>; для остальных голосов возвращаются только доступные поля.</td></tr>
+                            <tr><th><code>model</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text010">Gateway-модель из группы audio speech. Если не передать, gateway вернёт каталог по всем доступным TTS-моделям.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.audio.text011">JSON со списком голосов. Известные Silero-голоса дополняются</span> <code>gender</code> <span data-i18n="docs:sections.audio.text012">и</span> <code>language</code><span data-i18n="docs:sections.audio.text013">; для остальных голосов возвращаются только доступные поля.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -321,15 +295,15 @@
                     <h3>POST /v1/audio/transcriptions</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>Content-Type</code><span class="param-label required">обязательно</span></th><td>Используйте <code>multipart/form-data</code>.</td></tr>
-                            <tr><th><code>file</code><span class="param-label required">обязательно</span></th><td>Аудиофайл для распознавания.</td></tr>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из группы audio transcriptions.</td></tr>
-                            <tr><th><code>language</code><span class="param-label">опционально</span></th><td>Язык аудио, если его нужно задать явно.</td></tr>
-                            <tr><th><code>prompt</code><span class="param-label">опционально</span></th><td>Подсказка модели для контекста распознавания.</td></tr>
-                            <tr><th><code>response_format</code><span class="param-label">опционально</span></th><td>Формат ответа, например <code>json</code>, <code>text</code>, <code>srt</code> или <code>vtt</code>.</td></tr>
-                            <tr><th><code>temperature</code><span class="param-label">опционально</span></th><td>Управляет вариативностью расшифровки, если модель поддерживает параметр.</td></tr>
-                            <tr><th><code>timestamp_granularities[]</code><span class="param-label">опционально</span></th><td>Запрос временных меток на уровне сегментов или слов, если поддерживается моделью.</td></tr>
-                            <tr><th>Ответ</th><td>OpenAI-compatible transcription response. Streaming не поддерживается.</td></tr>
+                            <tr><th><code>Content-Type</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text014">Используйте</span> <code>multipart/form-data</code>.</td></tr>
+                            <tr><th><code>file</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text015">Аудиофайл для распознавания.</span></td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text016">Gateway-модель из группы audio transcriptions.</span></td></tr>
+                            <tr><th><code>language</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text017">Язык аудио, если его нужно задать явно.</span></td></tr>
+                            <tr><th><code>prompt</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text018">Подсказка модели для контекста распознавания.</span></td></tr>
+                            <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text019">Формат ответа, например</span> <code>json</code>, <code>text</code>, <code>srt</code> <span data-i18n="docs:sections.audio.text020">или</span> <code>vtt</code>.</td></tr>
+                            <tr><th><code>temperature</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text021">Управляет вариативностью расшифровки, если модель поддерживает параметр.</span></td></tr>
+                            <tr><th><code>timestamp_granularities[]</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text022">Запрос временных меток на уровне сегментов или слов, если поддерживается моделью.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.audio.text023">OpenAI-compatible transcription response. Streaming не поддерживается.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -338,44 +312,44 @@
 
         <section id="pdf" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Documents</p>
-                <h2>PDF conversion</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.pdf.kicker">Documents</span></p>
+                <h2><span data-i18n="docs:sections.pdf.heading">PDF conversion</span></h2>
             </div>
             <div class="service-grid">
                 <article class="service-card">
                     <h3>POST /v1/pdf/convert</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>Content-Type</code><span class="param-label required">обязательно</span></th><td>Используйте <code>multipart/form-data</code>.</td></tr>
-                            <tr><th><code>file</code><span class="param-label required">обязательно</span></th><td>PDF-файл для конвертации.</td></tr>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель из группы PDF conversion.</td></tr>
-                            <tr><th><code>output</code><span class="param-label">опционально</span></th><td>Формат результата: <code>both</code>, <code>docx</code> или <code>md</code>. По умолчанию используйте <code>both</code>, если нужны оба файла.</td></tr>
-                            <tr><th><code>language</code><span class="param-label">опционально</span></th><td>Языки OCR в формате converter-сервиса, например <code>rus+eng</code>.</td></tr>
-                            <tr><th><code>target_language</code><span class="param-label">опционально</span></th><td>Язык перевода итогового Markdown перед сборкой DOCX/MD, например <code>English</code> или <code>Russian</code>. Пустое поле или отсутствие параметра означает без перевода.</td></tr>
-                            <tr><th><code>math_ocr_provider</code><span class="param-label">опционально</span></th><td>Провайдер распознавания формул: <code>off</code>, <code>mathpix</code> или <code>local_im2latex</code>.</td></tr>
-                            <tr><th><code>formulas_max_pages</code><span class="param-label">опционально</span></th><td>Максимум страниц для распознавания формул. Пустое поле означает авто/дефолт сервиса.</td></tr>
-                            <tr><th><code>max_pages</code><span class="param-label">опционально</span></th><td>Ограничение количества страниц для обработки, удобно для тестового прогона.</td></tr>
-                            <tr><th><code>password</code><span class="param-label">опционально</span></th><td>Пароль для защищённого PDF.</td></tr>
-                            <tr><th><code>ocr_preprocess_save</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, converter должен сохранить preprocessed PDF как отдельный артефакт для отладки OCR.</td></tr>
-                            <tr><th>Ответ</th><td>Синхронный JSON converter-сервиса. Для долгих файлов предпочтительнее async job API.</td></tr>
+                            <tr><th><code>Content-Type</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.pdf.text001">Используйте</span> <code>multipart/form-data</code>.</td></tr>
+                            <tr><th><code>file</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.pdf.text002">PDF-файл для конвертации.</span></td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.pdf.text003">Gateway-модель из группы PDF conversion.</span></td></tr>
+                            <tr><th><code>output</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text004">Формат результата:</span> <code>both</code>, <code>docx</code> <span data-i18n="docs:sections.pdf.text005">или</span> <code>md</code><span data-i18n="docs:sections.pdf.text006">. По умолчанию используйте</span> <code>both</code><span data-i18n="docs:sections.pdf.text007">, если нужны оба файла.</span></td></tr>
+                            <tr><th><code>language</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text008">Языки OCR в формате converter-сервиса, например</span> <code>rus+eng</code>.</td></tr>
+                            <tr><th><code>target_language</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text009">Язык перевода итогового Markdown перед сборкой DOCX/MD, например</span> <code>English</code> <span data-i18n="docs:sections.pdf.text010">или</span> <code>Russian</code><span data-i18n="docs:sections.pdf.text011">. Пустое поле или отсутствие параметра означает без перевода.</span></td></tr>
+                            <tr><th><code>math_ocr_provider</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text012">Провайдер распознавания формул:</span> <code>off</code>, <code>mathpix</code> <span data-i18n="docs:sections.pdf.text013">или</span> <code>local_im2latex</code>.</td></tr>
+                            <tr><th><code>formulas_max_pages</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text014">Максимум страниц для распознавания формул. Пустое поле означает авто/дефолт сервиса.</span></td></tr>
+                            <tr><th><code>max_pages</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text015">Ограничение количества страниц для обработки, удобно для тестового прогона.</span></td></tr>
+                            <tr><th><code>password</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text016">Пароль для защищённого PDF.</span></td></tr>
+                            <tr><th><code>ocr_preprocess_save</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.pdf.text017">Если</span> <code>true</code><span data-i18n="docs:sections.pdf.text018">, converter должен сохранить preprocessed PDF как отдельный артефакт для отладки OCR.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.pdf.text019">Синхронный JSON converter-сервиса. Для долгих файлов предпочтительнее async job API.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
                 <article class="service-card">
-                    <h3>PDF jobs</h3>
+                    <h3><span data-i18n="docs:sections.pdf.subheading">PDF jobs</span></h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>POST /v1/pdf/jobs</code></th><td>Создаёт async job; принимает те же multipart-поля, что и <code>/v1/pdf/convert</code>. Playground использует именно этот endpoint.</td></tr>
-                            <tr><th><code>GET /v1/pdf/jobs/{job_id}</code></th><td>Статус job. Передайте <code>model</code> в query string; ответ может содержать <code>progress</code>, <code>eta_seconds</code>, <code>message</code> и список <code>events[]</code>.</td></tr>
-                            <tr><th><code>GET /v1/pdf/jobs/{job_id}/result</code></th><td>Итоговый JSON job. Передайте <code>model</code> в query string; в результате ожидаются артефакты <code>docx</code>, <code>md</code> и при включённом debug-флаге <code>preprocessed-pdf</code>.</td></tr>
-                            <tr><th><code>GET /v1/pdf/jobs/{job_id}/download/{artifact}</code></th><td>Скачивание артефакта, например <code>docx</code>, <code>md</code> или <code>preprocessed-pdf</code>. Передайте <code>model</code> в query string.</td></tr>
+                            <tr><th><code>POST /v1/pdf/jobs</code></th><td><span data-i18n="docs:sections.pdf.text020">Создаёт async job; принимает те же multipart-поля, что и</span> <code>/v1/pdf/convert</code><span data-i18n="docs:sections.pdf.text021">. Playground использует именно этот endpoint.</span></td></tr>
+                            <tr><th><code>GET /v1/pdf/jobs/{job_id}</code></th><td><span data-i18n="docs:sections.pdf.text022">Статус job. Передайте</span> <code>model</code> <span data-i18n="docs:sections.pdf.text023">в query string; ответ может содержать</span> <code>progress</code>, <code>eta_seconds</code>, <code>message</code> <span data-i18n="docs:sections.pdf.text024">и список</span> <code>events[]</code>.</td></tr>
+                            <tr><th><code>GET /v1/pdf/jobs/{job_id}/result</code></th><td><span data-i18n="docs:sections.pdf.text025">Итоговый JSON job. Передайте</span> <code>model</code> <span data-i18n="docs:sections.pdf.text026">в query string; в результате ожидаются артефакты</span> <code>docx</code>, <code>md</code> <span data-i18n="docs:sections.pdf.text027">и при включённом debug-флаге</span> <code>preprocessed-pdf</code>.</td></tr>
+                            <tr><th><code>GET /v1/pdf/jobs/{job_id}/download/{artifact}</code></th><td><span data-i18n="docs:sections.pdf.text028">Скачивание артефакта, например</span> <code>docx</code>, <code>md</code> <span data-i18n="docs:sections.pdf.text029">или</span> <code>preprocessed-pdf</code><span data-i18n="docs:sections.pdf.text030">. Передайте</span> <code>model</code> <span data-i18n="docs:sections.pdf.text031">в query string.</span></td></tr>
                         </tbody>
                     </table>
                 </article>
             </div>
             <div class="docs-panel">
-                <h3>Async job example</h3>
-                <pre><code>curl -s http://89.124.76.219:9000/v1/pdf/jobs \
+                <h3><span data-i18n="docs:sections.pdf.subheading2">Async job example</span></h3>
+                <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/pdf/jobs \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -F "model=llmgateway/pdf-converter" \
   -F "file=@document.pdf;type=application/pdf" \
@@ -387,7 +361,7 @@
   -F "max_pages=47" \
   -F "ocr_preprocess_save=true"</code></pre>
                 <p>
-                    После завершения скачивайте файлы через
+                    <span data-i18n="docs:sections.pdf.text032">После завершения скачивайте файлы через</span>
                     <code>/v1/pdf/jobs/{job_id}/download/{artifact}?model=llmgateway/pdf-converter</code>.
                 </p>
             </div>
@@ -396,24 +370,24 @@
         <section id="web" class="docs-section highlight-section">
             <div class="section-heading">
                 <p class="docs-kicker">web*</p>
-                <h2>Web-сервисы: параметры вызова</h2>
+                <h2><span data-i18n="docs:sections.web.heading">Web-сервисы: параметры вызова</span></h2>
             </div>
             <div class="service-grid">
                 <article class="service-card">
                     <h3>POST /v1/web/search</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель, настроенная для web search.</td></tr>
-                            <tr><th><code>query</code><span class="param-label required">обязательно</span></th><td>Поисковый запрос пользователя.</td></tr>
-                            <tr><th><code>max_results</code><span class="param-label">опционально</span></th><td>Сколько поисковых результатов вернуть. Диапазон: 1-20, по умолчанию 10.</td></tr>
-                            <tr><th><code>num_queries</code><span class="param-label">опционально</span></th><td>Сколько поисковых запросов выполнить для одной темы. Диапазон: 1-5, по умолчанию 1.</td></tr>
-                            <tr><th><code>language</code><span class="param-label">опционально</span></th><td>Язык поиска. По умолчанию <code>ru</code>.</td></tr>
-                            <tr><th><code>include_raw_content</code><span class="param-label">опционально</span></th><td>Tavily-compatible флаг. Если <code>true</code>, <code>markdown</code> или <code>text</code>, gateway скачивает найденные страницы через локальный read pipeline и добавляет <code>raw_content</code> в каждый элемент <code>data[]</code>.</td></tr>
-                            <tr><th><code>read_model</code><span class="param-label">опционально</span></th><td>Gateway-модель из <code>web_read</code> для скачивания <code>raw_content</code>. Нужна, если включён <code>include_raw_content</code> и в конфигурации есть несколько read-моделей.</td></tr>
-                            <tr><th><code>include_domains</code><span class="param-label">опционально</span></th><td>Tavily-compatible список доменов, которые нужно оставить в результатах. Можно передать массив строк или строку через запятую.</td></tr>
-                            <tr><th><code>exclude_domains</code><span class="param-label">опционально</span></th><td>Tavily-compatible список доменов, которые нужно убрать из результатов. Можно передать массив строк или строку через запятую.</td></tr>
-                            <tr><th><code>include_images</code><span class="param-label">опционально</span></th><td>Tavily-compatible флаг. Если <code>true</code>, каждый элемент <code>data[]</code> получает поле <code>images[]</code>. Gateway не выполняет отдельный image search; если pipeline не извлёк картинки, массив будет пустым.</td></tr>
-                            <tr><th>Ответ</th><td><code>data[]</code> с найденными страницами и <code>usage</code> с расходом запроса. При включённых флагах элементы могут содержать <code>raw_content</code> и <code>images[]</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text001">Gateway-модель, настроенная для web search.</span></td></tr>
+                            <tr><th><code>query</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text002">Поисковый запрос пользователя.</span></td></tr>
+                            <tr><th><code>max_results</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text003">Сколько поисковых результатов вернуть. Диапазон: 1-20, по умолчанию 10.</span></td></tr>
+                            <tr><th><code>num_queries</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text004">Сколько поисковых запросов выполнить для одной темы. Диапазон: 1-5, по умолчанию 1.</span></td></tr>
+                            <tr><th><code>language</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text005">Язык поиска. По умолчанию</span> <code>ru</code>.</td></tr>
+                            <tr><th><code>include_raw_content</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text006">Tavily-compatible флаг. Если</span> <code>true</code>, <code>markdown</code> <span data-i18n="docs:sections.web.text007">или</span> <code>text</code><span data-i18n="docs:sections.web.text008">, gateway скачивает найденные страницы через локальный read pipeline и добавляет</span> <code>raw_content</code> <span data-i18n="docs:sections.web.text009">в каждый элемент</span> <code>data[]</code>.</td></tr>
+                            <tr><th><code>read_model</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text010">Gateway-модель из</span> <code>web_read</code> <span data-i18n="docs:sections.web.text011">для скачивания</span> <code>raw_content</code><span data-i18n="docs:sections.web.text012">. Нужна, если включён</span> <code>include_raw_content</code> <span data-i18n="docs:sections.web.text013">и в конфигурации есть несколько read-моделей.</span></td></tr>
+                            <tr><th><code>include_domains</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text014">Tavily-compatible список доменов, которые нужно оставить в результатах. Можно передать массив строк или строку через запятую.</span></td></tr>
+                            <tr><th><code>exclude_domains</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text015">Tavily-compatible список доменов, которые нужно убрать из результатов. Можно передать массив строк или строку через запятую.</span></td></tr>
+                            <tr><th><code>include_images</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text016">Tavily-compatible флаг. Если</span> <code>true</code><span data-i18n="docs:sections.web.text017">, каждый элемент</span> <code>data[]</code> <span data-i18n="docs:sections.web.text018">получает поле</span> <code>images[]</code><span data-i18n="docs:sections.web.text019">. Gateway не выполняет отдельный image search; если pipeline не извлёк картинки, массив будет пустым.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><code>data[]</code> <span data-i18n="docs:sections.web.text020">с найденными страницами и</span> <code>usage</code> <span data-i18n="docs:sections.web.text021">с расходом запроса. При включённых флагах элементы могут содержать</span> <code>raw_content</code> <span data-i18n="docs:sections.web.text022">и</span> <code>images[]</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -421,11 +395,11 @@
                     <h3>POST /v1/web/read</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель, настроенная для чтения веб-страниц.</td></tr>
-                            <tr><th><code>url</code><span class="param-label required">обязательно</span></th><td>Адрес страницы, которую нужно загрузить и извлечь в текст.</td></tr>
-                            <tr><th><code>format</code><span class="param-label">опционально</span></th><td>Формат результата: <code>markdown</code> или <code>text</code>. По умолчанию <code>markdown</code>.</td></tr>
-                            <tr><th><code>include_images</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, ответ дополнительно содержит <code>images[]</code>. Если pipeline не извлёк картинки, массив будет пустым.</td></tr>
-                            <tr><th>Ответ</th><td><code>url</code>, <code>title</code>, извлечённый <code>content</code>, <code>usage</code> и опционально <code>images[]</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text023">Gateway-модель, настроенная для чтения веб-страниц.</span></td></tr>
+                            <tr><th><code>url</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text024">Адрес страницы, которую нужно загрузить и извлечь в текст.</span></td></tr>
+                            <tr><th><code>format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text025">Формат результата:</span> <code>markdown</code> <span data-i18n="docs:sections.web.text026">или</span> <code>text</code><span data-i18n="docs:sections.web.text027">. По умолчанию</span> <code>markdown</code>.</td></tr>
+                            <tr><th><code>include_images</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text028">Если</span> <code>true</code><span data-i18n="docs:sections.web.text029">, ответ дополнительно содержит</span> <code>images[]</code><span data-i18n="docs:sections.web.text030">. Если pipeline не извлёк картинки, массив будет пустым.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><code>url</code>, <code>title</code><span data-i18n="docs:sections.web.text031">, извлечённый</span> <code>content</code>, <code>usage</code> <span data-i18n="docs:sections.web.text032">и опционально</span> <code>images[]</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -433,15 +407,15 @@
                     <h3>POST /v1/tavily/search</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>query</code><span class="param-label required">обязательно</span></th><td>Поисковый запрос в Tavily-compatible формате.</td></tr>
-                            <tr><th><code>model</code><span class="param-label">опционально</span></th><td>Gateway-модель из <code>web_search</code>. Если она одна, gateway выберет её автоматически.</td></tr>
-                            <tr><th><code>max_results</code><span class="param-label">опционально</span></th><td>Сколько результатов вернуть. Диапазон: 1-20, по умолчанию 5.</td></tr>
-                            <tr><th><code>include_raw_content</code><span class="param-label">опционально</span></th><td>Если включено, каждый элемент <code>results[]</code> получает <code>raw_content</code> через gateway read pipeline.</td></tr>
-                            <tr><th><code>read_model</code><span class="param-label">опционально</span></th><td>Gateway-модель из <code>web_read</code> для <code>raw_content</code>. Нужна при нескольких read-моделях.</td></tr>
-                            <tr><th><code>include_domains</code><span class="param-label">опционально</span></th><td>Список доменов, которые нужно оставить в результатах.</td></tr>
-                            <tr><th><code>exclude_domains</code><span class="param-label">опционально</span></th><td>Список доменов, которые нужно убрать из результатов.</td></tr>
-                            <tr><th><code>include_images</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, Tavily-format ответ содержит top-level <code>images[]</code> и <code>images[]</code> внутри каждого результата. Без извлечённых картинок массивы пустые.</td></tr>
-                            <tr><th>Ответ</th><td>Tavily-compatible объект с <code>results[]</code>, <code>failed_results[]</code>, <code>answer</code>, <code>images[]</code>, <code>response_time</code>, <code>usage</code> и <code>request_id</code>.</td></tr>
+                            <tr><th><code>query</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text033">Поисковый запрос в Tavily-compatible формате.</span></td></tr>
+                            <tr><th><code>model</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text034">Gateway-модель из</span> <code>web_search</code><span data-i18n="docs:sections.web.text035">. Если она одна, gateway выберет её автоматически.</span></td></tr>
+                            <tr><th><code>max_results</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text036">Сколько результатов вернуть. Диапазон: 1-20, по умолчанию 5.</span></td></tr>
+                            <tr><th><code>include_raw_content</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text037">Если включено, каждый элемент</span> <code>results[]</code> <span data-i18n="docs:sections.web.text038">получает</span> <code>raw_content</code> <span data-i18n="docs:sections.web.text039">через gateway read pipeline.</span></td></tr>
+                            <tr><th><code>read_model</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text040">Gateway-модель из</span> <code>web_read</code> <span data-i18n="docs:sections.web.text041">для</span> <code>raw_content</code><span data-i18n="docs:sections.web.text042">. Нужна при нескольких read-моделях.</span></td></tr>
+                            <tr><th><code>include_domains</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text043">Список доменов, которые нужно оставить в результатах.</span></td></tr>
+                            <tr><th><code>exclude_domains</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text044">Список доменов, которые нужно убрать из результатов.</span></td></tr>
+                            <tr><th><code>include_images</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text045">Если</span> <code>true</code><span data-i18n="docs:sections.web.text046">, Tavily-format ответ содержит top-level</span> <code>images[]</code> <span data-i18n="docs:sections.web.text047">и</span> <code>images[]</code> <span data-i18n="docs:sections.web.text048">внутри каждого результата. Без извлечённых картинок массивы пустые.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.web.text049">Tavily-compatible объект с</span> <code>results[]</code>, <code>failed_results[]</code>, <code>answer</code>, <code>images[]</code>, <code>response_time</code>, <code>usage</code> <span data-i18n="docs:sections.web.text050">и</span> <code>request_id</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -449,12 +423,12 @@
                     <h3>POST /v1/tavily/extract</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>urls</code><span class="param-label required">обязательно</span></th><td>Один URL строкой или массив URL, которые нужно скачать через gateway read pipeline.</td></tr>
-                            <tr><th><code>model</code><span class="param-label">опционально</span></th><td>Gateway-модель из <code>web_read</code>. Если она одна, gateway выберет её автоматически.</td></tr>
-                            <tr><th><code>format</code><span class="param-label">опционально</span></th><td>Формат извлечённого контента: <code>markdown</code> или <code>text</code>. По умолчанию <code>markdown</code>.</td></tr>
-                            <tr><th><code>extract_depth</code><span class="param-label">опционально</span></th><td>Принимается для совместимости с Tavily-клиентами; скачивание выполняет gateway read pipeline.</td></tr>
-                            <tr><th><code>include_images</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, каждый элемент <code>results[]</code> содержит <code>images[]</code>. Если pipeline не извлёк картинки, массив будет пустым.</td></tr>
-                            <tr><th>Ответ</th><td>Tavily-compatible объект с <code>results[]</code>, <code>failed_results[]</code>, <code>images[]</code> внутри результатов, <code>response_time</code>, <code>usage</code> и <code>request_id</code>.</td></tr>
+                            <tr><th><code>urls</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text051">Один URL строкой или массив URL, которые нужно скачать через gateway read pipeline.</span></td></tr>
+                            <tr><th><code>model</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text052">Gateway-модель из</span> <code>web_read</code><span data-i18n="docs:sections.web.text053">. Если она одна, gateway выберет её автоматически.</span></td></tr>
+                            <tr><th><code>format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text054">Формат извлечённого контента:</span> <code>markdown</code> <span data-i18n="docs:sections.web.text055">или</span> <code>text</code><span data-i18n="docs:sections.web.text056">. По умолчанию</span> <code>markdown</code>.</td></tr>
+                            <tr><th><code>extract_depth</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text057">Принимается для совместимости с Tavily-клиентами; скачивание выполняет gateway read pipeline.</span></td></tr>
+                            <tr><th><code>include_images</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text058">Если</span> <code>true</code><span data-i18n="docs:sections.web.text059">, каждый элемент</span> <code>results[]</code> <span data-i18n="docs:sections.web.text060">содержит</span> <code>images[]</code><span data-i18n="docs:sections.web.text061">. Если pipeline не извлёк картинки, массив будет пустым.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.web.text062">Tavily-compatible объект с</span> <code>results[]</code>, <code>failed_results[]</code>, <code>images[]</code> <span data-i18n="docs:sections.web.text063">внутри результатов,</span> <code>response_time</code>, <code>usage</code> <span data-i18n="docs:sections.web.text064">и</span> <code>request_id</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -462,16 +436,16 @@
                     <h3>POST /v1/web/research</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель, настроенная для обычного web research.</td></tr>
-                            <tr><th><code>query</code><span class="param-label required">обязательно</span></th><td>Тема исследования или вопрос, по которому нужно собрать источники.</td></tr>
-                            <tr><th><code>language</code><span class="param-label">опционально</span></th><td>Где искать источники: <code>all</code>, <code>ru</code>, <code>en</code>, <code>zh</code> или список через запятую. По умолчанию <code>all</code>.</td></tr>
-                            <tr><th><code>num_queries</code><span class="param-label">опционально</span></th><td>Сколько поисковых запросов построить для темы. Диапазон: 1-5.</td></tr>
-                            <tr><th><code>max_results_per_lang</code><span class="param-label">опционально</span></th><td>Сколько результатов брать на каждый язык поиска. Диапазон: 1-20, по умолчанию 10.</td></tr>
-                            <tr><th><code>max_results</code><span class="param-label">опционально</span></th><td>Альтернативное имя общего лимита результатов, если не используется <code>max_results_per_lang</code>.</td></tr>
-                            <tr><th><code>max_articles</code><span class="param-label">опционально</span></th><td>Сколько найденных материалов читать и использовать в отчёте. Диапазон: 1-10, по умолчанию 8.</td></tr>
-                            <tr><th><code>output_language</code><span class="param-label">опционально</span></th><td>Язык итогового отчёта. По умолчанию <code>ru</code>.</td></tr>
-                            <tr><th><code>format</code><span class="param-label">опционально</span></th><td>Формат итогового отчёта. По умолчанию <code>markdown</code>.</td></tr>
-                            <tr><th>Ответ</th><td><code>output</code> с отчётом, <code>sources</code>, прочитанные <code>articles</code> и <code>usage</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text065">Gateway-модель, настроенная для обычного web research.</span></td></tr>
+                            <tr><th><code>query</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text066">Тема исследования или вопрос, по которому нужно собрать источники.</span></td></tr>
+                            <tr><th><code>language</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text067">Где искать источники:</span> <code>all</code>, <code>ru</code>, <code>en</code>, <code>zh</code> <span data-i18n="docs:sections.web.text068">или список через запятую. По умолчанию</span> <code>all</code>.</td></tr>
+                            <tr><th><code>num_queries</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text069">Сколько поисковых запросов построить для темы. Диапазон: 1-5.</span></td></tr>
+                            <tr><th><code>max_results_per_lang</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text070">Сколько результатов брать на каждый язык поиска. Диапазон: 1-20, по умолчанию 10.</span></td></tr>
+                            <tr><th><code>max_results</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text071">Альтернативное имя общего лимита результатов, если не используется</span> <code>max_results_per_lang</code>.</td></tr>
+                            <tr><th><code>max_articles</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text072">Сколько найденных материалов читать и использовать в отчёте. Диапазон: 1-10, по умолчанию 8.</span></td></tr>
+                            <tr><th><code>output_language</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text073">Язык итогового отчёта. По умолчанию</span> <code>ru</code>.</td></tr>
+                            <tr><th><code>format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text074">Формат итогового отчёта. По умолчанию</span> <code>markdown</code>.</td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><code>output</code> <span data-i18n="docs:sections.web.text075">с отчётом,</span> <code>sources</code><span data-i18n="docs:sections.web.text076">, прочитанные</span> <code>articles</code> <span data-i18n="docs:sections.web.text077">и</span> <code>usage</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
@@ -479,28 +453,28 @@
                     <h3>POST /v1/web/deep-research</h3>
                     <table class="params-table param-details">
                         <tbody>
-                            <tr><th><code>model</code><span class="param-label required">обязательно</span></th><td>Gateway-модель, настроенная для deep research.</td></tr>
-                            <tr><th><code>query</code><span class="param-label required">обязательно</span></th><td>Сложный вопрос или тема, по которой нужен многошаговый исследовательский отчёт.</td></tr>
-                            <tr><th><code>max_words</code><span class="param-label">опционально</span></th><td>Ограничивает длину итогового отчёта. Диапазон: 200-8000, по умолчанию 2500.</td></tr>
-                            <tr><th><code>breadth</code><span class="param-label">опционально</span></th><td>Ширина исследования: сколько направлений искать на каждом шаге. Диапазон: 1-10, по умолчанию 4.</td></tr>
-                            <tr><th><code>depth</code><span class="param-label">опционально</span></th><td>Глубина исследования: сколько итераций поиска и анализа выполнить. Диапазон: 1-5, по умолчанию 2.</td></tr>
-                            <tr><th><code>concurrency</code><span class="param-label">опционально</span></th><td>Сколько операций выполнять параллельно. Диапазон: 1-10, по умолчанию 6.</td></tr>
-                            <tr><th><code>language</code><span class="param-label">опционально</span></th><td>Язык итогового отчёта. По умолчанию <code>ru</code>.</td></tr>
-                            <tr><th><code>format</code><span class="param-label">опционально</span></th><td>Формат итогового отчёта. По умолчанию <code>markdown</code>.</td></tr>
-                            <tr><th><code>image_generation</code><span class="param-label">опционально</span></th><td>Если <code>true</code>, deep research дополнительно запрашивает изображения и возвращает их в <code>images[]</code>. По умолчанию <code>false</code>.</td></tr>
-                            <tr><th>Ответ</th><td><code>output</code> с отчётом, <code>sources</code>, <code>source_urls</code>, рабочий <code>context</code>, <code>images</code> и <code>usage</code>.</td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text078">Gateway-модель, настроенная для deep research.</span></td></tr>
+                            <tr><th><code>query</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.web.text079">Сложный вопрос или тема, по которой нужен многошаговый исследовательский отчёт.</span></td></tr>
+                            <tr><th><code>max_words</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text080">Ограничивает длину итогового отчёта. Диапазон: 200-8000, по умолчанию 2500.</span></td></tr>
+                            <tr><th><code>breadth</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text081">Ширина исследования: сколько направлений искать на каждом шаге. Диапазон: 1-10, по умолчанию 4.</span></td></tr>
+                            <tr><th><code>depth</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text082">Глубина исследования: сколько итераций поиска и анализа выполнить. Диапазон: 1-5, по умолчанию 2.</span></td></tr>
+                            <tr><th><code>concurrency</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text083">Сколько операций выполнять параллельно. Диапазон: 1-10, по умолчанию 6.</span></td></tr>
+                            <tr><th><code>language</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text084">Язык итогового отчёта. По умолчанию</span> <code>ru</code>.</td></tr>
+                            <tr><th><code>format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text085">Формат итогового отчёта. По умолчанию</span> <code>markdown</code>.</td></tr>
+                            <tr><th><code>image_generation</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.web.text086">Если</span> <code>true</code><span data-i18n="docs:sections.web.text087">, deep research дополнительно запрашивает изображения и возвращает их в</span> <code>images[]</code><span data-i18n="docs:sections.web.text088">. По умолчанию</span> <code>false</code>.</td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><code>output</code> <span data-i18n="docs:sections.web.text089">с отчётом,</span> <code>sources</code>, <code>source_urls</code><span data-i18n="docs:sections.web.text090">, рабочий</span> <code>context</code>, <code>images</code> <span data-i18n="docs:sections.web.text091">и</span> <code>usage</code>.</td></tr>
                         </tbody>
                     </table>
                 </article>
             </div>
             <div class="section-heading">
-                <p class="docs-kicker">curl examples</p>
-                <h2>Примеры вызова web*</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.web.kicker">curl examples</span></p>
+                <h2><span data-i18n="docs:sections.web.heading2">Примеры вызова web*</span></h2>
             </div>
             <div class="docs-grid two-columns">
                 <div class="docs-panel">
-                    <h3>Web search</h3>
-                    <pre><code>curl -s http://89.124.76.219:9000/v1/web/search \
+                    <h3><span data-i18n="docs:sections.web.subheading">Web search</span></h3>
+                    <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/search \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -512,8 +486,8 @@
   }'</code></pre>
                 </div>
                 <div class="docs-panel">
-                    <h3>Web read</h3>
-                    <pre><code>curl -s http://89.124.76.219:9000/v1/web/read \
+                    <h3><span data-i18n="docs:sections.web.subheading2">Web read</span></h3>
+                    <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/read \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -524,8 +498,8 @@
   }'</code></pre>
                 </div>
                 <div class="docs-panel">
-                    <h3>Web research</h3>
-                    <pre><code>curl -s http://89.124.76.219:9000/v1/web/research \
+                    <h3><span data-i18n="docs:sections.web.subheading3">Web research</span></h3>
+                    <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/research \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -538,8 +512,8 @@
   }'</code></pre>
                 </div>
                 <div class="docs-panel">
-                    <h3>Tavily-compatible search</h3>
-                    <pre><code>curl -s http://89.124.76.219:9000/v1/tavily/search \
+                    <h3><span data-i18n="docs:sections.web.subheading4">Tavily-compatible search</span></h3>
+                    <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/tavily/search \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -553,8 +527,8 @@
   }'</code></pre>
                 </div>
                 <div class="docs-panel">
-                    <h3>Tavily-compatible extract</h3>
-                    <pre><code>curl -s http://89.124.76.219:9000/v1/tavily/extract \
+                    <h3><span data-i18n="docs:sections.web.subheading5">Tavily-compatible extract</span></h3>
+                    <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/tavily/extract \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -565,8 +539,8 @@
   }'</code></pre>
                 </div>
                 <div class="docs-panel">
-                    <h3>Web deep research</h3>
-                    <pre><code>curl -s http://89.124.76.219:9000/v1/web/deep-research \
+                    <h3><span data-i18n="docs:sections.web.subheading6">Web deep research</span></h3>
+                    <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/deep-research \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -586,23 +560,23 @@
 
         <section id="playground" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Admin testing</p>
-                <h2>Playground</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.playground.kicker">Admin testing</span></p>
+                <h2><span data-i18n="docs:sections.playground.heading">Playground</span></h2>
             </div>
             <p>
-                Master-админ может открыть <code>/v1/ui/playground</code>, чтобы вручную проверить текущие operation routes
-                без отдельного клиента. Старый путь <code>/v1/ui/web-playground</code> сохранён как alias.
+                <span data-i18n="docs:sections.playground.text001">Master-админ может открыть</span> <code>/v1/ui/playground</code><span data-i18n="docs:sections.playground.text002">, чтобы вручную проверить текущие operation routes
+                без отдельного клиента. Старый путь</span> <code>/v1/ui/web-playground</code> <span data-i18n="docs:sections.playground.text003">сохранён как alias.</span>
             </p>
             <div class="endpoint-grid">
                 <div class="endpoint-card">
-                    <h3>Разделы</h3>
+                    <h3><span data-i18n="docs:sections.playground.subheading">Разделы</span></h3>
                     <table class="params-table">
                         <tbody>
-                            <tr><th>Web</th><td><code>/v1/web/search</code>, <code>/v1/web/read</code>, Tavily-compatible routes, research и deep research.</td></tr>
-                            <tr><th>Speech to Text</th><td><code>POST /v1/audio/transcriptions</code> через <code>multipart/form-data</code>, выбор языка/формата и скачивание результата.</td></tr>
-                            <tr><th>Text to Speech</th><td><code>GET /v1/audio/voices</code> для голосов выбранной модели, затем <code>POST /v1/audio/speech</code>; ответ проигрывается и скачивается как audio-файл.</td></tr>
-                            <tr><th>Images</th><td><code>/v1/images/generations</code> и <code>/v1/images/edits</code>; есть выбор размера, preview результата и скачивание изображений, editing принимает до 4 файлов <code>image[]</code>.</td></tr>
-                            <tr><th>PDF</th><td><code>POST /v1/pdf/jobs</code> с PDF-файлом, выбранной gateway-моделью, <code>output=both|docx|md</code>, <code>language</code>, опциональным <code>target_language</code> для перевода, настройками OCR/formula OCR, паролем и флагом <code>ocr_preprocess_save</code>; результат скачивается через job download endpoints.</td></tr>
+                            <tr><th><span data-i18n="docs:sections.playground.tableHeader001">Web</span></th><td><code>/v1/web/search</code>, <code>/v1/web/read</code><span data-i18n="docs:sections.playground.text004">, Tavily-compatible routes, research и deep research.</span></td></tr>
+                            <tr><th><span data-i18n="docs:sections.playground.tableHeader002">Speech to Text</span></th><td><code>POST /v1/audio/transcriptions</code> <span data-i18n="docs:sections.playground.text005">через</span> <code>multipart/form-data</code><span data-i18n="docs:sections.playground.text006">, выбор языка/формата и скачивание результата.</span></td></tr>
+                            <tr><th><span data-i18n="docs:sections.playground.tableHeader003">Text to Speech</span></th><td><code>GET /v1/audio/voices</code> <span data-i18n="docs:sections.playground.text007">для голосов выбранной модели, затем</span> <code>POST /v1/audio/speech</code><span data-i18n="docs:sections.playground.text008">; ответ проигрывается и скачивается как audio-файл.</span></td></tr>
+                            <tr><th><span data-i18n="docs:sections.playground.tableHeader004">Images</span></th><td><code>/v1/images/generations</code> <span data-i18n="docs:sections.playground.text009">и</span> <code>/v1/images/edits</code><span data-i18n="docs:sections.playground.text010">; есть выбор размера, preview результата и скачивание изображений, editing принимает до 4 файлов</span> <code>image[]</code>.</td></tr>
+                            <tr><th><span data-i18n="docs:sections.playground.tableHeader005">PDF</span></th><td><code>POST /v1/pdf/jobs</code> <span data-i18n="docs:sections.playground.text011">с PDF-файлом, выбранной gateway-моделью,</span> <code>output=both|docx|md</code>, <code>language</code><span data-i18n="docs:sections.playground.text012">, опциональным</span> <code>target_language</code> <span data-i18n="docs:sections.playground.text013">для перевода, настройками OCR/formula OCR, паролем и флагом</span> <code>ocr_preprocess_save</code><span data-i18n="docs:sections.playground.text014">; результат скачивается через job download endpoints.</span></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -611,33 +585,34 @@
 
         <section id="keys" class="docs-section">
             <div class="section-heading">
-                <p class="docs-kicker">Access control</p>
-                <h2>Доступ virtual keys</h2>
+                <p class="docs-kicker"><span data-i18n="docs:sections.keys.kicker">Access control</span></p>
+                <h2><span data-i18n="docs:sections.keys.heading">Доступ virtual keys</span></h2>
             </div>
             <p>
-                Виртуальный ключ <code>lgk_...</code> вызывает API так же, как master-key. Если для него задан
-                <code>allowed_models</code>, можно вызывать только перечисленные gateway-модели. Для <code>web_research</code>
-                и <code>web_deep_research</code> проверяется только сервисная модель из поля <code>model</code>.
-                Если поиск запрашивает <code>include_raw_content</code>, дополнительно проверяется доступ к выбранной
-                <code>read_model</code>, потому что скачивание страниц выполняет отдельный read-сервис. Для PDF job
-                status/result/download модель передаётся в query string и проверяется так же, как при создании job.
+                <span data-i18n="docs:sections.keys.text001">Виртуальный ключ</span> <code>lgk_...</code> <span data-i18n="docs:sections.keys.text002">вызывает API так же, как master-key. Если для него задан</span>
+                <code>allowed_models</code><span data-i18n="docs:sections.keys.text003">, можно вызывать только перечисленные gateway-модели. Для</span> <code>web_research</code>
+                <span data-i18n="docs:sections.keys.text004">и</span> <code>web_deep_research</code> <span data-i18n="docs:sections.keys.text005">проверяется только сервисная модель из поля</span> <code>model</code><span data-i18n="docs:sections.keys.text006">.
+                Если поиск запрашивает</span> <code>include_raw_content</code><span data-i18n="docs:sections.keys.text007">, дополнительно проверяется доступ к выбранной</span>
+                <code>read_model</code><span data-i18n="docs:sections.keys.text008">, потому что скачивание страниц выполняет отдельный read-сервис. Для PDF job
+                status/result/download модель передаётся в query string и проверяется так же, как при создании job.</span>
             </p>
         </section>
         </div>
 
         <section id="freeTierDocsPanel" class="docs-tab-panel docs-section" role="tabpanel" hidden>
             <div class="section-heading">
-                <p class="docs-kicker">Free-tier catalog</p>
-                <h2>Free-tier провайдеры</h2>
+                <p class="docs-kicker"><span data-i18n="docs:freeTier.kicker">Free-tier catalog</span></p>
+                <h2><span data-i18n="docs:freeTier.heading">Free-tier провайдеры</span></h2>
             </div>
-            <div id="freeTierDocStatus" class="docs-status" aria-live="polite" hidden></div>
-            <div id="freeTierMarkdown" class="markdown-doc" aria-live="polite"></div>
+            <div id="freeTierDocStatus" class="docs-status" hidden></div>
+            <div id="freeTierStatusDetail" class="docs-status-detail" data-i18n-raw-detail hidden></div>
+            <div id="freeTierMarkdown" class="markdown-doc"></div>
         </section>
     </main>
 
-    <script src="/static/ui-core.js"></script>
-    <script src="/static/shared-nav.js"></script>
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
     <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
     <script src="/static/gateway-docs.js"></script>
 </body>
 </html>

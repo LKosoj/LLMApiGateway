@@ -28,15 +28,12 @@ from llm_gateway_core.config.paths import STATIC_DIR
 from llm_gateway_core.db import api_keys_db as api_keys_db_module
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.middleware.auth import api_key_auth
-from llm_gateway_core.services.access_control import UsdBudgetLedger
-from llm_gateway_core.services.rate_limiter import RateLimiter
+from tests.runtime_test_support import bind_app_services
 
 
 def _build_app(db: ApiKeysDB) -> FastAPI:
     app = FastAPI()
-    app.state.api_keys_db = db
-    app.state.rate_limiter = RateLimiter()
-    app.state.usd_budget_ledger = UsdBudgetLedger()
+    bind_app_services(app, api_keys_db=db)
     app.middleware("http")(api_key_auth)
     app.include_router(auth_router)
     app.include_router(editor_router, prefix="/v1")
@@ -76,7 +73,7 @@ class ThemeUnificationTests(unittest.TestCase):
             self.addCleanup(p.stop)
 
         self.app = _build_app(self.db)
-        self.client = TestClient(self.app)
+        self.client = self.enterContext(TestClient(self.app))
 
     def _master_headers(self) -> dict:
         return {"Authorization": f"Bearer {self.master_key}"}
@@ -270,9 +267,13 @@ class ThemeUnificationTests(unittest.TestCase):
                 self.assertNotIn(pattern, content, f"{path.name} still references {pattern}")
 
     def test_translator_debug_css_uses_shared_scaffold(self):
-        """translator-debug.css is styled even if loaded as the only page stylesheet."""
+        """The translator page loads the shared theme before its page styles."""
         content = (STATIC_DIR / "translator-debug.css").read_text(encoding="utf-8")
-        self.assertIn("@import url('theme.css');", content)
+        html = (STATIC_DIR / "translator-debug.html").read_text(encoding="utf-8")
+        self.assertLess(
+            html.index('href="/static/theme.css"'),
+            html.index('href="/static/translator-debug.css"'),
+        )
         self.assertIn("width: min(var(--page-max-width)", content)
         self.assertIn("background: var(--bg-elevated)", content)
         self.assertIn("overflow-x: auto", content)

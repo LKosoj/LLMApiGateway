@@ -1,28 +1,47 @@
 services:
+  outputs-init:
+    image: llm-gateway:latest
+    user: "0:0"
+    read_only: true
+    restart: "no"
+    network_mode: "none"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: ["python", "-m", "llm_gateway_core.services.image_storage_cli"]
+    command: ["init-volume", "--outputs-dir", "/app/outputs"]
+    volumes:
+      - gateway_outputs:/app/outputs
+
   llm-gateway:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        LLMGATEWAY_EXPECTED_PRODUCT_VERSION: ${LLMGATEWAY_EXPECTED_PRODUCT_VERSION:?derive it with python3 scripts/check_product_version.py --print}
     image: llm-gateway:latest
-    container_name: llm-gateway
     restart: unless-stopped
+    read_only: true
+    depends_on:
+      outputs-init:
+        condition: service_completed_successfully
     ports:
       - "9000:9000"
     volumes:
-      # Mount providers.json read-write so the web editor can persist changes back to the host file
-      - ./providers.json:/app/providers.json
-      # Mount models_fallback_rules.json read-write so the web editor can persist changes back to the host file
-      - ./models_fallback_rules.json:/app/models_fallback_rules.json
-      # Mount models_operation_rules.json read-write so the web editor can persist changes for operation routes
-      - ./models_operation_rules.json:/app/models_operation_rules.json
-      # Mount models_fusion_rules.json read-write so the web editor can persist Fusion ensembles
-      - ./models_fusion_rules.json:/app/models_fusion_rules.json
-      # Mount models_router_rules.json read-write so router models can be configured on the host
-      - ./models_router_rules.json:/app/models_router_rules.json
-      # Mount models_model_rules.json read-write so the web editor can persist model aliases, excludes, and upstream model pools
-      - ./models_model_rules.json:/app/models_model_rules.json
+      # One writable directory is required for atomic config replace and rollback.
+      - ./config:/app/config
       # Mount database directory for persistence
       - ./data/db:/app/db
+      # Project-scoped persistent generated-image storage.
+      - gateway_outputs:/app/outputs
+    tmpfs:
+      - /app/logs:mode=0770,uid=10001,gid=10001
+      - /tmp:mode=1777
     environment:
       # Required: this is the gateway token clients must send to this service.
       - GATEWAY_API_KEY=your-secure-api-key
@@ -30,9 +49,20 @@ services:
       # Optional gateway settings
       - GATEWAY_PORT=9000
       - GATEWAY_HOST=0.0.0.0
+      # Required single-process safety assertion; this is not a scaling setting.
+      - GATEWAY_WORKERS=1
+      - GATEWAY_DB_DIR=/app/db
+      - GATEWAY_OUTPUTS_DIR=/app/outputs
       - LOG_FILE_LIMIT=15
       - LOG_CHAT_ENABLED=false
       - FALLBACK_PROVIDER=openrouter
+      - LLMGATEWAY_CONFIG_DIR=/app/config
+      - PROVIDERS_FILENAME=/app/config/providers.json
+      - FALLBACK_RULES_FILENAME=/app/config/models_fallback_rules.json
+      - OPERATION_RULES_FILENAME=/app/config/models_operation_rules.json
+      - FUSION_RULES_FILENAME=/app/config/models_fusion_rules.json
+      - MODEL_RULES_FILENAME=/app/config/models_model_rules.json
+      - ROUTER_RULES_FILENAME=/app/config/models_router_rules.json
 
       # Provider API keys - uncomment and set the ones you need.
       # APIKEY_OPENROUTER is issued by OpenRouter.
@@ -56,3 +86,6 @@ services:
 networks:
   llm-gateway-network:
     driver: bridge
+
+volumes:
+  gateway_outputs:

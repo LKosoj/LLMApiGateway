@@ -18,16 +18,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.auth_ui import auth_router
 from llm_gateway_core.api.v1.quota import quota_router
 from llm_gateway_core.db import api_keys_db as api_keys_db_module
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
-from llm_gateway_core.middleware.auth import api_key_auth
+from llm_gateway_core.middleware.auth import ROLE_USER, api_key_auth
 from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.rate_limiter import RateLimiter
+from tests._async_compat import run_async
+from tests.runtime_test_support import bind_app_services
 
 import llm_gateway_core.api.v1.quota as quota_module
 
@@ -35,8 +37,10 @@ import llm_gateway_core.api.v1.quota as quota_module
 class _FakeFallbackEventsDB:
     def __init__(self, counts: dict[int, int] | None = None):
         self._counts = counts or {}
+        self.calls: list[int | None] = []
 
     async def get_events_count_last_24h(self, api_key_id: int | None = None) -> dict[int, int]:
+        self.calls.append(api_key_id)
         if api_key_id is not None:
             return {k: v for k, v in self._counts.items() if k == api_key_id}
         return dict(self._counts)
@@ -45,11 +49,15 @@ class _FakeFallbackEventsDB:
 def _build_app(db: ApiKeysDB, rate_limiter: RateLimiter | None = None,
                fallback_db=None) -> FastAPI:
     app = FastAPI()
-    app.state.api_keys_db = db
-    app.state.rate_limiter = rate_limiter or RateLimiter()
-    app.state.usd_budget_ledger = UsdBudgetLedger()
-    if fallback_db is not None:
-        app.state.fallback_events_db = fallback_db
+    bind_app_services(
+        app,
+        api_keys_db=db,
+        fallback_events_db=(
+            fallback_db if fallback_db is not None else _FakeFallbackEventsDB()
+        ),
+        rate_limiter=rate_limiter if rate_limiter is not None else RateLimiter(),
+        usd_budget_ledger=UsdBudgetLedger(),
+    )
     app.middleware("http")(api_key_auth)
     app.include_router(auth_router)
     app.include_router(quota_router, prefix="/v1")
@@ -217,7 +225,11 @@ class QuotaEndpointTests(unittest.TestCase):
         app = _build_app(self.db)
         client = TestClient(app)
 
-        with patch.object(app.state.api_keys_db, "list_all", side_effect=counting_list_all):
+        with patch.object(
+            app.state.services.api_keys_db,
+            "list_all",
+            side_effect=counting_list_all,
+        ):
             # First call — populates cache
             r1 = client.get("/v1/api/quota/keys", headers=self._master_headers())
             # Second call — should hit cache, list_all not called again
@@ -251,6 +263,93 @@ class QuotaEndpointTests(unittest.TestCase):
         client = TestClient(app)
         response = client.get("/v1/api/quota/keys")  # no Authorization header
         self.assertEqual(response.status_code, 401)
+
+    def test_malformed_user_key_ids_fail_before_database_query(self):
+        app = _build_app(self.db)
+
+        with patch.object(self.db, "list_all", wraps=self.db.list_all) as list_all:
+            for key_id in (None, True, False, 0, -1, 1.0):
+                with self.subTest(key_id=key_id):
+                    request = Request(
+                        {
+                            "type": "http",
+                            "app": app,
+                            "state": {
+                                "api_key_role": ROLE_USER,
+                                "api_key_id": key_id,
+                            },
+                        }
+                    )
+
+                    with self.assertRaises(HTTPException) as raised:
+                        run_async(quota_module.get_quota_keys(request))
+
+                    self.assertEqual(raised.exception.status_code, 401)
+                    self.assertEqual(raised.exception.detail, "Authentication required.")
+
+        list_all.assert_not_called()
+
+    def test_mandatory_empty_dependencies_produce_zero_snapshot(self):
+        record = self.db.create(name="empty-dependencies")
+        fallback_db = _FakeFallbackEventsDB()
+        rate_limiter = RateLimiter()
+        app = _build_app(
+            self.db,
+            rate_limiter=rate_limiter,
+            fallback_db=fallback_db,
+        )
+
+        with patch.object(
+            rate_limiter,
+            "get_window_snapshot",
+            return_value=(0, 0, None),
+        ) as get_window_snapshot:
+            response = TestClient(app).get(
+                "/v1/api/quota/keys",
+                headers=self._master_headers(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(fallback_db.calls, [None])
+        get_window_snapshot.assert_called_once_with(record.id)
+        card = response.json()[0]
+        self.assertEqual(card["rpm"]["current"], 0)
+        self.assertEqual(card["tpm"]["current"], 0)
+        self.assertEqual(card["rpm"]["reset_in_seconds"], 60)
+        self.assertEqual(card["fallback_events_24h"], 0)
+
+    def test_database_exception_is_not_exposed_in_response(self):
+        app = _build_app(self.db)
+        client = TestClient(app)
+
+        with patch.object(
+            self.db,
+            "list_all",
+            side_effect=RuntimeError("postgres://admin:secret-token@db/quota"),
+        ):
+            response = client.get(
+                "/v1/api/quota/keys",
+                headers=self._master_headers(),
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["detail"], "Could not retrieve quota data.")
+        self.assertNotIn("secret-token", response.text)
+
+    def test_container_dependencies_win_over_conflicting_legacy_aliases(self):
+        self.db.create(name="container-quota")
+        app = _build_app(self.db)
+        app.state.api_keys_db = object()
+        app.state.fallback_events_db = object()
+        app.state.rate_limiter = object()
+
+        response = TestClient(app).get(
+            "/v1/api/quota/keys",
+            headers=self._master_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["name"], "container-quota")
 
 
 if __name__ == "__main__":

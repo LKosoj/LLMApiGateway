@@ -5,10 +5,22 @@ import unittest
 from unittest.mock import patch
 
 from llm_gateway_core.middleware.chat_logging import write_log
-from llm_gateway_core.utils.log_redaction import redact_headers_for_log, redact_payload_for_log
+from llm_gateway_core.utils.log_redaction import (
+    redact_headers_for_log,
+    redact_payload_for_log,
+    safe_exception_type_name,
+    sanitize_exception_type_name,
+)
 
 
 class LogRedactionTests(unittest.TestCase):
+    def test_exception_type_names_use_a_bounded_ascii_identifier(self):
+        unsafe_type = type("Unsafe\napi-secret", (RuntimeError,), {})
+
+        self.assertEqual(safe_exception_type_name(RuntimeError()), "RuntimeError")
+        self.assertEqual(safe_exception_type_name(unsafe_type()), "BaseException")
+        self.assertEqual(sanitize_exception_type_name("X" * 129), "BaseException")
+
     def test_redaction_helpers_remove_sensitive_headers_and_messages(self):
         headers = {
             "Authorization": "Bearer top-secret",
@@ -67,17 +79,34 @@ class LogRedactionTests(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
+            configured_logs = os.path.join(temp_dir, "configured logs")
+            unrelated_cwd = os.path.join(temp_dir, "unrelated cwd")
+            os.mkdir(unrelated_cwd)
             current_dir = os.getcwd()
             try:
-                os.chdir(temp_dir)
-                write_log(headers, request_body, "model response", tokens_usage)
-                log_dir = os.path.join(temp_dir, "logs")
-                log_files = [name for name in os.listdir(log_dir) if name.endswith(".txt")]
+                os.chdir(unrelated_cwd)
+                with patch.dict(
+                    os.environ,
+                    {"LLMGATEWAY_LOG_DIR": configured_logs},
+                    clear=False,
+                ):
+                    write_log(headers, request_body, "model response", tokens_usage)
+                log_files = [
+                    name
+                    for name in os.listdir(configured_logs)
+                    if name.endswith(".txt")
+                ]
                 self.assertEqual(len(log_files), 1)
-                with open(os.path.join(log_dir, log_files[0]), "r", encoding="utf-8") as log_file:
+                with open(
+                    os.path.join(configured_logs, log_files[0]),
+                    "r",
+                    encoding="utf-8",
+                ) as log_file:
                     content = log_file.read()
             finally:
                 os.chdir(current_dir)
+
+            self.assertFalse(os.path.exists(os.path.join(unrelated_cwd, "logs")))
 
         self.assertNotIn("Bearer top-secret", content)
         self.assertNotIn("session=abc", content)

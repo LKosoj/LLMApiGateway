@@ -1,0 +1,37 @@
+{
+  "appName": "LLM API Gateway",
+  "loading": "Loading…",
+  "items": "{count, plural, one {# item} other {# items}}",
+  "languageChanged": "Language changed to {locale}",
+  "languageLabel": "Language",
+  "localeChangeFailed": "The interface language could not be changed.",
+  "errors": {
+    "invalidApiKey": "Invalid API key.",
+    "invalidRequest": "The request is invalid.",
+    "rateLimited": "Too many requests. Try again later.",
+    "unavailable": "The service is temporarily unavailable.",
+    "requestFailed": "Request failed (HTTP {status}).",
+    "network": "The service could not be reached."
+  },
+  "theme": {
+    "switchToDark": "Switch to dark mode",
+    "switchToSystem": "Switch to system mode",
+    "switchToLight": "Switch to light mode"
+  },
+  "productVersion": {
+    "ready": "(v{version})",
+    "unavailable": "(version unavailable)"
+  },
+  "navigation": {
+    "label": "Primary navigation",
+    "docs": "Docs",
+    "usage": "Usage Statistics",
+    "quota": "Quota",
+    "rules": "Rules Editor",
+    "playground": "Playground",
+    "apiKeys": "API Keys",
+    "rejections": "Rejections",
+    "translator": "Translator Debug",
+    "pricing": "Pricing"
+  }
+}

@@ -60,7 +60,7 @@
 }
 
 .rej-table th {
-    color: var(--text-muted);
+    color: var(--text);
     font-weight: 700;
     white-space: nowrap;
 }

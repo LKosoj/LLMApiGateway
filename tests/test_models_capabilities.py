@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import main
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 VALID_PROVIDERS_TEXT = """
@@ -205,9 +206,26 @@ class ModelsCapabilitiesTests(unittest.TestCase):
         self.providers_path = Path(self.temp_dir.name) / "providers.json"
         self.rules_path = Path(self.temp_dir.name) / "models_fallback_rules.json"
         self.operation_rules_path = Path(self.temp_dir.name) / "models_operation_rules.json"
+        self.fusion_rules_path = Path(self.temp_dir.name) / "models_fusion_rules.json"
+        self.model_rules_path = Path(self.temp_dir.name) / "models_model_rules.json"
+        self.router_rules_path = Path(self.temp_dir.name) / "models_router_rules.json"
         self.providers_path.write_text(VALID_PROVIDERS_TEXT, encoding="utf-8")
         self.rules_path.write_text(VALID_FALLBACK_RULES_TEXT, encoding="utf-8")
         self.operation_rules_path.write_text(VALID_OPERATION_RULES_TEXT, encoding="utf-8")
+        self.fusion_rules_path.write_text("[]", encoding="utf-8")
+        self.model_rules_path.write_text("{}", encoding="utf-8")
+        self.router_rules_path.write_text(
+            """[
+  {
+    "gateway_model_name": "gateway/router",
+    "selector_model": "gateway/chat-only",
+    "targets": [
+      {"type": "gateway_model", "model": "gateway/chat-only"}
+    ]
+  }
+]""",
+            encoding="utf-8",
+        )
         self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
         self.fallback_provider_patcher.start()
 
@@ -215,6 +233,9 @@ class ModelsCapabilitiesTests(unittest.TestCase):
             providers_filename=str(self.providers_path),
             fallback_rules_filename=str(self.rules_path),
             operation_rules_filename=str(self.operation_rules_path),
+            fusion_rules_filename=str(self.fusion_rules_path),
+            model_rules_filename=str(self.model_rules_path),
+            router_rules_filename=str(self.router_rules_path),
         )
         self.config_loader.load_providers()
         self.config_loader.load_fallback_rules()
@@ -229,18 +250,21 @@ class ModelsCapabilitiesTests(unittest.TestCase):
         fake_http_client = Mock()
         fake_http_client.get = AsyncMock(return_value=_FallbackModelsResponse())
         fake_http_client.aclose = AsyncMock()
-        self.config_loader.load_fusion_rules = Mock(return_value={})
-        self.config_loader.router_rules = {
-            "gateway/router": {
-                "selector_model": "gateway/chat-only",
-                "targets": [{"type": "gateway_model", "model": "gateway/chat-only"}],
-            }
-        }
-        self.config_loader.load_router_rules = Mock(return_value=self.config_loader.router_rules)
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
+            install_main_chat_accounting_double(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))

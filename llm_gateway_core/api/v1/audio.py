@@ -1,30 +1,59 @@
 import json
 import logging
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from functools import partial
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from ..accounting_http import AccountingHttpUse, accounting_error_response
 from ...config.loader import ConfigLoader, OperationRoute, REQUEST_FORMAT_NVIDIA_RIVA_GRPC, resolve_provider_config_api_key
+from ...config.settings import settings
 from ...services.access_control import enforce_virtual_key_access
+from ...services.accounting import AccountingError
+from ...services.operation_accounting import (
+    OperationTerminalObservation,
+    parse_synthesized_operation_observation,
+    parse_upstream_operation_observation,
+)
 from ...services.payload_transform import apply_payload_transforms
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
-from .audio_adapters import sanitize_nvidia_riva_request_payload, transcribe_with_nvidia_riva_grpc
+from .audio_adapters import (
+    sanitize_nvidia_riva_request_payload,
+    transcribe_with_nvidia_riva_grpc,
+)
 from .operation_proxy import (
     extract_downstream_error_detail,
     proxy_json_raw_to_downstream,
     proxy_multipart_raw_to_downstream,
-    record_operation_usage,
     read_json_request_body,
     request_duration_ms,
     sanitize_target_url_for_log,
     should_retry_operation_status,
     sleep_before_retry,
 )
-from .operation_runtime import serialize_upload_limited
+from .operation_accounting import (
+    OperationTerminalOwner,
+    finalize_buffered_operation,
+    release_operation_if_open,
+    take_operation_terminal_owner,
+)
+from .operation_runtime import (
+    MultipartFilePayload,
+    ValidatedUpload,
+    admit_upload_processing,
+    validate_upload_limited,
+)
+
+if TYPE_CHECKING:
+    from ...services.runtime_config import AppServices, RuntimeSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +67,8 @@ TRUTHY_FORM_VALUES = frozenset({"1", "on", "true", "yes"})
 PROTECTED_AUDIO_CUSTOM_PARAM_KEYS = frozenset({"file", "model"})
 PROTECTED_AUDIO_SPEECH_CUSTOM_PARAM_KEYS = frozenset({"input", "model"})
 AUDIO_VOICES_DEFAULT_TARGET_PATH = "/voices"
+MULTIPART_MAX_FIELDS = 64
+MULTIPART_MAX_SCALAR_PART_BYTES = 64 * 1024
 KNOWN_VOICE_METADATA: dict[str, dict[str, str]] = {
     "aidar": {"gender": "male", "language": "ru"},
     "eugene": {"gender": "male", "language": "ru"},
@@ -49,25 +80,15 @@ KNOWN_VOICE_METADATA: dict[str, dict[str, str]] = {
 
 def _get_operation_runtime(
     request: Request,
-) -> tuple[OperationDispatcher, httpx.AsyncClient, ConfigLoader, dict]:
-    dispatcher: OperationDispatcher | None = getattr(request.app.state, "operation_dispatcher", None)
-    if dispatcher is None:
-        logger.error("OperationDispatcher not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Operation dispatcher not available.")
-
-    http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
-    if http_client is None:
-        logger.error("Shared httpx.AsyncClient not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Shared HTTP client not available.")
-
-    config_loader_instance: ConfigLoader | None = getattr(request.app.state, "config_loader", None)
-    if config_loader_instance is None:
-        logger.error("ConfigLoader not found in application state.")
-        raise HTTPException(status_code=500, detail="Internal server error: Core configuration not available.")
-
-    proxy_http_clients: dict = getattr(request.app.state, "proxy_http_clients", {})
-
-    return dispatcher, http_client, config_loader_instance, proxy_http_clients
+) -> tuple[OperationDispatcher, httpx.AsyncClient, ConfigLoader, Mapping[str, httpx.AsyncClient]]:
+    services = cast("AppServices", request.app.state.services)
+    runtime_snapshot = cast("RuntimeSnapshot", request.state.runtime_snapshot)
+    return (
+        runtime_snapshot.operation_dispatcher,
+        services.http_client,
+        runtime_snapshot.config_loader,
+        runtime_snapshot.proxy_http_clients,
+    )
 
 
 def _parse_form_field_value(value: object) -> object:
@@ -97,43 +118,53 @@ def _append_scalar_form_value(payload: dict[str, object], field_name: str, field
     payload[field_name] = [existing_value, field_value]
 
 
-async def _serialize_upload(value: UploadFile | StarletteUploadFile) -> tuple[str, bytes, str | None]:
-    return await serialize_upload_limited(value, default_filename="audio.bin", kind="audio")
+async def _validate_upload(value: UploadFile | StarletteUploadFile) -> ValidatedUpload:
+    return await validate_upload_limited(
+        value,
+        default_filename="audio.bin",
+        kind="audio",
+        max_bytes=settings.audio_upload_max_bytes,
+    )
 
 
+@asynccontextmanager
 async def _parse_audio_transcription_request(
     request: Request,
-) -> tuple[str, dict[str, object], list[tuple[str, tuple[str, bytes, str | None]]]]:
+) -> AsyncIterator[tuple[str, dict[str, object], ValidatedUpload]]:
     content_type = request.headers.get("content-type", "").lower()
     if "multipart/form-data" not in content_type:
         raise HTTPException(status_code=400, detail="Audio transcriptions endpoint expects multipart/form-data.")
 
-    form = await request.form()
     scalar_fields: dict[str, object] = {}
-    upload_file: tuple[str, bytes, str | None] | None = None
+    upload_file: ValidatedUpload | None = None
 
-    for key, value in form.multi_items():
-        if isinstance(value, (UploadFile, StarletteUploadFile)):
-            if key != "file":
-                raise HTTPException(status_code=400, detail=f"Unsupported multipart file field '{key}'.")
-            if upload_file is not None:
-                raise HTTPException(status_code=400, detail="Only one 'file' is supported in request body.")
-            upload_file = await _serialize_upload(value)
-            continue
+    async with request.form(
+        max_files=1,
+        max_fields=MULTIPART_MAX_FIELDS,
+        max_part_size=MULTIPART_MAX_SCALAR_PART_BYTES,
+    ) as form:
+        for key, value in form.multi_items():
+            if isinstance(value, (UploadFile, StarletteUploadFile)):
+                if key != "file":
+                    raise HTTPException(status_code=400, detail=f"Unsupported multipart file field '{key}'.")
+                if upload_file is not None:
+                    raise HTTPException(status_code=400, detail="Only one 'file' is supported in request body.")
+                upload_file = await _validate_upload(value)
+                continue
 
-        _append_scalar_form_value(scalar_fields, key, _parse_form_field_value(value))
+            _append_scalar_form_value(scalar_fields, key, _parse_form_field_value(value))
 
-    requested_model = scalar_fields.get("model")
-    if not isinstance(requested_model, str) or not requested_model:
-        raise HTTPException(status_code=400, detail="Missing 'model' in request body")
+        requested_model = scalar_fields.get("model")
+        if not isinstance(requested_model, str) or not requested_model:
+            raise HTTPException(status_code=400, detail="Missing 'model' in request body")
 
-    if upload_file is None:
-        raise HTTPException(status_code=400, detail="Missing 'file' in request body")
+        if upload_file is None:
+            raise HTTPException(status_code=400, detail="Missing 'file' in request body")
 
-    if _is_truthy_form_value(scalar_fields.get("stream")):
-        raise HTTPException(status_code=400, detail="Audio transcription streaming is not supported.")
+        if _is_truthy_form_value(scalar_fields.get("stream")):
+            raise HTTPException(status_code=400, detail="Audio transcription streaming is not supported.")
 
-    return requested_model, scalar_fields, [("file", upload_file)]
+        yield requested_model, scalar_fields, upload_file
 
 
 async def _parse_audio_speech_request(request: Request) -> tuple[str, dict[str, object]]:
@@ -431,7 +462,8 @@ def _normalize_audio_voices_payload(payload: dict[str, object], model: str | Non
 
 
 def _allowed_audio_speech_model_names(request: Request) -> list[str]:
-    operation_rules = getattr(request.app.state, "operation_rules", {})
+    runtime_snapshot = cast("RuntimeSnapshot", request.state.runtime_snapshot)
+    operation_rules = runtime_snapshot.config_loader.operation_rules
     audio_speech_rules = operation_rules.get(AUDIO_SPEECH_SECTION, {})
     if not isinstance(audio_speech_rules, dict):
         return []
@@ -507,127 +539,245 @@ def _log_route_fallback(
     )
 
 
-@router.post("/audio/transcriptions")
-async def create_audio_transcription(request: Request):
-    requested_model, request_payload, files_payload = await _parse_audio_transcription_request(request)
+def _parse_audio_terminal_observation(
+    owner: OperationTerminalOwner,
+    payload: Mapping[str, object],
+    *,
+    gateway_model: str,
+    route: OperationRoute,
+    duration_ms: int,
+    synthesized: bool,
+) -> OperationTerminalObservation:
+    parser = (
+        parse_synthesized_operation_observation
+        if synthesized
+        else parse_upstream_operation_observation
+    )
+    return parser(
+        payload,
+        policy=owner.context.policy,
+        gateway_model=gateway_model,
+        provider=route.provider,
+        model=route.model,
+        cost_rate_registry=owner.cost_rate_registry,
+        operation_cost_calculator_registry=(
+            owner.operation_cost_calculator_registry
+        ),
+        occurred_at=datetime.now(timezone.utc),
+        duration_ms=duration_ms,
+    )
 
-    enforce_virtual_key_access(request, requested_model)
 
-    dispatcher, http_client, config_loader_instance, proxy_http_clients = _get_operation_runtime(request)
-    routes = dispatcher.lookup_routes(AUDIO_TRANSCRIPTIONS_SECTION, requested_model)
-    if not routes:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No audio transcription route configured for model '{requested_model}'.",
+async def _run_audio_accounting(
+    request: Request,
+    operation: Callable[[OperationTerminalOwner], Awaitable[object]],
+) -> object:
+    try:
+        owner = take_operation_terminal_owner(request)
+    except AccountingError as exc:
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMISSION,
         )
 
+    try:
+        return await operation(owner)
+    except AccountingError as exc:
+        await release_operation_if_open(owner, primary_error=exc)
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMISSION,
+        )
+    except BaseException as exc:
+        await release_operation_if_open(owner, primary_error=exc)
+        raise
+
+
+async def _proxy_audio_transcription(
+    request: Request,
+    owner: OperationTerminalOwner,
+    *,
+    dispatcher: OperationDispatcher,
+    http_client: httpx.AsyncClient,
+    config_loader_instance: ConfigLoader,
+    proxy_http_clients: Mapping[str, httpx.AsyncClient],
+    routes: list[OperationRoute],
+    requested_model: str,
+    request_payload: dict[str, object],
+    upload: ValidatedUpload,
+) -> object:
     request_started_at = time.monotonic()
+    files_payload: list[tuple[str, MultipartFilePayload]] = [
+        ("file", upload.as_multipart_file())
+    ]
 
     for route_index, route in enumerate(routes):
-        try:
-            provider_config = config_loader_instance.providers_config.get(route.provider)
-            if provider_config is None:
-                logger.error(
-                    "Provider '%s' for audio transcription route '%s' is missing from providers_config.",
-                    route.provider,
-                    requested_model,
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail="Internal server error: Provider configuration not available.",
-                )
+        processing_weight = upload.size
+        if route.request_format == REQUEST_FORMAT_NVIDIA_RIVA_GRPC:
+            processing_weight += 2 * settings.audio_decoded_max_bytes
 
-            retry_count, retry_delay = _prepare_audio_request_state(
-                request,
-                dispatcher,
-                route,
-                gateway_model=requested_model,
-            )
-            route_request_payload = request_payload
-            if route.request_format == REQUEST_FORMAT_NVIDIA_RIVA_GRPC:
-                route_request_payload = sanitize_nvidia_riva_request_payload(request_payload)
+        async with admit_upload_processing(request, processing_weight):
+            try:
+                provider_config = config_loader_instance.providers_config.get(route.provider)
+                if provider_config is None:
+                    logger.error(
+                        "Provider '%s' for audio transcription route '%s' is missing from providers_config.",
+                        route.provider,
+                        requested_model,
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Internal server error: Provider configuration not available.",
+                    )
 
-            route_payload = _build_route_payload(route_request_payload, route)
-            if route.request_format == REQUEST_FORMAT_NVIDIA_RIVA_GRPC:
-                adapter_response = await transcribe_with_nvidia_riva_grpc(
-                    request_payload=route_payload,
-                    files_payload=files_payload,
-                    provider_name=route.provider,
-                    provider_base_url=provider_config.baseUrl,
-                    provider_api_key=resolve_provider_config_api_key(provider_config),
-                    route_custom_headers=route.custom_headers,
-                    target_path=route.target_path,
-                    retry_count=retry_count,
-                    retry_delay=retry_delay,
+                retry_count, retry_delay = _prepare_audio_request_state(
+                    request,
+                    dispatcher,
+                    route,
+                    gateway_model=requested_model,
+                )
+                route_request_payload = request_payload
+                if route.request_format == REQUEST_FORMAT_NVIDIA_RIVA_GRPC:
+                    route_request_payload = sanitize_nvidia_riva_request_payload(request_payload)
+
+                route_payload = _build_route_payload(route_request_payload, route)
+                if route.request_format == REQUEST_FORMAT_NVIDIA_RIVA_GRPC:
+                    adapter_response = await transcribe_with_nvidia_riva_grpc(
+                        request_payload=route_payload,
+                        files_payload=files_payload,
+                        provider_name=route.provider,
+                        provider_base_url=provider_config.baseUrl,
+                        provider_api_key=resolve_provider_config_api_key(provider_config),
+                        route_custom_headers=route.custom_headers,
+                        target_path=route.target_path,
+                        retry_count=retry_count,
+                        retry_delay=retry_delay,
+                        decoded_audio_max_bytes=settings.audio_decoded_max_bytes,
+                    )
+                    if adapter_response.is_json:
+                        response = JSONResponse(
+                            content=adapter_response.body,
+                            status_code=adapter_response.status_code,
+                        )
+                    else:
+                        response = Response(
+                            content=adapter_response.body,
+                            status_code=adapter_response.status_code,
+                            headers={"content-type": adapter_response.content_type},
+                        )
+                    observation = _parse_audio_terminal_observation(
+                        owner,
+                        {},
+                        gateway_model=requested_model,
+                        route=route,
+                        duration_ms=request_duration_ms(request_started_at),
+                        synthesized=True,
+                    )
+                    return await finalize_buffered_operation(owner, response, observation)
+
+                target_url, headers = await _prepare_audio_http_request(
+                    request,
+                    dispatcher,
+                    route,
+                    provider_config,
+                )
+                effective_client = proxy_http_clients.get(route.provider, http_client)
+                response_body, downstream_status_code, downstream_content_type = (
+                    await proxy_multipart_raw_to_downstream(
+                        target_url,
+                        headers,
+                        _flatten_scalar_fields(route_payload),
+                        files_payload,
+                        effective_client,
+                        retry_count=retry_count,
+                        retry_delay=retry_delay,
+                        timeout=AUDIO_TRANSCRIPTION_DOWNSTREAM_TIMEOUT,
+                    )
                 )
                 duration_ms = request_duration_ms(request_started_at)
-                await record_operation_usage(
-                    request,
+                if _is_json_content_type(downstream_content_type):
+                    try:
+                        parsed_response = json.loads(response_body.decode("utf-8"))
+                    except (UnicodeDecodeError, ValueError) as exc:
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Downstream request returned invalid JSON.",
+                        ) from exc
+
+                    response = JSONResponse(
+                        content=parsed_response,
+                        status_code=downstream_status_code,
+                    )
+                    usage_payload = parsed_response if isinstance(parsed_response, dict) else {}
+                    observation = _parse_audio_terminal_observation(
+                        owner,
+                        usage_payload,
+                        gateway_model=requested_model,
+                        route=route,
+                        duration_ms=duration_ms,
+                        synthesized=False,
+                    )
+                    return await finalize_buffered_operation(owner, response, observation)
+
+                response_headers = {"content-type": downstream_content_type} if downstream_content_type else None
+                response = Response(
+                    content=response_body,
+                    status_code=downstream_status_code,
+                    headers=response_headers,
+                )
+                observation = _parse_audio_terminal_observation(
+                    owner,
                     {},
                     gateway_model=requested_model,
-                    operation=AUDIO_TRANSCRIPTION_OPERATION,
+                    route=route,
                     duration_ms=duration_ms,
+                    synthesized=True,
                 )
-                if adapter_response.is_json:
-                    return JSONResponse(content=adapter_response.body, status_code=adapter_response.status_code)
+                return await finalize_buffered_operation(owner, response, observation)
+            except HTTPException as exc:
+                if _should_try_next_route(exc, route_index, routes):
+                    _log_route_fallback(requested_model, route, route_index, routes, exc)
+                    continue
+                raise
 
-                return Response(
-                    content=adapter_response.body,
-                    status_code=adapter_response.status_code,
-                    headers={"content-type": adapter_response.content_type},
-                )
+    raise HTTPException(
+        status_code=503,
+        detail="Audio transcription request failed after exhausting fallback routes.",
+    )
 
-            target_url, headers = await _prepare_audio_http_request(
-                request,
-                dispatcher,
-                route,
-                provider_config,
+
+@router.post("/audio/transcriptions")
+async def create_audio_transcription(request: Request):
+    async with _parse_audio_transcription_request(request) as (
+        requested_model,
+        request_payload,
+        upload,
+    ):
+        enforce_virtual_key_access(request, requested_model)
+
+        dispatcher, http_client, config_loader_instance, proxy_http_clients = _get_operation_runtime(request)
+        routes = dispatcher.lookup_routes(AUDIO_TRANSCRIPTIONS_SECTION, requested_model)
+        if not routes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No audio transcription route configured for model '{requested_model}'.",
             )
-            effective_client = proxy_http_clients.get(route.provider, http_client)
-            response_body, downstream_status_code, downstream_content_type = await proxy_multipart_raw_to_downstream(
-                target_url,
-                headers,
-                _flatten_scalar_fields(route_payload),
-                files_payload,
-                effective_client,
-                retry_count=retry_count,
-                retry_delay=retry_delay,
-                timeout=AUDIO_TRANSCRIPTION_DOWNSTREAM_TIMEOUT,
-            )
 
-            duration_ms = request_duration_ms(request_started_at)
-            if _is_json_content_type(downstream_content_type):
-                try:
-                    parsed_response = json.loads(response_body.decode("utf-8"))
-                except (UnicodeDecodeError, ValueError) as exc:
-                    raise HTTPException(status_code=503, detail="Downstream request returned invalid JSON.") from exc
-
-                usage_payload = parsed_response if isinstance(parsed_response, dict) else {}
-                await record_operation_usage(
-                    request,
-                    usage_payload,
-                    gateway_model=requested_model,
-                    operation=AUDIO_TRANSCRIPTION_OPERATION,
-                    duration_ms=duration_ms,
-                )
-                return JSONResponse(content=parsed_response, status_code=downstream_status_code)
-
-            await record_operation_usage(
-                request,
-                {},
-                gateway_model=requested_model,
-                operation=AUDIO_TRANSCRIPTION_OPERATION,
-                duration_ms=duration_ms,
-            )
-            response_headers = {"content-type": downstream_content_type} if downstream_content_type else None
-            return Response(content=response_body, status_code=downstream_status_code, headers=response_headers)
-        except HTTPException as exc:
-            if _should_try_next_route(exc, route_index, routes):
-                _log_route_fallback(requested_model, route, route_index, routes, exc)
-                continue
-            raise
-
-    raise HTTPException(status_code=503, detail="Audio transcription request failed after exhausting fallback routes.")
+        operation = partial(
+            _proxy_audio_transcription,
+            request,
+            dispatcher=dispatcher,
+            http_client=http_client,
+            config_loader_instance=config_loader_instance,
+            proxy_http_clients=proxy_http_clients,
+            routes=routes,
+            requested_model=requested_model,
+            request_payload=request_payload,
+            upload=upload,
+        )
+        return await _run_audio_accounting(request, operation)
 
 
 @router.get("/audio/voices")
@@ -650,6 +800,74 @@ async def list_audio_voices(request: Request, model: str | None = None):
     return JSONResponse(content={"object": "audio.voice_catalog", "data": voice_catalog})
 
 
+async def _proxy_audio_speech(
+    request: Request,
+    owner: OperationTerminalOwner,
+    *,
+    dispatcher: OperationDispatcher,
+    http_client: httpx.AsyncClient,
+    config_loader_instance: ConfigLoader,
+    proxy_http_clients: Mapping[str, httpx.AsyncClient],
+    route: OperationRoute,
+    requested_model: str,
+    request_payload: dict[str, object],
+) -> object:
+    request_started_at = time.monotonic()
+    provider_config = config_loader_instance.providers_config.get(route.provider)
+    if provider_config is None:
+        logger.error(
+            "Provider '%s' for audio speech route '%s' is missing from providers_config.",
+            route.provider,
+            requested_model,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error: Provider configuration not available.",
+        )
+
+    retry_count, retry_delay = _prepare_audio_request_state(
+        request,
+        dispatcher,
+        route,
+        gateway_model=requested_model,
+        operation=AUDIO_SPEECH_OPERATION,
+    )
+    route_payload = _build_speech_route_payload(request_payload, route)
+    target_url, headers = await _prepare_audio_json_http_request(
+        request,
+        dispatcher,
+        route,
+        provider_config,
+    )
+    effective_client = proxy_http_clients.get(route.provider, http_client)
+    response_body, downstream_status_code, downstream_content_type = (
+        await proxy_json_raw_to_downstream(
+            target_url,
+            headers,
+            route_payload,
+            effective_client,
+            retry_count=retry_count,
+            retry_delay=retry_delay,
+        )
+    )
+
+    response_headers = {"content-type": downstream_content_type or "audio/mpeg"}
+    response = Response(
+        content=response_body,
+        status_code=downstream_status_code,
+        headers=response_headers,
+    )
+    observation = _parse_audio_terminal_observation(
+        owner,
+        {},
+        gateway_model=requested_model,
+        route=route,
+        duration_ms=request_duration_ms(request_started_at),
+        synthesized=True,
+    )
+    return await finalize_buffered_operation(owner, response, observation)
+
+
 @router.post("/audio/speech")
 async def create_audio_speech(request: Request):
     requested_model, request_payload = await _parse_audio_speech_request(request)
@@ -664,45 +882,15 @@ async def create_audio_speech(request: Request):
             detail=f"No audio speech route configured for model '{requested_model}'.",
         )
 
-    provider_config = config_loader_instance.providers_config.get(route.provider)
-    if provider_config is None:
-        logger.error(
-            "Provider '%s' for audio speech route '%s' is missing from providers_config.",
-            route.provider,
-            requested_model,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error: Provider configuration not available.",
-        )
-
-    request_started_at = time.monotonic()
-    retry_count, retry_delay = _prepare_audio_request_state(
+    operation = partial(
+        _proxy_audio_speech,
         request,
-        dispatcher,
-        route,
-        gateway_model=requested_model,
-        operation=AUDIO_SPEECH_OPERATION,
+        dispatcher=dispatcher,
+        http_client=http_client,
+        config_loader_instance=config_loader_instance,
+        proxy_http_clients=proxy_http_clients,
+        route=route,
+        requested_model=requested_model,
+        request_payload=request_payload,
     )
-    route_payload = _build_speech_route_payload(request_payload, route)
-    target_url, headers = await _prepare_audio_json_http_request(request, dispatcher, route, provider_config)
-    effective_client = proxy_http_clients.get(route.provider, http_client)
-    response_body, downstream_status_code, downstream_content_type = await proxy_json_raw_to_downstream(
-        target_url,
-        headers,
-        route_payload,
-        effective_client,
-        retry_count=retry_count,
-        retry_delay=retry_delay,
-    )
-
-    await record_operation_usage(
-        request,
-        {},
-        gateway_model=requested_model,
-        operation=AUDIO_SPEECH_OPERATION,
-        duration_ms=request_duration_ms(request_started_at),
-    )
-
-    response_headers = {"content-type": downstream_content_type or "audio/mpeg"}
-    return Response(content=response_body, status_code=downstream_status_code, headers=response_headers)
+    return await _run_audio_accounting(request, operation)

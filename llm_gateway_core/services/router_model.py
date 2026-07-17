@@ -11,12 +11,15 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import math
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import HTTPException, Request
 
-from ..utils.usage_tracking import build_model_cost_rate_registry, calculate_model_cost_usd
+from ..utils.usage_tracking import ModelCostRates
+from .accounting import AccountingValidationError
+from .chat_accounting import ChatTerminalObservation, ObservedChatResponse
+from .operation_accounting import build_token_model_component
 
 logger = logging.getLogger(__name__)
 
@@ -184,45 +187,6 @@ def _request_summary(request_body: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _usage_cost(usage: dict[str, Any]) -> float | None:
-    try:
-        cost = float(usage.get("cost"))
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(cost) or cost < 0:
-        return None
-    return cost
-
-
-def _cost_rate_registry(request: Request, config_loader: Any) -> dict[tuple[str, str], Any]:
-    app_state = getattr(getattr(request, "app", None), "state", None)
-    registry = getattr(app_state, "cost_rate_registry", None)
-    if isinstance(registry, dict):
-        return registry
-    return build_model_cost_rate_registry(getattr(config_loader, "providers_config", None))
-
-
-def _usage_component_cost(
-    *,
-    usage: dict[str, Any],
-    request: Request,
-    config_loader: Any,
-    provider: str | None,
-    model: str | None,
-) -> float | None:
-    upstream_cost = _usage_cost(usage)
-    if upstream_cost is not None:
-        return upstream_cost
-    if not provider or not model:
-        return None
-    registry = _cost_rate_registry(request, config_loader)
-    return calculate_model_cost_usd(
-        prompt_tokens=usage.get("prompt_tokens") or 0,
-        completion_tokens=usage.get("completion_tokens") or 0,
-        rates=registry.get((provider, model)),
-    )
-
-
 def _coerce_token_count(value: Any) -> int:
     try:
         return max(int(value or 0), 0)
@@ -267,8 +231,14 @@ def _add_anthropic_usage(target_usage: dict[str, Any], extra_usage: dict[str, An
 
 
 class RouterModelService:
-    def __init__(self, config_loader: Any) -> None:
+    def __init__(
+        self,
+        config_loader: Any,
+        *,
+        cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
+    ) -> None:
         self._config_loader = config_loader
+        self._cost_rate_registry = cost_rate_registry
 
     async def run(
         self,
@@ -278,6 +248,22 @@ class RouterModelService:
         router_config: dict[str, Any],
         request_body: dict[str, Any],
     ) -> Any:
+        observed = await self.run_observed(
+            request=request,
+            gateway_model_name=gateway_model_name,
+            router_config=router_config,
+            request_body=request_body,
+        )
+        return observed.response
+
+    async def run_observed(
+        self,
+        *,
+        request: Request,
+        gateway_model_name: str,
+        router_config: dict[str, Any],
+        request_body: dict[str, Any],
+    ) -> ObservedChatResponse:
         if request_body.get("stream", False):
             raise HTTPException(status_code=400, detail="Router models do not support streaming responses.")
 
@@ -301,6 +287,17 @@ class RouterModelService:
         selector_usage = selector_response.get("usage") if isinstance(selector_response, dict) else {}
         selector_provider = getattr(request.state, "llmgateway_provider", None)
         selector_provider_model = getattr(request.state, "llmgateway_provider_model", None)
+        if not isinstance(selector_provider, str) or not isinstance(
+            selector_provider_model,
+            str,
+        ):
+            raise AccountingValidationError
+        selector_component = build_token_model_component(
+            selector_response,
+            provider=selector_provider,
+            model=selector_provider_model,
+            cost_rate_registry=self._cost_rate_registry,
+        )
         selector_text = _extract_text(selector_response)
         try:
             decision = _parse_selector_decision(selector_text)
@@ -321,44 +318,50 @@ class RouterModelService:
             selected_candidate=selected_candidate,
         )
 
-        if isinstance(response, dict):
-            response_usage = response.get("usage")
-            is_anthropic_raw = bool(getattr(request.state, "llmgateway_response_is_anthropic_raw", False))
-            if "choices" in response or is_anthropic_raw:
-                if not isinstance(response_usage, dict):
-                    response_usage = {}
-                    response["usage"] = response_usage
-                delegate_usage = dict(response_usage)
-                selector_usage_dict = selector_usage if isinstance(selector_usage, dict) else {}
-                delegate_cost = _usage_component_cost(
-                    usage=_usage_for_cost(delegate_usage),
-                    request=request,
-                    config_loader=self._config_loader,
-                    provider=getattr(request.state, "llmgateway_provider", None),
-                    model=getattr(request.state, "llmgateway_provider_model", None),
-                )
-                selector_cost = _usage_component_cost(
-                    usage=_usage_for_cost(selector_usage_dict),
-                    request=request,
-                    config_loader=self._config_loader,
-                    provider=selector_provider,
-                    model=selector_provider_model,
-                )
-                if is_anthropic_raw and "choices" not in response:
-                    _add_anthropic_usage(response_usage, selector_usage_dict)
-                else:
-                    _add_usage(response_usage, selector_usage_dict)
-                if delegate_cost is not None or selector_cost is not None:
-                    response_usage["cost"] = float(delegate_cost or 0.0) + float(selector_cost or 0.0)
-            response["router"] = {
-                "model": gateway_model_name,
-                "selector_model": router_config["selector_model"],
-                "selected_candidate_id": selected_id,
-                "selected_candidate": selected_candidate,
-                "reason": decision.get("reason"),
-                "confidence": decision.get("confidence"),
-            }
-        return response
+        if not isinstance(response, dict):
+            raise HTTPException(status_code=502, detail="Router delegate returned a non-JSON response.")
+
+        is_anthropic_raw = bool(
+            getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
+        )
+        if "choices" not in response and not is_anthropic_raw:
+            raise HTTPException(status_code=502, detail="Router delegate returned an invalid chat response.")
+
+        delegate_provider = getattr(request.state, "llmgateway_provider", None)
+        delegate_model = getattr(request.state, "llmgateway_provider_model", None)
+        if not isinstance(delegate_provider, str) or not isinstance(delegate_model, str):
+            raise AccountingValidationError
+        delegate_component = build_token_model_component(
+            response,
+            provider=delegate_provider,
+            model=delegate_model,
+            cost_rate_registry=self._cost_rate_registry,
+        )
+        observation = ChatTerminalObservation(
+            top_provider=delegate_provider,
+            top_model=delegate_model,
+            components=(selector_component, delegate_component),
+        )
+
+        response_usage = response.get("usage")
+        if not isinstance(response_usage, dict):
+            response_usage = {}
+            response["usage"] = response_usage
+        selector_usage_dict = selector_usage if isinstance(selector_usage, dict) else {}
+        if is_anthropic_raw and "choices" not in response:
+            _add_anthropic_usage(response_usage, selector_usage_dict)
+        else:
+            _add_usage(response_usage, selector_usage_dict)
+        response_usage["cost"] = observation.usage.cost
+        response["router"] = {
+            "model": gateway_model_name,
+            "selector_model": router_config["selector_model"],
+            "selected_candidate_id": selected_id,
+            "selected_candidate": selected_candidate,
+            "reason": decision.get("reason"),
+            "confidence": decision.get("confidence"),
+        }
+        return ObservedChatResponse(response=response, observation=observation)
 
     async def _call_selector(
         self,

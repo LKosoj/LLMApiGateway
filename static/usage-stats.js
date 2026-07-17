@@ -1,17 +1,135 @@
 document.addEventListener('DOMContentLoaded', () => {
+    void window.gatewayI18n.ready.then(initializeUsagePage, () => undefined);
+});
+
+function initializeUsagePage() {
     const { apiFetch } = window.gatewayAuth;
+    const gatewayI18n = window.gatewayI18n;
+    const gatewayUi = window.gatewayUi;
 
     const periodSelector = document.getElementById('periodSelector');
     const refreshButton = document.getElementById('refreshButton');
     const statsArea = document.getElementById('statsArea');
     const messageArea = document.getElementById('messageArea');
+    const messageRawDetail = document.getElementById('messageRawDetail');
+    const messageRequestId = document.getElementById('messageRequestId');
     Theme.attachToggle('darkModeToggle');
 
-    // --- Fetch and Render Statistics Logic ---
-    const showMessage = (message, isError = false) => {
-        messageArea.textContent = message;
-        messageArea.className = isError ? 'error' : '';
+    const snapshots = {
+        stats: null,
+        records: null,
+        fallbackStats: null,
+        fallbackChains: null,
+        upstream: null,
     };
+    const requestGenerations = {
+        stats: 0,
+        records: 0,
+        fallbackStats: 0,
+        fallbackChains: 0,
+        upstream: 0,
+    };
+    const loadingGenerations = {
+        stats: null,
+        records: null,
+        fallbackStats: null,
+        fallbackChains: null,
+        upstream: null,
+    };
+    const expandedFallbackChains = new Set();
+    let currentRequestId = null;
+    let unsubscribeLocale = null;
+
+    const t = (key, values = {}) => gatewayI18n.t(key, values);
+    const message = (key, values = {}) => Object.freeze({key, values});
+    const formatNumber = (value, options = {}) => gatewayI18n.formatNumber(
+        Number.isFinite(Number(value)) ? Number(value) : 0,
+        options,
+    );
+    const formatCurrency = (value) => gatewayI18n.formatCurrency(
+        Number.isFinite(Number(value)) ? Number(value) : 0,
+        'USD',
+        {minimumFractionDigits: 4, maximumFractionDigits: 4},
+    );
+    const notAvailable = () => t('usage:values.notAvailable');
+
+    const pageStatus = gatewayUi.createStatus(messageArea, {
+        rawDetailElement: messageRawDetail,
+        renderMessage: (statusMessage) => t(statusMessage.key, statusMessage.values || {}),
+    });
+
+    const renderRequestId = (requestId) => {
+        currentRequestId = requestId;
+        messageRequestId.hidden = requestId === null;
+        messageRequestId.textContent = requestId === null
+            ? ''
+            : gatewayI18n.t('usage:status.requestId', {id: requestId});
+        if (requestId === null) {
+            messageRequestId.removeAttribute('lang');
+            messageRequestId.removeAttribute('dir');
+        } else {
+            messageRequestId.setAttribute('lang', 'und');
+            messageRequestId.setAttribute('dir', 'auto');
+        }
+    };
+
+    const showMessage = (statusMessage, kind = 'polite', options = {}) => {
+        if (!statusMessage) {
+            pageStatus.clear();
+            renderRequestId(null);
+            return;
+        }
+        pageStatus[kind](statusMessage, {rawDetail: options.rawDetail ?? null});
+        renderRequestId(options.requestId ?? null);
+    };
+
+    const showApiError = (payload, response = null, error = null) => {
+        const descriptor = gatewayUi.describeApiError(payload, {
+            status: response?.status,
+            requestId: response?.headers?.get('X-Request-ID') || null,
+        });
+        showMessage(
+            message(descriptor.summaryKey, descriptor.summaryValues),
+            'error',
+            {
+                rawDetail: descriptor.rawDetail ?? error?.message ?? null,
+                requestId: descriptor.requestId,
+            },
+        );
+    };
+
+    const startRequest = (name) => {
+        requestGenerations[name] += 1;
+        return requestGenerations[name];
+    };
+    const startLoading = (name, generation) => {
+        loadingGenerations[name] = generation;
+    };
+    const finishLoading = (name, generation) => {
+        if (loadingGenerations[name] === generation) {
+            loadingGenerations[name] = null;
+        }
+    };
+    const isCurrentRequest = (name, generation, activationContext = null) => (
+        requestGenerations[name] === generation
+        && isActivationCurrent(activationContext)
+    );
+
+    const isActivationContext = (value) => Boolean(
+        value
+        && value.signal
+        && typeof value.isCurrent === 'function'
+    );
+    const isActivationCurrent = (value) => (
+        !isActivationContext(value)
+        || (!value.signal.aborted && value.isCurrent())
+    );
+    const reportTabActivation = (promise) => {
+        promise.catch((error) => {
+            queueMicrotask(() => { throw error; });
+        });
+    };
+    let statsActivationContext = null;
 
     const formatResolvedTarget = (row) => {
         const provider = typeof row?.provider === 'string' ? row.provider.trim() : '';
@@ -20,25 +138,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (provider && model) {
             return `${provider}/${model}`;
         }
-        return model || provider || 'N/A';
+        return model || provider || notAvailable();
     };
 
     const formatGatewayModel = (row) => {
         const gatewayModel = typeof row?.gateway_model === 'string' ? row.gateway_model.trim() : '';
-        return gatewayModel || 'N/A';
+        return gatewayModel || notAvailable();
     };
 
     const formatOperation = (row) => {
         const operation = typeof row?.operation === 'string' ? row.operation.trim() : '';
-        return operation || 'N/A';
+        return operation || notAvailable();
     };
 
     const formatTimestamp = (value) => {
         const timestamp = typeof value === 'string' ? value.trim() : '';
         if (!timestamp) {
-            return 'N/A';
+            return notAvailable();
         }
-        return timestamp.split('.')[0] || timestamp;
+        const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp);
+        const parsed = new Date(hasZone ? timestamp : `${timestamp.replace(' ', 'T')}Z`);
+        if (Number.isNaN(parsed.getTime())) return timestamp;
+        return gatewayI18n.formatDate(parsed, {
+            dateStyle: 'medium',
+            timeStyle: 'medium',
+            timeZone: 'UTC',
+        });
     };
 
     const isRunningUsageRecord = (row) => {
@@ -46,12 +171,30 @@ document.addEventListener('DOMContentLoaded', () => {
         return status === 'running' || status === 'in_progress';
     };
 
+    const metricColumnKeys = Object.freeze({
+        prompt_tokens: 'usage:columns.promptTokens',
+        completion_tokens: 'usage:columns.completionTokens',
+        reasoning_tokens: 'usage:columns.reasoningTokens',
+        total_tokens: 'usage:columns.totalTokens',
+        cached_tokens: 'usage:columns.cachedTokens',
+        count: 'usage:columns.countHeader',
+        cost: 'usage:columns.costUsd',
+        cost_saved: 'usage:columns.costSavedUsd',
+        cost_per_million: 'usage:columns.costPerMillion',
+    });
+
+    const markTechnical = (element) => {
+        element.setAttribute('lang', 'und');
+        element.setAttribute('dir', 'auto');
+        return element;
+    };
+
     const createStatsTable = (data) => {
         const fragment = document.createDocumentFragment();
         if (!data || data.length === 0) {
             const p = document.createElement('p');
             p.className = 'empty-state';
-            p.textContent = 'No data available for the selected period.';
+            p.textContent = gatewayI18n.t('usage:empty.statistics');
             fragment.appendChild(p);
             return fragment;
         }
@@ -72,7 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (const periodKey in groupedByPeriod) {
             const h2 = document.createElement('h2');
-            h2.textContent = `Period: ${periodKey}`;
+            h2.textContent = gatewayI18n.t('usage:period.label', {period: periodKey});
             fragment.appendChild(h2);
 
             const table = document.createElement('table');
@@ -80,32 +223,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const trHead = document.createElement('tr');
             
             const thGatewayModel = document.createElement('th');
-            thGatewayModel.textContent = 'Gateway Model';
+            thGatewayModel.textContent = gatewayI18n.t('usage:columns.gatewayModel');
             trHead.appendChild(thGatewayModel);
 
             const thResolvedModel = document.createElement('th');
-            thResolvedModel.textContent = 'Resolved Model';
+            thResolvedModel.textContent = gatewayI18n.t('usage:columns.resolvedModel');
             trHead.appendChild(thResolvedModel);
 
             const thOperation = document.createElement('th');
-            thOperation.textContent = 'Operation';
+            thOperation.textContent = gatewayI18n.t('usage:columns.operationHeader');
             trHead.appendChild(thOperation);
 
             metrics.forEach(metric => {
                 const th = document.createElement('th');
-                let displayMetric = metric.replace('_', ' ').split(' ') 
-                                      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                                      .join(' ');
-                if (metric === 'cost_per_million') {
-                    displayMetric = 'Cost/Million';
-                }
-                if (metric === 'cost_saved') {
-                    displayMetric = 'Cost Saved ($)';
-                }
-                if (metric === 'cost') {
-                    displayMetric = 'Cost ($)';
-                }
-                th.textContent = displayMetric;
+                th.textContent = t(metricColumnKeys[metric]);
                 trHead.appendChild(th);
             });
             thead.appendChild(trHead);
@@ -116,14 +247,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 const tr = document.createElement('tr');
                 const tdGatewayModel = document.createElement('td');
                 tdGatewayModel.textContent = formatGatewayModel(row);
+                markTechnical(tdGatewayModel);
                 tr.appendChild(tdGatewayModel);
 
                 const tdResolvedModel = document.createElement('td');
                 tdResolvedModel.textContent = formatResolvedTarget(row);
+                markTechnical(tdResolvedModel);
                 tr.appendChild(tdResolvedModel);
 
                 const tdOperation = document.createElement('td');
                 tdOperation.textContent = formatOperation(row);
+                markTechnical(tdOperation);
                 tr.appendChild(tdOperation);
 
                 metrics.forEach(metric => {
@@ -131,17 +265,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (metric === 'cost_per_million') {
                         const total_cost = row.cost || 0;
                         const total_tokens = row.total_tokens || 0;
-                        const costPerMillion = total_tokens > 0 ? (total_cost / total_tokens) * 1000000 : 0;
-                        value = costPerMillion.toFixed(4);
-                    }
-                    if (metric === 'cost' && typeof value === 'number') {
-                        value = value.toFixed(4);
-                    }
-                    if (metric === 'cost_saved' && typeof value === 'number') {
-                        value = value.toFixed(4);
+                        value = total_tokens > 0 ? (total_cost / total_tokens) * 1000000 : 0;
                     }
                     const td = document.createElement('td');
-                    td.textContent = typeof value === 'number' ? value.toLocaleString() : value;
+                    td.textContent = ['cost', 'cost_saved', 'cost_per_million'].includes(metric)
+                        ? formatCurrency(value)
+                        : formatNumber(value);
                     tr.appendChild(td);
                 });
                 tbody.appendChild(tr);
@@ -153,40 +282,51 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const fetchAndRenderStats = async () => {
+        const activationContext = statsActivationContext;
+        const requestGeneration = startRequest('stats');
+        startLoading('stats', requestGeneration);
         const selectedPeriod = periodSelector.value;
-        statsArea.textContent = 'Loading statistics...';
-        showMessage('');
+        statsArea.textContent = gatewayI18n.t('usage:status.statisticsLoading');
+        showMessage(message('usage:status.statisticsLoading'), 'busy');
         
         refreshButton.disabled = true;
         refreshButton.classList.add('loading');
 
         try {
             const response = await apiFetch(`/v1/api/usage-stats/${selectedPeriod}`);
-            const data = await response.json();
+            if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
+            const data = await response.json().catch(() => ({}));
+            if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
 
             if (!response.ok) {
-                const errorMessage = data.detail ? data.detail : `Error: ${response.status} ${response.statusText}`;
-                showMessage(errorMessage, true);
+                showApiError(data, response);
                 statsArea.textContent = '';
                 return;
             }
-            
-            statsArea.textContent = "";
-            statsArea.appendChild(createStatsTable(data));
+            snapshots.stats = Object.freeze({period: selectedPeriod, data});
+            renderStatsSnapshot();
             if (data.length === 0) {
-                showMessage('');
+                showMessage(null);
             } else {
-                showMessage('Statistics loaded successfully.');
+                showMessage(message('usage:status.statisticsLoaded'));
             }
 
         } catch (error) {
+            if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
             console.error('Failed to fetch usage statistics:', error);
-            showMessage(`Failed to load statistics: ${error.message}`, true);
+            showApiError(null, null, error);
             statsArea.textContent = '';
         } finally {
+            finishLoading('stats', requestGeneration);
+            if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
             refreshButton.disabled = false;
             refreshButton.classList.remove('loading');
         }
+    };
+
+    const renderStatsSnapshot = () => {
+        if (!snapshots.stats) return;
+        statsArea.replaceChildren(createStatsTable(snapshots.stats.data));
     };
 
     // Event Listeners
@@ -196,50 +336,51 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Tab Switching Logic ---
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabContents = document.querySelectorAll('.tab-content');
+    const orderedTabContents = Array.from(tabButtons, (button) => (
+        document.getElementById(`${button.dataset.tab}TabContent`)
+    ));
 
-    const tabsContainer = document.querySelector('.tabs');
-    if (tabsContainer && typeof tabsContainer.setAttribute === 'function') {
-        tabsContainer.setAttribute('role', 'tablist');
-    }
-
-    const updateTabA11y = (activeTab) => {
-        tabButtons.forEach(btn => {
-            const isActive = btn.dataset.tab === activeTab;
-            btn.setAttribute('role', 'tab');
-            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    const tabsContainer = tabButtons[0]?.closest('[role="tablist"]');
+    let fallbackSubTabsController = null;
+    let usageTabsController = null;
+    const activateUsageTab = async (context) => {
+        const tab = context.key;
+        tabButtons.forEach((button) => {
+            button.classList.toggle('active', button === context.tab);
         });
-        tabContents.forEach(content => {
-            content.setAttribute('role', 'tabpanel');
+        tabContents.forEach((content) => {
+            content.classList.toggle('active', content === context.panel);
         });
-    };
 
-    tabButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            const tab = button.dataset.tab;
-
-            tabButtons.forEach(btn => btn.classList.remove('active'));
-            tabContents.forEach(content => content.classList.remove('active'));
-
-            button.classList.add('active');
-            document.getElementById(`${tab}TabContent`).classList.add('active');
-            updateTabA11y(tab);
-
-            // Load data for the active tab
-            if (tab === 'records') {
-                currentPage = 1;
-                fetchAndRenderRecords();
-            } else if (tab === 'analytics') {
-                window.usageAnalyticsDashboard.activate();
-            } else if (tab === 'fallback') {
-                loadActiveFallbackSubTab();
-            } else if (tab === 'topology') {
-                loadTopology();
-            } else {
-                fetchAndRenderStats();
+        if (tab === 'records') {
+            currentPage = 1;
+            await fetchAndRenderRecords(context);
+        } else if (tab === 'analytics') {
+            if (context.signal.aborted || !context.isCurrent()) return;
+            await window.usageAnalyticsDashboard.activate();
+        } else if (tab === 'fallback') {
+            if (fallbackSubTabsController) {
+                await fallbackSubTabsController.activate(fallbackSubTabsController.activeKey);
             }
+        } else if (tab === 'topology') {
+            await loadTopology(context);
+        } else {
+            statsActivationContext = context;
+            const pendingLoad = fetchAndRenderStats();
+            statsActivationContext = null;
+            await pendingLoad;
+        }
+    };
+    if (tabsContainer && orderedTabContents.every(Boolean)) {
+        usageTabsController = window.gatewayUi.createTabs(tabsContainer, {
+            activation: 'manual',
+            getKey: (button) => button.dataset.tab,
+            initialKey: 'analytics',
+            onActivate: activateUsageTab,
+            onReselect: activateUsageTab,
+            panels: orderedTabContents,
         });
-    });
-    updateTabA11y('analytics');
+    }
 
     // --- Usage Records Logic (New) ---
     const recordsArea = document.getElementById('recordsArea');
@@ -249,13 +390,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const pageInfoSpan = document.getElementById('pageInfo');
     const recordsPerPage = 25; // As per the task description
     let currentPage = 1;
+    const recordColumnKeys = Object.freeze({
+        timestamp: 'usage:columns.timestamp',
+        duration_ms: 'usage:columns.durationMs',
+        gateway_model: 'usage:columns.gatewayModel',
+        operation: 'usage:columns.operationHeader',
+        model: 'usage:columns.resolvedModel',
+        x_title: 'usage:columns.xTitleHeader',
+        prompt_tokens: 'usage:columns.promptTokens',
+        completion_tokens: 'usage:columns.completionTokens',
+        reasoning_tokens: 'usage:columns.reasoningTokens',
+        total_tokens: 'usage:columns.totalTokens',
+        cached_tokens: 'usage:columns.cachedTokens',
+        cost: 'usage:columns.costUsd',
+        cost_saved: 'usage:columns.costSavedUsd',
+        is_estimated: 'usage:columns.estimatedHeader',
+    });
 
     const createRecordsTable = (data) => {
         const fragment = document.createDocumentFragment();
         if (!data || data.length === 0) {
             const p = document.createElement('p');
             p.className = 'empty-state';
-            p.textContent = 'No usage records available.';
+            p.textContent = gatewayI18n.t('usage:empty.records');
             fragment.appendChild(p);
             return fragment;
         }
@@ -281,34 +438,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         headers.forEach(header => {
             const th = document.createElement('th');
-            let displayMetric = header.replace('_', ' ').split(' ')
-                                 .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                                 .join(' ');
-            if (header === 'gateway_model') {
-                displayMetric = 'Gateway Model';
-            }
-            if (header === 'model') {
-                displayMetric = 'Resolved Model';
-            }
-            if (header === 'x_title') {
-                displayMetric = 'X-Title';
-            }
-            if (header === 'operation') {
-                displayMetric = 'Operation';
-            }
-            if (header === 'duration_ms') {
-                displayMetric = 'Duration (ms)';
-            }
-            if (header === 'cost') {
-                displayMetric = 'Cost ($)';
-            }
-            if (header === 'cost_saved') {
-                displayMetric = 'Cost Saved ($)';
-            }
-            if (header === 'is_estimated') {
-                displayMetric = 'Estimated';
-            }
-            th.textContent = displayMetric;
+            const translationKey = recordColumnKeys[header];
+            th.textContent = translationKey ? t(translationKey) : header;
+            if (!translationKey) markTechnical(th);
             trHead.appendChild(th);
         });
         thead.appendChild(trHead);
@@ -335,16 +467,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (header === 'timestamp') {
                     formattedValue = formatTimestamp(formattedValue);
                 } else if (header === 'cost' || header === 'cost_saved') {
-                    // Example: '0.01' -> '0.0100'
-                    if (typeof formattedValue === 'number') {
-                        formattedValue = formattedValue.toFixed(4);
-                    }
+                    formattedValue = formatCurrency(formattedValue);
                 } else if (header === 'is_estimated') {
                     formattedValue = (formattedValue === 1 || formattedValue === true) ? '≈' : '';
+                } else if (typeof formattedValue === 'number') {
+                    formattedValue = formatNumber(formattedValue);
                 }
                 const td = document.createElement('td');
-                const displayValue = typeof formattedValue === 'number' ? formattedValue.toLocaleString() : formattedValue;
-                td.textContent = displayValue !== null && displayValue !== undefined ? displayValue : 'N/A';
+                td.textContent = formattedValue !== null && formattedValue !== undefined
+                    ? formattedValue
+                    : notAvailable();
+                if (['gateway_model', 'operation', 'model', 'x_title'].includes(header)) {
+                    markTechnical(td);
+                }
                 tr.appendChild(td);
             });
             tbody.appendChild(tr);
@@ -355,28 +490,32 @@ document.addEventListener('DOMContentLoaded', () => {
         return fragment;
     };
 
-    const updatePaginationControls = (totalRecords) => {
+    const updatePaginationControls = (totalRecords, page = currentPage) => {
         const totalPages = Math.ceil(totalRecords / recordsPerPage);
-        pageInfoSpan.textContent = `Page ${currentPage} of ${totalPages || 1}`;
-        prevPageButton.disabled = currentPage === 1;
-        nextPageButton.disabled = currentPage === totalPages || totalRecords === 0;
+        pageInfoSpan.textContent = gatewayI18n.t('usage:pagination.page', {current: page, total: totalPages || 1});
+        prevPageButton.disabled = page === 1;
+        nextPageButton.disabled = page === totalPages || totalRecords === 0;
     };
 
-    const fetchAndRenderRecords = async () => {
-        recordsArea.textContent = 'Loading usage records...';
-        showMessage('');
+    const fetchAndRenderRecords = async (activationContext = null) => {
+        const requestGeneration = startRequest('records');
+        startLoading('records', requestGeneration);
+        const requestedPage = currentPage;
+        recordsArea.textContent = gatewayI18n.t('usage:status.recordsLoading');
+        showMessage(message('usage:status.recordsLoading'), 'busy');
 
-        const offset = (currentPage - 1) * recordsPerPage;
+        const offset = (requestedPage - 1) * recordsPerPage;
         recordRefreshButton.disabled = true;
         recordRefreshButton.classList.add('loading');
 
         try {
             const response = await apiFetch(`/v1/api/usage-records?limit=${recordsPerPage}&offset=${offset}`);
-            const responseData = await response.json(); // Renamed to avoid confusion with internal 'data'
+            if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
+            const responseData = await response.json().catch(() => ({}));
+            if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
 
             if (!response.ok) {
-                const errorMessage = responseData.detail ? responseData.detail : `Error: ${response.status} ${response.statusText}`;
-                showMessage(errorMessage, true);
+                showApiError(responseData, response);
                 recordsArea.textContent = '';
                 updatePaginationControls(0);
                 return;
@@ -384,26 +523,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const records = responseData.records;
             const totalRecords = responseData.total_records;
+            currentPage = requestedPage;
+            snapshots.records = Object.freeze({records, totalRecords, page: requestedPage});
+            renderRecordsSnapshot();
 
-            recordsArea.textContent = "";
-            recordsArea.appendChild(createRecordsTable(records));
-            updatePaginationControls(totalRecords);
-
-            if (records.length === 0 && currentPage === 1) {
-                showMessage('No usage records found.', false);
+            if (records.length === 0 && requestedPage === 1) {
+                showMessage(message('usage:empty.recordsFound'));
             } else {
-                showMessage('Usage records loaded successfully.');
+                showMessage(message('usage:status.recordsLoaded'));
             }
 
         } catch (error) {
+            if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
             console.error('Failed to fetch usage records:', error);
-            showMessage(`Failed to load usage records: ${error.message}`, true);
+            showApiError(null, null, error);
             recordsArea.textContent = '';
             updatePaginationControls(0);
         } finally {
+            finishLoading('records', requestGeneration);
+            if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
             recordRefreshButton.disabled = false;
             recordRefreshButton.classList.remove('loading');
         }
+    };
+
+    const renderRecordsSnapshot = () => {
+        if (!snapshots.records) return;
+        currentPage = snapshots.records.page;
+        recordsArea.replaceChildren(createRecordsTable(snapshots.records.records));
+        updatePaginationControls(snapshots.records.totalRecords, snapshots.records.page);
     };
 
     prevPageButton.addEventListener('click', () => {
@@ -437,60 +585,75 @@ document.addEventListener('DOMContentLoaded', () => {
     const upstreamStatsArea = document.getElementById('upstreamStatsArea');
     const fallbackRecordsPerPage = 25;
     let fallbackCurrentPage = 1;
+    let fallbackChainsActivationContext = null;
 
     // Sub-tab switching
     const fallbackSubTabs = document.querySelectorAll('.fallback-sub-tab');
     const fallbackSubContents = document.querySelectorAll('.fallback-sub-content');
-
-    fallbackSubTabs.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const subtab = btn.dataset.subtab;
-            fallbackSubTabs.forEach(b => b.classList.remove('active'));
-            fallbackSubContents.forEach(c => c.classList.remove('active'));
-            btn.classList.add('active');
-            const contentBySubTab = {
-                summary: 'fallbackSummaryContent',
-                chains: 'fallbackChainsContent',
-                upstream: 'upstreamAnalyticsContent',
-            };
-            document.getElementById(contentBySubTab[subtab] || 'fallbackSummaryContent').classList.add('active');
-            if (subtab === 'chains') {
-                fallbackCurrentPage = 1;
-                fetchAndRenderFallbackChains();
-            } else if (subtab === 'upstream') {
-                fetchAndRenderUpstreamStats();
-            } else {
-                fetchAndRenderFallbackStats();
-            }
+    const fallbackPanelIds = {
+        summary: 'fallbackSummaryContent',
+        chains: 'fallbackChainsContent',
+        upstream: 'upstreamAnalyticsContent',
+    };
+    const orderedFallbackSubContents = Array.from(fallbackSubTabs, (button) => (
+        document.getElementById(fallbackPanelIds[button.dataset.subtab])
+    ));
+    const fallbackSubTabsContainer = fallbackSubTabs[0]?.closest('[role="tablist"]');
+    const isFallbackLoadCurrent = (activationContext) => (
+        isActivationCurrent(activationContext)
+        && isActivationContext(activationContext)
+        && fallbackSubTabsController?.activeKey === activationContext.key
+        && !document.getElementById('fallbackTabContent').hidden
+    );
+    const activateFallbackSubTab = async (context) => {
+        const subtab = context.key;
+        fallbackSubTabs.forEach((button) => {
+            button.classList.toggle('active', button === context.tab);
         });
-    });
-
-    const loadActiveFallbackSubTab = () => {
-        const activeSubTab = document.querySelector('.fallback-sub-tab.active');
-        if (activeSubTab && activeSubTab.dataset.subtab === 'chains') {
-            fetchAndRenderFallbackChains();
-        } else if (activeSubTab && activeSubTab.dataset.subtab === 'upstream') {
-            fetchAndRenderUpstreamStats();
+        fallbackSubContents.forEach((content) => {
+            content.classList.toggle('active', content === context.panel);
+        });
+        if (subtab === 'chains') {
+            fallbackCurrentPage = 1;
+            fallbackChainsActivationContext = context;
+            await fetchAndRenderFallbackChains(context);
+        } else if (subtab === 'upstream') {
+            await fetchAndRenderUpstreamStats(context);
         } else {
-            fetchAndRenderFallbackStats();
+            await fetchAndRenderFallbackStats(context);
         }
     };
+    if (fallbackSubTabsContainer && orderedFallbackSubContents.every(Boolean)) {
+        fallbackSubTabsController = window.gatewayUi.createTabs(fallbackSubTabsContainer, {
+            activation: 'manual',
+            getKey: (button) => button.dataset.subtab,
+            initialKey: 'summary',
+            onActivate: activateFallbackSubTab,
+            onReselect: activateFallbackSubTab,
+            panels: orderedFallbackSubContents,
+        });
+    }
 
-    const ERROR_TYPE_LABELS = {
-        'http_429': '429 Rate Limit',
-        'http_400': '400 Bad Request',
-        'http_401': '401 Unauthorized',
-        'http_403': '403 Forbidden',
-        'http_404': '404 Not Found',
-        'http_500': '500 Server Error',
-        'http_502': '502 Bad Gateway',
-        'http_503': '503 Unavailable',
-        'read_timeout': 'Read Timeout',
-        'connect_timeout': 'Connect Timeout',
-        'connect_error': 'Connect Error',
-        'context_overflow': 'Context Overflow',
-        'unknown': 'Unknown',
+    const reloadFallbackSubTab = (key) => {
+        if (!fallbackSubTabsController) return;
+        reportTabActivation(fallbackSubTabsController.activate(key));
     };
+
+    const ERROR_TYPE_LABELS = Object.freeze({
+        'http_429': 'usage:errorTypes.http429',
+        'http_400': 'usage:errorTypes.http400',
+        'http_401': 'usage:errorTypes.http401',
+        'http_403': 'usage:errorTypes.http403',
+        'http_404': 'usage:errorTypes.http404',
+        'http_500': 'usage:errorTypes.http500',
+        'http_502': 'usage:errorTypes.http502',
+        'http_503': 'usage:errorTypes.http503',
+        'read_timeout': 'usage:errorTypes.readTimeout',
+        'connect_timeout': 'usage:errorTypes.connectTimeout',
+        'connect_error': 'usage:errorTypes.connectError',
+        'context_overflow': 'usage:errorTypes.contextOverflow',
+        'unknown': 'usage:errorTypes.unknownLabel',
+    });
 
     const ERROR_TYPE_CLASSES = {
         'http_429': 'error-badge-rate-limit',
@@ -505,12 +668,21 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const formatErrorType = (errorType) => {
-        return ERROR_TYPE_LABELS[errorType] || errorType || 'N/A';
+        const key = ERROR_TYPE_LABELS[errorType];
+        return key ? t(key) : (errorType || notAvailable());
     };
 
     const formatDuration = (ms) => {
-        if (ms < 1000) return `${ms}ms`;
-        return `${(ms / 1000).toFixed(1)}s`;
+        const duration = Number.isFinite(Number(ms)) ? Number(ms) : 0;
+        if (duration < 1000) {
+            return t('usage:format.milliseconds', {value: formatNumber(duration)});
+        }
+        return t('usage:format.seconds', {
+            value: formatNumber(duration / 1000, {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+            }),
+        });
     };
 
     const createFallbackStatsTable = (data) => {
@@ -518,7 +690,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!data || data.length === 0) {
             const p = document.createElement('p');
             p.className = 'empty-state';
-            p.textContent = 'No fallback failures for the selected period.';
+            p.textContent = gatewayI18n.t('usage:empty.fallback');
             fragment.appendChild(p);
             return fragment;
         }
@@ -532,15 +704,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (const periodKey in groupedByPeriod) {
             const h2 = document.createElement('h2');
-            h2.textContent = `Period: ${periodKey}`;
+            h2.textContent = gatewayI18n.t('usage:period.label', {period: periodKey});
             fragment.appendChild(h2);
 
             const table = document.createElement('table');
             const thead = document.createElement('thead');
             const trHead = document.createElement('tr');
-            ['Gateway Model', 'Provider', 'Model', 'Error Type', 'Count', 'Avg Duration'].forEach(text => {
+            [
+                'usage:columns.gatewayModel',
+                'usage:columns.providerHeader',
+                'usage:columns.modelHeader',
+                'usage:columns.errorType',
+                'usage:columns.countHeader',
+                'usage:columns.averageDuration',
+            ].forEach(key => {
                 const th = document.createElement('th');
-                th.textContent = text;
+                th.textContent = t(key);
                 trHead.appendChild(th);
             });
             thead.appendChild(trHead);
@@ -551,13 +730,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const tr = document.createElement('tr');
 
                 const cells = [
-                    row.gateway_model || 'N/A',
-                    row.provider || 'N/A',
-                    row.model || 'N/A',
+                    row.gateway_model || notAvailable(),
+                    row.provider || notAvailable(),
+                    row.model || notAvailable(),
                 ];
                 cells.forEach(text => {
                     const td = document.createElement('td');
                     td.textContent = text;
+                    markTechnical(td);
                     tr.appendChild(td);
                 });
 
@@ -566,11 +746,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const badge = document.createElement('span');
                 badge.className = `error-badge ${getErrorBadgeClass(row.error_type)}`;
                 badge.textContent = formatErrorType(row.error_type);
+                if (!ERROR_TYPE_LABELS[row.error_type]) markTechnical(badge);
                 tdError.appendChild(badge);
                 tr.appendChild(tdError);
 
                 const tdCount = document.createElement('td');
-                tdCount.textContent = row.count;
+                tdCount.textContent = formatNumber(row.count);
                 tr.appendChild(tdCount);
 
                 const tdDuration = document.createElement('td');
@@ -585,34 +766,46 @@ document.addEventListener('DOMContentLoaded', () => {
         return fragment;
     };
 
-    const fetchAndRenderFallbackStats = async () => {
+    const fetchAndRenderFallbackStats = async (activationContext = null) => {
+        const requestGeneration = startRequest('fallbackStats');
+        startLoading('fallbackStats', requestGeneration);
         const selectedPeriod = fallbackPeriodSelector.value;
-        fallbackStatsArea.textContent = 'Loading fallback statistics...';
-        showMessage('');
+        fallbackStatsArea.textContent = gatewayI18n.t('usage:status.fallbackLoading');
+        showMessage(message('usage:status.fallbackLoading'), 'busy');
         fallbackRefreshButton.disabled = true;
         fallbackRefreshButton.classList.add('loading');
 
         try {
             const response = await apiFetch(`/v1/api/fallback-stats/${selectedPeriod}`);
-            const data = await response.json();
+            if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
+            const data = await response.json().catch(() => ({}));
+            if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
 
             if (!response.ok) {
-                showMessage(data.detail || `Error: ${response.status}`, true);
+                showApiError(data, response);
                 fallbackStatsArea.textContent = '';
                 return;
             }
 
-            fallbackStatsArea.textContent = '';
-            fallbackStatsArea.appendChild(createFallbackStatsTable(data));
-            showMessage(data.length === 0 ? 'No fallback failures for the selected period.' : 'Fallback statistics loaded.');
+            snapshots.fallbackStats = Object.freeze({period: selectedPeriod, data});
+            renderFallbackStatsSnapshot();
+            showMessage(message(data.length === 0 ? 'usage:empty.fallback' : 'usage:status.fallbackLoaded'));
         } catch (error) {
+            if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             console.error('Failed to fetch fallback stats:', error);
-            showMessage(`Failed to load fallback statistics: ${error.message}`, true);
+            showApiError(null, null, error);
             fallbackStatsArea.textContent = '';
         } finally {
+            finishLoading('fallbackStats', requestGeneration);
+            if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             fallbackRefreshButton.disabled = false;
             fallbackRefreshButton.classList.remove('loading');
         }
+    };
+
+    const renderFallbackStatsSnapshot = () => {
+        if (!snapshots.fallbackStats) return;
+        fallbackStatsArea.replaceChildren(createFallbackStatsTable(snapshots.fallbackStats.data));
     };
 
     const createFallbackChainsView = (records) => {
@@ -620,18 +813,27 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!records || records.length === 0) {
             const p = document.createElement('p');
             p.className = 'empty-state';
-            p.textContent = 'No fallback chains found.';
+            p.textContent = gatewayI18n.t('usage:empty.chains');
             fragment.appendChild(p);
             return fragment;
         }
 
-        records.forEach(record => {
+        records.forEach((record, recordIndex) => {
+            const chainId = String(record.request_id || `${fallbackCurrentPage}-${recordIndex}`);
+            const detailsId = `fallback-chain-${fallbackCurrentPage}-${recordIndex}`;
+            const initiallyOpen = expandedFallbackChains.has(chainId);
             const card = document.createElement('div');
             card.className = 'chain-card';
+            card.classList.toggle('chain-card-open', initiallyOpen);
 
             // Header (clickable to expand)
             const header = document.createElement('div');
             header.className = 'chain-header';
+            header.setAttribute('role', 'button');
+            header.setAttribute('tabindex', '0');
+            header.setAttribute('aria-expanded', String(initiallyOpen));
+            header.setAttribute('aria-controls', detailsId);
+            header.dataset.focusKey = `fallback-chain:${chainId}`;
 
             const summary = document.createElement('div');
             summary.className = 'chain-summary';
@@ -643,17 +845,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const modelSpan = document.createElement('span');
             modelSpan.className = 'chain-model';
-            modelSpan.textContent = record.gateway_model || 'N/A';
+            modelSpan.textContent = record.gateway_model || notAvailable();
+            markTechnical(modelSpan);
             summary.appendChild(modelSpan);
 
             const titleSpan = document.createElement('span');
             titleSpan.className = 'chain-title';
-            titleSpan.textContent = `X-Title: ${record.x_title || 'N/A'}`;
+            titleSpan.textContent = gatewayI18n.t('usage:format.xTitle', {value: record.x_title || notAvailable()});
+            titleSpan.setAttribute('dir', 'auto');
             summary.appendChild(titleSpan);
 
             const attSpan = document.createElement('span');
             attSpan.className = 'chain-attempts';
-            attSpan.textContent = `${record.total_attempts} attempts`;
+            attSpan.textContent = gatewayI18n.t('usage:counts.attempts', {count: Number(record.total_attempts) || 0});
             summary.appendChild(attSpan);
 
             const durSpan = document.createElement('span');
@@ -663,19 +867,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const resSpan = document.createElement('span');
             resSpan.className = `chain-result ${record.success ? 'chain-success' : 'chain-failure'}`;
-            resSpan.textContent = record.success ? 'Success' : 'Failed';
+            resSpan.textContent = record.success
+                ? gatewayI18n.t('usage:values.successLabel')
+                : gatewayI18n.t('usage:values.failedLabel');
             summary.appendChild(resSpan);
 
             header.appendChild(summary);
 
             const toggle = document.createElement('span');
             toggle.className = 'chain-toggle';
-            toggle.textContent = '\u25BC';
+            toggle.textContent = initiallyOpen ? '\u25B2' : '\u25BC';
             header.appendChild(toggle);
 
             const details = document.createElement('div');
             details.className = 'chain-details';
-            details.style.display = 'none';
+            details.id = detailsId;
+            details.style.display = initiallyOpen ? 'block' : 'none';
 
             // Find max duration for proportional bars
             const maxDuration = Math.max(...record.attempts.map(a => a.duration_ms), 1);
@@ -697,12 +904,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const provSpan = document.createElement('span');
                 provSpan.className = 'attempt-provider';
                 provSpan.textContent = `${attempt.provider}/${attempt.model}`;
+                markTechnical(provSpan);
                 targetWrap.appendChild(provSpan);
 
                 if (!attempt.success && attempt.error_message) {
                     const errMessage = document.createElement('div');
                     errMessage.className = 'attempt-error-message';
                     errMessage.textContent = attempt.error_message;
+                    markTechnical(errMessage);
                     targetWrap.appendChild(errMessage);
                 }
 
@@ -714,6 +923,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const badge = document.createElement('span');
                     badge.className = `error-badge ${getErrorBadgeClass(attempt.error_type)}`;
                     badge.textContent = formatErrorType(attempt.error_type);
+                    if (!ERROR_TYPE_LABELS[attempt.error_type]) markTechnical(badge);
                     errSpan.appendChild(badge);
                 }
                 row.appendChild(errSpan);
@@ -739,11 +949,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 details.appendChild(row);
             });
 
-            header.addEventListener('click', () => {
+            const toggleDetails = () => {
                 const isOpen = details.style.display !== 'none';
                 details.style.display = isOpen ? 'none' : 'block';
                 toggle.textContent = isOpen ? '\u25BC' : '\u25B2';
                 card.classList.toggle('chain-card-open', !isOpen);
+                header.setAttribute('aria-expanded', String(!isOpen));
+                if (isOpen) expandedFallbackChains.delete(chainId);
+                else expandedFallbackChains.add(chainId);
+            };
+            header.addEventListener('click', toggleDetails);
+            header.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                toggleDetails();
             });
 
             card.appendChild(header);
@@ -754,45 +973,67 @@ document.addEventListener('DOMContentLoaded', () => {
         return fragment;
     };
 
-    const updateFallbackPagination = (totalRecords) => {
+    const updateFallbackPagination = (totalRecords, page = fallbackCurrentPage) => {
         const totalPages = Math.ceil(totalRecords / fallbackRecordsPerPage);
-        fallbackPageInfo.textContent = `Page ${fallbackCurrentPage} of ${totalPages || 1}`;
-        fallbackPrevPage.disabled = fallbackCurrentPage === 1;
-        fallbackNextPage.disabled = fallbackCurrentPage === totalPages || totalRecords === 0;
+        fallbackPageInfo.textContent = gatewayI18n.t('usage:pagination.page', {current: page, total: totalPages || 1});
+        fallbackPrevPage.disabled = page === 1;
+        fallbackNextPage.disabled = page === totalPages || totalRecords === 0;
     };
 
-    const fetchAndRenderFallbackChains = async () => {
-        fallbackChainsArea.textContent = 'Loading fallback chains...';
-        showMessage('');
+    const fetchAndRenderFallbackChains = async (activationContext = null) => {
+        const requestGeneration = startRequest('fallbackChains');
+        startLoading('fallbackChains', requestGeneration);
+        const requestedPage = fallbackCurrentPage;
+        fallbackChainsArea.textContent = gatewayI18n.t('usage:status.chainsLoading');
+        showMessage(message('usage:status.chainsLoading'), 'busy');
         fallbackChainsRefreshButton.disabled = true;
         fallbackChainsRefreshButton.classList.add('loading');
 
-        const offset = (fallbackCurrentPage - 1) * fallbackRecordsPerPage;
+        const offset = (requestedPage - 1) * fallbackRecordsPerPage;
 
         try {
             const response = await apiFetch(`/v1/api/fallback-records?limit=${fallbackRecordsPerPage}&offset=${offset}`);
-            const responseData = await response.json();
+            if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
+            const responseData = await response.json().catch(() => ({}));
+            if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
 
             if (!response.ok) {
-                showMessage(responseData.detail || `Error: ${response.status}`, true);
+                showApiError(responseData, response);
                 fallbackChainsArea.textContent = '';
                 updateFallbackPagination(0);
                 return;
             }
 
-            fallbackChainsArea.textContent = '';
-            fallbackChainsArea.appendChild(createFallbackChainsView(responseData.records));
-            updateFallbackPagination(responseData.total_records);
-            showMessage(responseData.records.length === 0 ? 'No fallback chains found.' : 'Fallback chains loaded.');
+            fallbackCurrentPage = requestedPage;
+            snapshots.fallbackChains = Object.freeze({
+                records: responseData.records,
+                totalRecords: responseData.total_records,
+                page: requestedPage,
+            });
+            renderFallbackChainsSnapshot();
+            showMessage(message(responseData.records.length === 0 ? 'usage:empty.chains' : 'usage:status.chainsLoaded'));
         } catch (error) {
+            if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             console.error('Failed to fetch fallback chains:', error);
-            showMessage(`Failed to load fallback chains: ${error.message}`, true);
+            showApiError(null, null, error);
             fallbackChainsArea.textContent = '';
             updateFallbackPagination(0);
         } finally {
+            finishLoading('fallbackChains', requestGeneration);
+            if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             fallbackChainsRefreshButton.disabled = false;
             fallbackChainsRefreshButton.classList.remove('loading');
         }
+    };
+
+    const renderFallbackChainsSnapshot = () => {
+        if (!snapshots.fallbackChains) return;
+        fallbackCurrentPage = snapshots.fallbackChains.page;
+        fallbackChainsArea.replaceChildren(createFallbackChainsView(snapshots.fallbackChains.records));
+        updateFallbackPagination(
+            snapshots.fallbackChains.totalRecords,
+            snapshots.fallbackChains.page,
+        );
     };
 
     const createUpstreamStatsTable = (data) => {
@@ -800,7 +1041,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!data || data.length === 0) {
             const p = document.createElement('p');
             p.className = 'empty-state';
-            p.textContent = 'No upstream analytics for the selected period.';
+            p.textContent = gatewayI18n.t('usage:empty.upstream');
             fragment.appendChild(p);
             return fragment;
         }
@@ -814,27 +1055,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (const periodKey in groupedByPeriod) {
             const h2 = document.createElement('h2');
-            h2.textContent = `Period: ${periodKey}`;
+            h2.textContent = gatewayI18n.t('usage:period.label', {period: periodKey});
             fragment.appendChild(h2);
 
             const table = document.createElement('table');
             const thead = document.createElement('thead');
             const trHead = document.createElement('tr');
             [
-                'Gateway Model',
-                'Provider',
-                'Model',
-                'Operation',
-                'Key',
-                'Attempts',
-                'Success',
-                'Errors',
-                'Success Rate',
-                'Avg Duration',
-                'Max Duration',
-            ].forEach(text => {
+                'usage:columns.gatewayModel',
+                'usage:columns.providerHeader',
+                'usage:columns.modelHeader',
+                'usage:columns.operationHeader',
+                'usage:columns.key',
+                'usage:columns.attemptsHeader',
+                'usage:columns.successHeader',
+                'usage:columns.errorsHeader',
+                'usage:columns.successRate',
+                'usage:columns.averageDuration',
+                'usage:columns.maxDuration',
+            ].forEach(key => {
                 const th = document.createElement('th');
-                th.textContent = text;
+                th.textContent = t(key);
                 trHead.appendChild(th);
             });
             thead.appendChild(trHead);
@@ -843,23 +1084,30 @@ document.addEventListener('DOMContentLoaded', () => {
             const tbody = document.createElement('tbody');
             groupedByPeriod[periodKey].forEach(row => {
                 const tr = document.createElement('tr');
-                const successRate = typeof row.success_rate === 'number' ? `${row.success_rate.toFixed(1)}%` : 'N/A';
+                const successRate = typeof row.success_rate === 'number'
+                    ? formatNumber(row.success_rate / 100, {
+                        style: 'percent',
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                    })
+                    : notAvailable();
                 const cells = [
-                    row.gateway_model || 'N/A',
-                    row.provider || 'N/A',
-                    row.model || 'N/A',
-                    row.operation || 'N/A',
-                    row.upstream_key_fingerprint || 'N/A',
-                    row.attempts,
-                    row.successes,
-                    row.errors,
+                    row.gateway_model || notAvailable(),
+                    row.provider || notAvailable(),
+                    row.model || notAvailable(),
+                    row.operation || notAvailable(),
+                    row.upstream_key_fingerprint || notAvailable(),
+                    formatNumber(row.attempts),
+                    formatNumber(row.successes),
+                    formatNumber(row.errors),
                     successRate,
                     formatDuration(row.avg_duration_ms || 0),
                     formatDuration(row.max_duration_ms || 0),
                 ];
-                cells.forEach(value => {
+                cells.forEach((value, index) => {
                     const td = document.createElement('td');
-                    td.textContent = typeof value === 'number' ? value.toLocaleString() : value;
+                    td.textContent = value;
+                    if (index < 5) markTechnical(td);
                     tr.appendChild(td);
                 });
                 tbody.appendChild(tr);
@@ -870,70 +1118,76 @@ document.addEventListener('DOMContentLoaded', () => {
         return fragment;
     };
 
-    const fetchAndRenderUpstreamStats = async () => {
+    const fetchAndRenderUpstreamStats = async (activationContext = null) => {
+        const requestGeneration = startRequest('upstream');
+        startLoading('upstream', requestGeneration);
         const selectedPeriod = upstreamPeriodSelector.value;
-        upstreamStatsArea.textContent = 'Loading upstream analytics...';
-        showMessage('');
+        upstreamStatsArea.textContent = gatewayI18n.t('usage:status.upstreamLoading');
+        showMessage(message('usage:status.upstreamLoading'), 'busy');
         upstreamRefreshButton.disabled = true;
         upstreamRefreshButton.classList.add('loading');
 
         try {
             const response = await apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`);
-            const data = await response.json();
+            if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
+            const data = await response.json().catch(() => ({}));
+            if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
 
             if (!response.ok) {
-                showMessage(data.detail || `Error: ${response.status}`, true);
+                showApiError(data, response);
                 upstreamStatsArea.textContent = '';
                 return;
             }
 
-            upstreamStatsArea.textContent = '';
-            upstreamStatsArea.appendChild(createUpstreamStatsTable(data));
-            showMessage(data.length === 0 ? 'No upstream analytics for the selected period.' : 'Upstream analytics loaded.');
+            snapshots.upstream = Object.freeze({period: selectedPeriod, data});
+            renderUpstreamSnapshot();
+            showMessage(message(data.length === 0 ? 'usage:empty.upstream' : 'usage:status.upstreamLoaded'));
         } catch (error) {
+            if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             console.error('Failed to fetch upstream analytics:', error);
-            showMessage(`Failed to load upstream analytics: ${error.message}`, true);
+            showApiError(null, null, error);
             upstreamStatsArea.textContent = '';
         } finally {
+            finishLoading('upstream', requestGeneration);
+            if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             upstreamRefreshButton.disabled = false;
             upstreamRefreshButton.classList.remove('loading');
         }
     };
 
-    fallbackRefreshButton.addEventListener('click', fetchAndRenderFallbackStats);
-    fallbackPeriodSelector.addEventListener('change', fetchAndRenderFallbackStats);
-    upstreamRefreshButton.addEventListener('click', fetchAndRenderUpstreamStats);
-    upstreamPeriodSelector.addEventListener('change', fetchAndRenderUpstreamStats);
+    const renderUpstreamSnapshot = () => {
+        if (!snapshots.upstream) return;
+        upstreamStatsArea.replaceChildren(createUpstreamStatsTable(snapshots.upstream.data));
+    };
+
+    fallbackRefreshButton.addEventListener('click', () => reloadFallbackSubTab('summary'));
+    fallbackPeriodSelector.addEventListener('change', () => reloadFallbackSubTab('summary'));
+    upstreamRefreshButton.addEventListener('click', () => reloadFallbackSubTab('upstream'));
+    upstreamPeriodSelector.addEventListener('change', () => reloadFallbackSubTab('upstream'));
 
     fallbackChainsRefreshButton.addEventListener('click', () => {
         fallbackCurrentPage = 1;
-        fetchAndRenderFallbackChains();
+        reloadFallbackSubTab('chains');
     });
 
     fallbackPrevPage.addEventListener('click', () => {
         if (fallbackCurrentPage > 1) {
             fallbackCurrentPage--;
-            fetchAndRenderFallbackChains();
+            fetchAndRenderFallbackChains(fallbackChainsActivationContext);
         }
     });
 
     fallbackNextPage.addEventListener('click', () => {
+        const totalPages = Math.ceil((snapshots.fallbackChains?.totalRecords || 0) / fallbackRecordsPerPage);
+        // Fail closed: block navigation until page count is known.
+        if (!totalPages || fallbackCurrentPage >= totalPages) return;
         fallbackCurrentPage++;
-        fetchAndRenderFallbackChains();
+        fetchAndRenderFallbackChains(fallbackChainsActivationContext);
     });
 
     // Ensure initial load respects the default tab
-    const activeTab = document.querySelector('.tab-button.active');
-    if (activeTab && activeTab.dataset.tab === 'records') {
-        fetchAndRenderRecords();
-    } else if (activeTab && activeTab.dataset.tab === 'analytics') {
-        window.usageAnalyticsDashboard.activate();
-    } else if (activeTab && activeTab.dataset.tab === 'fallback') {
-        loadActiveFallbackSubTab();
-    } else if (activeTab && activeTab.dataset.tab === 'topology') {
-        loadTopology();
-    } else {
-        fetchAndRenderStats();
+    if (usageTabsController) {
+        reportTabActivation(usageTabsController.activate(usageTabsController.activeKey));
     }
 
     // ── Topology tab: routing map + live monitor ───────────────────────────────
@@ -970,13 +1224,20 @@ document.addEventListener('DOMContentLoaded', () => {
         document.head.appendChild(link);
     }
 
-    function showTopologyFatalError(message, onRetry) {
+    function showTopologyFatalError(summaryKey, rawDetail, onRetry) {
         topologyContainer.replaceChildren();
         const errDiv = document.createElement('div');
         errDiv.className = 'topology-error';
-        errDiv.textContent = message;
+        errDiv.setAttribute('role', 'alert');
+        errDiv.textContent = t(summaryKey);
+        if (rawDetail) {
+            const detail = document.createElement('div');
+            detail.textContent = rawDetail;
+            markTechnical(detail);
+            errDiv.appendChild(detail);
+        }
         const retryBtn = document.createElement('button');
-        retryBtn.textContent = 'Retry';
+        retryBtn.textContent = gatewayI18n.t('topology:status.retryAction');
         retryBtn.addEventListener('click', onRetry);
         errDiv.appendChild(retryBtn);
         topologyContainer.appendChild(errDiv);
@@ -1037,16 +1298,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const lines = [];
         if (isModel) {
             const steps = (d.chain || []).length;
-            lines.push(`${steps} step${steps === 1 ? '' : 's'}`);
-            if (hasActive) lines.push(`▶ ${active} active`);
+            lines.push(t('topology:node.steps', {count: steps}));
+            if (hasActive) lines.push(`▶ ${t('topology:node.active', {count: active})}`);
         } else if (!isCentral) {
-            lines.push(`Health: ${health}${d.configured === false ? ' (not configured)' : ''}`);
-            if (hasActive) lines.push(`▶ ${active} active`);
-            lines.push(`Penalty: ${typeof d.penalty === 'number' ? d.penalty.toFixed(2) : 0}`);
+            const healthKeys = {
+                ok: 'topology:health.healthyLabel',
+                error: 'topology:health.errorLabel',
+                invalid: 'topology:health.invalidLabel',
+            };
+            const healthText = healthKeys[health] ? t(healthKeys[health]) : health;
+            const configuredSuffix = d.configured === false
+                ? ` (${t('topology:node.notConfiguredSuffix')})`
+                : '';
+            lines.push(t('topology:node.health', {value: `${healthText}${configuredSuffix}`}));
+            if (hasActive) lines.push(`▶ ${t('topology:node.active', {count: active})}`);
+            lines.push(t('topology:node.penalty', {
+                value: formatNumber(typeof d.penalty === 'number' ? d.penalty : 0, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                }),
+            }));
         }
 
         const label = h('div', null,
-            h('div', { className: 'topology-node-title' }, node.label || node.id),
+            h('div', { className: 'topology-node-title', lang: 'und', dir: 'auto' }, node.label || node.id),
             lines.length
                 ? h('div', { className: 'topology-node-metrics' },
                     lines.map((line, idx) => h('div', { key: idx }, line)))
@@ -1060,6 +1335,10 @@ document.addEventListener('DOMContentLoaded', () => {
             sourcePosition: 'right',
             targetPosition: 'left',
             connectable: false,
+            ariaLabel: t('topology:node.aria', {
+                label: node.label || node.id,
+                details: lines.join('. '),
+            }),
             data: { label },
             style: {
                 background: isCentral ? 'var(--accent)' : (isModel ? 'var(--accent-soft)' : undefined),
@@ -1095,8 +1374,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (kind === 'fallback') {
             label = (d.steps && d.steps.length) ? d.steps.join(',') : String(d.priority || '');
         } else if (isCtx) {
-            label = 'ctx';
+            label = t('topology:edge.contextOverflowShort');
         }
+
+        const kindKeys = {
+            alias: 'topology:edge.aliasLabel',
+            fallback: 'topology:edge.fallbackLabel',
+            context_overflow: 'topology:edge.contextOverflowLabel',
+        };
+        const kindLabel = kindKeys[kind] ? t(kindKeys[kind]) : kind;
 
         const emphasised = (chain && inChain) || edge.animated;
         const baseWidth = isAlias ? 1.5 : 2;
@@ -1108,6 +1394,11 @@ document.addEventListener('DOMContentLoaded', () => {
             type: 'default',
             animated: !!edge.animated,
             label,
+            ariaLabel: t('topology:edge.aria', {
+                source: edge.source,
+                target: edge.target,
+                kind: kindLabel,
+            }),
             labelStyle: { fontSize: 11, fontWeight: 700, fill: stroke },
             labelBgStyle: { fill: 'var(--bg-elevated)', fillOpacity: 0.85 },
             labelBgPadding: [4, 2],
@@ -1138,18 +1429,38 @@ document.addEventListener('DOMContentLoaded', () => {
         const h = React.createElement;
         const node = detail.node;
         const d = node.data || {};
-        const kv = (k, v) => h('div', { className: 'topology-detail-row', key: k },
+        const kv = (k, v, technical = false) => h('div', { className: 'topology-detail-row', key: k },
             h('span', { className: 'topology-detail-key' }, k),
-            h('span', { className: 'topology-detail-val' }, v));
+            h('span', {
+                className: 'topology-detail-val',
+                lang: technical ? 'und' : undefined,
+                dir: technical ? 'auto' : undefined,
+            }, v));
 
         let body;
         if (detail.kind === 'provider') {
+            const healthKey = {
+                ok: 'topology:health.healthyLabel',
+                error: 'topology:health.errorLabel',
+                invalid: 'topology:health.invalidLabel',
+            }[d.health];
             body = [
-                kv('Health', d.health),
-                kv('Configured', d.configured === false ? 'no' : 'yes'),
-                kv('Active requests', String(d.active_requests || 0)),
-                kv('Penalty', typeof d.penalty === 'number' ? d.penalty.toFixed(2) : '0'),
-                (d.models && d.models.length) ? kv('Models', d.models.join(', ')) : null,
+                kv(
+                    t('topology:details.healthLabel'),
+                    healthKey ? t(healthKey) : String(d.health || notAvailable()),
+                    !healthKey,
+                ),
+                kv(t('topology:details.configuredLabel'), d.configured === false
+                    ? t('topology:values.noLabel')
+                    : t('topology:values.yesLabel')),
+                kv(t('topology:details.activeRequests'), formatNumber(d.active_requests || 0)),
+                kv(t('topology:details.penaltyLabel'), formatNumber(
+                    typeof d.penalty === 'number' ? d.penalty : 0,
+                    {minimumFractionDigits: 2, maximumFractionDigits: 2},
+                )),
+                (d.models && d.models.length)
+                    ? kv(t('topology:details.modelsLabel'), d.models.join(', '), true)
+                    : null,
             ];
         } else {
             const flags = d.flags || {};
@@ -1157,28 +1468,48 @@ document.addEventListener('DOMContentLoaded', () => {
             const chainItems = (d.chain || []).map((step, i) =>
                 h('li', { key: i, className: 'topology-chain-step' },
                     h('span', { className: 'topology-chain-prio' }, `#${step.priority}`),
-                    h('span', { className: 'topology-chain-target' }, `${step.provider || '?'} / ${step.model || '?'}`),
+                    h('span', { className: 'topology-chain-target', lang: 'und', dir: 'auto' }, `${step.provider || '?'} / ${step.model || '?'}`),
                     (step.retry_count != null || step.retry_delay != null)
                         ? h('span', { className: 'topology-chain-retry' },
-                            `retry: ${step.retry_count != null ? step.retry_count : '-'}${step.retry_delay != null ? ` (${step.retry_delay}ms)` : ''}`)
+                            step.retry_delay != null
+                                ? t('topology:details.retryWithDelay', {
+                                    count: step.retry_count != null ? formatNumber(step.retry_count) : '-',
+                                    delay: t('usage:format.milliseconds', {value: formatNumber(step.retry_delay)}),
+                                })
+                                : t('topology:details.retry', {
+                                    count: step.retry_count != null ? formatNumber(step.retry_count) : '-',
+                                }))
                         : null
                 )
             );
             body = [
-                kv('Active requests', String(d.active_requests || 0)),
-                (d.max_total_attempts != null) ? kv('Max total attempts', String(d.max_total_attempts)) : null,
-                flagList.length ? kv('Flags', flagList.join(', ')) : null,
-                d.context_overflow ? kv('Context overflow', `${d.context_overflow.provider} / ${d.context_overflow.model || '?'}`) : null,
-                h('div', { className: 'topology-detail-subhead', key: 'chainhead' }, 'Fallback chain'),
+                kv(t('topology:details.activeRequests'), formatNumber(d.active_requests || 0)),
+                (d.max_total_attempts != null)
+                    ? kv(t('topology:details.maxAttempts'), formatNumber(d.max_total_attempts))
+                    : null,
+                flagList.length ? kv(t('topology:details.flagsLabel'), flagList.join(', '), true) : null,
+                d.context_overflow
+                    ? kv(
+                        t('topology:details.contextOverflowLabel'),
+                        `${d.context_overflow.provider} / ${d.context_overflow.model || '?'}`,
+                        true,
+                    )
+                    : null,
+                h('div', { className: 'topology-detail-subhead', key: 'chainhead' }, t('topology:details.fallbackChainLabel')),
                 h('ol', { className: 'topology-chain-list', key: 'chain' },
-                    chainItems.length ? chainItems : h('li', { key: 'empty' }, '— нет целей —')),
+                    chainItems.length ? chainItems : h('li', { key: 'empty' }, t('topology:details.emptyChain'))),
             ];
         }
 
         return h('div', { className: 'topology-detail' },
             h('div', { className: 'topology-detail-header' },
-                h('span', { className: 'topology-detail-title' }, node.label || node.id),
-                h('button', { className: 'topology-detail-close', onClick: onClose, title: 'Close' }, '×')
+                h('span', { className: 'topology-detail-title', lang: 'und', dir: 'auto' }, node.label || node.id),
+                h('button', {
+                    className: 'topology-detail-close',
+                    onClick: onClose,
+                    title: t('topology:details.closeAction'),
+                    'aria-label': t('topology:details.closeAction'),
+                }, '×')
             ),
             h('div', { className: 'topology-detail-body' }, body.filter(Boolean))
         );
@@ -1186,31 +1517,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function TopologyApp(props) {
         const { React, ReactFlow, Background, Controls } = props;
-        const { useState, useEffect, useCallback, useMemo, createElement: h } = React;
+        const {
+            useState,
+            useEffect,
+            useLayoutEffect,
+            useCallback,
+            useMemo,
+            useRef,
+            createElement: h,
+        } = React;
 
         const [graph, setGraph] = useState(null);
         const [error, setError] = useState(null);
         const [selectedModel, setSelectedModel] = useState(null);
         const [detail, setDetail] = useState(null);
         const [auto, setAuto] = useState(topologyAutoRefreshInput ? topologyAutoRefreshInput.checked : true);
+        const [localeRevision, setLocaleRevision] = useState(0);
+        const fetchGeneration = useRef(0);
         const [size, setSize] = useState({
             w: topologyContainer.clientWidth || 1000,
             h: topologyContainer.clientHeight || 520,
         });
 
         const fetchGraph = useCallback(async () => {
+            const requestGeneration = ++fetchGeneration.current;
             try {
                 const resp = await apiFetch('/v1/topology');
+                if (requestGeneration !== fetchGeneration.current) return;
                 if (!resp.ok) {
                     const errBody = await resp.json().catch(() => ({}));
-                    setError(`Ошибка загрузки топологии: ${errBody.detail || resp.status}`);
+                    if (requestGeneration !== fetchGeneration.current) return;
+                    setError(gatewayUi.describeApiError(errBody, {
+                        status: resp.status,
+                        requestId: resp.headers.get('X-Request-ID'),
+                    }));
                     return;
                 }
-                setGraph(await resp.json());
+                const nextGraph = await resp.json();
+                if (requestGeneration !== fetchGeneration.current) return;
+                setGraph(nextGraph);
                 setError(null);
             } catch (e) {
+                if (requestGeneration !== fetchGeneration.current) return;
                 console.error('Failed to fetch topology:', e);
-                setError(`Ошибка загрузки топологии: ${e.message}`);
+                const descriptor = gatewayUi.describeApiError(null);
+                setError({...descriptor, rawDetail: e.message});
             }
         }, []);
 
@@ -1238,9 +1589,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Expose refresh / auto-toggle to the external toolbar controls.
         useEffect(() => {
-            _topologyApi = { refresh: fetchGraph, setAuto };
+            _topologyApi = {
+                refresh: fetchGraph,
+                setAuto,
+                rerenderLocale: () => setLocaleRevision(revision => revision + 1),
+            };
             return () => { _topologyApi = null; };
         }, [fetchGraph]);
+
+        useLayoutEffect(() => {
+            const controls = topologyContainer.querySelector('.react-flow__controls');
+            if (!controls) return;
+            controls.setAttribute('aria-label', gatewayI18n.t('topology:controls.groupLabel'));
+            const labels = [
+                ['.react-flow__controls-zoomin', 'topology:controls.zoomInAction'],
+                ['.react-flow__controls-zoomout', 'topology:controls.zoomOutAction'],
+                ['.react-flow__controls-fitview', 'topology:controls.fitViewAction'],
+                ['.react-flow__controls-interactive', 'topology:controls.toggleInteractivityAction'],
+            ];
+            labels.forEach(([selector, key]) => {
+                const button = controls.querySelector(selector);
+                if (!button) return;
+                const label = t(key);
+                button.setAttribute('aria-label', label);
+                button.setAttribute('title', label);
+            });
+        }, [graph, localeRevision]);
 
         const onNodeClick = useCallback((_evt, node) => {
             const raw = ((graph && graph.nodes) || []).find(n => n.id === node.id);
@@ -1264,12 +1638,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const styled = useMemo(
             () => topologyBuildGraph(React, graph, selectedModel, size),
-            [React, graph, selectedModel, size]
+            [React, graph, selectedModel, size, localeRevision]
         );
 
         if (error) {
             return h('div', { className: 'topology-error' },
-                error, h('button', { onClick: fetchGraph }, 'Retry'));
+                h('div', {role: 'alert'}, t(error.summaryKey, error.summaryValues)),
+                error.rawDetail
+                    ? h('div', {lang: 'und', dir: 'auto'}, error.rawDetail)
+                    : null,
+                error.requestId
+                    ? h('div', {lang: 'und', dir: 'auto'}, t('usage:status.requestId', {id: error.requestId}))
+                    : null,
+                h('button', { onClick: fetchGraph }, t('topology:status.retryAction')));
         }
 
         return h('div', { className: 'topology-body' },
@@ -1283,14 +1664,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         onNodeClick,
                         onPaneClick,
                         attributionPosition: 'bottom-right',
-                    }, h(Background, null), h(Controls, null))
-                    : h('div', { className: 'topology-loading' }, 'Loading topology...')
+                    }, h(Background, null), h(Controls, {
+                        'aria-label': gatewayI18n.t('topology:controls.groupLabel'),
+                    }))
+                    : h('div', { className: 'topology-loading' }, t('topology:status.loading'))
             ),
             detail ? topologyDetailPanel(React, detail, () => { setDetail(null); setSelectedModel(null); }) : null
         );
     }
 
-    async function loadTopology() {
+    async function loadTopology(activationContext = null) {
         ensureTopologyStylesLoaded();
         // Mount once; subsequent activations just trigger a refresh so the
         // viewport and any selected chain survive tab switches.
@@ -1298,14 +1681,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (_topologyApi) _topologyApi.refresh();
             return;
         }
-        topologyContainer.textContent = 'Loading topology...';
+        topologyContainer.textContent = gatewayI18n.t('topology:status.loading');
 
         let bundle;
         try {
             bundle = await import('/static/vendor/topology.bundle.mjs');
+            if (!isActivationCurrent(activationContext)) return;
         } catch (bundleError) {
+            if (!isActivationCurrent(activationContext)) return;
             console.error('Topology bundle load failed:', bundleError);
-            showTopologyFatalError('Не удалось загрузить визуализацию (bundle недоступен).', loadTopology);
+            showTopologyFatalError('topology:status.bundleFailed', bundleError.message, loadTopology);
             return;
         }
 
@@ -1332,4 +1717,87 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-});
+    function captureLocaleUiState() {
+        const activeElement = document.activeElement;
+        const focusId = activeElement?.id || null;
+        const focusKey = activeElement?.dataset?.focusKey || null;
+        const scrollElements = [
+            statsArea,
+            recordsArea,
+            fallbackStatsArea,
+            fallbackChainsArea,
+            upstreamStatsArea,
+            ...document.querySelectorAll('.analytics-table-wrap'),
+        ];
+        return {
+            activeElement,
+            focusId,
+            focusKey,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY,
+            scrollPositions: scrollElements.map(element => ({
+                element,
+                left: element.scrollLeft,
+                top: element.scrollTop,
+            })),
+        };
+    }
+
+    function restoreLocaleUiState(state) {
+        state.scrollPositions.forEach(({element, left, top}) => {
+            if (!element.isConnected) return;
+            element.scrollLeft = left;
+            element.scrollTop = top;
+        });
+        window.requestAnimationFrame(() => {
+            window.scrollTo(state.scrollX, state.scrollY);
+            let focusTarget = state.activeElement?.isConnected ? state.activeElement : null;
+            if (!focusTarget && state.focusId) focusTarget = document.getElementById(state.focusId);
+            if (!focusTarget && state.focusKey) {
+                focusTarget = Array.from(document.querySelectorAll('[data-focus-key]'))
+                    .find(element => element.dataset.focusKey === state.focusKey) || null;
+            }
+            focusTarget?.focus({preventScroll: true});
+        });
+    }
+
+    function rerenderLocale() {
+        const uiState = captureLocaleUiState();
+        if (loadingGenerations.stats !== null) {
+            statsArea.textContent = gatewayI18n.t('usage:status.statisticsLoading');
+        } else {
+            renderStatsSnapshot();
+        }
+        if (loadingGenerations.records !== null) {
+            recordsArea.textContent = gatewayI18n.t('usage:status.recordsLoading');
+        } else {
+            renderRecordsSnapshot();
+        }
+        if (loadingGenerations.fallbackStats !== null) {
+            fallbackStatsArea.textContent = gatewayI18n.t('usage:status.fallbackLoading');
+        } else {
+            renderFallbackStatsSnapshot();
+        }
+        if (loadingGenerations.fallbackChains !== null) {
+            fallbackChainsArea.textContent = gatewayI18n.t('usage:status.chainsLoading');
+        } else {
+            renderFallbackChainsSnapshot();
+        }
+        if (loadingGenerations.upstream !== null) {
+            upstreamStatsArea.textContent = gatewayI18n.t('usage:status.upstreamLoading');
+        } else {
+            renderUpstreamSnapshot();
+        }
+        window.usageAnalyticsDashboard.rerenderLocale();
+        _topologyApi?.rerenderLocale();
+        pageStatus.rerender();
+        renderRequestId(currentRequestId);
+        restoreLocaleUiState(uiState);
+    }
+
+    updatePaginationControls(0);
+    updateFallbackPagination(0);
+    unsubscribeLocale = gatewayI18n.subscribe(rerenderLocale);
+    window.addEventListener('pagehide', () => unsubscribeLocale?.(), {once: true});
+
+}

@@ -1,7 +1,7 @@
 import json
 import unittest
-from pathlib import Path
 
+from llm_gateway_core.config.paths import resolve_db_dir
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.utils.usage_tracking import (
     FALLBACK_USAGE_SOURCE,
@@ -36,8 +36,7 @@ class UsageTrackingEncodingFallbackTests(unittest.TestCase):
         self.assertIn("model_hint=None", "\n".join(logs.output))
 
     def test_fallback_estimated_usage_is_persisted_with_source(self):
-        db_path = Path("db/test_usage_source_estimate_fallback.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_usage_source_estimate_fallback.sqlite"
 
         try:
             usage = {

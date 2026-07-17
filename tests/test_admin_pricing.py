@@ -6,21 +6,49 @@ import json
 import os
 import tempfile
 import unittest
+import warnings
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.auth_ui import auth_router
-from llm_gateway_core.api.v1.admin_pricing import admin_pricing_router
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=(
+            r"`langchain-community` is being sunset and is no longer actively "
+            r"maintained\. See https://github\.com/langchain-ai/"
+            r"langchain-community/issues/674 for details and migration guidance "
+            r"toward standalone integration packages\."
+        ),
+        category=DeprecationWarning,
+        module=r"gpt_researcher\.scraper\.arxiv\.arxiv",
+    )
+    from llm_gateway_core.api.v1.admin_pricing import admin_pricing_router
+
+from llm_gateway_core.config.config_store import ConfigSourceBundle
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 import llm_gateway_core.db.api_keys_db as api_keys_db_module
-from llm_gateway_core.middleware.auth import api_key_auth
-from llm_gateway_core.services.access_control import UsdBudgetLedger
-from llm_gateway_core.services.rate_limiter import RateLimiter
+from llm_gateway_core.middleware.auth import ApiKeyAuthMiddleware
+from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
+from llm_gateway_core.services.config_updates import (
+    ConfigUpdateCoordinator,
+    ConfigUpdateError,
+    ConfigUpdateErrorCode,
+)
+from llm_gateway_core.services.runtime_config import RuntimeGenerationManager
 from llm_gateway_core.utils.html_cache import clear_cache
+from llm_gateway_core.utils.usage_tracking import build_model_cost_rate_registry
+from tests.runtime_test_support import (
+    install_test_runtime_snapshot,
+    make_app_services,
+    make_runtime_snapshot,
+)
 
 # Import the settings object used by the loader module so we can patch it in
 # tests without affecting the global application settings.
@@ -74,20 +102,68 @@ def _providers_json_no_models(tmp_path: Path) -> Path:
     return p
 
 
-def _build_app(providers_path: Path) -> tuple[FastAPI, ConfigLoader]:
+def _write_companion_sources(root: Path) -> None:
+    (root / "models_fallback_rules.json").write_text("[]\n", encoding="utf-8")
+    (root / "models_model_rules.json").write_text("{}\n", encoding="utf-8")
+    (root / "models_operation_rules.json").write_text("{}\n", encoding="utf-8")
+    (root / "models_fusion_rules.json").write_text("[]\n", encoding="utf-8")
+    (root / "models_router_rules.json").write_text("[]\n", encoding="utf-8")
+
+
+def _build_app(
+    providers_path: Path,
+    *,
+    api_keys_db: ApiKeysDB | None = None,
+) -> tuple[FastAPI, ConfigLoader]:
     """Build a minimal FastAPI app with the pricing router.
 
     The loader settings are patched so that FALLBACK_PROVIDER validation
     passes with our test provider.
     """
-    loader = ConfigLoader(providers_filename=str(providers_path))
-    loader.load_providers()  # Called with settings already patched by caller
+    _write_companion_sources(providers_path.parent)
+    loader = ConfigLoader.from_source_bundle(
+        ConfigSourceBundle.capture(providers_path.parent)
+    ).load_complete()
 
-    app = FastAPI()
-    app.state.config_loader = loader
-    app.state.rate_limiter = RateLimiter()
-    app.state.usd_budget_ledger = UsdBudgetLedger()
-    app.middleware("http")(api_key_auth)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        manager = RuntimeGenerationManager()
+        shared_client = httpx.AsyncClient()
+        initial_snapshot = make_runtime_snapshot(
+            generation=1,
+            config_loader=loader,
+            http_client=shared_client,
+            cost_rate_registry=build_model_cost_rate_registry(
+                loader.providers_config
+            ),
+        )
+        install_test_runtime_snapshot(manager, initial_snapshot)
+        coordinator = ConfigUpdateCoordinator(
+            runtime_manager=manager,
+            shared_http_client=shared_client,
+            initial_snapshot=initial_snapshot,
+        )
+        service_overrides = {
+            "runtime_manager": manager,
+            "config_update_coordinator": coordinator,
+            "http_client": shared_client,
+        }
+        if api_keys_db is not None:
+            service_overrides["api_keys_db"] = api_keys_db
+        services = make_app_services(**service_overrides)
+        app.state.services = services
+        try:
+            yield
+        finally:
+            del app.state.services
+            await coordinator.close()
+            await services.task_supervisor.close()
+            await manager.shutdown()
+            await shared_client.aclose()
+
+    app = FastAPI(lifespan=lifespan)
+    app.add_middleware(RuntimeSnapshotMiddleware)
+    app.add_middleware(ApiKeyAuthMiddleware)
     app.include_router(auth_router)
     app.include_router(admin_pricing_router, prefix="/v1")
     return app, loader
@@ -128,7 +204,7 @@ class TestGetPricing(_PricingTestBase):
     def test_get_pricing_returns_current_rates(self):
         providers_path = _providers_json_with_models(self.tmp_path)
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         resp = client.get("/v1/admin/pricing", headers=_master_headers())
         self.assertEqual(resp.status_code, 200)
@@ -144,7 +220,7 @@ class TestGetPricing(_PricingTestBase):
     def test_get_pricing_empty_when_no_models_block(self):
         providers_path = _providers_json_no_models(self.tmp_path)
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         resp = client.get("/v1/admin/pricing", headers=_master_headers())
         self.assertEqual(resp.status_code, 200)
@@ -155,7 +231,7 @@ class TestPutPricing(_PricingTestBase):
     def test_put_pricing_writes_to_providers_json(self):
         providers_path = _providers_json_no_models(self.tmp_path)
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         payload = {
             "items": [
@@ -197,7 +273,7 @@ class TestPutPricing(_PricingTestBase):
         providers_path.write_text(content, encoding="utf-8")
 
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         payload = {
             "items": [
@@ -224,15 +300,17 @@ class TestPutPricing(_PricingTestBase):
     def test_put_pricing_atomic_write(self):
         """If write fails, the main file is untouched."""
         providers_path = _providers_json_no_models(self.tmp_path)
-        original_content = providers_path.read_text(encoding="utf-8")
+        original_content = providers_path.read_bytes()
 
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app, raise_server_exceptions=False))
 
-        # Patch _write_text_atomically to raise an error
-        with patch(
-            "llm_gateway_core.api.v1.admin_pricing._write_text_atomically",
-            side_effect=OSError("disk full"),
+        with patch.object(
+            ConfigUpdateCoordinator,
+            "_commit_prepared_transaction",
+            side_effect=ConfigUpdateError(
+                ConfigUpdateErrorCode.COMMIT_FAILED
+            ),
         ):
             payload = {
                 "items": [
@@ -245,15 +323,15 @@ class TestPutPricing(_PricingTestBase):
                 ]
             }
             resp = client.put("/v1/admin/pricing", json=payload, headers=_master_headers())
-            self.assertIn(resp.status_code, (500, 422))
+            self.assertEqual(resp.status_code, 500)
 
         # Main file must remain unchanged
-        self.assertEqual(providers_path.read_text(encoding="utf-8"), original_content)
+        self.assertEqual(providers_path.read_bytes(), original_content)
 
-    def test_put_pricing_invalid_negative_rate_422(self):
+    def test_put_pricing_invalid_negative_rate_400(self):
         providers_path = _providers_json_no_models(self.tmp_path)
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         payload = {
             "items": [
@@ -266,9 +344,13 @@ class TestPutPricing(_PricingTestBase):
             ]
         }
         resp = client.put("/v1/admin/pricing", json=payload, headers=_master_headers())
-        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(
+            resp.json()["detail"]["code"],
+            "config_validation_failed",
+        )
 
-    def test_put_pricing_rejects_partial_payload_that_would_drop_existing_models(self):
+    def test_put_pricing_partial_payload_deletes_omitted_rates(self):
         providers_data = [
             {
                 "test_provider": {
@@ -290,10 +372,9 @@ class TestPutPricing(_PricingTestBase):
             },
         ]
         providers_path = self.tmp_path / "providers.json"
-        original_content = json.dumps(providers_data)
-        providers_path.write_text(original_content, encoding="utf-8")
+        providers_path.write_text(json.dumps(providers_data), encoding="utf-8")
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         payload = {
             "items": [
@@ -308,9 +389,16 @@ class TestPutPricing(_PricingTestBase):
 
         resp = client.put("/v1/admin/pricing", json=payload, headers=_master_headers())
 
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("missing existing model rates", resp.json()["detail"])
-        self.assertEqual(providers_path.read_text(encoding="utf-8"), original_content)
+        self.assertEqual(resp.status_code, 200)
+        written = json.loads(providers_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            written[0]["test_provider"]["models"]["model_x"],
+            {"input_rate": 2.0, "output_rate": 5.0},
+        )
+        self.assertNotIn(
+            "other_model",
+            written[1]["other_provider"]["models"],
+        )
 
 
 class TestCalculate(_PricingTestBase):
@@ -330,7 +418,7 @@ class TestCalculate(_PricingTestBase):
         providers_path = self.tmp_path / "providers.json"
         providers_path.write_text(json.dumps(data), encoding="utf-8")
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         resp = client.post(
             "/v1/admin/pricing/calculate",
@@ -351,7 +439,7 @@ class TestCalculate(_PricingTestBase):
     def test_calculate_model_not_found_404(self):
         providers_path = _providers_json_no_models(self.tmp_path)
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         resp = client.post(
             "/v1/admin/pricing/calculate",
@@ -389,21 +477,13 @@ class TestAuthEnforcement(unittest.TestCase):
         path_patch.start()
         self.addCleanup(path_patch.stop)
 
-        providers_path = _providers_json_no_models(self.tmp_path)
-        loader = ConfigLoader(providers_filename=str(providers_path))
-        loader.load_providers()
-
         self.db = ApiKeysDB(db_filename="test_pricing_auth.db")
-
-        self.app = FastAPI()
-        self.app.state.config_loader = loader
-        self.app.state.api_keys_db = self.db
-        self.app.state.rate_limiter = RateLimiter()
-        self.app.state.usd_budget_ledger = UsdBudgetLedger()
-        self.app.middleware("http")(api_key_auth)
-        self.app.include_router(auth_router)
-        self.app.include_router(admin_pricing_router, prefix="/v1")
-        self.client = TestClient(self.app)
+        providers_path = _providers_json_no_models(self.tmp_path)
+        self.app, _loader = _build_app(
+            providers_path,
+            api_keys_db=self.db,
+        )
+        self.client = self.enterContext(TestClient(self.app))
 
     def test_endpoint_master_only_403_for_virtual_key(self):
         record = self.db.create(name="virtual-user")
@@ -418,12 +498,12 @@ class TestAuthEnforcement(unittest.TestCase):
         self.assertEqual(resp.status_code, 401)
 
 
-class TestHotReload(_PricingTestBase):
-    def test_hot_reload_registry_after_put(self):
-        """After PUT the new rates are immediately visible via GET without restart."""
+class TestPublishedGeneration(_PricingTestBase):
+    def test_published_registry_after_put(self):
+        """After PUT the published generation is visible without restart."""
         providers_path = _providers_json_no_models(self.tmp_path)
         app, loader = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         # Initially empty
         resp = client.get("/v1/admin/pricing", headers=_master_headers())
@@ -443,13 +523,14 @@ class TestHotReload(_PricingTestBase):
         put_resp = client.put("/v1/admin/pricing", json=payload, headers=_master_headers())
         self.assertEqual(put_resp.status_code, 200)
 
-        # GET should now reflect the new rate (hot-reload via reload_providers_config)
+        # GET should now reflect the new published generation.
         get_resp = client.get("/v1/admin/pricing", headers=_master_headers())
         self.assertEqual(get_resp.status_code, 200)
         items = get_resp.json()["items"]
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["model"], "new_model")
         self.assertAlmostEqual(items[0]["input_rate"], 5.0)
+        self.assertIsNone(loader.providers_config["test_provider"].models)
 
 
 class TestUiPage(_PricingTestBase):
@@ -466,7 +547,7 @@ class TestUiPage(_PricingTestBase):
 
         providers_path = _providers_json_no_models(self.tmp_path)
         app, _ = _build_app(providers_path)
-        client = TestClient(app)
+        client = self.enterContext(TestClient(app))
 
         resp = client.get("/v1/ui/pricing", headers=_master_headers())
         self.assertEqual(resp.status_code, 200)

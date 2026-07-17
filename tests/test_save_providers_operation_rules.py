@@ -1,13 +1,13 @@
 import tempfile
 import unittest
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-import main
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.rules_editor_test_support import transactional_rules_editor_client
 
 
 VALID_PROVIDERS_TEXT = """
@@ -75,7 +75,14 @@ class SaveProvidersOperationRulesTests(unittest.TestCase):
         self.rules_path.write_text(VALID_RULES_TEXT, encoding="utf-8")
         self.operation_rules_path.write_text(OPERATION_RULES_TEXT, encoding="utf-8")
         self.fusion_rules_path.write_text("[]", encoding="utf-8")
-        self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
+        self.router_rules_path = Path(self.temp_dir.name) / "models_router_rules.json"
+        self.model_rules_path = Path(self.temp_dir.name) / "models_model_rules.json"
+        self.router_rules_path.write_text("[]", encoding="utf-8")
+        self.model_rules_path.write_text("{}", encoding="utf-8")
+        self.fallback_provider_patcher = patch(
+            "llm_gateway_core.config.loader.settings.fallback_provider",
+            "openrouter",
+        )
         self.fallback_provider_patcher.start()
 
         self.config_loader = ConfigLoader(
@@ -83,10 +90,9 @@ class SaveProvidersOperationRulesTests(unittest.TestCase):
             fallback_rules_filename=str(self.rules_path),
             operation_rules_filename=str(self.operation_rules_path),
             fusion_rules_filename=str(self.fusion_rules_path),
-        )
-        self.config_loader.load_providers()
-        self.config_loader.load_fallback_rules()
-        self.config_loader.load_operation_rules()
+            router_rules_filename=str(self.router_rules_path),
+            model_rules_filename=str(self.model_rules_path),
+        ).load_complete()
 
     def tearDown(self):
         self.fallback_provider_patcher.stop()
@@ -94,17 +100,8 @@ class SaveProvidersOperationRulesTests(unittest.TestCase):
 
     @contextmanager
     def _client(self):
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB"))
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
-
-            with TestClient(main.app) as client:
-                yield client
+        with transactional_rules_editor_client(self.config_loader) as result:
+            yield result
 
     def _save_providers(self, client: TestClient, payload_text: str):
         return client.post(
@@ -120,13 +117,28 @@ class SaveProvidersOperationRulesTests(unittest.TestCase):
         original_file_content = self.providers_path.read_text(encoding="utf-8")
         renamed_providers_text = VALID_PROVIDERS_TEXT.replace('"devbox"', '"devbox_renamed"')
 
-        with self._client() as client:
+        with self._client() as (client, runtime):
             response = self._save_providers(client, renamed_providers_text)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Invalid operation rules provider references", response.json()["detail"])
-        self.assertIn("devbox", response.json()["detail"])
+        self.assertEqual(response.json()["detail"]["code"], "config_validation_failed")
+        self.assertEqual(
+            response.json()["detail"]["errors"],
+            [
+                {
+                    "type": "rule_validation",
+                    "loc": [],
+                    "msg": (
+                        "Invalid provider 'devbox' used in operation route for "
+                        "'gateway/embed' in 'embeddings'. Provider not found in "
+                        "configuration."
+                    ),
+                }
+            ],
+        )
+        self.assertNotIn("DIRECT-KEY", response.text)
         self.assertEqual(self.providers_path.read_text(encoding="utf-8"), original_file_content)
+        self.assertIs(runtime.initial_snapshot.config_loader, self.config_loader)
 
     def test_save_providers_rejects_provider_delete_used_by_operation_rules(self):
         original_file_content = self.providers_path.read_text(encoding="utf-8")
@@ -141,13 +153,28 @@ class SaveProvidersOperationRulesTests(unittest.TestCase):
         ]
         """.strip()
 
-        with self._client() as client:
+        with self._client() as (client, runtime):
             response = self._save_providers(client, deleted_provider_text)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Invalid operation rules provider references", response.json()["detail"])
-        self.assertIn("devbox", response.json()["detail"])
+        self.assertEqual(response.json()["detail"]["code"], "config_validation_failed")
+        self.assertEqual(
+            response.json()["detail"]["errors"],
+            [
+                {
+                    "type": "rule_validation",
+                    "loc": [],
+                    "msg": (
+                        "Invalid provider 'devbox' used in operation route for "
+                        "'gateway/embed' in 'embeddings'. Provider not found in "
+                        "configuration."
+                    ),
+                }
+            ],
+        )
+        self.assertNotIn("DIRECT-KEY", response.text)
         self.assertEqual(self.providers_path.read_text(encoding="utf-8"), original_file_content)
+        self.assertIs(runtime.initial_snapshot.config_loader, self.config_loader)
 
 
 if __name__ == "__main__":

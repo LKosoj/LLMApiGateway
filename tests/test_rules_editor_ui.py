@@ -1,36 +1,54 @@
 from pathlib import Path
 
 
+EDITOR_SOURCE = Path("frontend/editor/src")
+
+
+def _editor_source() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(EDITOR_SOURCE.glob("*.mjs"))
+    )
+
+
 def test_editor_js_contains_provider_models_cache_logic():
-    content = Path("static/editor.js").read_text(encoding="utf-8")
+    content = _editor_source()
 
     assert "providerModelsCache" in content
-    assert "MODELS_CACHE_TTL_MS = 15 * 60 * 1000" in content
-    assert "MODEL_ID_COLLATOR" in content
+    assert "MODELS_CACHE_TTL_MS: 15 * 60 * 1000" in content
+    assert "createLazyProviderCatalogRowController" in content
+    assert "loadProviderCatalogsInCard" in content
+    assert "Promise.allSettled" in content
+    assert "gatewayI18n.subscribe" in content
+    assert "_modelLoadPromise" not in content
+    assert "Promise.all(modelLoadPromises)" not in content
+    assert "gatewayI18n.getCollator" in content
     assert "sortProviderModelIds(models)" in content
     assert "models: sortedModels" in content
     assert "/v1/config/models-rules/structured" in content
     assert "/v1/config/router-rules/structured" in content
     assert "/v1/config/providers/${encodeURIComponent(providerName)}/models" in content
-    assert "Choose an available model for provider" in content
-    assert "Unavailable fallback models —" in content
+    assert "editor:errors.chooseAvailableModel" in content
+    assert "editor:messages.unavailableModels" in content
     assert "context_overflow_fallback" in content
-    assert "Context Overflow Fallback" in content
-    assert "Enable dedicated fallback for context overflow errors" in content
+    assert "editor:toggles.contextOverflow" in content
+    assert "editor:toggles.contextOverflowEnable" in content
     assert "strip_think_tags" in content
-    assert "Strip <think> tags from replies" in content
+    assert "editor:toggles.stripThink" in content
     assert "max-total-attempts-input" in content
     assert "max_total_attempts" in content
     assert "Max Total Attempts (chain budget)" in content
     assert "use-provider-order-checkbox" in content
     assert "use_provider_order_as_fallback" in content
-    assert "Use provider order as fallback" in content
+    assert "editor:toggles.providerOrder" in content
     assert "upstream-key-pool-input" in content
     assert "upstream_key_pool" in content
     assert "Upstream Key Pool" in content
     assert "Number.parseFloat(retryDelayInput.value)" in content
-    assert "payload = getEmbeddingsPayloadForSave(await fetchOperationRulesPayload())" in content
-    assert "availableProviders = [];" in content
+    assert "getEmbeddingsPayloadForSave(ctx.getOperationBasePayload())" in content
+    assert "fetchOperationRulesPayload" not in content
+    assert "'If-Match': base.etag" in content
+    assert "availableProviders: []" in content
     assert "/v1/config/providers/structured" in content
     assert "buildProviderCard" in content
     assert "provider-name-input" in content
@@ -41,7 +59,7 @@ def test_editor_js_contains_provider_models_cache_logic():
     assert "tabOpenRouterFree.hidden = !response.ok || !payload.configured" in content
     assert "OpenRouter free model ranking" in content
     assert "runFallbackModelEval" in content
-    assert "reasonParts.push(`Gateway models:" in content
+    assert "editor:eval.gatewayModels" in content
     assert "buildRouterCard" in content
     assert "router-selector-model-select" in content
     assert "router-target-type-select" in content
@@ -50,7 +68,7 @@ def test_editor_js_contains_provider_models_cache_logic():
 
 
 def test_editor_js_exposes_provider_field_tooltips_and_upstream_limits_editor():
-    content = Path("static/editor.js").read_text(encoding="utf-8")
+    content = _editor_source()
 
     assert "PROVIDER_FIELD_TOOLTIPS" in content
     assert "attachFieldTooltip" in content
@@ -60,9 +78,9 @@ def test_editor_js_exposes_provider_field_tooltips_and_upstream_limits_editor():
     assert "upstream-limit-row" in content
     assert "upstream-limit-${key}" in content
     assert "UPSTREAM_LIMIT_KEYS = ['rpm', 'rpd', 'tpm', 'tpd']" in content
-    assert "Upstream Limits per Model" in content
-    assert "Per-model upstream quota ledger" in content
-    assert "Requests per minute allowed per upstream key" in content
+    assert "editor:fields.upstreamLimits" in content
+    assert "editor:tooltips.upstreamLimits" in content
+    assert "editor:tooltips.rpm" in content
     assert "provider-routing-input" in content
     assert "provider-upstream-key-pools-input" in content
     assert "Routing Policy (JSON)" in content

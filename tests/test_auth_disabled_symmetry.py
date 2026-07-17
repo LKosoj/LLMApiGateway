@@ -8,11 +8,12 @@ from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from llm_gateway_core.middleware.auth import (
     API_KEY_DISABLED_DETAIL,
     API_KEY_DISABLED_HTML,
+    ApiKeyAuthMiddleware,
     ROLE_USER,
     SESSION_COOKIE_NAME,
-    api_key_auth,
     create_authenticated_session,
 )
+from tests.runtime_test_support import bind_app_services
 
 
 class FakeApiKeysDB:
@@ -32,8 +33,8 @@ class FakeApiKeysDB:
 
 def build_test_app(record: ApiKeyRecord) -> FastAPI:
     app = FastAPI()
-    app.state.api_keys_db = FakeApiKeysDB(record)
-    app.middleware("http")(api_key_auth)
+    bind_app_services(app, api_keys_db=FakeApiKeysDB(record))
+    app.add_middleware(ApiKeyAuthMiddleware)
 
     @app.get("/v1/models")
     async def models():

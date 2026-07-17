@@ -14,13 +14,17 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import httpx
 
 from ..config.loader import ProviderDetails, resolve_provider_api_key_value
 from ..utils.api_keys import has_api_key, select_next_api_key
+
+if TYPE_CHECKING:
+    from .runtime_config import RuntimeGenerationManager, RuntimeLease
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,56 @@ CODE_EVAL_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
 
 class OpenRouterFreeModelsNotConfigured(RuntimeError):
     """Поднимается при попытке управления сервисом, который не сконфигурирован."""
+
+
+class OpenRouterFreeModelsStateError(RuntimeError):
+    """The requested lifecycle transition is invalid for this service instance."""
+
+
+class OpenRouterFreeModelsStopError(RuntimeError):
+    """Credential-safe report for a task that failed while the service stopped."""
+
+    def __init__(self, failures: tuple[tuple[str, str], ...]) -> None:
+        self.failures = failures
+        summary = ", ".join(
+            f"{task_name}={exception_type}"
+            for task_name, exception_type in failures
+        )
+        super().__init__(f"OpenRouter task shutdown failed: {summary}")
+
+
+def _safe_exception_type(exc: BaseException) -> str:
+    exception_type = type(exc).__name__
+    if (
+        not exception_type.isascii()
+        or not exception_type.isidentifier()
+        or len(exception_type) > 128
+    ):
+        return "BaseException"
+    return exception_type
+
+
+class _LifecycleState(str, Enum):
+    NEW = "new"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenRouterRefreshContext:
+    generation: int
+    provider_name: str
+    provider_config: ProviderDetails = field(repr=False)
+    provider_api_key: str = field(repr=False)
+    http_client: httpx.AsyncClient = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeRefreshRun:
+    generation: int
+    lease: RuntimeLease = field(repr=False)
+    context: _OpenRouterRefreshContext | None = field(repr=False)
 
 
 @dataclass
@@ -170,6 +224,7 @@ class OpenRouterFreeModelsService:
         self._time_func = time_func
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self._refresh_lock = asyncio.Lock()
         self._snapshot: OpenRouterFreeModelsSnapshot | None = None
         self._configured = False
         self._running = False
@@ -180,8 +235,17 @@ class OpenRouterFreeModelsService:
         self._provider_config: ProviderDetails | None = None
         self._provider_api_key: str | None = None
         self._http_client: httpx.AsyncClient | None = None
+        self._runtime_manager: RuntimeGenerationManager | None = None
+        self._shared_http_client: httpx.AsyncClient | None = None
         self._manual_refresh_running = False
         self._manual_refresh_task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._lifecycle_state = _LifecycleState.NEW
+        self._lifecycle_epoch = 0
+        self._stop_cleanup_task: asyncio.Task[tuple[tuple[str, str], ...]] | None = None
+        self._stop_task: asyncio.Task[None] | None = None
+        self._stop_participants: frozenset[asyncio.Task] = frozenset()
+        self._stop_failures: tuple[tuple[str, str], ...] | None = None
 
     async def start(
         self,
@@ -189,32 +253,410 @@ class OpenRouterFreeModelsService:
         providers_config: dict[str, ProviderDetails],
         http_client: httpx.AsyncClient,
     ) -> None:
+        loop = self._bind_loop()
+        if self._lifecycle_state not in {
+            _LifecycleState.NEW,
+            _LifecycleState.STOPPED,
+        }:
+            raise OpenRouterFreeModelsStateError(
+                f"OpenRouter free model scoring is {self._lifecycle_state.value}."
+            )
+        if self._stop_task is not None:
+            raise OpenRouterFreeModelsStateError(
+                "OpenRouter free model scoring has not finished stopping."
+            )
+
         provider_config = providers_config.get(self._provider_name)
         provider_api_key = self._resolve_openrouter_api_key(provider_config)
         if provider_config is None or not has_api_key(provider_api_key) or not self._is_official_openrouter_url(provider_config.baseUrl):
+            self._runtime_manager = None
+            self._shared_http_client = None
             self._configured = False
             self._last_error = None
+            self._running = False
+            self._lifecycle_epoch += 1
+            self._lifecycle_state = _LifecycleState.RUNNING
+            self._stop_failures = None
             logger.info("OpenRouter free model scoring is disabled: official OpenRouter provider/key is not configured.")
             return
+
+        start_gate: asyncio.Future[None] = loop.create_future()
+        run_loop = self._run_loop_after_start_commit(start_gate)
+        try:
+            periodic_task = loop.create_task(
+                run_loop,
+                name="openrouter-free-models-scoring",
+            )
+        except BaseException:
+            start_gate.cancel()
+            run_loop.close()
+            raise
+        if periodic_task.done():
+            try:
+                periodic_task.exception()
+            except asyncio.CancelledError:
+                pass
+            start_gate.cancel()
+            raise OpenRouterFreeModelsStateError(
+                "OpenRouter periodic task terminated before lifecycle commit."
+            )
 
         self._provider_config = provider_config
         self._provider_api_key = provider_api_key
         self._http_client = http_client
+        self._runtime_manager = None
+        self._shared_http_client = None
         self._configured = True
         self._running = True
-        self._task = asyncio.create_task(self._run_loop(), name="openrouter-free-models-scoring")
+        self._task = periodic_task
+        self._lifecycle_epoch += 1
+        self._lifecycle_state = _LifecycleState.RUNNING
+        self._stop_failures = None
+        start_gate.set_result(None)
         logger.info("OpenRouter free model scoring started with %d second interval.", self.refresh_interval_seconds)
 
-    async def stop(self) -> None:
-        self._running = False
-        task = self._task
-        self._task = None
-        if task is not None:
-            task.cancel()
+    async def start_runtime(
+        self,
+        *,
+        runtime_manager: RuntimeGenerationManager,
+        shared_http_client: httpx.AsyncClient,
+    ) -> None:
+        """Start the transitional generation-aware lifecycle."""
+        loop = self._bind_loop()
+        self._validate_start_state()
+        initial_run = self._acquire_runtime_run(
+            runtime_manager=runtime_manager,
+            shared_http_client=shared_http_client,
+        )
+        start_gate: asyncio.Future[None] = loop.create_future()
+        run_loop = self._run_loop_after_start_commit(start_gate, initial_run)
+        try:
+            periodic_task = loop.create_task(
+                run_loop,
+                name="openrouter-free-models-scoring",
+            )
+        except BaseException:
+            if not initial_run.lease.released:
+                initial_run.lease.release()
+            start_gate.cancel()
+            run_loop.close()
+            raise
+        if periodic_task.done():
             try:
-                await task
+                periodic_task.exception()
             except asyncio.CancelledError:
                 pass
+            if not initial_run.lease.released:
+                initial_run.lease.release()
+            start_gate.cancel()
+            raise OpenRouterFreeModelsStateError(
+                "OpenRouter periodic task terminated before lifecycle commit."
+            )
+
+        self._provider_config = None
+        self._provider_api_key = None
+        self._http_client = None
+        self._runtime_manager = runtime_manager
+        self._shared_http_client = shared_http_client
+        self._configured = initial_run.context is not None
+        self._running = True
+        self._task = periodic_task
+        self._lifecycle_epoch += 1
+        self._lifecycle_state = _LifecycleState.RUNNING
+        self._stop_failures = None
+        start_gate.set_result(None)
+        logger.info(
+            "OpenRouter free model scoring started in runtime-generation mode "
+            "with %d second interval.",
+            self.refresh_interval_seconds,
+        )
+
+    def _validate_start_state(self) -> None:
+        if self._lifecycle_state not in {
+            _LifecycleState.NEW,
+            _LifecycleState.STOPPED,
+        }:
+            raise OpenRouterFreeModelsStateError(
+                f"OpenRouter free model scoring is {self._lifecycle_state.value}."
+            )
+        if self._stop_task is not None:
+            raise OpenRouterFreeModelsStateError(
+                "OpenRouter free model scoring has not finished stopping."
+            )
+
+    async def _run_loop_after_start_commit(
+        self,
+        start_gate: asyncio.Future[None],
+        initial_runtime_run: _RuntimeRefreshRun | None = None,
+    ) -> None:
+        try:
+            await start_gate
+        except BaseException:
+            if (
+                initial_runtime_run is not None
+                and not initial_runtime_run.lease.released
+            ):
+                initial_runtime_run.lease.release()
+            raise
+        await self._run_loop(initial_runtime_run=initial_runtime_run)
+
+    async def stop(self) -> None:
+        loop = self._bind_loop()
+        current_task = asyncio.current_task()
+        async with self._lock:
+            lifecycle_state = self._lifecycle_state
+            if lifecycle_state is _LifecycleState.STOPPED:
+                failures = self._stop_failures
+                if failures:
+                    raise OpenRouterFreeModelsStopError(failures)
+                return
+
+            if lifecycle_state is _LifecycleState.STOPPING:
+                stop_task = self._stop_task
+                cleanup_task = self._stop_cleanup_task
+                if stop_task is None or cleanup_task is None:
+                    raise OpenRouterFreeModelsStateError(
+                        "OpenRouter stop operation is unavailable."
+                    )
+                if current_task in self._stop_participants:
+                    return
+                wait_for_cleanup_only = False
+            else:
+                was_running = self._running
+                was_manual_refresh_running = self._manual_refresh_running
+                self._running = False
+                self._lifecycle_state = _LifecycleState.STOPPING
+                periodic_task = self._task
+                manual_task = self._manual_refresh_task
+                self._task = None
+                self._manual_refresh_task = None
+                self._manual_refresh_running = False
+                participants = frozenset(
+                    task
+                    for task in (periodic_task, manual_task)
+                    if task is not None
+                )
+                self._stop_participants = participants
+                self_participant = (
+                    current_task if current_task in participants else None
+                )
+                self_participant_name = (
+                    "periodic"
+                    if self_participant is periodic_task
+                    else "manual"
+                )
+                stop_gate: asyncio.Future[None] = loop.create_future()
+                cleanup_operation = self._stop_cleanup_after_commit(
+                    stop_gate,
+                    periodic_task=periodic_task,
+                    manual_task=manual_task,
+                    caller_task=current_task,
+                )
+                try:
+                    cleanup_task = loop.create_task(
+                        cleanup_operation,
+                        name="openrouter-free-models-stop-cleanup",
+                    )
+                except BaseException:
+                    stop_gate.cancel()
+                    cleanup_operation.close()
+                    self._task = periodic_task
+                    self._manual_refresh_task = manual_task
+                    self._running = was_running
+                    self._manual_refresh_running = was_manual_refresh_running
+                    self._stop_participants = frozenset()
+                    self._lifecycle_state = lifecycle_state
+                    raise
+                terminal_operation = self._stop_terminal_after_commit(
+                    stop_gate,
+                    cleanup_task=cleanup_task,
+                    self_participant=self_participant,
+                    self_participant_name=self_participant_name,
+                )
+                try:
+                    stop_task = loop.create_task(
+                        terminal_operation,
+                        name="openrouter-free-models-stop-terminal",
+                    )
+                except BaseException:
+                    stop_gate.cancel()
+                    terminal_operation.close()
+                    cleanup_task.cancel()
+                    cleanup_task.add_done_callback(self._consume_task_result)
+                    self._task = periodic_task
+                    self._manual_refresh_task = manual_task
+                    self._running = was_running
+                    self._manual_refresh_running = was_manual_refresh_running
+                    self._stop_participants = frozenset()
+                    self._lifecycle_state = lifecycle_state
+                    raise
+                self._stop_cleanup_task = cleanup_task
+                self._stop_task = stop_task
+                epoch = self._lifecycle_epoch
+                stop_task.add_done_callback(
+                    lambda completed, lifecycle_epoch=epoch: self._finish_stop_operation(
+                        completed,
+                        lifecycle_epoch,
+                    )
+                )
+                wait_for_cleanup_only = self_participant is not None
+                stop_gate.set_result(None)
+
+        if wait_for_cleanup_only:
+            failures = await asyncio.shield(cleanup_task)
+            if failures:
+                raise OpenRouterFreeModelsStopError(failures)
+            return
+        await asyncio.shield(stop_task)
+
+    async def _stop_cleanup_after_commit(
+        self,
+        stop_gate: asyncio.Future[None],
+        *,
+        periodic_task: asyncio.Task | None,
+        manual_task: asyncio.Task | None,
+        caller_task: asyncio.Task | None,
+    ) -> tuple[tuple[str, str], ...]:
+        await stop_gate
+        return await self._stop_owned_tasks(
+            periodic_task=periodic_task,
+            manual_task=manual_task,
+            caller_task=caller_task,
+        )
+
+    async def _stop_terminal_after_commit(
+        self,
+        stop_gate: asyncio.Future[None],
+        *,
+        cleanup_task: asyncio.Task[tuple[tuple[str, str], ...]],
+        self_participant: asyncio.Task | None,
+        self_participant_name: str,
+    ) -> None:
+        await stop_gate
+        failures = list(await cleanup_task)
+        if self_participant is not None:
+            await asyncio.gather(self_participant, return_exceptions=True)
+            if not self_participant.cancelled():
+                try:
+                    self_failure = self_participant.exception()
+                except asyncio.CancelledError:
+                    self_failure = None
+                if isinstance(self_failure, OpenRouterFreeModelsStopError):
+                    failures.extend(self_failure.failures)
+                elif self_failure is not None:
+                    exception_type = _safe_exception_type(self_failure)
+                    failures.append((self_participant_name, exception_type))
+                    logger.error(
+                        "OpenRouter task failed during shutdown: task=%s error_type=%s",
+                        self_participant_name,
+                        exception_type,
+                    )
+
+        unique_failures = tuple(dict.fromkeys(failures))
+        if unique_failures:
+            raise OpenRouterFreeModelsStopError(unique_failures)
+
+    def _bind_loop(self) -> asyncio.AbstractEventLoop:
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            raise OpenRouterFreeModelsStateError(
+                "OpenRouter lifecycle operations require a running event loop."
+            ) from exc
+        if self._loop is None:
+            self._loop = running_loop
+        elif self._loop is not running_loop:
+            raise OpenRouterFreeModelsStateError(
+                "OpenRouterFreeModelsService cannot be reused on another event loop."
+            )
+        return running_loop
+
+    def _finish_stop_operation(
+        self,
+        task: asyncio.Task[None],
+        lifecycle_epoch: int,
+    ) -> None:
+        failures: tuple[tuple[str, str], ...] | None = None
+        try:
+            failure = task.exception()
+        except asyncio.CancelledError as exc:
+            failures = (("stop", _safe_exception_type(exc)),)
+        except BaseException as exc:
+            failures = (("stop", _safe_exception_type(exc)),)
+        else:
+            if isinstance(failure, OpenRouterFreeModelsStopError):
+                failures = failure.failures
+            elif failure is not None:
+                failures = (("stop", _safe_exception_type(failure)),)
+
+        if self._lifecycle_epoch != lifecycle_epoch or self._stop_task is not task:
+            return
+        self._stop_failures = failures
+        self._stop_cleanup_task = None
+        self._stop_task = None
+        self._stop_participants = frozenset()
+        self._lifecycle_state = _LifecycleState.STOPPED
+
+    async def _stop_owned_tasks(
+        self,
+        *,
+        periodic_task: asyncio.Task | None,
+        manual_task: asyncio.Task | None,
+        caller_task: asyncio.Task | None,
+    ) -> tuple[tuple[str, str], ...]:
+        owned_tasks: list[tuple[str, asyncio.Task]] = []
+        seen: set[asyncio.Task] = set()
+        for task_name, task in (
+            ("periodic", periodic_task),
+            ("manual", manual_task),
+        ):
+            if task is None or task is caller_task or task in seen:
+                continue
+            seen.add(task)
+            owned_tasks.append((task_name, task))
+
+        try:
+            for _, task in owned_tasks:
+                if not task.done():
+                    task.cancel()
+
+            await asyncio.gather(
+                *(task for _, task in owned_tasks),
+                return_exceptions=True,
+            )
+            failures: list[tuple[str, str]] = []
+            for task_name, task in owned_tasks:
+                if task.cancelled():
+                    continue
+                try:
+                    failure = task.exception()
+                except asyncio.CancelledError:
+                    continue
+                if failure is None:
+                    continue
+                exception_type = _safe_exception_type(failure)
+                failures.append((task_name, exception_type))
+                logger.error(
+                    "OpenRouter task failed during shutdown: task=%s error_type=%s",
+                    task_name,
+                    exception_type,
+                )
+            return tuple(failures)
+        except BaseException as exc:
+            exception_type = _safe_exception_type(exc)
+            logger.error(
+                "OpenRouter task failed during shutdown: task=%s error_type=%s",
+                "cleanup",
+                exception_type,
+            )
+            return (("cleanup", exception_type),)
+
+    @staticmethod
+    def _consume_task_result(task: asyncio.Task) -> None:
+        try:
+            task.exception()
+        except BaseException:
+            pass
 
     async def get_status(self) -> dict[str, Any]:
         async with self._lock:
@@ -231,58 +673,262 @@ class OpenRouterFreeModelsService:
                 "snapshot": snapshot,
             }
 
+    def _acquire_runtime_run(
+        self,
+        *,
+        runtime_manager: RuntimeGenerationManager | None = None,
+        shared_http_client: httpx.AsyncClient | None = None,
+    ) -> _RuntimeRefreshRun:
+        manager = (
+            runtime_manager
+            if runtime_manager is not None
+            else self._runtime_manager
+        )
+        shared_client = (
+            shared_http_client
+            if shared_http_client is not None
+            else self._shared_http_client
+        )
+        if manager is None or shared_client is None:
+            raise OpenRouterFreeModelsStateError(
+                "OpenRouter runtime-generation dependencies are not bound."
+            )
+        lease = manager.acquire_current()
+        try:
+            provider_config = lease.snapshot.config_loader.providers_config.get(
+                self._provider_name
+            )
+            provider_api_key = self._resolve_openrouter_api_key(provider_config)
+            if (
+                provider_config is None
+                or not has_api_key(provider_api_key)
+                or not self._is_official_openrouter_url(provider_config.baseUrl)
+            ):
+                context = None
+            else:
+                context = _OpenRouterRefreshContext(
+                    generation=lease.generation,
+                    provider_name=self._provider_name,
+                    provider_config=provider_config.model_copy(deep=True),
+                    provider_api_key=provider_api_key,
+                    http_client=lease.snapshot.proxy_http_clients.get(
+                        self._provider_name,
+                        shared_client,
+                    ),
+                )
+        except BaseException:
+            lease.release()
+            raise
+        return _RuntimeRefreshRun(
+            generation=lease.generation,
+            lease=lease,
+            context=context,
+        )
+
+    def _legacy_refresh_context(self) -> _OpenRouterRefreshContext | None:
+        if (
+            not self._configured
+            or self._provider_config is None
+            or not has_api_key(self._provider_api_key)
+            or self._http_client is None
+        ):
+            return None
+        return _OpenRouterRefreshContext(
+            generation=0,
+            provider_name=self._provider_name,
+            provider_config=self._provider_config,
+            provider_api_key=self._provider_api_key,
+            http_client=self._http_client,
+        )
+
+    async def _execute_runtime_run(
+        self,
+        runtime_run: _RuntimeRefreshRun,
+        *,
+        force_full: bool,
+    ) -> None:
+        try:
+            async with self._refresh_lock:
+                context = runtime_run.context
+                if context is None:
+                    async with self._lock:
+                        self._configured = False
+                        self._last_checked_at = _utc_now_iso(self._time_func)
+                        self._last_error = None
+                    return
+                async with self._lock:
+                    self._configured = True
+                await self._refresh_once(context, force_full=force_full)
+        except Exception as exc:
+            logger.error(
+                "OpenRouter free model scoring refresh failed: error_type=%s.",
+                _safe_exception_type(exc),
+            )
+            await self._record_refresh_error(exc)
+        finally:
+            if not runtime_run.lease.released:
+                runtime_run.lease.release()
+
+    async def _record_refresh_error(self, exc: BaseException) -> None:
+        async with self._lock:
+            self._last_checked_at = _utc_now_iso(self._time_func)
+            self._last_error = _safe_exception_type(exc)
+
     async def refresh_once(self, *, force_full: bool = False) -> None:
-        if not self._configured or self._provider_config is None or not has_api_key(self._provider_api_key) or self._http_client is None:
+        if self._runtime_manager is not None:
+            try:
+                runtime_run = self._acquire_runtime_run()
+            except Exception as exc:
+                await self._record_refresh_error(exc)
+                return
+            await self._execute_runtime_run(runtime_run, force_full=force_full)
             return
 
+        context = self._legacy_refresh_context()
+        if context is None:
+            return
         try:
-            await self._refresh_once(force_full=force_full)
+            async with self._refresh_lock:
+                await self._refresh_once(context, force_full=force_full)
         except Exception as exc:
-            logger.exception("OpenRouter free model scoring refresh failed.")
-            async with self._lock:
-                self._last_checked_at = _utc_now_iso(self._time_func)
-                self._last_error = str(exc)
+            logger.error(
+                "OpenRouter free model scoring refresh failed: error_type=%s.",
+                _safe_exception_type(exc),
+            )
+            await self._record_refresh_error(exc)
 
     async def start_manual_full_refresh(self) -> bool:
         """Запустить полноценную переоценку в фоне. Возвращает False если уже запущено."""
-        if not self._configured:
+        loop = self._bind_loop()
+        if self._lifecycle_state is not _LifecycleState.RUNNING:
+            raise OpenRouterFreeModelsStateError(
+                f"OpenRouter free model scoring is {self._lifecycle_state.value}."
+            )
+        if self._runtime_manager is None and not self._configured:
             raise OpenRouterFreeModelsNotConfigured(
                 "OpenRouter free model scoring is not configured."
             )
         async with self._lock:
+            if self._lifecycle_state is not _LifecycleState.RUNNING:
+                raise OpenRouterFreeModelsStateError(
+                    f"OpenRouter free model scoring is {self._lifecycle_state.value}."
+                )
             if self._manual_refresh_running:
                 return False
+            runtime_run: _RuntimeRefreshRun | None = None
+            if self._runtime_manager is not None:
+                runtime_run = self._acquire_runtime_run()
+                if runtime_run.context is None:
+                    runtime_run.lease.release()
+                    self._configured = False
+                    raise OpenRouterFreeModelsNotConfigured(
+                        "OpenRouter free model scoring is not configured."
+                    )
+            manual_gate: asyncio.Future[None] = loop.create_future()
+            manual_refresh = self._run_manual_refresh_after_commit(
+                manual_gate,
+                runtime_run,
+            )
+            try:
+                manual_task = loop.create_task(
+                    manual_refresh,
+                    name="openrouter-free-models-manual-refresh",
+                )
+            except BaseException:
+                if runtime_run is not None and not runtime_run.lease.released:
+                    runtime_run.lease.release()
+                manual_gate.cancel()
+                manual_refresh.close()
+                raise
+            if manual_task.done():
+                try:
+                    manual_task.exception()
+                except asyncio.CancelledError:
+                    pass
+                if runtime_run is not None and not runtime_run.lease.released:
+                    runtime_run.lease.release()
+                manual_gate.cancel()
+                raise OpenRouterFreeModelsStateError(
+                    "OpenRouter manual refresh terminated before lifecycle commit."
+                )
             self._manual_refresh_running = True
-        self._manual_refresh_task = asyncio.create_task(
-            self._run_manual_refresh(), name="openrouter-free-models-manual-refresh"
-        )
+            self._manual_refresh_task = manual_task
+            manual_gate.set_result(None)
         return True
 
-    async def _run_manual_refresh(self) -> None:
+    async def _run_manual_refresh_after_commit(
+        self,
+        manual_gate: asyncio.Future[None],
+        runtime_run: _RuntimeRefreshRun | None,
+    ) -> None:
         try:
-            await self.refresh_once(force_full=True)
+            await manual_gate
+        except BaseException:
+            if runtime_run is not None and not runtime_run.lease.released:
+                runtime_run.lease.release()
+            raise
+        await self._run_manual_refresh(runtime_run)
+
+    async def _run_manual_refresh(
+        self,
+        runtime_run: _RuntimeRefreshRun | None = None,
+    ) -> None:
+        try:
+            if runtime_run is None:
+                await self.refresh_once(force_full=True)
+            else:
+                await self._execute_runtime_run(runtime_run, force_full=True)
         finally:
+            current_task = asyncio.current_task()
             async with self._lock:
                 self._manual_refresh_running = False
+                if self._manual_refresh_task is current_task:
+                    self._manual_refresh_task = None
 
-    async def _run_loop(self) -> None:
-        while self._running:
-            started_at = self._time_func()
-            await self.refresh_once()
-            next_refresh_at = started_at + self.refresh_interval_seconds
-            async with self._lock:
-                self._next_refresh_at = _timestamp_to_iso(next_refresh_at)
-            await asyncio.sleep(max(0.0, next_refresh_at - self._time_func()))
+    async def _run_loop(
+        self,
+        *,
+        initial_runtime_run: _RuntimeRefreshRun | None = None,
+    ) -> None:
+        runtime_run = initial_runtime_run
+        try:
+            while self._running:
+                started_at = self._time_func()
+                if self._runtime_manager is None:
+                    await self.refresh_once()
+                else:
+                    if runtime_run is None:
+                        try:
+                            runtime_run = self._acquire_runtime_run()
+                        except Exception as exc:
+                            await self._record_refresh_error(exc)
+                    if runtime_run is not None:
+                        run_to_execute = runtime_run
+                        runtime_run = None
+                        await self._execute_runtime_run(
+                            run_to_execute,
+                            force_full=False,
+                        )
+                if not self._running:
+                    return
+                next_refresh_at = started_at + self.refresh_interval_seconds
+                async with self._lock:
+                    self._next_refresh_at = _timestamp_to_iso(next_refresh_at)
+                await asyncio.sleep(max(0.0, next_refresh_at - self._time_func()))
+        finally:
+            if runtime_run is not None and not runtime_run.lease.released:
+                runtime_run.lease.release()
 
-    async def _refresh_once(self, *, force_full: bool = False) -> None:
-        assert self._provider_config is not None
-        assert self._provider_api_key is not None
-        assert self._http_client is not None
-
+    async def _refresh_once(
+        self,
+        context: _OpenRouterRefreshContext,
+        *,
+        force_full: bool = False,
+    ) -> None:
         catalog = await self._fetch_openrouter_catalog(
-            self._http_client,
-            self._provider_config,
-            self._select_openrouter_api_key(),
+            context.http_client,
+            context.provider_config,
+            self._select_openrouter_api_key(context.provider_api_key),
         )
         eligible_entries = [entry for entry in catalog if _is_eligible_free_text_model(entry, self._time_func())]
         fingerprint = _catalog_fingerprint(eligible_entries)
@@ -293,12 +939,14 @@ class OpenRouterFreeModelsService:
         if not force_full and previous_snapshot and previous_snapshot.catalog_fingerprint == fingerprint:
             snapshot = await self._refresh_latency_only(
                 previous_snapshot,
+                context=context,
                 catalog_count=len(catalog),
                 eligible_count=len(eligible_entries),
             )
         else:
             snapshot = await self._refresh_full(
                 eligible_entries,
+                context=context,
                 catalog_count=len(catalog),
                 fingerprint=fingerprint,
             )
@@ -333,15 +981,16 @@ class OpenRouterFreeModelsService:
         self,
         eligible_entries: list[dict[str, Any]],
         *,
+        context: _OpenRouterRefreshContext,
         catalog_count: int,
         fingerprint: str,
     ) -> OpenRouterFreeModelsSnapshot:
         models = [_score_metadata(entry, self._time_func()) for entry in eligible_entries]
         models.sort(key=_rank_sort_key)
         for model in models:
-            await self._apply_health_probe(model)
+            await self._apply_health_probe(model, context=context)
 
-        evaluated_count = await self._apply_lite_evals(models)
+        evaluated_count = await self._apply_lite_evals(models, context=context)
         for model in models:
             if not model.eval_summary:
                 model.eval_summary = _not_evaluated_summary("health_probe_failed")
@@ -358,7 +1007,7 @@ class OpenRouterFreeModelsService:
             catalog_count=catalog_count,
             eligible_count=len(eligible_entries),
             evaluated_count=evaluated_count,
-            base_url=self._provider_config.baseUrl if self._provider_config else "",
+            base_url=context.provider_config.baseUrl,
             models=models,
             notes=[
                 "Eligible pool: free text OpenRouter models with at least 8k context and no expired catalog entry.",
@@ -372,17 +1021,18 @@ class OpenRouterFreeModelsService:
         self,
         previous_snapshot: OpenRouterFreeModelsSnapshot,
         *,
+        context: _OpenRouterRefreshContext,
         catalog_count: int,
         eligible_count: int,
     ) -> OpenRouterFreeModelsSnapshot:
         models = copy.deepcopy(previous_snapshot.models)
         for model in models:
-            await self._apply_health_probe(model)
+            await self._apply_health_probe(model, context=context)
 
         # Догнать lite eval для моделей, которые в прошлый раз не прошли health
         # (поэтому evaluated_count «застревал»), а сейчас стали passed/imperfect.
         pending = [model for model in models if _needs_lite_eval(model)]
-        newly_evaluated = await self._apply_lite_evals(pending)
+        newly_evaluated = await self._apply_lite_evals(pending, context=context)
 
         for model in models:
             if not model.eval_summary:
@@ -410,12 +1060,17 @@ class OpenRouterFreeModelsService:
             catalog_count=catalog_count,
             eligible_count=eligible_count,
             evaluated_count=previous_snapshot.evaluated_count + newly_evaluated,
-            base_url=previous_snapshot.base_url,
+            base_url=context.provider_config.baseUrl,
             models=models,
             notes=notes,
         )
 
-    async def _apply_health_probe(self, model: ScoredOpenRouterModel) -> None:
+    async def _apply_health_probe(
+        self,
+        model: ScoredOpenRouterModel,
+        *,
+        context: _OpenRouterRefreshContext,
+    ) -> None:
         model.health_score = 0
         model.latency_score = 0
         model.latency_ms = None
@@ -430,7 +1085,11 @@ class OpenRouterFreeModelsService:
                 "temperature": 0,
                 "usage": {"include": True},
             }
-            response = await self._chat_completion(payload, timeout=HEALTH_PROBE_TIMEOUT_SECONDS)
+            response = await self._chat_completion(
+                payload,
+                context=context,
+                timeout=HEALTH_PROBE_TIMEOUT_SECONDS,
+            )
             model.latency_ms = max(0, int((self._time_func() - started_at) * 1000))
             content = _extract_chat_content(response)
             if "OK" in content.upper():
@@ -449,7 +1108,7 @@ class OpenRouterFreeModelsService:
             if status_code == 429:
                 model.instability_penalty += 25
         except Exception as exc:
-            model.health_status = exc.__class__.__name__
+            model.health_status = _safe_exception_type(exc)
             model.health_score = 0
             model.latency_score = 0
             model.latency_ms = None
@@ -457,19 +1116,35 @@ class OpenRouterFreeModelsService:
         finally:
             model.recalculate_score()
 
-    async def _apply_lite_evals(self, models: list[ScoredOpenRouterModel]) -> int:
+    async def _apply_lite_evals(
+        self,
+        models: list[ScoredOpenRouterModel],
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+    ) -> int:
         evaluated_count = 0
         for model in models:
             if not _health_status_allows_lite_eval(model.health_status):
                 model.eval_summary = _not_evaluated_summary(_lite_eval_skip_reason(model.health_status))
                 continue
-            model.eval_summary = await self._run_lite_eval_suite(model)
+            if context is None:
+                model.eval_summary = await self._run_lite_eval_suite(model)
+            else:
+                model.eval_summary = await self._run_lite_eval_suite(
+                    model,
+                    context=context,
+                )
             model.lite_eval_score = int(model.eval_summary.get("points", 0))
             model.recalculate_score()
             evaluated_count += 1
         return evaluated_count
 
-    async def _run_lite_eval_suite(self, model: ScoredOpenRouterModel) -> dict[str, Any]:
+    async def _run_lite_eval_suite(
+        self,
+        model: ScoredOpenRouterModel,
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+    ) -> dict[str, Any]:
         task_runners = (
             ("instruction_following_lite", 200, self._run_instruction_following_lite_task),
             ("tool_call_lite", 200, self._run_tool_call_lite_task),
@@ -480,7 +1155,7 @@ class OpenRouterFreeModelsService:
         tasks: list[LiteEvalTaskResult] = []
         for task_id, max_points, runner in task_runners:
             try:
-                tasks.append(await runner(model))
+                tasks.append(await runner(model, context=context))
             except Exception as exc:
                 tasks.append(
                     LiteEvalTaskResult(
@@ -488,7 +1163,7 @@ class OpenRouterFreeModelsService:
                         points=0,
                         max_points=max_points,
                         status="error",
-                        details={"error": exc.__class__.__name__},
+                        details={"error": _safe_exception_type(exc)},
                     )
                 )
         points = sum(task.points for task in tasks)
@@ -504,7 +1179,12 @@ class OpenRouterFreeModelsService:
             "tasks": [task.to_dict() for task in tasks],
         }
 
-    async def _run_instruction_following_lite_task(self, model: ScoredOpenRouterModel) -> LiteEvalTaskResult:
+    async def _run_instruction_following_lite_task(
+        self,
+        model: ScoredOpenRouterModel,
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+    ) -> LiteEvalTaskResult:
         prompt = (
             "Return exactly 4 lines.\n"
             "Line 1 must be exactly: STATUS: READY\n"
@@ -514,7 +1194,11 @@ class OpenRouterFreeModelsService:
             "Line 4 must be exactly: DONE\n"
             "No markdown and no extra text."
         )
-        response = await self._chat_completion(_eval_payload(model, prompt, max_tokens=120), timeout=LITE_EVAL_TIMEOUT_SECONDS)
+        response = await self._chat_completion(
+            _eval_payload(model, prompt, max_tokens=120),
+            context=context,
+            timeout=LITE_EVAL_TIMEOUT_SECONDS,
+        )
         content = _extract_chat_content(response).strip()
         lines = [line.strip() for line in content.splitlines() if line.strip()]
         json_line = _extract_json_object(lines[2]) if len(lines) >= 3 else {}
@@ -535,7 +1219,12 @@ class OpenRouterFreeModelsService:
             details=details,
         )
 
-    async def _run_tool_call_lite_task(self, model: ScoredOpenRouterModel) -> LiteEvalTaskResult:
+    async def _run_tool_call_lite_task(
+        self,
+        model: ScoredOpenRouterModel,
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+    ) -> LiteEvalTaskResult:
         prompt = (
             "Available tools:\n"
             "create_ticket(title, priority, assignee, due_date)\n"
@@ -546,7 +1235,11 @@ class OpenRouterFreeModelsService:
             "Do not send email.\n"
             "Return only JSON: {\"tool\":\"...\",\"arguments\":{...}}"
         )
-        response = await self._chat_completion(_eval_payload(model, prompt, max_tokens=220), timeout=LITE_EVAL_TIMEOUT_SECONDS)
+        response = await self._chat_completion(
+            _eval_payload(model, prompt, max_tokens=220),
+            context=context,
+            timeout=LITE_EVAL_TIMEOUT_SECONDS,
+        )
         parsed = _extract_json_object(_extract_chat_content(response))
         arguments = parsed.get("arguments") if isinstance(parsed.get("arguments"), dict) else {}
         title = str(arguments.get("title", ""))
@@ -568,13 +1261,22 @@ class OpenRouterFreeModelsService:
             details=details,
         )
 
-    async def _run_code_unit_lite_task(self, model: ScoredOpenRouterModel) -> LiteEvalTaskResult:
+    async def _run_code_unit_lite_task(
+        self,
+        model: ScoredOpenRouterModel,
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+    ) -> LiteEvalTaskResult:
         prompt = (
             "Return only JSON with one key \"code\". The value must be Python code defining:\n"
             "def sum_even_squares(nums: list[int]) -> int:\n"
             "It must return the sum of squares of even integers in nums. No imports."
         )
-        response = await self._chat_completion(_eval_payload(model, prompt, max_tokens=320), timeout=LITE_EVAL_TIMEOUT_SECONDS)
+        response = await self._chat_completion(
+            _eval_payload(model, prompt, max_tokens=320),
+            context=context,
+            timeout=LITE_EVAL_TIMEOUT_SECONDS,
+        )
         code = _extract_python_code(_extract_chat_content(response))
         safety_error = _python_code_safety_error(code)
         details: dict[str, Any] = {
@@ -604,14 +1306,23 @@ class OpenRouterFreeModelsService:
             details=details,
         )
 
-    async def _run_symbolic_math_lite_task(self, model: ScoredOpenRouterModel) -> LiteEvalTaskResult:
+    async def _run_symbolic_math_lite_task(
+        self,
+        model: ScoredOpenRouterModel,
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+    ) -> LiteEvalTaskResult:
         values = _symbolic_math_values(int(self._time_func()) // REFRESH_INTERVAL_SECONDS)
         prompt = (
             f"A notebook has {values['total_pages']} pages. Mira writes {values['weekday_pages']} pages every weekday "
             f"for {values['weeks']} weeks and {values['weekend_pages']} pages on each weekend day. "
             "How many pages remain? Return only the integer."
         )
-        response = await self._chat_completion(_eval_payload(model, prompt, max_tokens=80), timeout=LITE_EVAL_TIMEOUT_SECONDS)
+        response = await self._chat_completion(
+            _eval_payload(model, prompt, max_tokens=80),
+            context=context,
+            timeout=LITE_EVAL_TIMEOUT_SECONDS,
+        )
         answer = _extract_chat_content(response)
         parsed_answer = _first_int(answer)
         expected = values["remaining_pages"]
@@ -628,12 +1339,21 @@ class OpenRouterFreeModelsService:
             details=details,
         )
 
-    async def _run_simpleqa_lite_task(self, model: ScoredOpenRouterModel) -> LiteEvalTaskResult:
+    async def _run_simpleqa_lite_task(
+        self,
+        model: ScoredOpenRouterModel,
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+    ) -> LiteEvalTaskResult:
         prompt = (
             "Who wrote the novel \"The Left Hand of Darkness\"? "
             "If unsure, answer UNKNOWN. Return only the answer."
         )
-        response = await self._chat_completion(_eval_payload(model, prompt, max_tokens=40), timeout=LITE_EVAL_TIMEOUT_SECONDS)
+        response = await self._chat_completion(
+            _eval_payload(model, prompt, max_tokens=40),
+            context=context,
+            timeout=LITE_EVAL_TIMEOUT_SECONDS,
+        )
         answer = _normalize_simple_answer(_extract_chat_content(response))
         correct_aliases = {"ursulakleguin", "ursulaleguin"}
         is_correct = answer in correct_aliases
@@ -653,12 +1373,27 @@ class OpenRouterFreeModelsService:
             details=details,
         )
 
-    async def _chat_completion(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
-        assert self._http_client is not None
-        assert self._provider_config is not None
-        provider_api_key = self._select_openrouter_api_key()
-        target_url = f"{self._provider_config.baseUrl.rstrip('/')}/chat/completions"
-        response = await self._http_client.post(
+    async def _chat_completion(
+        self,
+        payload: dict[str, Any],
+        *,
+        context: _OpenRouterRefreshContext | None = None,
+        timeout: float,
+    ) -> dict[str, Any]:
+        effective_context = (
+            context if context is not None else self._legacy_refresh_context()
+        )
+        if effective_context is None:
+            raise OpenRouterFreeModelsNotConfigured(
+                "OpenRouter free model scoring is not configured."
+            )
+        provider_api_key = self._select_openrouter_api_key(
+            effective_context.provider_api_key
+        )
+        target_url = (
+            f"{effective_context.provider_config.baseUrl.rstrip('/')}/chat/completions"
+        )
+        response = await effective_context.http_client.post(
             target_url,
             headers={
                 "Content-Type": "application/json",
@@ -680,8 +1415,12 @@ class OpenRouterFreeModelsService:
         except Exception:
             return None
 
-    def _select_openrouter_api_key(self) -> str:
-        api_key = select_next_api_key(self._provider_api_key)
+    def _select_openrouter_api_key(self, provider_api_key: str | None = None) -> str:
+        api_key = select_next_api_key(
+            provider_api_key
+            if provider_api_key is not None
+            else self._provider_api_key
+        )
         if api_key is None:
             raise RuntimeError("OpenRouter API key is not configured.")
         return api_key

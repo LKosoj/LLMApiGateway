@@ -1,8 +1,8 @@
 .playground-intro {
     margin: 0 0 18px;
+    color: var(--text);
     font-size: 0.95em;
     line-height: 1.55;
-    opacity: 0.85;
 }
 
 .playground-panel {
@@ -565,7 +565,12 @@ body.dark-mode .playground-result pre.raw-json {
         flex-direction: column;
     }
 
-    .playground-form .field-row .field-group,
+    .playground-form .field-row .field-group {
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
+    }
+
     .run-button,
     .reset-button {
         width: 100%;

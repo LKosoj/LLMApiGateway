@@ -1,0 +1,71 @@
+{
+  "actions": {
+    "anthropicSample": "Пример Anthropic",
+    "copied": "Скопировано!",
+    "copy": "Копировать",
+    "openaiSample": "Пример OpenAI",
+    "run": "Запустить преобразование",
+    "running": "Выполняется…",
+    "toolSample": "Пример с инструментом"
+  },
+  "errors": {
+    "copyFailed": "Не удалось скопировать содержимое.",
+    "invalidMockJson": "Некорректный JSON в макете ответа.",
+    "invalidRequestJson": "Некорректный JSON в теле запроса.",
+    "invalidResponse": "Ответ отладчика преобразования имеет неверный формат.",
+    "unsupportedStep": "Ответ содержит неподдерживаемый шаг преобразования."
+  },
+  "heading": "Отладчик преобразований",
+  "input": {
+    "mockHint": "— оставьте пустым для стандартного макета",
+    "mockPlaceholder": "Оставьте пустым, чтобы использовать встроенный макет ответа",
+    "mockResponse": "Макет ответа провайдера (JSON, необязательно)",
+    "requestBody": "Тело запроса (JSON)",
+    "sourceFormat": "Исходный формат",
+    "targetFormat": "Целевой формат",
+    "title": "Входные данные"
+  },
+  "intro": "Проверьте, как шлюз преобразует запросы между форматами OpenAI и Anthropic. Инструмент доступен только владельцу мастер-ключа и не обращается к реальному провайдеру.",
+  "pageTitle": "LLM Gateway — Отладчик преобразований",
+  "steps": {
+    "clientRequest": {
+      "notes": "Исходное тело запроса, полученное от клиента.",
+      "title": "Запрос клиента"
+    },
+    "clientResponse": {
+      "notesAlreadyOpenai": "Клиент ожидает формат OpenAI, поэтому содержимое шага 6 передаётся без изменений.",
+      "notesToAnthropic": "Ответ OpenAI преобразуется в формат Anthropic для исходного клиента функцией _openai_response_to_anthropic.",
+      "title": "Ответ клиенту"
+    },
+    "detectedFormat": {
+      "notes": "Форматы определены по параметрам запроса.",
+      "title": "Определённый формат"
+    },
+    "emptyAfter": "чтобы увидеть шаги обработки.",
+    "emptyBefore": "Заполните входные данные и нажмите",
+    "intermediateOpenaiRequest": {
+      "notesAlreadyOpenai": "Исходные данные уже имеют формат OpenAI; преобразование не требуется.",
+      "notesFromAnthropic": "Запрос Anthropic преобразуется в формат OpenAI функцией _anthropic_request_to_openai_payload.",
+      "title": "Промежуточный запрос OpenAI"
+    },
+    "intermediateOpenaiResponse": {
+      "notesAlreadyOpenai": "Провайдер вернул формат OpenAI; преобразование не требуется.",
+      "notesFromAnthropic": "Ответ провайдера Anthropic преобразуется обратно в формат OpenAI функцией _anthropic_response_to_openai.",
+      "title": "Промежуточный ответ OpenAI"
+    },
+    "notes": "Примечания",
+    "providerResponseMock": {
+      "notesDefaultAnthropic": "Макет не передан; используется стандартный макет ответа в формате Anthropic.",
+      "notesDefaultOpenai": "Макет не передан; используется стандартный макет ответа в формате OpenAI.",
+      "notesProvided": "Макет ответа провайдера передан вызывающей стороной.",
+      "title": "Ответ провайдера (макет)"
+    },
+    "stepHeading": "Шаг {step}: {title}",
+    "targetRequest": {
+      "notesAlreadyOpenai": "Целевой формат — OpenAI, поэтому содержимое шага 3 передаётся без изменений.",
+      "notesToAnthropic": "Запрос OpenAI преобразуется в формат Anthropic функцией _openai_request_to_anthropic_payload.",
+      "title": "Целевой запрос (формат провайдера)"
+    },
+    "title": "Шаги преобразования"
+  }
+}

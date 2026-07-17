@@ -15,6 +15,7 @@ from llm_gateway_core.agents.deep_research import (
     GatewayImageGenerator,
     _image_filename,
 )
+from llm_gateway_core.services.image_storage import GeneratedImageStorage
 from tests._async_compat import run_async
 
 
@@ -90,10 +91,32 @@ class _FakeResearcher:
         _FakeResearcher.report_images = list(self.available_images)
         return "report"
 
+    def get_research_sources(self):
+        return self.sources
+
+    def get_source_urls(self):
+        return self.source_urls
+
+    def get_research_context(self):
+        return self.context
+
+    def get_costs(self):
+        return self.costs
+
 
 class _FakeDeepResearchManager(DeepResearchManager):
     def _get_researcher_factory(self):
         return _FakeResearcher
+
+
+class _FailingCostsResearcher(_FakeResearcher):
+    def get_costs(self):
+        raise RuntimeError("sensitive diagnostic failure")
+
+
+class _FailingCostsDeepResearchManager(DeepResearchManager):
+    def _get_researcher_factory(self):
+        return _FailingCostsResearcher
 
 
 class _FakeGatewayToolResearcher:
@@ -138,6 +161,18 @@ class _FakeGatewayToolResearcher:
     async def write_report(self):
         return "gateway report"
 
+    def get_research_sources(self):
+        return self.sources
+
+    def get_source_urls(self):
+        return self.source_urls
+
+    def get_research_context(self):
+        return self.context
+
+    def get_costs(self):
+        return self.costs
+
 
 class _FakeGatewayToolDeepResearchManager(DeepResearchManager):
     def _get_researcher_factory(self):
@@ -145,6 +180,45 @@ class _FakeGatewayToolDeepResearchManager(DeepResearchManager):
 
 
 class DeepResearchManagerTests(unittest.TestCase):
+    def test_process_owned_image_storage_reaches_gateway_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            images_root = Path(tmp) / "images"
+            images_root.mkdir()
+            image_storage = GeneratedImageStorage(images_root)
+
+            run_async(
+                _FakeDeepResearchManager().conduct_deep_research(
+                    query="topic",
+                    fast_model="llmgateway/light_model",
+                    smart_model="llmgateway/light_model",
+                    strategic_model="llmgateway/light_model",
+                    gateway_base_url="http://127.0.0.1:9000/v1",
+                    gateway_api_key="test-gateway-key",
+                    image_generation_enabled=True,
+                    image_generation_model="llmgateway/image-gen",
+                    image_generation_size="1024x1024",
+                    image_storage=image_storage,
+                )
+            )
+
+        self.assertIs(_FakeResearcher.image_provider._image_storage, image_storage)
+
+    def test_diagnostic_cost_failure_does_not_fail_research(self):
+        with self.assertLogs(deep_research_module.logger, level="WARNING") as captured:
+            result = run_async(
+                _FailingCostsDeepResearchManager().conduct_deep_research(
+                    query="topic",
+                    fast_model="llmgateway/light_model",
+                    smart_model="llmgateway/light_model",
+                    strategic_model="llmgateway/light_model",
+                )
+            )
+
+        self.assertTrue(result["success"])
+        self.assertIsNone(result["costs"])
+        self.assertIn("diagnostic cost is unavailable", captured.output[0])
+        self.assertNotIn("sensitive diagnostic failure", captured.output[0])
+
     def test_image_generation_env_is_configured_for_single_call(self):
         old_enabled = os.environ.get("IMAGE_GENERATION_ENABLED")
         os.environ["IMAGE_GENERATION_ENABLED"] = "outside"
@@ -329,7 +403,7 @@ class DeepResearchManagerTests(unittest.TestCase):
             async def _run_in_worker():
                 callback_loop = asyncio.get_running_loop()
                 result = await asyncio.to_thread(
-                    lambda: asyncio.run(
+                    lambda: run_async(
                         _FakeGatewayToolDeepResearchManager().conduct_deep_research(
                             query="topic",
                             fast_model="llmgateway/light_model",
@@ -423,6 +497,10 @@ class ImageFilenameTests(unittest.TestCase):
 
 
 class GatewayImageGeneratorTests(unittest.TestCase):
+    def test_relative_output_override_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "output_dir must be an absolute path"):
+            GatewayImageGenerator(output_dir="relative/outputs")
+
     def test_generate_image_writes_png_and_populates_accumulator(self):
         from base64 import b64encode
 
@@ -445,6 +523,7 @@ class GatewayImageGeneratorTests(unittest.TestCase):
                 return _FakeResponse()
 
         with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "images").mkdir()
             generator = GatewayImageGenerator(output_dir=tmp, http_client=_FakeClient())
             # is_available() depends on env; feed minimal identity:
             generator.model_name = "gw/image"
@@ -526,6 +605,7 @@ class GatewayImageGeneratorTests(unittest.TestCase):
                 return _FakeResponse()
 
         with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "images").mkdir()
             fake_client = _FakeClient()
             generator = GatewayImageGenerator(output_dir=tmp, http_client=fake_client)
             generator.model_name = "gw/image"
@@ -560,14 +640,15 @@ class GeneratedImagesInResultTests(unittest.TestCase):
 
 class DeepResearchUnavailableTests(unittest.TestCase):
     def test_manager_fails_explicitly_when_gpt_researcher_extra_is_missing(self):
-        with patch.object(deep_research_module, "GPTResearcher", None):
-            with patch.object(
-                deep_research_module,
-                "GPT_RESEARCHER_IMPORT_ERROR",
-                ImportError("missing optional package"),
-            ):
-                with self.assertRaises(DeepResearchUnavailableError) as ctx:
-                    DeepResearchManager()._get_researcher_factory()
+        with patch.object(
+            deep_research_module,
+            "get_gpt_researcher_factory",
+            side_effect=DeepResearchUnavailableError(
+                "Python package 'gpt-researcher' is not installed."
+            ),
+        ):
+            with self.assertRaises(DeepResearchUnavailableError) as ctx:
+                DeepResearchManager()._get_researcher_factory()
 
         self.assertIn("gpt-researcher", str(ctx.exception))
         self.assertIn("not installed", str(ctx.exception))

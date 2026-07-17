@@ -11,9 +11,9 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -25,6 +25,8 @@ import main
 from llm_gateway_core.api.v1 import chat as chat_module
 from llm_gateway_core.config.loader import ANTHROPIC_API_VERSION, ProviderDetails
 from llm_gateway_core.services.provider_models import ProviderModelsService
+from tests._async_compat import run_async
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 def _build_anthropic_text_stream() -> StreamingResponse:
@@ -424,6 +426,8 @@ class AnthropicResponseToOpenAITests(unittest.TestCase):
 
 def _build_fake_config_loader(provider_type: str) -> Mock:
     loader = Mock()
+    loader.configured_paths = {}
+    loader.operation_rules = {}
     loader.providers_config = {
         "anthropic-upstream": SimpleNamespace(
             baseUrl="https://api.anthropic.example",
@@ -445,13 +449,30 @@ def _build_fake_config_loader(provider_type: str) -> Mock:
     }
     loader.load_providers.return_value = loader.providers_config
     loader.load_fallback_rules.return_value = loader.fallback_rules
+    loader.load_operation_rules.return_value = {}
+    loader.load_complete.return_value = loader
     return loader
 
 
 class DispatcherAnthropicProviderTests(unittest.TestCase):
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        coordinator_patcher = patch(
+            "main.ConfigUpdateCoordinator",
+            return_value=config_update_coordinator,
+        )
+        coordinator_patcher.start()
+        self.addCleanup(coordinator_patcher.stop)
+
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_openai_client_routes_to_anthropic_provider_and_converts_response(
         self,
@@ -522,7 +543,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_openai_tool_name_is_mapped_for_anthropic_provider_and_restored_in_response(
         self,
@@ -590,7 +611,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_anthropic_client_forwards_native_payload_without_lossy_roundtrip(
         self,
@@ -658,7 +679,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_openai_client_streams_from_anthropic_provider_as_openai_sse(
         self,
@@ -710,7 +731,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_openai_client_stream_usage_includes_anthropic_cache_tokens(
         self,
@@ -753,7 +774,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_openai_client_receives_tool_call_deltas_from_anthropic_stream(
         self,
@@ -808,7 +829,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_openai_client_stream_restores_mapped_tool_name_from_anthropic_provider(
         self,
@@ -864,7 +885,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_anthropic_client_receives_native_anthropic_stream_without_roundtrip(
         self,
@@ -931,7 +952,7 @@ class ProviderModelsServiceAnthropicTests(unittest.TestCase):
         fake_client = Mock()
         fake_client.get = AsyncMock(return_value=fake_response)
 
-        models = asyncio.run(
+        models = run_async(
             service._fetch_models("anthropic-upstream", provider_config, fake_client)
         )
         self.assertEqual(models, ["claude-sonnet-4-6", "claude-haiku-4-5"])
@@ -956,7 +977,7 @@ class ProviderModelsServiceAnthropicTests(unittest.TestCase):
         fake_client = Mock()
         fake_client.get = AsyncMock(return_value=fake_response)
 
-        models = asyncio.run(
+        models = run_async(
             service._fetch_models("openai-upstream", provider_config, fake_client)
         )
         self.assertEqual(models, ["gpt-4o"])

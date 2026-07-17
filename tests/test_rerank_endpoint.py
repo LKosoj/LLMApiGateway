@@ -9,6 +9,9 @@ from fastapi.testclient import TestClient
 
 import main
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.operation_accounting_test_support import (
+    install_embeddings_rerank_accounting_passthrough,
+)
 
 
 VALID_PROVIDERS_TEXT = """
@@ -136,14 +139,25 @@ class RerankEndpointTests(unittest.TestCase):
         else:
             fake_http_client.post = AsyncMock(return_value=downstream_response)
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
             stack.enter_context(patch.object(main.settings, "fallback_provider", "openai"))
+            install_embeddings_rerank_accounting_passthrough(stack)
 
             with TestClient(main.app) as client:
                 yield client, fake_http_client

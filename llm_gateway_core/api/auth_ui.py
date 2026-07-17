@@ -1,12 +1,14 @@
 import asyncio
 import html
 import logging
+from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ..config.paths import STATIC_DIR
 from ..config.settings import settings
+from .error_envelope import error_response
 from ..utils.html_cache import get_template
 from ..middleware.auth import (
     API_KEY_DISABLED_DETAIL,
@@ -15,7 +17,6 @@ from ..middleware.auth import (
     ROLE_USER,
     SESSION_COOKIE_NAME,
     SESSION_HMAC_CONFIGURATION_ERROR,
-    _ip_blocked_response,
     _note_auth_failure,
     _note_auth_success,
     _tokens_match,
@@ -31,22 +32,31 @@ from ..middleware.auth import (
 from ..db.rejections_db import record_rejection
 from ..utils.client_ip import get_client_ip
 
+if TYPE_CHECKING:
+    from ..services.ip_blocklist import IpBlockGuard
+    from ..services.runtime_config import AppServices
+
 auth_router = APIRouter()
 
 LOGIN_TEMPLATE_PATH = STATIC_DIR / "login.html"
 
 
-def _invalid_login_response(request: Request) -> JSONResponse:
+def _invalid_login_response(
+    request: Request,
+    guard: "IpBlockGuard | None",
+) -> JSONResponse:
     record_rejection(
         request,
         status_code=status.HTTP_401_UNAUTHORIZED,
         reason="Invalid API Key",
         category="auth_invalid",
     )
-    _note_auth_failure(request)
-    response = JSONResponse(
+    _note_auth_failure(request, guard)
+    response = error_response(
+        request,
         status_code=status.HTTP_401_UNAUTHORIZED,
-        content={"detail": "Invalid API Key"},
+        detail="Invalid API Key",
+        code="auth_invalid_api_key",
     )
     clear_authenticated_session_cookie(response)
     return response
@@ -59,9 +69,11 @@ def _disabled_login_response(request: Request) -> JSONResponse:
         reason=API_KEY_DISABLED_DETAIL,
         category="key_disabled",
     )
-    response = JSONResponse(
+    response = error_response(
+        request,
         status_code=status.HTTP_401_UNAUTHORIZED,
-        content={"detail": "Invalid API Key"},
+        detail="Invalid API Key",
+        code="auth_invalid_api_key",
     )
     clear_authenticated_session_cookie(response)
     return response
@@ -113,53 +125,62 @@ async def login_page(request: Request, next: str | None = None):
 @auth_router.post("/auth/login", include_in_schema=False)
 async def login_submit(request: Request):
     next_path = DEFAULT_UI_PATH
-    guard = getattr(request.app.state, "ip_block_guard", None)
+    services = cast("AppServices", request.app.state.services)
+    api_keys_db = services.api_keys_db
+    guard = services.ip_block_guard
     if guard is not None:
         client_ip = get_client_ip(request)
         if client_ip:
             retry_after = guard.check_blocked(client_ip)
             if retry_after is not None:
-                return _ip_blocked_response(retry_after)
+                return error_response(
+                    request,
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many failed authentication attempts. Try again later.",
+                    code="auth_rate_limited",
+                    headers={"Retry-After": str(retry_after)},
+                )
 
     try:
         payload = await request.json()
     except Exception:
-        return JSONResponse(
+        return error_response(
+            request,
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Request body must be a JSON object"},
+            detail="Request body must be a JSON object",
+            code="auth_invalid_request",
         )
 
     if not isinstance(payload, dict):
-        return JSONResponse(
+        return error_response(
+            request,
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Request body must be a JSON object"},
+            detail="Request body must be a JSON object",
+            code="auth_invalid_request",
         )
 
     api_key = payload.get("api_key", "")
     next_path = normalize_next_path(payload.get("next"))
 
     if not is_session_hmac_configured():
-        return JSONResponse(
+        return error_response(
+            request,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": SESSION_HMAC_CONFIGURATION_ERROR},
+            detail=SESSION_HMAC_CONFIGURATION_ERROR,
+            code="auth_unavailable",
         )
 
     if not isinstance(api_key, str) or not api_key:
-        return _invalid_login_response(request)
+        return _invalid_login_response(request, guard)
 
     role = ROLE_MASTER
     key_id: int | None = None
     if _tokens_match(api_key, settings.gateway_api_key):
         role = ROLE_MASTER
     else:
-        api_keys_db = getattr(request.app.state, "api_keys_db", None)
-        record = (
-            await asyncio.to_thread(api_keys_db.get_by_key, api_key)
-            if api_keys_db is not None
-            else None
-        )
+        record = await asyncio.to_thread(api_keys_db.get_by_key, api_key)
         if record is None:
-            return _invalid_login_response(request)
+            return _invalid_login_response(request, guard)
         if record.disabled:
             return _disabled_login_response(request)
         role = ROLE_USER
@@ -168,7 +189,7 @@ async def login_submit(request: Request):
     session_id = create_authenticated_session(role=role, key_id=key_id)
     response = JSONResponse(content={"redirect_to": next_path, "role": role})
     set_authenticated_session_cookie(response, session_id)
-    _note_auth_success(request)
+    _note_auth_success(request, guard)
     return response
 
 
@@ -187,7 +208,7 @@ async def auth_me(request: Request):
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "Not authenticated"},
         )
-    role = getattr(request.state, "api_key_role", ROLE_MASTER)
+    role = getattr(request.state, "api_key_role", None)
     key_id = getattr(request.state, "api_key_id", None)
     record = getattr(request.state, "api_key_record", None)
     payload = {

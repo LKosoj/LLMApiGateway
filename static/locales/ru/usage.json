@@ -1,0 +1,218 @@
+{
+  "page": {
+    "title": "LLM Gateway — статистика использования",
+    "heading": "LLM Gateway — статистика использования",
+    "productVersionAria": "Версия продукта"
+  },
+  "tabs": {
+    "analytics": "Аналитика",
+    "statistics": "Статистика использования",
+    "records": "Записи использования",
+    "fallback": "Аналитика резервных маршрутов",
+    "topology": "Топология"
+  },
+  "actions": {
+    "refreshAction": "Обновить",
+    "previousAction": "Назад",
+    "nextAction": "Далее"
+  },
+  "period": {
+    "groupBy": "Группировать по:",
+    "hourOption": "Час",
+    "dayOption": "День",
+    "weekOption": "Неделя",
+    "monthOption": "Месяц",
+    "label": "Период: {period}"
+  },
+  "ranges": {
+    "last24Hours": "Последние 24 часа",
+    "last7Days": "Последние 7 дней",
+    "last14Days": "Последние 14 дней",
+    "last30Days": "Последние 30 дней",
+    "last90Days": "Последние 90 дней",
+    "last180Days": "Последние 180 дней",
+    "last365Days": "Последние 365 дней",
+    "last12Months": "Последние 12 месяцев"
+  },
+  "filters": {
+    "rangeLabel": "Диапазон",
+    "bucketLabel": "Интервал",
+    "virtualKey": "Виртуальный ключ",
+    "providerKey": "Ключ провайдера",
+    "operationLabel": "Операция",
+    "gatewayLabel": "Шлюз",
+    "providerLabel": "Провайдер",
+    "modelLabel": "Модель",
+    "xTitleLabel": "X-Title",
+    "estimatedLabel": "Оценочные данные",
+    "allKeys": "Все ключи",
+    "unattributed": "Без привязки",
+    "allProviderKeys": "Все ключи провайдеров",
+    "allOperations": "Все операции",
+    "allGateways": "Все шлюзы",
+    "allProviders": "Все провайдеры",
+    "allModels": "Все модели",
+    "allTitles": "Все заголовки",
+    "allUsage": "Все данные",
+    "estimatedOnly": "Только оценочные",
+    "providerUsage": "Данные провайдера"
+  },
+  "sections": {
+    "analytics": "Аналитика",
+    "tokenTrend": "Динамика токенов",
+    "costByProvider": "Стоимость по провайдерам",
+    "filteredBreakdown": "Детализация по фильтрам",
+    "xTitleBreakdown": "Детализация по X-Title",
+    "reliabilityTitle": "Надёжность",
+    "virtualKeys": "Виртуальные ключи",
+    "recentActivity": "Недавняя активность",
+    "latestRecords": "Последние записи использования",
+    "fallbackChains": "Цепочки резервных маршрутов"
+  },
+  "fallbackTabs": {
+    "summaryTab": "Сводка",
+    "chainsTab": "Цепочки",
+    "upstream": "Аналитика upstream"
+  },
+  "initial": {
+    "statistics": "Выберите период и нажмите «Обновить», чтобы посмотреть статистику.",
+    "records": "Загрузка записей использования…",
+    "fallback": "Выберите период и нажмите «Обновить», чтобы посмотреть статистику резервных маршрутов.",
+    "chains": "Загрузка цепочек резервных маршрутов…",
+    "upstream": "Выберите период и нажмите «Обновить», чтобы посмотреть upstream-аналитику."
+  },
+  "status": {
+    "statisticsLoading": "Загрузка статистики…",
+    "statisticsLoaded": "Статистика загружена.",
+    "recordsLoading": "Загрузка записей использования…",
+    "recordsLoaded": "Записи использования загружены.",
+    "fallbackLoading": "Загрузка статистики резервных маршрутов…",
+    "fallbackLoaded": "Статистика резервных маршрутов загружена.",
+    "chainsLoading": "Загрузка цепочек резервных маршрутов…",
+    "chainsLoaded": "Цепочки резервных маршрутов загружены.",
+    "upstreamLoading": "Загрузка upstream-аналитики…",
+    "upstreamLoaded": "Upstream-аналитика загружена.",
+    "analyticsLoading": "Загрузка аналитики…",
+    "analyticsLoaded": "Загружено: {count, plural, one {# запрос} few {# запроса} many {# запросов} other {# запроса}}.",
+    "requestId": "Идентификатор запроса: {id}"
+  },
+  "empty": {
+    "statistics": "За выбранный период данных нет.",
+    "records": "Записей использования нет.",
+    "recordsFound": "Записи использования не найдены.",
+    "fallback": "За выбранный период ошибок резервных маршрутов не было.",
+    "chains": "Цепочки резервных маршрутов не найдены.",
+    "upstream": "За выбранный период upstream-аналитики нет.",
+    "analytics": "По выбранным фильтрам данных нет.",
+    "trend": "По выбранным фильтрам нет данных о динамике.",
+    "providers": "По выбранным фильтрам нет данных о провайдерах.",
+    "breakdown": "По выбранным фильтрам строк нет.",
+    "xTitles": "По выбранным фильтрам строк X-Title нет.",
+    "virtualKeys": "По выбранным фильтрам строк виртуальных ключей нет.",
+    "recent": "По выбранным фильтрам недавней активности нет."
+  },
+  "values": {
+    "notAvailable": "Нет данных",
+    "yesLabel": "Да",
+    "noLabel": "Нет",
+    "successLabel": "Успешно",
+    "failedLabel": "Ошибка",
+    "completedLabel": "Завершено",
+    "runningLabel": "Выполняется",
+    "inProgressLabel": "В процессе",
+    "unknownLabel": "Неизвестно",
+    "virtualKey": "Виртуальный ключ №{id}"
+  },
+  "pagination": {
+    "page": "Страница {current} из {total}"
+  },
+  "counts": {
+    "attempts": "{count, plural, one {# попытка} few {# попытки} many {# попыток} other {# попытки}}",
+    "buckets": "{count, plural, one {# интервал} few {# интервала} many {# интервалов} other {# интервала}}",
+    "providers": "{count, plural, one {# провайдер} few {# провайдера} many {# провайдеров} other {# провайдера}}"
+  },
+  "format": {
+    "milliseconds": "{value} мс",
+    "seconds": "{value} с",
+    "retry": "повторов: {count}",
+    "retryWithDelay": "повторов: {count} ({delay})",
+    "xTitle": "X-Title: {value}",
+    "fallbackMetric": "Резервный маршрут: {value}",
+    "rejectedMetric": "Отклонено: {value}"
+  },
+  "kpis": {
+    "requestsLabel": "Запросы",
+    "totalTokens": "Всего токенов",
+    "costLabel": "Стоимость",
+    "costSaved": "Экономия",
+    "costPerMillion": "Стоимость за 1 млн",
+    "averageDuration": "Средняя длительность",
+    "activeLabel": "Активные",
+    "fallbackErrors": "Ошибки резервных маршрутов",
+    "rejectionsLabel": "Отклонения",
+    "estimatedLabel": "Оценочные"
+  },
+  "charts": {
+    "tokenTrendAria": "Линейный график динамики токенов",
+    "providerCostAria": "Столбчатая диаграмма стоимости по провайдерам"
+  },
+  "columns": {
+    "gatewayModel": "Модель шлюза",
+    "resolvedModel": "Выбранная модель",
+    "resolvedTarget": "Выбранный маршрут",
+    "operationHeader": "Операция",
+    "statusHeader": "Статус",
+    "timestamp": "Время",
+    "durationMs": "Длительность (мс)",
+    "providerHeader": "Провайдер",
+    "modelHeader": "Модель",
+    "xTitleHeader": "X-Title",
+    "promptTokens": "Токены запроса",
+    "completionTokens": "Токены ответа",
+    "reasoningTokens": "Токены рассуждения",
+    "totalTokens": "Всего токенов",
+    "cachedTokens": "Кэшированные токены",
+    "countHeader": "Количество",
+    "requestsHeader": "Запросы",
+    "tokensHeader": "Токены",
+    "costHeader": "Стоимость",
+    "costUsd": "Стоимость (USD)",
+    "costSaved": "Экономия",
+    "costSavedUsd": "Экономия (USD)",
+    "costPerMillion": "Стоимость за миллион",
+    "estimatedHeader": "Оценочные",
+    "averageDuration": "Средняя длительность",
+    "errorType": "Тип ошибки",
+    "key": "Ключ",
+    "attemptsHeader": "Попытки",
+    "successHeader": "Успешно",
+    "errorsHeader": "Ошибки",
+    "successRate": "Доля успешных",
+    "maxDuration": "Максимальная длительность",
+    "metricHeader": "Показатель",
+    "valueHeader": "Значение",
+    "virtualKey": "Виртуальный ключ",
+    "gatewayHeader": "Шлюз"
+  },
+  "reliability": {
+    "fallbackAttempts": "Попытки резервных маршрутов",
+    "fallbackErrors": "Ошибки резервных маршрутов",
+    "fallbackSuccess": "Успешность резервных маршрутов",
+    "rejectionsMetric": "Отклонения"
+  },
+  "errorTypes": {
+    "http429": "429 — превышен лимит",
+    "http400": "400 — некорректный запрос",
+    "http401": "401 — требуется авторизация",
+    "http403": "403 — доступ запрещён",
+    "http404": "404 — не найдено",
+    "http500": "500 — ошибка сервера",
+    "http502": "502 — ошибка шлюза",
+    "http503": "503 — сервис недоступен",
+    "readTimeout": "Превышено время чтения",
+    "connectTimeout": "Превышено время подключения",
+    "connectError": "Ошибка подключения",
+    "contextOverflow": "Переполнение контекста",
+    "unknownLabel": "Неизвестная ошибка"
+  }
+}

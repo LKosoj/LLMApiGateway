@@ -26,6 +26,26 @@ SENSITIVE_PAYLOAD_KEYS = {
     "token",
     "x-api-key",
 }
+# Keys that can carry bulk user/model content (chat messages, Responses-API
+# "input"/"instructions", system prompts, plain "prompt" strings). All of them
+# are gated by the same include_messages flag "messages" already used, so
+# free-form input isn't logged unless a caller explicitly opts in.
+BULK_CONTENT_PAYLOAD_KEYS = {"messages", "input", "instructions", "system", "prompt"}
+
+
+def sanitize_exception_type_name(exception_type: object) -> str:
+    if (
+        not isinstance(exception_type, str)
+        or not exception_type.isascii()
+        or not exception_type.isidentifier()
+        or len(exception_type) > 128
+    ):
+        return "BaseException"
+    return exception_type
+
+
+def safe_exception_type_name(exception: BaseException) -> str:
+    return sanitize_exception_type_name(type(exception).__name__)
 
 
 def is_sensitive_header_name(header_name: str) -> bool:
@@ -52,7 +72,7 @@ def redact_payload_for_log(payload: Any, include_messages: bool = False) -> Any:
         redacted_payload = {}
         for key, value in payload.items():
             normalized_key = key.strip().lower() if isinstance(key, str) else key
-            if normalized_key == "messages" and not include_messages:
+            if normalized_key in BULK_CONTENT_PAYLOAD_KEYS and not include_messages:
                 continue
             if normalized_key in SENSITIVE_PAYLOAD_KEYS:
                 redacted_payload[key] = REDACTED_SECRET_VALUE

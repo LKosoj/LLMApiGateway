@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-i18n-page="login">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway Login</title>
+    <title data-i18n="auth:pageTitle">LLM Gateway Login</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <script src="/static/theme.js"></script>
@@ -36,6 +36,7 @@
         .card {
             position: relative;
             width: min(420px, calc(100vw - 32px));
+            box-sizing: border-box;
             padding: 32px;
             border-radius: var(--radius-xl, 20px);
             background: var(--bg-elevated, #ffffff);
@@ -134,7 +135,6 @@
         }
 
         .error {
-            display: __ERROR_DISPLAY__;
             margin-bottom: 16px;
             padding: 12px 14px;
             border-radius: var(--radius-md, 10px);
@@ -144,64 +144,65 @@
             font-size: 14px;
         }
 
+        #errorBox {
+            display: __ERROR_DISPLAY__;
+        }
+
         .hint {
             margin-top: 14px;
             margin-bottom: 0;
             font-size: 13px;
             color: var(--text-muted, #64748b);
         }
+
+        .locale-control {
+            display: grid;
+            grid-template-columns: auto minmax(112px, 1fr);
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 22px;
+        }
+
+        .locale-control label {
+            margin: 0;
+        }
+
+        .locale-control select {
+            width: 100%;
+            padding: 9px 30px 9px 10px;
+            border: 1px solid var(--border-strong, #cbd5e1);
+            border-radius: var(--radius-md, 10px);
+            background: var(--bg, #f4f6f9);
+            color: var(--text-strong, #0f172a);
+            font: inherit;
+        }
+
+        [hidden] {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
     <main class="card">
-        <h1>LLM Gateway Login</h1>
-        <p>Enter <code>GATEWAY_API_KEY</code> to open the protected UI and create a persistent signed cookie for this browser.</p>
-        <div id="errorBox" class="error">__ERROR_MESSAGE__</div>
+        <div class="locale-control">
+            <label for="localeSelect" data-i18n="auth:languageLabel">Language</label>
+            <select id="localeSelect" data-locale-select></select>
+        </div>
+        <div class="error" role="alert" data-locale-error hidden></div>
+        <h1 data-i18n="auth:title">Sign in</h1>
+        <p data-i18n="auth:intro">Use the master GATEWAY_API_KEY or a virtual lgk_… API key.</p>
+        <div id="errorSummary" class="error" hidden></div>
+        <template id="serverErrorTemplate">__ERROR_MESSAGE__</template>
+        <div id="errorBox" class="error" data-i18n-raw-detail></div>
         <form id="loginForm">
             <input id="nextInput" type="hidden" value="__NEXT__">
-            <label for="apiKeyInput">Gateway API Key</label>
+            <label for="apiKeyInput" data-i18n="auth:apiKeyLabel">Gateway API key</label>
             <input id="apiKeyInput" name="api_key" type="password" autocomplete="current-password" autofocus required>
-            <button id="submitButton" type="submit">Sign in</button>
+            <button id="submitButton" type="submit" data-i18n="auth:submit" disabled>Sign in</button>
         </form>
-        <p class="hint">After sign-in the browser uses a persistent HttpOnly cookie, so the UI stays signed in across browser restarts. SDK clients can continue to use Bearer auth directly.</p>
+        <p class="hint" data-i18n="auth:accessHint">The master key opens every administration page. A virtual key opens Docs, Usage Statistics, and Quota for that key.</p>
     </main>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const form = document.getElementById('loginForm');
-            const apiKeyInput = document.getElementById('apiKeyInput');
-            const nextInput = document.getElementById('nextInput');
-            const submitButton = document.getElementById('submitButton');
-            const errorBox = document.getElementById('errorBox');
-
-            form.addEventListener('submit', async (event) => {
-                event.preventDefault();
-                submitButton.disabled = true;
-                errorBox.style.display = 'none';
-                errorBox.textContent = '';
-
-                try {
-                    const response = await fetch('/auth/login', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            api_key: apiKeyInput.value,
-                            next: nextInput.value
-                        })
-                    });
-
-                    const payload = await response.json();
-                    if (!response.ok) {
-                        throw new Error(payload.detail || 'Authentication failed');
-                    }
-
-                    window.location.assign(payload.redirect_to || '/v1/ui/usage-stats');
-                } catch (error) {
-                    errorBox.textContent = error.message;
-                    errorBox.style.display = 'block';
-                    submitButton.disabled = false;
-                }
-            });
-        });
-    </script>
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
+    <script src="/static/login.js"></script>
 </body>
 </html>

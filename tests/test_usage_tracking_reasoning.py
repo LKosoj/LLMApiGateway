@@ -1,7 +1,7 @@
 import sqlite3
 import unittest
-from pathlib import Path
 
+from llm_gateway_core.config.paths import resolve_db_dir
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.utils.usage_tracking import extract_tokens_usage
 from tests._async_compat import run_async
@@ -36,8 +36,7 @@ class UsageTrackingReasoningTests(unittest.TestCase):
         return run_async(db.get_latest_usage_records(limit=1, offset=0))[0]
 
     def test_completion_gt_reasoning_keeps_completion_total_in_db(self):
-        db_path = Path("db/test_usage_tracking_reasoning_gt.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_usage_tracking_reasoning_gt.sqlite"
 
         try:
             row = self._record_reasoning_usage(
@@ -52,8 +51,7 @@ class UsageTrackingReasoningTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_completion_lt_reasoning_keeps_completion_total_in_db(self):
-        db_path = Path("db/test_usage_tracking_reasoning_lt.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_usage_tracking_reasoning_lt.sqlite"
 
         try:
             row = self._record_reasoning_usage(
@@ -68,8 +66,7 @@ class UsageTrackingReasoningTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_init_db_adds_reasoning_tokens_column_for_existing_database(self):
-        db_path = Path("db/test_usage_tracking_reasoning_migration.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_usage_tracking_reasoning_migration.sqlite"
 
         try:
             with sqlite3.connect(db_path) as conn:

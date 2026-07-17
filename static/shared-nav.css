@@ -1,0 +1,135 @@
+.top-nav-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    overflow: visible;
+}
+
+.gateway-nav-mount {
+    position: relative;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.gateway-nav-mount[hidden],
+[data-master-only][hidden],
+[data-user-only][hidden] {
+    display: none !important;
+}
+
+.gateway-nav-scroller {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+}
+
+.gateway-nav-scroller::-webkit-scrollbar {
+    display: none;
+}
+
+.gateway-nav-mount::before,
+.gateway-nav-mount::after {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    bottom: 0;
+    width: 28px;
+    content: '';
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+}
+
+.gateway-nav-mount::before {
+    inset-inline-start: 0;
+    background: linear-gradient(to right, var(--bg-elevated, #ffffff), transparent);
+}
+
+.gateway-nav-mount::after {
+    inset-inline-end: 0;
+    background: linear-gradient(to left, var(--bg-elevated, #ffffff), transparent);
+}
+
+[dir='rtl'] .gateway-nav-mount::before {
+    background: linear-gradient(to left, var(--bg-elevated, #ffffff), transparent);
+}
+
+[dir='rtl'] .gateway-nav-mount::after {
+    background: linear-gradient(to right, var(--bg-elevated, #ffffff), transparent);
+}
+
+.gateway-nav-mount[data-overflow-start]::before,
+.gateway-nav-mount[data-overflow-end]::after {
+    opacity: 1;
+}
+
+.gateway-nav-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.gateway-locale-label {
+    color: var(--text-muted, #64748b);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.gateway-locale-select {
+    min-width: 92px;
+    padding: 7px 28px 7px 9px;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-elevated, #ffffff);
+    color: var(--text, #334155);
+    font: inherit;
+}
+
+.gateway-locale-error {
+    position: fixed;
+    z-index: 1000;
+    inset-inline-end: 16px;
+    top: 64px;
+    max-width: min(360px, calc(100vw - 32px));
+    padding: 10px 12px;
+    border: 1px solid var(--error, #dc2626);
+    border-radius: var(--radius-md, 8px);
+    background: var(--error-soft, #fee2e2);
+    color: var(--error, #991b1b);
+    font-size: 13px;
+}
+
+@media (max-width: 767px) {
+    .top-nav-content {
+        gap: 6px;
+    }
+
+    .gateway-nav-scroller {
+        gap: 6px;
+        scroll-padding-inline: 8px;
+    }
+
+    .gateway-locale-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    .gateway-locale-select {
+        min-width: 72px;
+        width: 72px;
+        padding-inline: 7px 22px;
+        font-size: 12px;
+    }
+}

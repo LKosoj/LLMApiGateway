@@ -1,0 +1,4077 @@
+{
+  "schemaVersion": 2,
+  "requireAllComplete": true,
+  "pages": {
+    "runtime": {
+      "status": "complete",
+      "html": [],
+      "scripts": [
+        "static/shared-auth.js",
+        "static/shared-nav.js",
+        "static/theme.js"
+      ]
+    },
+    "login": {
+      "status": "complete",
+      "html": [
+        "static/login.html"
+      ],
+      "scripts": [
+        "static/login.js"
+      ]
+    },
+    "docs": {
+      "status": "complete",
+      "html": [
+        "static/gateway-docs.html"
+      ],
+      "scripts": [
+        "static/gateway-docs.js"
+      ]
+    },
+    "rules-editor": {
+      "status": "complete",
+      "html": [
+        "static/rules-editor.html"
+      ],
+      "scripts": [
+        "static/editor.js"
+      ]
+    },
+    "playground": {
+      "status": "complete",
+      "html": [
+        "static/web-playground.html"
+      ],
+      "scripts": [
+        "static/web-playground.js"
+      ]
+    },
+    "usage": {
+      "status": "complete",
+      "html": [
+        "static/usage-stats.html"
+      ],
+      "scripts": [
+        "static/usage-analytics.js",
+        "static/usage-stats.js"
+      ]
+    },
+    "api-keys": {
+      "status": "complete",
+      "html": [
+        "static/api-keys.html"
+      ],
+      "scripts": [
+        "static/api-keys.js"
+      ]
+    },
+    "pricing": {
+      "status": "complete",
+      "html": [
+        "static/pricing.html"
+      ],
+      "scripts": [
+        "static/pricing.js"
+      ]
+    },
+    "quota": {
+      "status": "complete",
+      "html": [
+        "static/quota.html"
+      ],
+      "scripts": [
+        "static/quota.js"
+      ]
+    },
+    "rejections": {
+      "status": "complete",
+      "html": [
+        "static/rejections.html"
+      ],
+      "scripts": [
+        "static/rejections.js"
+      ]
+    },
+    "translator": {
+      "status": "complete",
+      "html": [
+        "static/translator-debug.html"
+      ],
+      "scripts": [
+        "static/translator-debug.js"
+      ]
+    }
+  },
+  "exemptions": [
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 38,
+      "column": 50,
+      "text": "auth_invalid",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 39,
+      "column": 50,
+      "text": "key_disabled",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 40,
+      "column": 55,
+      "text": "model_not_allowed",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 41,
+      "column": 54,
+      "text": "budget_exhausted",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 42,
+      "column": 50,
+      "text": "rate_limited",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 43,
+      "column": 49,
+      "text": "master_only",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 44,
+      "column": 50,
+      "text": "unauthorized",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 45,
+      "column": 48,
+      "text": "ip_blocked",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 59,
+      "column": 40,
+      "text": "25",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 60,
+      "column": 49,
+      "text": "50",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 61,
+      "column": 41,
+      "text": "100",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 62,
+      "column": 41,
+      "text": "200",
+      "classification": "protocol"
+    },
+    {
+      "page": "rejections",
+      "file": "static/rejections.html",
+      "kind": "html-text",
+      "line": 83,
+      "column": 29,
+      "text": "X-Title",
+      "classification": "protocol"
+    },
+    {
+      "page": "translator",
+      "file": "static/translator-debug.html",
+      "kind": "html-text",
+      "line": 39,
+      "column": 44,
+      "text": "OpenAI",
+      "classification": "protocol"
+    },
+    {
+      "page": "translator",
+      "file": "static/translator-debug.html",
+      "kind": "html-text",
+      "line": 40,
+      "column": 47,
+      "text": "Anthropic",
+      "classification": "protocol"
+    },
+    {
+      "page": "translator",
+      "file": "static/translator-debug.html",
+      "kind": "html-text",
+      "line": 45,
+      "column": 47,
+      "text": "Anthropic",
+      "classification": "protocol"
+    },
+    {
+      "page": "translator",
+      "file": "static/translator-debug.html",
+      "kind": "html-text",
+      "line": 46,
+      "column": 44,
+      "text": "OpenAI",
+      "classification": "protocol"
+    },
+    {
+      "page": "translator",
+      "file": "static/translator-debug.html",
+      "kind": "html-attribute",
+      "line": 50,
+      "column": 87,
+      "text": "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}",
+      "classification": "sample"
+    },
+    {
+      "page": "pricing",
+      "file": "static/pricing.js",
+      "kind": "js-sink",
+      "line": 384,
+      "column": 13,
+      "text": "USD",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 32,
+      "column": 40,
+      "text": "LLM Gateway",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 35,
+      "column": 94,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 91,
+      "column": 43,
+      "text": "Base URL",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 92,
+      "column": 43,
+      "text": "Authorization",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 92,
+      "column": 241,
+      "text": "Authorization: Bearer <GATEWAY_API_KEY или lgk_...>",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 93,
+      "column": 43,
+      "text": "GET /models",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 101,
+      "column": 43,
+      "text": "Endpoint",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 101,
+      "column": 236,
+      "text": "POST /v1/messages",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 102,
+      "column": 43,
+      "text": "X-Api-Key",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 103,
+      "column": 43,
+      "text": "anthropic-version",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 117,
+      "column": 25,
+      "text": "POST /v1/chat/completions",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 120,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 121,
+      "column": 43,
+      "text": "messages",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 122,
+      "column": 43,
+      "text": "stream",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 122,
+      "column": 218,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 123,
+      "column": 43,
+      "text": "temperature",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 124,
+      "column": 43,
+      "text": "max_tokens",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 125,
+      "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 126,
+      "column": 43,
+      "text": "tools",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 127,
+      "column": 43,
+      "text": "tool_choice",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 128,
+      "column": 191,
+      "text": "choices[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 128,
+      "column": 268,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 133,
+      "column": 25,
+      "text": "POST /v1/responses",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 136,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 137,
+      "column": 43,
+      "text": "input",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 138,
+      "column": 43,
+      "text": "instructions",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 139,
+      "column": 43,
+      "text": "text.format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 140,
+      "column": 43,
+      "text": "tools",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 141,
+      "column": 43,
+      "text": "tool_choice",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 142,
+      "column": 43,
+      "text": "max_output_tokens",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 143,
+      "column": 43,
+      "text": "stream",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 143,
+      "column": 218,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 149,
+      "column": 25,
+      "text": "POST /v1/messages",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 152,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 153,
+      "column": 43,
+      "text": "messages",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 154,
+      "column": 43,
+      "text": "max_tokens",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 155,
+      "column": 43,
+      "text": "system",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 156,
+      "column": 43,
+      "text": "stream",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 156,
+      "column": 218,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 157,
+      "column": 43,
+      "text": "temperature",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 158,
+      "column": 43,
+      "text": "top_p",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 158,
+      "column": 64,
+      "text": "top_k",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 159,
+      "column": 43,
+      "text": "stop_sequences",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 174,
+      "column": 25,
+      "text": "POST /v1/rerank",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 178,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 179,
+      "column": 43,
+      "text": "query",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 180,
+      "column": 43,
+      "text": "documents",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 181,
+      "column": 43,
+      "text": "top_n",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 182,
+      "column": 43,
+      "text": "return_documents",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 182,
+      "column": 230,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 183,
+      "column": 103,
+      "text": "data[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 183,
+      "column": 179,
+      "text": "index",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 183,
+      "column": 199,
+      "text": "score",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 183,
+      "column": 289,
+      "text": "document",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 188,
+      "column": 37,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 188,
+      "column": 77,
+      "text": "/rerank \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/rerank\", \"query\": \"документ про маршрутизацию моделей\", \"documents\": [ \"Gateway models are called through a single API.\", \"Images are generated through /v1/images/generations.\", \"Usage statistics are grouped by day and month.\" ], \"top_n\": 2, \"return_documents\": true }'",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 202,
+      "column": 143,
+      "text": "results[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 212,
+      "column": 25,
+      "text": "POST /v1/embeddings",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 215,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 216,
+      "column": 43,
+      "text": "input",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 217,
+      "column": 43,
+      "text": "encoding_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 217,
+      "column": 253,
+      "text": "float",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 217,
+      "column": 334,
+      "text": "base64",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 218,
+      "column": 43,
+      "text": "dimensions",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 219,
+      "column": 43,
+      "text": "user",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 220,
+      "column": 201,
+      "text": "data[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 220,
+      "column": 281,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 234,
+      "column": 25,
+      "text": "POST /v1/images/generations",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 234,
+      "column": 56,
+      "text": "POST /v1/images",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 237,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 238,
+      "column": 43,
+      "text": "prompt",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 239,
+      "column": 43,
+      "text": "size",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 239,
+      "column": 242,
+      "text": "1024x1024",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 240,
+      "column": 43,
+      "text": "n",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 241,
+      "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 242,
+      "column": 43,
+      "text": "quality",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 242,
+      "column": 66,
+      "text": "style",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 243,
+      "column": 192,
+      "text": "data[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 248,
+      "column": 25,
+      "text": "POST /v1/images/edits",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 251,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 252,
+      "column": 43,
+      "text": "prompt",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 253,
+      "column": 43,
+      "text": "images",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 253,
+      "column": 283,
+      "text": "image",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 253,
+      "column": 360,
+      "text": "image[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 254,
+      "column": 43,
+      "text": "mask",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 255,
+      "column": 43,
+      "text": "size",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 256,
+      "column": 43,
+      "text": "n",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 257,
+      "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 258,
+      "column": 192,
+      "text": "data[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 272,
+      "column": 25,
+      "text": "POST /v1/audio/speech",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 275,
+      "column": 43,
+      "text": "Content-Type",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 275,
+      "column": 241,
+      "text": "application/json",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 276,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 277,
+      "column": 43,
+      "text": "input",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 278,
+      "column": 43,
+      "text": "voice",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 279,
+      "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 279,
+      "column": 246,
+      "text": "mp3",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 279,
+      "column": 320,
+      "text": "wav",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 280,
+      "column": 43,
+      "text": "speed",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 281,
+      "column": 185,
+      "text": "content-type",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 286,
+      "column": 25,
+      "text": "GET /v1/audio/voices",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 289,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 290,
+      "column": 217,
+      "text": "gender",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 290,
+      "column": 292,
+      "text": "language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 295,
+      "column": 25,
+      "text": "POST /v1/audio/transcriptions",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 298,
+      "column": 43,
+      "text": "Content-Type",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 298,
+      "column": 241,
+      "text": "multipart/form-data",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 299,
+      "column": 43,
+      "text": "file",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 300,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 301,
+      "column": 43,
+      "text": "language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 302,
+      "column": 43,
+      "text": "prompt",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 303,
+      "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 303,
+      "column": 247,
+      "text": "json",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 303,
+      "column": 266,
+      "text": "text",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 303,
+      "column": 285,
+      "text": "srt",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 303,
+      "column": 359,
+      "text": "vtt",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 304,
+      "column": 43,
+      "text": "temperature",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 305,
+      "column": 43,
+      "text": "timestamp_granularities[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 320,
+      "column": 25,
+      "text": "POST /v1/pdf/convert",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 323,
+      "column": 43,
+      "text": "Content-Type",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 323,
+      "column": 239,
+      "text": "multipart/form-data",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 324,
+      "column": 43,
+      "text": "file",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 325,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 326,
+      "column": 43,
+      "text": "output",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 326,
+      "column": 231,
+      "text": "both",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 326,
+      "column": 250,
+      "text": "docx",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 326,
+      "column": 323,
+      "text": "md",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 326,
+      "column": 416,
+      "text": "both",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 327,
+      "column": 43,
+      "text": "language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 327,
+      "column": 262,
+      "text": "rus+eng",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 328,
+      "column": 43,
+      "text": "target_language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 328,
+      "column": 286,
+      "text": "English",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 328,
+      "column": 362,
+      "text": "Russian",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 329,
+      "column": 43,
+      "text": "math_ocr_provider",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 329,
+      "column": 255,
+      "text": "off",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 329,
+      "column": 273,
+      "text": "mathpix",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 329,
+      "column": 349,
+      "text": "local_im2latex",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 330,
+      "column": 43,
+      "text": "formulas_max_pages",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 331,
+      "column": 43,
+      "text": "max_pages",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 332,
+      "column": 43,
+      "text": "password",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 333,
+      "column": 43,
+      "text": "ocr_preprocess_save",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 333,
+      "column": 230,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 342,
+      "column": 43,
+      "text": "POST /v1/pdf/jobs",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 342,
+      "column": 190,
+      "text": "/v1/pdf/convert",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 343,
+      "column": 43,
+      "text": "GET /v1/pdf/jobs/{job_id}",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 343,
+      "column": 163,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 343,
+      "column": 271,
+      "text": "progress",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 343,
+      "column": 294,
+      "text": "eta_seconds",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 343,
+      "column": 320,
+      "text": "message",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 343,
+      "column": 401,
+      "text": "events[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 344,
+      "column": 43,
+      "text": "GET /v1/pdf/jobs/{job_id}/result",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 344,
+      "column": 177,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 344,
+      "column": 296,
+      "text": "docx",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 344,
+      "column": 315,
+      "text": "md",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 344,
+      "column": 411,
+      "text": "preprocessed-pdf",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 345,
+      "column": 43,
+      "text": "GET /v1/pdf/jobs/{job_id}/download/{artifact}",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 345,
+      "column": 192,
+      "text": "docx",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 345,
+      "column": 211,
+      "text": "md",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 345,
+      "column": 282,
+      "text": "preprocessed-pdf",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 345,
+      "column": 374,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 352,
+      "column": 41,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 352,
+      "column": 81,
+      "text": "/pdf/jobs \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -F \"model=llmgateway/pdf-converter\" \\ -F \"file=@document.pdf;type=application/pdf\" \\ -F \"output=both\" \\ -F \"language=rus+eng\" \\ -F \"target_language=English\" \\ -F \"math_ocr_provider=mathpix\" \\ -F \"formulas_max_pages=10\" \\ -F \"max_pages=47\" \\ -F \"ocr_preprocess_save=true\"",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 365,
+      "column": 27,
+      "text": "/v1/pdf/jobs/{job_id}/download/{artifact}?model=llmgateway/pdf-converter",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 372,
+      "column": 40,
+      "text": "web*",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 377,
+      "column": 25,
+      "text": "POST /v1/web/search",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 380,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 381,
+      "column": 43,
+      "text": "query",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 382,
+      "column": 43,
+      "text": "max_results",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 383,
+      "column": 43,
+      "text": "num_queries",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 384,
+      "column": 43,
+      "text": "language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 384,
+      "column": 240,
+      "text": "ru",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 385,
+      "column": 43,
+      "text": "include_raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 385,
+      "column": 254,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 385,
+      "column": 273,
+      "text": "markdown",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 385,
+      "column": 350,
+      "text": "text",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 385,
+      "column": 499,
+      "text": "raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 385,
+      "column": 592,
+      "text": "data[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 386,
+      "column": 43,
+      "text": "read_model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 386,
+      "column": 234,
+      "text": "web_read",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 386,
+      "column": 322,
+      "text": "raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 386,
+      "column": 419,
+      "text": "include_raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 387,
+      "column": 43,
+      "text": "include_domains",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 388,
+      "column": 43,
+      "text": "exclude_domains",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 389,
+      "column": 43,
+      "text": "include_images",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 389,
+      "column": 249,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 389,
+      "column": 334,
+      "text": "data[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 389,
+      "column": 419,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 390,
+      "column": 103,
+      "text": "data[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 390,
+      "column": 200,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 390,
+      "column": 337,
+      "text": "raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 390,
+      "column": 415,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 395,
+      "column": 25,
+      "text": "POST /v1/web/read",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 398,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 399,
+      "column": 43,
+      "text": "url",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 400,
+      "column": 43,
+      "text": "format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 400,
+      "column": 231,
+      "text": "markdown",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 400,
+      "column": 308,
+      "text": "text",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 400,
+      "column": 391,
+      "text": "markdown",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 401,
+      "column": 43,
+      "text": "include_images",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 401,
+      "column": 225,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 401,
+      "column": 324,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 402,
+      "column": 103,
+      "text": "url",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 402,
+      "column": 121,
+      "text": "title",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 402,
+      "column": 204,
+      "text": "content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 402,
+      "column": 226,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 402,
+      "column": 310,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 407,
+      "column": 25,
+      "text": "POST /v1/tavily/search",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 410,
+      "column": 43,
+      "text": "query",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 411,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 411,
+      "column": 229,
+      "text": "web_search",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 412,
+      "column": 43,
+      "text": "max_results",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 413,
+      "column": 43,
+      "text": "include_raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 413,
+      "column": 255,
+      "text": "results[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 413,
+      "column": 338,
+      "text": "raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 414,
+      "column": 43,
+      "text": "read_model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 414,
+      "column": 234,
+      "text": "web_read",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 414,
+      "column": 311,
+      "text": "raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 415,
+      "column": 43,
+      "text": "include_domains",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 416,
+      "column": 43,
+      "text": "exclude_domains",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 417,
+      "column": 43,
+      "text": "include_images",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 417,
+      "column": 225,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 417,
+      "column": 334,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 417,
+      "column": 409,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 418,
+      "column": 181,
+      "text": "results[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 418,
+      "column": 205,
+      "text": "failed_results[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 418,
+      "column": 236,
+      "text": "answer",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 418,
+      "column": 257,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 418,
+      "column": 280,
+      "text": "response_time",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 418,
+      "column": 308,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 418,
+      "column": 380,
+      "text": "request_id",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 423,
+      "column": 25,
+      "text": "POST /v1/tavily/extract",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 426,
+      "column": 43,
+      "text": "urls",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 427,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 427,
+      "column": 229,
+      "text": "web_read",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 428,
+      "column": 43,
+      "text": "format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 428,
+      "column": 242,
+      "text": "markdown",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 428,
+      "column": 319,
+      "text": "text",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 428,
+      "column": 402,
+      "text": "markdown",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 429,
+      "column": 43,
+      "text": "extract_depth",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 430,
+      "column": 43,
+      "text": "include_images",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 430,
+      "column": 225,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 430,
+      "column": 310,
+      "text": "results[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 430,
+      "column": 393,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 431,
+      "column": 181,
+      "text": "results[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 431,
+      "column": 205,
+      "text": "failed_results[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 431,
+      "column": 236,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 431,
+      "column": 329,
+      "text": "response_time",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 431,
+      "column": 357,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 431,
+      "column": 429,
+      "text": "request_id",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 436,
+      "column": 25,
+      "text": "POST /v1/web/research",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 439,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 440,
+      "column": 43,
+      "text": "query",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 441,
+      "column": 43,
+      "text": "language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 441,
+      "column": 236,
+      "text": "all",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 441,
+      "column": 254,
+      "text": "ru",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 441,
+      "column": 271,
+      "text": "en",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 441,
+      "column": 288,
+      "text": "zh",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 441,
+      "column": 394,
+      "text": "all",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 442,
+      "column": 43,
+      "text": "num_queries",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 443,
+      "column": 43,
+      "text": "max_results_per_lang",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 444,
+      "column": 43,
+      "text": "max_results",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 444,
+      "column": 284,
+      "text": "max_results_per_lang",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 445,
+      "column": 43,
+      "text": "max_articles",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 446,
+      "column": 43,
+      "text": "output_language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 446,
+      "column": 257,
+      "text": "ru",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 447,
+      "column": 43,
+      "text": "format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 447,
+      "column": 250,
+      "text": "markdown",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 448,
+      "column": 103,
+      "text": "output",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 448,
+      "column": 185,
+      "text": "sources",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 448,
+      "column": 270,
+      "text": "articles",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 448,
+      "column": 345,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-text",
+      "line": 453,
+      "column": 25,
+      "text": "POST /v1/web/deep-research",
+      "classification": "protocol"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 456,
+      "column": 43,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 457,
+      "column": 43,
+      "text": "query",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 458,
+      "column": 43,
+      "text": "max_words",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 459,
+      "column": 43,
+      "text": "breadth",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 460,
+      "column": 43,
+      "text": "depth",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 461,
+      "column": 43,
+      "text": "concurrency",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 462,
+      "column": 43,
+      "text": "language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 462,
+      "column": 250,
+      "text": "ru",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 463,
+      "column": 43,
+      "text": "format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 463,
+      "column": 250,
+      "text": "markdown",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 464,
+      "column": 43,
+      "text": "image_generation",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 464,
+      "column": 227,
+      "text": "true",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 464,
+      "column": 367,
+      "text": "images[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 464,
+      "column": 454,
+      "text": "false",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 465,
+      "column": 103,
+      "text": "output",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 465,
+      "column": 185,
+      "text": "sources",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 465,
+      "column": 207,
+      "text": "source_urls",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 465,
+      "column": 292,
+      "text": "context",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 465,
+      "column": 314,
+      "text": "images",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 465,
+      "column": 387,
+      "text": "usage",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 477,
+      "column": 45,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 477,
+      "column": 85,
+      "text": "/web/search \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-search\", \"query\": \"новости рынка LLM API\", \"max_results\": 10, \"language\": \"ru\", \"include_images\": true }'",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 490,
+      "column": 45,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 490,
+      "column": 85,
+      "text": "/web/read \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-read\", \"url\": \"https://example.com/article\", \"format\": \"markdown\", \"include_images\": true }'",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 502,
+      "column": 45,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 502,
+      "column": 85,
+      "text": "/web/research \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-research\", \"query\": \"сравнение API для web search\", \"language\": \"all\", \"max_results_per_lang\": 10, \"max_articles\": 8, \"output_language\": \"ru\" }'",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 516,
+      "column": 45,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 516,
+      "column": 85,
+      "text": "/tavily/search \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-search\", \"read_model\": \"llmgateway/web-read\", \"query\": \"LLM gateway web search\", \"max_results\": 5, \"include_raw_content\": \"markdown\", \"include_domains\": [\"example.com\"], \"include_images\": true }'",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 531,
+      "column": 45,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 531,
+      "column": 85,
+      "text": "/tavily/extract \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-read\", \"urls\": [\"https://example.com/article\"], \"format\": \"markdown\", \"include_images\": true }'",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 543,
+      "column": 45,
+      "text": "curl -s",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-pre",
+      "line": 543,
+      "column": 85,
+      "text": "/web/deep-research \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-deep-research\", \"query\": \"как устроены современные rerank модели\", \"max_words\": 2500, \"breadth\": 4, \"depth\": 2, \"concurrency\": 6, \"language\": \"ru\", \"format\": \"markdown\", \"image_generation\": true }'",
+      "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 567,
+      "column": 108,
+      "text": "/v1/ui/playground",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 568,
+      "column": 66,
+      "text": "/v1/ui/web-playground",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 575,
+      "column": 120,
+      "text": "/v1/web/search",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 575,
+      "column": 149,
+      "text": "/v1/web/read",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 576,
+      "column": 131,
+      "text": "POST /v1/audio/transcriptions",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 576,
+      "column": 238,
+      "text": "multipart/form-data",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 577,
+      "column": 131,
+      "text": "GET /v1/audio/voices",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 577,
+      "column": 259,
+      "text": "POST /v1/audio/speech",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 578,
+      "column": 123,
+      "text": "/v1/images/generations",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 578,
+      "column": 219,
+      "text": "/v1/images/edits",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 578,
+      "column": 403,
+      "text": "image[]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 579,
+      "column": 120,
+      "text": "POST /v1/pdf/jobs",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 579,
+      "column": 250,
+      "text": "output=both|docx|md",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 579,
+      "column": 284,
+      "text": "language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 579,
+      "column": 378,
+      "text": "target_language",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 579,
+      "column": 525,
+      "text": "ocr_preprocess_save",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 592,
+      "column": 92,
+      "text": "lgk_...",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 593,
+      "column": 23,
+      "text": "allowed_models",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 593,
+      "column": 160,
+      "text": "web_research",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 594,
+      "column": 77,
+      "text": "web_deep_research",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 594,
+      "column": 204,
+      "text": "model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 595,
+      "column": 53,
+      "text": "include_raw_content",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 596,
+      "column": 23,
+      "text": "read_model",
+      "classification": "code"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 194,
+      "column": 141,
+      "text": "/v1/web/search",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 195,
+      "column": 268,
+      "text": ".env",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 195,
+      "column": 287,
+      "text": "PROXY_URL",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 195,
+      "column": 312,
+      "text": "TAVILY_API_KEY",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 195,
+      "column": 342,
+      "text": "JINA_API_KEY",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 195,
+      "column": 370,
+      "text": "ZAI_API_KEY",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 209,
+      "column": 139,
+      "text": "/v1/web/read",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 210,
+      "column": 306,
+      "text": "PROXY_URL",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 210,
+      "column": 331,
+      "text": "TAVILY_API_KEY",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 210,
+      "column": 361,
+      "text": "JINA_API_KEY",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 210,
+      "column": 389,
+      "text": "ZAI_API_KEY",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 210,
+      "column": 480,
+      "text": ".env",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 223,
+      "column": 135,
+      "text": "/v1/web/research",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 236,
+      "column": 144,
+      "text": "/v1/web/deep-research",
+      "classification": "protocol"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 237,
+      "column": 220,
+      "text": "image_generation: true",
+      "classification": "sample"
+    },
+    {
+      "page": "rules-editor",
+      "file": "static/rules-editor.html",
+      "kind": "html-code",
+      "line": 359,
+      "column": 231,
+      "text": "${VAR_NAME}",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-code",
+      "line": 32,
+      "column": 19,
+      "text": "models_operation_rules.json",
+      "classification": "code"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-code",
+      "line": 56,
+      "column": 144,
+      "text": "include_details",
+      "classification": "code"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 91,
+      "column": 83,
+      "text": "latest EU AI Act updates",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 116,
+      "column": 54,
+      "text": "markdown",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 117,
+      "column": 50,
+      "text": "text",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 128,
+      "column": 106,
+      "text": "example.com, docs.example.com",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 132,
+      "column": 106,
+      "text": "spam.example",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 151,
+      "column": 76,
+      "text": "https://example.com/article",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 156,
+      "column": 59,
+      "text": "markdown",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 157,
+      "column": 46,
+      "text": "text",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 186,
+      "column": 89,
+      "text": "LLM gateway web search",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 201,
+      "column": 54,
+      "text": "markdown",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 202,
+      "column": 50,
+      "text": "text",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 213,
+      "column": 112,
+      "text": "example.com, docs.example.com",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 217,
+      "column": 112,
+      "text": "spam.example",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 236,
+      "column": 107,
+      "text": "https://example.com/article https://example.com/another",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 242,
+      "column": 63,
+      "text": "markdown",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 243,
+      "column": 50,
+      "text": "text",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 291,
+      "column": 48,
+      "text": "ru",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 292,
+      "column": 48,
+      "text": "en",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 293,
+      "column": 48,
+      "text": "zh",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 300,
+      "column": 57,
+      "text": "ru",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 301,
+      "column": 48,
+      "text": "en",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 302,
+      "column": 48,
+      "text": "zh",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 309,
+      "column": 63,
+      "text": "markdown",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 310,
+      "column": 50,
+      "text": "text",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 359,
+      "column": 63,
+      "text": "markdown",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 360,
+      "column": 50,
+      "text": "text",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 405,
+      "column": 52,
+      "text": "ru",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 406,
+      "column": 52,
+      "text": "en",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 407,
+      "column": 52,
+      "text": "zh",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 408,
+      "column": 52,
+      "text": "de",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 409,
+      "column": 52,
+      "text": "fr",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 410,
+      "column": 52,
+      "text": "es",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 411,
+      "column": 52,
+      "text": "it",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 412,
+      "column": 52,
+      "text": "pt",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 413,
+      "column": 52,
+      "text": "ja",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 414,
+      "column": 52,
+      "text": "ko",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 420,
+      "column": 62,
+      "text": "mp3",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 421,
+      "column": 53,
+      "text": "wav",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 422,
+      "column": 54,
+      "text": "opus",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 423,
+      "column": 54,
+      "text": "flac",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 424,
+      "column": 53,
+      "text": "aac",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 429,
+      "column": 129,
+      "text": "1",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 457,
+      "column": 52,
+      "text": "ru",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 458,
+      "column": 52,
+      "text": "en",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 459,
+      "column": 52,
+      "text": "zh",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 460,
+      "column": 52,
+      "text": "de",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 461,
+      "column": 52,
+      "text": "fr",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 462,
+      "column": 52,
+      "text": "es",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 463,
+      "column": 52,
+      "text": "it",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 464,
+      "column": 52,
+      "text": "pt",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 465,
+      "column": 52,
+      "text": "ja",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 466,
+      "column": 52,
+      "text": "ko",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 472,
+      "column": 63,
+      "text": "json",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 473,
+      "column": 54,
+      "text": "text",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 474,
+      "column": 53,
+      "text": "srt",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 475,
+      "column": 53,
+      "text": "vtt",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 480,
+      "column": 145,
+      "text": "0",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 512,
+      "column": 59,
+      "text": "1024x1024",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 513,
+      "column": 59,
+      "text": "1024x1536",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 514,
+      "column": 59,
+      "text": "1536x1024",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 515,
+      "column": 57,
+      "text": "512x512",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 516,
+      "column": 57,
+      "text": "768x768",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 527,
+      "column": 53,
+      "text": "url",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 528,
+      "column": 58,
+      "text": "b64_json",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 567,
+      "column": 59,
+      "text": "1024x1024",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 568,
+      "column": 59,
+      "text": "1024x1536",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 569,
+      "column": 59,
+      "text": "1536x1024",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 570,
+      "column": 57,
+      "text": "512x512",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 571,
+      "column": 57,
+      "text": "768x768",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 582,
+      "column": 53,
+      "text": "url",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 583,
+      "column": 58,
+      "text": "b64_json",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 611,
+      "column": 63,
+      "text": "DOCX + MD",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 612,
+      "column": 54,
+      "text": "DOCX",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 613,
+      "column": 52,
+      "text": "MD",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 634,
+      "column": 62,
+      "text": "off",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 635,
+      "column": 57,
+      "text": "mathpix",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 636,
+      "column": 64,
+      "text": "local_im2latex",
+      "classification": "protocol"
+    }
+  ]
+}

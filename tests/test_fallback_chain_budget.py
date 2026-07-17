@@ -1,16 +1,20 @@
 """Tests for chain-wide attempt budget (max_total_attempts)."""
 
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
 import main
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 def _build_fake_config_loader(fallback_rule: dict, model: str = "gateway-model") -> Mock:
     fake_config_loader = Mock()
+    fake_config_loader.configured_paths = {}
+    fake_config_loader.operation_rules = {}
     fake_config_loader.providers_config = {
         "provider-a": SimpleNamespace(baseUrl="https://a.example", apikey="K"),
         "provider-b": SimpleNamespace(baseUrl="https://b.example", apikey="K"),
@@ -18,14 +22,30 @@ def _build_fake_config_loader(fallback_rule: dict, model: str = "gateway-model")
     fake_config_loader.fallback_rules = {model: fallback_rule}
     fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
     fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+    fake_config_loader.load_operation_rules.return_value = {}
+    fake_config_loader.load_complete.return_value = fake_config_loader
     return fake_config_loader
 
 
 class FallbackChainBudgetTests(unittest.TestCase):
-    @patch("llm_gateway_core.api.v1.chat.asyncio.sleep", new_callable=AsyncMock)
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        coordinator_patcher = patch(
+            "main.ConfigUpdateCoordinator",
+            return_value=config_update_coordinator,
+        )
+        coordinator_patcher.start()
+        self.addCleanup(coordinator_patcher.stop)
+
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_without_budget_each_model_retries_independently(
         self,
@@ -33,7 +53,6 @@ class FallbackChainBudgetTests(unittest.TestCase):
         async_client_ctor,
         _tokens_usage_db,
         make_llm_request_mock,
-        _sleep_mock,
     ):
         fake_config_loader = _build_fake_config_loader(
             {
@@ -72,10 +91,9 @@ class FallbackChainBudgetTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 503)
         self.assertEqual(make_llm_request_mock.await_count, 6)
 
-    @patch("llm_gateway_core.api.v1.chat.asyncio.sleep", new_callable=AsyncMock)
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_budget_caps_total_attempts_across_chain(
         self,
@@ -83,7 +101,6 @@ class FallbackChainBudgetTests(unittest.TestCase):
         async_client_ctor,
         _tokens_usage_db,
         make_llm_request_mock,
-        _sleep_mock,
     ):
         fake_config_loader = _build_fake_config_loader(
             {
@@ -122,10 +139,9 @@ class FallbackChainBudgetTests(unittest.TestCase):
         # Budget of 3 must be respected across both models.
         self.assertEqual(make_llm_request_mock.await_count, 3)
 
-    @patch("llm_gateway_core.api.v1.chat.asyncio.sleep", new_callable=AsyncMock)
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_budget_allows_second_model_when_first_exhausts_retries_partially(
         self,
@@ -133,7 +149,6 @@ class FallbackChainBudgetTests(unittest.TestCase):
         async_client_ctor,
         _tokens_usage_db,
         make_llm_request_mock,
-        _sleep_mock,
     ):
         fake_config_loader = _build_fake_config_loader(
             {

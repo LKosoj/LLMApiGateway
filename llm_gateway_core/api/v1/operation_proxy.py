@@ -10,7 +10,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ...utils.text_sanitize import sanitize_payload
-from ...utils.usage_tracking import enrich_tokens_usage, extract_tokens_usage
+from .operation_runtime import MultipartFilePayload
 
 logger = logging.getLogger(__name__)
 
@@ -70,32 +70,6 @@ def sanitize_target_url_for_log(target_url: str) -> str:
             "",
         )
     )
-
-
-def _mark_usd_budget_reservation_finalized(request: Request) -> None:
-    if getattr(request.state, "usd_budget_reserved", False):
-        request.state.usd_budget_finalized = True
-
-
-def _commit_usd_budget_reservation(request: Request, cost_usd: float) -> None:
-    if not getattr(request.state, "usd_budget_reserved", False):
-        return
-    if getattr(request.state, "usd_budget_finalized", False):
-        return
-    key_id = getattr(request.state, "usd_budget_reserved_key_id", None)
-    reserved_estimate = getattr(request.state, "usd_budget_reserved_estimate", None)
-    ledger = getattr(request.app.state, "usd_budget_ledger", None)
-    if key_id is not None and ledger is not None:
-        try:
-            ledger.commit_reserved(
-                int(key_id),
-                float(cost_usd or 0.0),
-                reserved=reserved_estimate,
-            )
-        except Exception as exc:
-            logger.error("Failed to commit USD budget reservation for key %s: %s", key_id, exc)
-            return
-    _mark_usd_budget_reservation_finalized(request)
 
 
 def should_retry_operation_status(status_code: int) -> bool:
@@ -299,7 +273,7 @@ async def proxy_multipart_to_downstream(
     target_url: str,
     headers: dict,
     data: Mapping[str, object] | Sequence[tuple[str, object]],
-    files: Sequence[tuple[str, tuple[str, bytes, str | None]]],
+    files: Sequence[tuple[str, MultipartFilePayload]],
     http_client: httpx.AsyncClient,
     retry_count: int = 0,
     retry_delay: float = 0.0,
@@ -315,6 +289,7 @@ async def proxy_multipart_to_downstream(
         attempt_number += 1
 
         try:
+            _rewind_multipart_files(files)
             response = await http_client.post(target_url, headers=headers, data=normalized_data, files=files)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.warning(
@@ -366,7 +341,7 @@ async def proxy_multipart_raw_to_downstream(
     target_url: str,
     headers: dict,
     data: Mapping[str, object] | Sequence[tuple[str, object]],
-    files: Sequence[tuple[str, tuple[str, bytes, str | None]]],
+    files: Sequence[tuple[str, MultipartFilePayload]],
     http_client: httpx.AsyncClient,
     retry_count: int = 0,
     retry_delay: float = 0.0,
@@ -383,6 +358,7 @@ async def proxy_multipart_raw_to_downstream(
         attempt_number += 1
 
         try:
+            _rewind_multipart_files(files)
             request_kwargs = {"headers": headers, "data": normalized_data, "files": files}
             if timeout is not None:
                 request_kwargs["timeout"] = timeout
@@ -430,6 +406,22 @@ async def proxy_multipart_raw_to_downstream(
     raise HTTPException(status_code=503, detail="Downstream request failed after exhausting retries.")
 
 
+def _rewind_multipart_files(
+    files: Sequence[tuple[str, MultipartFilePayload]],
+) -> None:
+    for _, (_, content, _) in files:
+        if isinstance(content, bytes):
+            continue
+        try:
+            content.seek(0)
+        except Exception as exc:
+            logger.error("Failed to rewind multipart upload before downstream request.")
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to prepare uploaded file for downstream request.",
+            ) from exc
+
+
 def _normalize_multipart_scalar_data(
     data: Mapping[str, object] | Sequence[tuple[str, object]],
 ) -> dict[str, object]:
@@ -450,84 +442,6 @@ def _normalize_multipart_scalar_data(
         normalized_data[field_name] = [existing_value, field_value]
 
     return normalized_data
-
-
-async def record_operation_usage(
-    request: Request,
-    downstream_json: dict,
-    *,
-    gateway_model: str,
-    operation: str,
-    duration_ms: int | None = None,
-    idempotency_key: str | None = None,
-) -> bool:
-    tokens_usage_db = getattr(request.app.state, "tokens_usage_db", None)
-
-    tokens_usage = extract_tokens_usage(downstream_json)
-    tokens_usage = enrich_tokens_usage(
-        tokens_usage,
-        request,
-        gateway_model=gateway_model,
-        operation=operation,
-    )
-    if duration_ms is not None:
-        tokens_usage["duration_ms"] = duration_ms
-
-    if tokens_usage_db is None:
-        logger.warning("TokensUsageDB not found in application state; skipping %s usage persistence.", operation)
-        if idempotency_key is not None:
-            return False
-    else:
-        try:
-            if idempotency_key is None:
-                tokens_usage_db.insert_usage(tokens_usage)
-            else:
-                insert_usage_once = getattr(tokens_usage_db, "insert_usage_once", None)
-                if not callable(insert_usage_once):
-                    logger.warning(
-                        "TokensUsageDB does not support idempotent usage persistence; skipping %s usage.",
-                        operation,
-                    )
-                    return False
-                inserted = await asyncio.to_thread(insert_usage_once, idempotency_key, tokens_usage)
-                if not inserted:
-                    return False
-        except Exception as exc:
-            logger.error("Failed to store %s usage statistics: %s", operation, exc, exc_info=True)
-            if idempotency_key is not None:
-                return False
-
-    key_id = tokens_usage.get("api_key_id")
-    if key_id is None:
-        _commit_usd_budget_reservation(request, float(tokens_usage.get("cost") or 0.0))
-        return True
-
-    api_keys_db = getattr(request.app.state, "api_keys_db", None)
-    if api_keys_db is not None:
-        try:
-            await asyncio.to_thread(
-                api_keys_db.record_spent,
-                int(key_id),
-                float(tokens_usage.get("cost") or 0.0),
-            )
-        except Exception as exc:
-            logger.error("Failed to update spent_usd for key %s after %s: %s", key_id, operation, exc)
-
-    _commit_usd_budget_reservation(request, float(tokens_usage.get("cost") or 0.0))
-
-    rate_limiter = getattr(request.app.state, "rate_limiter", None)
-    if rate_limiter is not None:
-        try:
-            key_tpm_rec = getattr(request.state, "api_key_record", None)
-            rate_limiter.add_tokens(
-                int(key_id),
-                int(tokens_usage.get("total_tokens") or 0),
-                tpm_limit=getattr(key_tpm_rec, "tpm", None),
-            )
-        except Exception as exc:
-            logger.error("Failed to attribute %s tokens to RateLimiter for key %s: %s", operation, key_id, exc)
-
-    return True
 
 
 def json_response(content: dict, status_code: int) -> JSONResponse:

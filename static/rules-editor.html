@@ -1,420 +1,410 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-i18n-page="rules-editor">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway v1.10 - Configuration Editor</title>
+    <title data-i18n="editor:page.title">LLM Gateway - Configuration Editor</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/editor.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
     <script src="/static/theme.js"></script>
 </head>
 <body>
     <div class="top-nav">
         <div class="top-nav-content">
-            <a href="/v1/ui/docs" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
-                Docs
-            </a>
-            <a href="/v1/ui/usage-stats" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-                Usage Statistics
-            </a>
-            <a href="/v1/ui/quota" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                Quota
-            </a>
-            <a href="/v1/ui/rules-editor" class="nav-button active" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                Rules Editor
-            </a>
-            <a href="/v1/ui/playground" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
-                Playground
-            </a>
-            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
-                API Keys
-            </a>
-            <a href="/v1/ui/rejections" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Rejections
-            </a>
-            <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                Translator Debug
-            </a>
-            <a href="/v1/ui/pricing" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                Pricing
-            </a>
-            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
-                <span class="icon-placeholder"></span>
-            </button>
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
         </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
     </div>
     <div class="container">
-        <h1>LLM Gateway - Configuration Editor <span class="page-version">(v1.10)</span></h1>
+        <h1><span data-i18n="editor:page.heading">LLM Gateway - Configuration Editor</span> <span class="page-version" data-product-version aria-label="Product version" data-i18n-aria-label="editor:page.versionLabel"></span></h1>
 
-        <div class="tabs">
-            <button id="tabRules" class="tab-button active" data-tab="rules">Fallback Rules</button>
-            <button id="tabEmbeddings" class="tab-button" data-tab="embeddings">Embeddings</button>
-            <button id="tabRerank" class="tab-button" data-tab="rerank">Rerank</button>
-            <button id="tabImages" class="tab-button" data-tab="images">Images</button>
-            <button id="tabAudio" class="tab-button" data-tab="audio">Audio</button>
-            <button id="tabWeb" class="tab-button" data-tab="web">Web</button>
-            <button id="tabFusion" class="tab-button" data-tab="fusion">Fusion</button>
-            <button id="tabRouter" class="tab-button" data-tab="router">Router</button>
-            <button id="tabModelRules" class="tab-button" data-tab="model-rules">Model Rules</button>
-            <button id="tabOpenRouterFree" class="tab-button" data-tab="openrouter-free" hidden>OpenRouter Free</button>
-            <button id="tabFallbackEval" class="tab-button" data-tab="fallback-eval">Fallback Eval</button>
-            <button id="tabProviders" class="tab-button" data-tab="providers">Providers</button>
+        <div class="tabs" role="tablist">
+            <button id="tabRules" class="tab-button active" data-tab="rules" role="tab" data-i18n="editor:tabs.rules">Fallback Rules</button>
+            <button id="tabEmbeddings" class="tab-button" data-tab="embeddings" role="tab" data-i18n="editor:tabs.embeddings">Embeddings</button>
+            <button id="tabRerank" class="tab-button" data-tab="rerank" role="tab" data-i18n="editor:tabs.rerank">Rerank</button>
+            <button id="tabImages" class="tab-button" data-tab="images" role="tab" data-i18n="editor:tabs.images">Images</button>
+            <button id="tabAudio" class="tab-button" data-tab="audio" role="tab" data-i18n="editor:tabs.audio">Audio</button>
+            <button id="tabWeb" class="tab-button" data-tab="web" role="tab" data-i18n="editor:tabs.web">Web</button>
+            <button id="tabFusion" class="tab-button" data-tab="fusion" role="tab" data-i18n="editor:tabs.fusion">Fusion</button>
+            <button id="tabRouter" class="tab-button" data-tab="router" role="tab" data-i18n="editor:tabs.router">Router</button>
+            <button id="tabModelRules" class="tab-button" data-tab="model-rules" role="tab" data-i18n="editor:tabs.modelRules">Model Rules</button>
+            <button id="tabOpenRouterFree" class="tab-button" data-tab="openrouter-free" role="tab" hidden data-i18n="editor:tabs.openrouterFree">OpenRouter Free</button>
+            <button id="tabFallbackEval" class="tab-button" data-tab="fallback-eval" role="tab" data-i18n="editor:tabs.fallbackEval">Fallback Eval</button>
+            <button id="tabProviders" class="tab-button" data-tab="providers" role="tab" data-i18n="editor:tabs.providers">Providers</button>
         </div>
 
         <div style="position:relative">
-            <div id="editor-container-rules" class="editor-tab-content active">
+            <div id="editor-container-rules" class="editor-tab-content active" role="tabpanel">
                 <div id="rulesBuilder" class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Fallback Rules</strong>
-                            <span>Choose providers and only their available models. Provider model lists are cached for 15 minutes and refreshed on demand.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Format: JSON5 (supports // single-line and /* multi-line */ comments)</span>
+                            <strong data-i18n="editor:sections.fallback.title">Fallback Rules</strong>
+                            <span data-i18n="editor:sections.fallback.description">Choose providers and only their available models. Provider model lists are cached for 15 minutes and refreshed on demand.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em;" data-i18n="editor:sections.fallback.format">Format: JSON5 (supports // single-line and /* multi-line */ comments)</span>
                         </div>
                         <div class="rules-toolbar-actions">
-                            <button id="previewRulesButton" type="button" class="secondary-button">Preview Changes</button>
-                            <button id="suggestEvalOrderButton" type="button" class="secondary-button">Suggest Eval Order</button>
-                            <button id="addRuleButton" type="button" class="secondary-button">Add Gateway Model</button>
+                            <button id="previewRulesButton" type="button" class="secondary-button" data-i18n="editor:actions.preview">Preview Changes</button>
+                            <button id="suggestEvalOrderButton" type="button" class="secondary-button" data-i18n="editor:actions.suggestOrder">Suggest Eval Order</button>
+                            <button id="addRuleButton" type="button" class="secondary-button" data-i18n="editor:actions.addGatewayModel">Add Gateway Model</button>
                         </div>
                     </div>
                     <div id="rulesPreviewArea" class="rules-preview" hidden></div>
                     <div id="rulesList" class="rules-list"></div>
-                    <div id="rulesEmptyState" class="rules-empty-state" hidden>
+                    <div id="rulesEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.fallback.empty">
                         No fallback rules yet. Add the first gateway model rule to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-embeddings" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-embeddings" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div id="embeddingsBuilder" class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Embeddings Routes</strong>
-                            <span>Configure routes for /v1/embeddings endpoint.</span>
+                            <strong data-i18n="editor:sections.embeddings.title">Embeddings Routes</strong>
+                            <span data-i18n="editor:sections.embeddings.description">Configure routes for /v1/embeddings endpoint.</span>
                         </div>
-                        <button id="addEmbeddingButton" type="button" class="secondary-button">Add Embedding Model</button>
+                        <button id="addEmbeddingButton" type="button" class="secondary-button" data-i18n="editor:actions.addEmbeddingModel">Add Embedding Model</button>
                     </div>
                     <div id="embeddingsList" class="rules-list"></div>
-                    <div id="embeddingsEmptyState" class="rules-empty-state" hidden>
+                    <div id="embeddingsEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.embeddings.empty">
                         No embedding routes yet. Add the first embedding model to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-rerank" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-rerank" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div id="rerankBuilder" class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Rerank Routes</strong>
-                            <span>Configure routes for /v1/rerank endpoint.</span>
+                            <strong data-i18n="editor:sections.rerank.title">Rerank Routes</strong>
+                            <span data-i18n="editor:sections.rerank.description">Configure routes for /v1/rerank endpoint.</span>
                         </div>
-                        <button id="addRerankButton" type="button" class="secondary-button">Add Rerank Model</button>
+                        <button id="addRerankButton" type="button" class="secondary-button" data-i18n="editor:actions.addRerankModel">Add Rerank Model</button>
                     </div>
                     <div id="rerankList" class="rules-list"></div>
-                    <div id="rerankEmptyState" class="rules-empty-state" hidden>
+                    <div id="rerankEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.rerank.empty">
                         No rerank routes yet. Add the first rerank model to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-fusion" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-fusion" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div id="fusionBuilder" class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Fusion Models</strong>
-                            <span>Each Fusion model runs a panel of models in parallel, a judge produces a structured analysis (agreements, disputes, per-model insights, blind spots), and a main model writes the final answer.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Pick a provider and model for each role. Register the gateway itself as a provider to reuse gateway (llmgateway/*) models. Panel size: 1–8.</span>
+                            <strong data-i18n="editor:sections.fusion.title">Fusion Models</strong>
+                            <span data-i18n="editor:sections.fusion.description">Each Fusion model runs a panel of models in parallel, a judge produces a structured analysis, and a main model writes the final answer.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;" data-i18n="editor:sections.fusion.hint">Pick a provider and model for each role. Register the gateway itself as a provider to reuse gateway models. Panel size: 1–8.</span>
                         </div>
-                        <button id="addFusionButton" type="button" class="secondary-button">Add Fusion Model</button>
+                        <button id="addFusionButton" type="button" class="secondary-button" data-i18n="editor:actions.addFusionModel">Add Fusion Model</button>
                     </div>
                     <div id="fusionList" class="rules-list"></div>
-                    <div id="fusionEmptyState" class="rules-empty-state" hidden>
+                    <div id="fusionEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.fusion.empty">
                         No fusion models yet. Add the first fusion model to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-router" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-router" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div id="routerBuilder" class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Router Models</strong>
-                            <span>Each Router model calls a selector gateway model, then routes the original request to one explicit target.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Selector and targets are chosen only from chat models configured in Fallback Rules. A target can use a full gateway fallback chain or start at a specific fallback entry and continue from there.</span>
+                            <strong data-i18n="editor:sections.router.title">Router Models</strong>
+                            <span data-i18n="editor:sections.router.description">Each Router model calls a selector gateway model, then routes the original request to one explicit target.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;" data-i18n="editor:sections.router.hint">Selector and targets come from chat models configured in Fallback Rules. A target can use the full fallback chain or start at a specific entry.</span>
                         </div>
-                        <button id="addRouterButton" type="button" class="secondary-button">Add Router Model</button>
+                        <button id="addRouterButton" type="button" class="secondary-button" data-i18n="editor:actions.addRouterModel">Add Router Model</button>
                     </div>
                     <div id="routerList" class="rules-list"></div>
-                    <div id="routerEmptyState" class="rules-empty-state" hidden>
+                    <div id="routerEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.router.empty">
                         No router models yet. Add the first router model to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-images" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-images" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Image Generation Routes</strong>
-                            <span>Configure routes for both /v1/images and /v1/images/generations.</span>
-                            <span>Default format is OpenAI-compatible passthrough. Advanced options can switch to mapping-based adapters such as NVIDIA JSON/artifacts routes.</span>
+                            <strong data-i18n="editor:sections.imageGeneration.title">Image Generation Routes</strong>
+                            <span data-i18n="editor:sections.imageGeneration.description">Configure routes for both /v1/images and /v1/images/generations.</span>
+                            <span data-i18n="editor:sections.imageGeneration.hint">The default is OpenAI-compatible passthrough. Advanced options support mapping-based adapters such as NVIDIA JSON/artifacts routes.</span>
                         </div>
-                        <button id="addImageGenerationButton" type="button" class="secondary-button">Add Generation Model</button>
+                        <button id="addImageGenerationButton" type="button" class="secondary-button" data-i18n="editor:actions.addGenerationModel">Add Generation Model</button>
                     </div>
                     <div id="imageGenerationList" class="rules-list"></div>
-                    <div id="imageGenerationEmptyState" class="rules-empty-state" hidden>
+                    <div id="imageGenerationEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.imageGeneration.empty">
                         No image generation routes yet. Add the first image generation model to begin.
                     </div>
                 </div>
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Image Edit Routes</strong>
-                            <span>Configure routes for /v1/images/edits. Supports JSON and multipart requests.</span>
-                            <span>Use request/response mappings when a downstream model needs a provider-specific shape instead of OpenAI-compatible images payloads.</span>
+                            <strong data-i18n="editor:sections.imageEdit.title">Image Edit Routes</strong>
+                            <span data-i18n="editor:sections.imageEdit.description">Configure routes for /v1/images/edits. Supports JSON and multipart requests.</span>
+                            <span data-i18n="editor:sections.imageEdit.hint">Use request and response mappings when a downstream model requires a provider-specific shape.</span>
                         </div>
-                        <button id="addImageEditButton" type="button" class="secondary-button">Add Edit Model</button>
+                        <button id="addImageEditButton" type="button" class="secondary-button" data-i18n="editor:actions.addEditModel">Add Edit Model</button>
                     </div>
                     <div id="imageEditList" class="rules-list"></div>
-                    <div id="imageEditEmptyState" class="rules-empty-state" hidden>
+                    <div id="imageEditEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.imageEdit.empty">
                         No image edit routes yet. Add the first image edit model to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-audio" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-audio" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Audio Speech Routes</strong>
-                            <span>Configure routes for /v1/audio/speech and the voice catalog used by /v1/audio/voices.</span>
-                            <span>Text-to-speech uses the first route for each gateway model. Configure retry settings and voice catalog path in advanced options.</span>
+                            <strong data-i18n="editor:sections.audioSpeech.title">Audio Speech Routes</strong>
+                            <span data-i18n="editor:sections.audioSpeech.description">Configure routes for /v1/audio/speech and the voice catalog used by /v1/audio/voices.</span>
+                            <span data-i18n="editor:sections.audioSpeech.hint">Text-to-speech uses the first route for each gateway model. Retry settings and the voice catalog path are in advanced options.</span>
                         </div>
-                        <button id="addAudioSpeechButton" type="button" class="secondary-button">Add Speech Model</button>
+                        <button id="addAudioSpeechButton" type="button" class="secondary-button" data-i18n="editor:actions.addSpeechModel">Add Speech Model</button>
                     </div>
                     <div id="audioSpeechList" class="rules-list"></div>
-                    <div id="audioSpeechEmptyState" class="rules-empty-state" hidden>
+                    <div id="audioSpeechEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.audioSpeech.empty">
                         No audio speech routes yet. Add the first speech model to begin.
                     </div>
                 </div>
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Audio Transcriptions Routes</strong>
-                            <span>Configure routes for /v1/audio/transcriptions.</span>
-                            <span>Requests stay OpenAI-compatible multipart/form-data. Advanced options can switch the downstream transport to vendor-specific adapters such as NVIDIA Riva gRPC.</span>
+                            <strong data-i18n="editor:sections.audioTranscriptions.title">Audio Transcriptions Routes</strong>
+                            <span data-i18n="editor:sections.audioTranscriptions.description">Configure routes for /v1/audio/transcriptions.</span>
+                            <span data-i18n="editor:sections.audioTranscriptions.hint">Requests remain OpenAI-compatible multipart/form-data. Advanced options can select vendor adapters such as NVIDIA Riva gRPC.</span>
                         </div>
-                        <button id="addAudioTranscriptionButton" type="button" class="secondary-button">Add Audio Model</button>
+                        <button id="addAudioTranscriptionButton" type="button" class="secondary-button" data-i18n="editor:actions.addAudioModel">Add Audio Model</button>
                     </div>
                     <div id="audioTranscriptionsList" class="rules-list"></div>
-                    <div id="audioTranscriptionsEmptyState" class="rules-empty-state" hidden>
+                    <div id="audioTranscriptionsEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.audioTranscriptions.empty">
                         No audio transcription routes yet. Add the first audio model to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-web" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-web" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Web Search Services</strong>
-                            <span>Configure gateway services for <code>/v1/web/search</code>. Each service only defines the gateway-visible name and (optionally) a query-expansion model.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Upstream adapters are built in and fixed: Proxy → Tavily → Jina → Z.AI. Enable each by setting the corresponding env var in <code>.env</code>: <code>PROXY_URL</code> / <code>TAVILY_API_KEY</code> / <code>JINA_API_KEY</code> / <code>ZAI_API_KEY</code>. Adapters are tried in that order and the first non-empty result wins.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The optional <em>Query Model</em> below each service is a gateway chat LLM used to expand the user query into multiple search queries.</span>
+                            <strong data-i18n="editor:sections.webSearch.title">Web Search Services</strong>
+                            <span><span data-i18n="editor:sections.webSearch.descriptionBefore">Configure gateway services for</span> <code>/v1/web/search</code>. <span data-i18n="editor:sections.webSearch.descriptionAfter">Each service defines a gateway-visible name and an optional query-expansion model.</span></span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;"><span data-i18n="editor:sections.webSearch.adaptersBefore">Built-in adapters run in this fixed order: Proxy → Tavily → Jina → Z.AI. Configure them in</span> <code>.env</code>: <code>PROXY_URL</code> / <code>TAVILY_API_KEY</code> / <code>JINA_API_KEY</code> / <code>ZAI_API_KEY</code>. <span data-i18n="editor:sections.webSearch.adaptersAfter">The first non-empty result wins.</span></span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;"><span data-i18n="editor:sections.webSearch.queryBefore">The optional</span> <em data-i18n="editor:sections.webSearch.queryLabel">Query Model</em> <span data-i18n="editor:sections.webSearch.queryAfter">is a gateway chat LLM that expands the user query into multiple search queries.</span></span>
                         </div>
-                        <button id="addWebSearchButton" type="button" class="secondary-button">Add Search Service</button>
+                        <button id="addWebSearchButton" type="button" class="secondary-button" data-i18n="editor:actions.addSearchService">Add Search Service</button>
                     </div>
                     <div id="webSearchList" class="rules-list"></div>
-                    <div id="webSearchEmptyState" class="rules-empty-state" hidden>
+                    <div id="webSearchEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.webSearch.empty">
                         No web search services yet. Add the first search service to begin.
                     </div>
                 </div>
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Web Read Services</strong>
-                            <span>Configure gateway services for <code>/v1/web/read</code>. Each service only defines the gateway-visible name.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The gateway first tries a direct HTTP fetch (no API key required, with trafilatura / HTML parser / PDF / YouTube subtitles). Only if that returns empty are built-in adapters tried in fixed order: Proxy → Tavily → Jina → Z.AI. Enable each by setting <code>PROXY_URL</code> / <code>TAVILY_API_KEY</code> / <code>JINA_API_KEY</code> / <code>ZAI_API_KEY</code> in <code>.env</code>.</span>
+                            <strong data-i18n="editor:sections.webRead.title">Web Read Services</strong>
+                            <span><span data-i18n="editor:sections.webRead.descriptionBefore">Configure gateway services for</span> <code>/v1/web/read</code>. <span data-i18n="editor:sections.webRead.descriptionAfter">Each service defines only its gateway-visible name.</span></span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;"><span data-i18n="editor:sections.webRead.adaptersBefore">The gateway first tries direct HTTP fetch. If it is empty, built-in adapters run in order: Proxy → Tavily → Jina → Z.AI. Configure</span> <code>PROXY_URL</code> / <code>TAVILY_API_KEY</code> / <code>JINA_API_KEY</code> / <code>ZAI_API_KEY</code> <span data-i18n="editor:sections.webRead.adaptersAfter">in</span> <code>.env</code>.</span>
                         </div>
-                        <button id="addWebReadButton" type="button" class="secondary-button">Add Read Service</button>
+                        <button id="addWebReadButton" type="button" class="secondary-button" data-i18n="editor:actions.addReadService">Add Read Service</button>
                     </div>
                     <div id="webReadList" class="rules-list"></div>
-                    <div id="webReadEmptyState" class="rules-empty-state" hidden>
+                    <div id="webReadEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.webRead.empty">
                         No web read services yet. Add the first read service to begin.
                     </div>
                 </div>
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Web Research Services</strong>
-                            <span>Composite services for <code>/v1/web/research</code>. Each service picks a gateway Web Search, a Web Read, and a chat LLM to synthesize the final answer.</span>
+                            <strong data-i18n="editor:sections.webResearch.title">Web Research Services</strong>
+                            <span><span data-i18n="editor:sections.webResearch.descriptionBefore">Composite services for</span> <code>/v1/web/research</code>. <span data-i18n="editor:sections.webResearch.descriptionAfter">Each service chooses Web Search, Web Read, and a chat LLM for the final answer.</span></span>
                         </div>
-                        <button id="addWebResearchButton" type="button" class="secondary-button">Add Research Service</button>
+                        <button id="addWebResearchButton" type="button" class="secondary-button" data-i18n="editor:actions.addResearchService">Add Research Service</button>
                     </div>
                     <div id="webResearchList" class="rules-list"></div>
-                    <div id="webResearchEmptyState" class="rules-empty-state" hidden>
+                    <div id="webResearchEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.webResearch.empty">
                         No web research services yet. Add the first research service to begin.
                     </div>
                 </div>
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Web Deep Research Services</strong>
-                            <span>GPT Researcher services for <code>/v1/web/deep-research</code>. Every model (search, read, fast/smart/strategic LLMs, embedding, image) is a gateway-managed model.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Image generation is opt-in per request (<code>image_generation: true</code>) and uses the configured gateway image model.</span>
+                            <strong data-i18n="editor:sections.webDeepResearch.title">Web Deep Research Services</strong>
+                            <span><span data-i18n="editor:sections.webDeepResearch.descriptionBefore">GPT Researcher services for</span> <code>/v1/web/deep-research</code>. <span data-i18n="editor:sections.webDeepResearch.descriptionAfter">Every search, read, LLM, embedding, and image model is gateway-managed.</span></span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;"><span data-i18n="editor:sections.webDeepResearch.imageBefore">Image generation is opt-in per request</span> (<code>image_generation: true</code>) <span data-i18n="editor:sections.webDeepResearch.imageAfter">and uses the configured gateway image model.</span></span>
                         </div>
-                        <button id="addWebDeepResearchButton" type="button" class="secondary-button">Add Deep Research Service</button>
+                        <button id="addWebDeepResearchButton" type="button" class="secondary-button" data-i18n="editor:actions.addDeepResearchService">Add Deep Research Service</button>
                     </div>
                     <div id="webDeepResearchList" class="rules-list"></div>
-                    <div id="webDeepResearchEmptyState" class="rules-empty-state" hidden>
+                    <div id="webDeepResearchEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.webDeepResearch.empty">
                         No web deep research services yet. Add the first deep research service to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-openrouter-free" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-openrouter-free" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div class="rules-builder openrouter-free-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>OpenRouter Free Model Ranking</strong>
-                            <span>Read-only ranking of free text OpenRouter models scored by metadata, health, latency, and lite eval checks.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The tab is shown only when the official OpenRouter provider and API key are configured. All eligible reachable models are evaluated.</span>
+                            <strong data-i18n="editor:eval.openrouterTitle">OpenRouter Free Model Ranking</strong>
+                            <span data-i18n="editor:eval.openrouterDescription">Read-only ranking of free text OpenRouter models scored by metadata, health, latency, and lite eval checks.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;" data-i18n="editor:eval.openrouterHint">This tab is shown only when the official OpenRouter provider and API key are configured.</span>
                         </div>
-                        <button id="runOpenRouterFreeEvalButton" type="button" class="secondary-button">Run Full Eval</button>
+                        <button id="runOpenRouterFreeEvalButton" type="button" class="secondary-button" data-i18n="editor:actions.runFullEval">Run Full Eval</button>
                     </div>
-                    <dl class="openrouter-free-guide" aria-label="OpenRouter scoring metric descriptions">
+                    <dl class="openrouter-free-guide" aria-label="OpenRouter scoring metric descriptions" data-i18n-aria-label="editor:eval.openrouterGuideLabel">
                         <div>
-                            <dt>metadata</dt>
-                            <dd>Catalog score for free pricing, context size, max output, recency, and supported features such as tools, structured outputs, response format, reasoning, seed, and stop.</dd>
+                            <dt data-i18n="editor:eval.metadata">metadata</dt>
+                            <dd data-i18n="editor:eval.metadataDescription">Catalog score based on pricing, context size, recency, and supported features.</dd>
                         </div>
                         <div>
-                            <dt>health</dt>
-                            <dd>Probe score from a small “reply OK” request. Passed models get the full health bonus; imperfect or failed probes get less.</dd>
+                            <dt data-i18n="editor:eval.health">health</dt>
+                            <dd data-i18n="editor:eval.healthDescription">Probe score from a small reply request.</dd>
                         </div>
                         <div>
-                            <dt>latency</dt>
-                            <dd>Speed bonus calculated from the health probe latency. Lower latency gives more points.</dd>
+                            <dt data-i18n="editor:eval.latency">latency</dt>
+                            <dd data-i18n="editor:eval.latencyDescription">Speed bonus based on health probe latency.</dd>
                         </div>
                         <div>
-                            <dt>eval</dt>
-                            <dd>Lite eval score for instruction following, tool-call JSON, Python code unit tests, parameterized arithmetic, and factual QA.</dd>
+                            <dt data-i18n="editor:eval.eval">eval</dt>
+                            <dd data-i18n="editor:eval.evalDescription">Lite eval score for instruction following, tools, code, arithmetic, and factual QA.</dd>
                         </div>
                         <div>
-                            <dt>penalty</dt>
-                            <dd>Instability points subtracted from the final score, mainly for rate limits or probe errors.</dd>
+                            <dt data-i18n="editor:eval.penalty">penalty</dt>
+                            <dd data-i18n="editor:eval.penaltyDescription">Instability points subtracted from the final score.</dd>
                         </div>
                         <div>
-                            <dt>latency ms</dt>
-                            <dd>Measured response time of the health probe in milliseconds.</dd>
+                            <dt data-i18n="editor:eval.latencyMs">latency ms</dt>
+                            <dd data-i18n="editor:eval.latencyMsDescription">Measured health probe response time in milliseconds.</dd>
                         </div>
                         <div>
-                            <dt>context</dt>
-                            <dd>Model context window size in tokens from the OpenRouter catalog.</dd>
+                            <dt data-i18n="editor:eval.context">context</dt>
+                            <dd data-i18n="editor:eval.contextDescription">Model context window size in tokens.</dd>
                         </div>
                         <div>
-                            <dt>health status</dt>
-                            <dd>Raw health probe result, for example passed, imperfect, http_429, timeout, or another error class.</dd>
+                            <dt data-i18n="editor:eval.healthStatus">health status</dt>
+                            <dd data-i18n="editor:eval.healthStatusDescription">Raw health probe result.</dd>
                         </div>
                     </dl>
                     <div id="openRouterFreeStatus" class="openrouter-free-status"></div>
                     <div id="openRouterFreeModels" class="openrouter-free-models"></div>
-                    <div id="openRouterFreeEmptyState" class="rules-empty-state" hidden>
+                    <div id="openRouterFreeEmptyState" class="rules-empty-state" hidden data-i18n="editor:eval.openrouterEmpty">
                         OpenRouter scoring has not produced a snapshot yet.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-fallback-eval" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-fallback-eval" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div class="rules-builder fallback-eval-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Fallback Model Eval</strong>
-                            <span>Manual lite eval for unique provider/model targets from configured fallback rules.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">The eval runs only when you press the button; it evaluates OpenAI-compatible and Anthropic targets directly and does not change routing rules.</span>
+                            <strong data-i18n="editor:eval.fallbackTitle">Fallback Model Eval</strong>
+                            <span data-i18n="editor:eval.fallbackDescription">Manual lite eval for unique provider/model targets from configured fallback rules.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;" data-i18n="editor:eval.fallbackHint">The eval runs only when you press the button and does not change routing rules.</span>
                         </div>
-                        <button id="runFallbackEvalButton" type="button" class="secondary-button">Run Eval</button>
+                        <button id="runFallbackEvalButton" type="button" class="secondary-button" data-i18n="editor:actions.runEval">Run Eval</button>
                     </div>
-                    <dl class="openrouter-free-guide" aria-label="Fallback model eval metric descriptions">
+                    <dl class="openrouter-free-guide" aria-label="Fallback model eval metric descriptions" data-i18n-aria-label="editor:eval.fallbackGuideLabel">
                         <div>
-                            <dt>unique target</dt>
-                            <dd>A configured fallback route grouped by provider and model. Repeated routes are evaluated once and list all gateway models that reference them.</dd>
+                            <dt data-i18n="editor:eval.uniqueTarget">unique target</dt>
+                            <dd data-i18n="editor:eval.uniqueTargetDescription">A provider/model fallback route evaluated once for all referencing gateway models.</dd>
                         </div>
                         <div>
-                            <dt>health</dt>
-                            <dd>Probe score from a small “reply OK” request sent directly to the configured provider/model route.</dd>
+                            <dt data-i18n="editor:eval.health">health</dt>
+                            <dd data-i18n="editor:eval.healthDescription">Probe score from a small reply request.</dd>
                         </div>
                         <div>
-                            <dt>latency</dt>
-                            <dd>Speed bonus calculated from the health probe latency. Lower latency gives more points.</dd>
+                            <dt data-i18n="editor:eval.latency">latency</dt>
+                            <dd data-i18n="editor:eval.latencyDescription">Speed bonus based on health probe latency.</dd>
                         </div>
                         <div>
-                            <dt>eval</dt>
-                            <dd>Lite eval score for instruction following, tool-call JSON, Python code unit tests, arithmetic, and factual QA.</dd>
+                            <dt data-i18n="editor:eval.eval">eval</dt>
+                            <dd data-i18n="editor:eval.evalDescription">Lite eval score for instruction following, tools, code, arithmetic, and factual QA.</dd>
                         </div>
                         <div>
-                            <dt>metadata</dt>
-                            <dd>OpenRouter catalog score matched by model basename when the official openrouter provider and API key are configured. If a target has no match but other targets do, this is the median known metadata score.</dd>
+                            <dt data-i18n="editor:eval.metadata">metadata</dt>
+                            <dd data-i18n="editor:eval.metadataDescription">Catalog score based on pricing, context size, recency, and supported features.</dd>
                         </div>
                         <div>
-                            <dt>penalty</dt>
-                            <dd>Instability points subtracted from the final score, mainly for rate limits or probe errors.</dd>
+                            <dt data-i18n="editor:eval.penalty">penalty</dt>
+                            <dd data-i18n="editor:eval.penaltyDescription">Instability points subtracted from the final score.</dd>
                         </div>
                         <div>
-                            <dt>latency ms</dt>
-                            <dd>Measured response time of the health probe in milliseconds.</dd>
+                            <dt data-i18n="editor:eval.latencyMs">latency ms</dt>
+                            <dd data-i18n="editor:eval.latencyMsDescription">Measured health probe response time in milliseconds.</dd>
                         </div>
                         <div>
-                            <dt>context</dt>
-                            <dd>OpenRouter context length when a catalog card was matched; otherwise 0.</dd>
+                            <dt data-i18n="editor:eval.context">context</dt>
+                            <dd data-i18n="editor:eval.contextDescription">Model context window size in tokens.</dd>
                         </div>
                         <div>
-                            <dt>health status</dt>
-                            <dd>Raw health probe result, for example passed, imperfect, http_429, missing_provider, timeout, or another error class.</dd>
+                            <dt data-i18n="editor:eval.healthStatus">health status</dt>
+                            <dd data-i18n="editor:eval.healthStatusDescription">Raw health probe result.</dd>
                         </div>
                     </dl>
                     <div id="fallbackEvalStatus" class="openrouter-free-status"></div>
                     <div id="fallbackEvalModels" class="openrouter-free-models"></div>
-                    <div id="fallbackEvalEmptyState" class="rules-empty-state" hidden>
+                    <div id="fallbackEvalEmptyState" class="rules-empty-state" hidden data-i18n="editor:eval.fallbackEmpty">
                         Fallback model eval has not been run yet.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-providers" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-providers" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div id="providersBuilder" class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Providers</strong>
-                            <span>Configure provider base URLs, API key references, native API type, proxy, and optional model metadata.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">API key and proxy environment variables must use explicit <code>${VAR_NAME}</code> syntax.</span>
+                            <strong data-i18n="editor:sections.providers.title">Providers</strong>
+                            <span data-i18n="editor:sections.providers.description">Configure provider base URLs, API key references, native API type, proxy, and optional model metadata.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;"><span data-i18n="editor:sections.providers.hintBefore">API key and proxy environment variables must use explicit</span> <code>${VAR_NAME}</code> <span data-i18n="editor:sections.providers.hintAfter">syntax.</span></span>
                         </div>
-                        <button id="addProviderButton" type="button" class="secondary-button">Add Provider</button>
+                        <button id="addProviderButton" type="button" class="secondary-button" data-i18n="editor:actions.addProvider">Add Provider</button>
                     </div>
                     <div id="providersList" class="rules-list"></div>
-                    <div id="providersEmptyState" class="rules-empty-state" hidden>
+                    <div id="providersEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.providers.empty">
                         No providers yet. Add the first provider to begin.
                     </div>
                 </div>
             </div>
-            <div id="editor-container-model-rules" class="editor-tab-content" style="display: none;">
+            <div id="editor-container-model-rules" class="editor-tab-content" role="tabpanel" style="display: none;">
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong>Model Rules</strong>
-                            <span>Configure aliases, prefixes, excluded models, and upstream model pools in models_model_rules.json.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;">Format: JSON5 object. Unknown alias targets and invalid pools fail closed on save.</span>
+                            <strong data-i18n="editor:sections.modelRules.title">Model Rules</strong>
+                            <span data-i18n="editor:sections.modelRules.description">Configure aliases, prefixes, excluded models, and upstream model pools in models_model_rules.json.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;" data-i18n="editor:sections.modelRules.hint">Format: JSON5 object. Unknown alias targets and invalid pools fail closed on save.</span>
                         </div>
                     </div>
                     <textarea id="modelRulesRawInput" class="raw-json-editor" rows="18" spellcheck="false"></textarea>
                 </div>
             </div>
         </div>
-        <button id="saveButton">Save Configuration</button>
+        <div
+            id="editorConflictState"
+            class="editor-conflict-state"
+            role="alert"
+            tabindex="-1"
+            hidden
+        >
+            <div class="editor-conflict-copy">
+                <strong data-i18n="editor:conflict.title"></strong>
+                <span data-i18n="editor:conflict.message"></span>
+            </div>
+            <button
+                id="reloadEditorDocumentButton"
+                type="button"
+                class="secondary-button"
+                data-i18n="editor:conflict.reload"
+            ></button>
+        </div>
+        <button id="saveButton" data-editor-dirty="false" data-i18n="editor:actions.saveConfiguration">Save Configuration</button>
         <div id="messageArea"></div>
+        <pre id="messageRawDetail" data-i18n-raw-detail hidden></pre>
     </div>
 
-    <script src="/static/ui-core.js"></script>
-    <script src="/static/shared-nav.js"></script>
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
     <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
     <script src="/static/editor.js"></script>
 </body>
 </html>

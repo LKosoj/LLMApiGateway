@@ -1,17 +1,43 @@
 import copy
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
 import main
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 class ChatRetryPayloadTests(unittest.TestCase):
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack,
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        patchers = (
+            patch.object(main.AtomicConfigFileTransaction, "recover_pending"),
+            patch(
+                "llm_gateway_core.services.runtime_candidate."
+                "build_operation_cost_calculator_registry",
+                return_value={},
+            ),
+            patch(
+                "main.ConfigUpdateCoordinator",
+                return_value=config_update_coordinator,
+            ),
+        )
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_retry_attempts_reuse_clean_payload_copies(
         self,
@@ -43,6 +69,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -87,7 +114,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_null_response_format_is_omitted_from_provider_payload(
         self,
@@ -117,6 +144,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -157,7 +185,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_parameterless_function_tools_receive_empty_schema(
         self,
@@ -187,6 +215,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -238,7 +267,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_minimax_models_merge_multiple_system_messages(
         self,
@@ -268,6 +297,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -314,7 +344,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_non_minimax_models_keep_multiple_system_messages(
         self,
@@ -344,6 +374,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()

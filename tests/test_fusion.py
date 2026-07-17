@@ -1,17 +1,32 @@
+import asyncio
 import json
 import time
 import unittest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from types import MappingProxyType, SimpleNamespace
+from unittest.mock import AsyncMock, Mock, create_autospec, patch
 
 import pydantic
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1 import web as web_api
 from llm_gateway_core.config.loader import ConfigLoader, FusionModelConfig, ProviderDetails
 from llm_gateway_core.services import fusion_ensemble
+from llm_gateway_core.services.accounting import (
+    AccountingReceipt,
+    AccountingReservation,
+    AccountingCostError,
+    AccountingUsage,
+    BillingComponent,
+    BillingComponentKind,
+    CostSource,
+    ProjectionStatus,
+    SourceStatus,
+)
+from llm_gateway_core.services.accounting_service import AccountingService
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
+from llm_gateway_core.utils.usage_tracking import build_model_cost_rate_registry
 from tests._async_compat import run_async
 
 
@@ -19,7 +34,13 @@ def _panel_response(content, usage=None):
     return (
         {
             "choices": [{"message": {"role": "assistant", "content": content}}],
-            "usage": usage or {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            "usage": usage
+            or {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "cost": 0.0,
+            },
         },
         None,
     )
@@ -41,6 +62,10 @@ async def _fake_make_llm_request(client, url, headers, payload, is_streaming):
     else:
         content = f"answer for {payload['model']}"
     return _panel_response(content)
+
+
+def _frozen_cost_rate_registry(config_loader):
+    return MappingProxyType(build_model_cost_rate_registry(config_loader.providers_config))
 
 
 class FusionConfigValidationTests(unittest.TestCase):
@@ -108,7 +133,10 @@ class FusionServiceTests(unittest.TestCase):
                 "p1": SimpleNamespace(baseUrl="https://p1.example", apikey="K", type="openai"),
             }
         )
-        return FusionEnsembleService(config_loader)
+        return FusionEnsembleService(
+            config_loader,
+            cost_rate_registry=_frozen_cost_rate_registry(config_loader),
+        )
 
     def _fusion_config(self, **overrides):
         config = {
@@ -153,7 +181,7 @@ class FusionServiceTests(unittest.TestCase):
         self.assertEqual(request.state.llmgateway_provider, "p1")
         self.assertEqual(request.state.llmgateway_provider_model, "main")
 
-    def test_pipeline_sums_cost_by_actual_fusion_member(self):
+    def test_pipeline_uses_injected_cost_registry_after_loader_pricing_mutation(self):
         config_loader = SimpleNamespace(
             providers_config={
                 "p1": SimpleNamespace(
@@ -163,11 +191,22 @@ class FusionServiceTests(unittest.TestCase):
                     models={
                         "m1": {"input_rate": 1.0, "output_rate": 2.0},
                         "judge": {"input_rate": 3.0, "output_rate": 4.0},
+                        "main": {"input_rate": 100.0, "output_rate": 200.0},
                     },
                 ),
             }
         )
-        service = FusionEnsembleService(config_loader)
+        cost_rate_registry = _frozen_cost_rate_registry(config_loader)
+        service = FusionEnsembleService(
+            config_loader,
+            cost_rate_registry=cost_rate_registry,
+        )
+        self.assertIs(service._cost_rate_registry, cost_rate_registry)
+        config_loader.providers_config["p1"].models = {
+            "m1": {"input_rate": 10_000.0, "output_rate": 20_000.0},
+            "judge": {"input_rate": 30_000.0, "output_rate": 40_000.0},
+            "main": {"input_rate": 50_000.0, "output_rate": 60_000.0},
+        }
         request = SimpleNamespace(state=SimpleNamespace())
 
         async def priced_members(client, url, headers, payload, is_streaming):
@@ -175,7 +214,9 @@ class FusionServiceTests(unittest.TestCase):
             if model == "m1":
                 return _panel_response(
                     "m1 answer",
-                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                    MappingProxyType(
+                        {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+                    ),
                 )
             if model == "m2":
                 return _panel_response(
@@ -189,15 +230,15 @@ class FusionServiceTests(unittest.TestCase):
                 )
             return _panel_response(
                 "FINAL ANSWER",
-                {"prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10, "cost": 0.5},
+                {"prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10, "cost": 0.0},
             )
 
         with patch(
             "llm_gateway_core.services.fusion_ensemble.make_llm_request",
             side_effect=priced_members,
         ):
-            result = run_async(
-                service.run(
+            observed = run_async(
+                service.run_observed(
                     request=request,
                     gateway_model_name="llmgateway/fusion-test",
                     fusion_config=self._fusion_config(judge_model={"provider": "p1", "model": "judge"}),
@@ -206,14 +247,25 @@ class FusionServiceTests(unittest.TestCase):
                     proxy_http_clients={},
                 )
             )
+        result = observed.response
 
-        expected_cost = 0.02 + 0.5 + ((10 * 1.0 + 5 * 2.0) / 1_000_000) + ((2 * 3.0 + 3 * 4.0) / 1_000_000)
+        expected_cost = 0.02 + ((10 * 1.0 + 5 * 2.0) / 1_000_000) + ((2 * 3.0 + 3 * 4.0) / 1_000_000)
         self.assertEqual(result["usage"]["total_tokens"], 32)
         self.assertAlmostEqual(result["usage"]["cost"], expected_cost)
         self.assertNotIn("_cost_incomplete", result["usage"])
         self.assertAlmostEqual(request.state.usage_tracker["cost"], expected_cost)
         self.assertTrue(request.state.usage_tracker[fusion_ensemble.RATE_BASED_COST_SKIP_KEY])
         self.assertNotIn(fusion_ensemble.UPSTREAM_COST_PRESENT_KEY, request.state.usage_tracker)
+        self.assertEqual(
+            [component.cost_source for component in observed.observation.components],
+            [
+                CostSource.TOKEN_REGISTRY,
+                CostSource.UPSTREAM,
+                CostSource.TOKEN_REGISTRY,
+                CostSource.UPSTREAM,
+            ],
+        )
+        self.assertEqual(observed.observation.components[-1].usage.cost, 0.0)
 
     def test_main_failure_preserves_panel_and_judge_usage_tracker(self):
         service = self._service()
@@ -325,6 +377,413 @@ class FusionServiceTests(unittest.TestCase):
         self.assertEqual(errored[0]["model"], "m2")
 
 
+class FusionObservedAccountingTests(unittest.TestCase):
+    def _service(self):
+        config_loader = SimpleNamespace(
+            providers_config={
+                "p1": SimpleNamespace(
+                    baseUrl="https://p1.example",
+                    apikey="K",
+                    type="openai",
+                    models={
+                        model: {"input_rate": 1.0, "output_rate": 1.0}
+                        for model in ("m1", "m2", "judge", "main")
+                    },
+                ),
+            }
+        )
+        return FusionEnsembleService(
+            config_loader,
+            cost_rate_registry=_frozen_cost_rate_registry(config_loader),
+        )
+
+    @staticmethod
+    def _config():
+        return {
+            "panel": [
+                {"provider": "p1", "model": "m1"},
+                {"provider": "p1", "model": "m2"},
+            ],
+            "judge_model": {"provider": "p1", "model": "judge"},
+            "main_model": {"provider": "p1", "model": "main"},
+            "include_details_default": False,
+        }
+
+    @staticmethod
+    def _priced_response(content, *, cost):
+        return _panel_response(
+            content,
+            {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "cost": cost,
+            },
+        )
+
+    def test_observed_manifest_keeps_config_order_after_reverse_panel_completion(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        m2_finished = asyncio.Event()
+        completion_order = []
+
+        async def reverse_completion(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            if model == "m1":
+                await m2_finished.wait()
+                completion_order.append(model)
+                return self._priced_response("m1 answer", cost=0.01)
+            if model == "m2":
+                completion_order.append(model)
+                m2_finished.set()
+                return self._priced_response("m2 answer", cost=0.02)
+            if model == "judge":
+                return self._priced_response(
+                    json.dumps({"agreements": [], "disputes": []}),
+                    cost=0.03,
+                )
+            return self._priced_response("FINAL", cost=0.04)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=reverse_completion,
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._config(),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(completion_order, ["m2", "m1"])
+        self.assertEqual(
+            [(component.provider, component.model) for component in observed.observation.components],
+            [("p1", "m1"), ("p1", "m2"), ("p1", "judge"), ("p1", "main")],
+        )
+        self.assertEqual(
+            [component.cost_source for component in observed.observation.components],
+            [CostSource.UPSTREAM] * 4,
+        )
+        self.assertEqual(observed.observation.usage.total_tokens, 8)
+        self.assertAlmostEqual(observed.observation.usage.cost, 0.1)
+        self.assertEqual(observed.response["usage"]["total_tokens"], 8)
+        self.assertAlmostEqual(observed.response["usage"]["cost"], 0.1)
+        self.assertEqual(observed.observation.top_provider, "p1")
+        self.assertEqual(observed.observation.top_model, "main")
+        fingerprints = [
+            component.billing_fingerprint for component in observed.observation.components
+        ]
+        self.assertEqual(len(set(fingerprints)), 4)
+
+    def test_observed_manifest_retains_only_successful_panels_and_skips_failed_judge(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def partial_success(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            if model in {"m2", "judge"}:
+                return None, f"{model} unavailable"
+            return self._priced_response(f"answer from {model}", cost=0.0)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=partial_success,
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._config(),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(
+            [component.model for component in observed.observation.components],
+            ["m1", "main"],
+        )
+        self.assertEqual(observed.observation.usage.total_tokens, 4)
+
+    def test_main_failure_does_not_construct_terminal_observation(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def fail_main(client, url, headers, payload, is_streaming):
+            if payload["model"] == "main":
+                return None, "main unavailable"
+            return self._priced_response(
+                json.dumps({"agreements": [], "disputes": []}),
+                cost=0.0,
+            )
+
+        with (
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+                side_effect=fail_main,
+            ),
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.ChatTerminalObservation"
+            ) as observation_type,
+        ):
+            with self.assertRaises(HTTPException):
+                run_async(
+                    service.run_observed(
+                        request=request,
+                        gateway_model_name="llmgateway/fusion-test",
+                        fusion_config=self._config(),
+                        request_body={"messages": [{"role": "user", "content": "hi"}]},
+                        http_client=None,
+                        proxy_http_clients={},
+                    )
+                )
+
+        observation_type.assert_not_called()
+        self.assertFalse(hasattr(request.state, "chat_terminal_observation"))
+
+    def test_observed_web_tools_preserve_invocation_component_order(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        config = self._config()
+        config["panel"] = [{"provider": "p1", "model": "m1"}]
+        config["web_tools"] = {"search_model": "llmgateway/web-search"}
+        operation_component = BillingComponent(
+            provider=None,
+            model=None,
+            usage=AccountingUsage(cost=0.2),
+            cost_source=CostSource.OPERATION_CONFIGURED,
+            component_kind=BillingComponentKind.OPERATION,
+            operation="web_search",
+            gateway_model="llmgateway/web-search",
+        )
+        internal_component = BillingComponent(
+            provider="query-provider",
+            model="query-model",
+            usage=AccountingUsage(
+                prompt_tokens=2,
+                completion_tokens=1,
+                total_tokens=3,
+                cost=0.05,
+            ),
+            cost_source=CostSource.UPSTREAM,
+        )
+
+        async def web_tool_members(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            if model == "m1":
+                has_tool_result = any(
+                    message.get("role") == "tool" for message in payload["messages"]
+                )
+                if not has_tool_result:
+                    response, error = _tool_call_response("web_search", {"query": "latest"})
+                    response["usage"]["cost"] = 0.01
+                    return response, error
+                return self._priced_response("panel answer", cost=0.02)
+            if model == "judge":
+                return self._priced_response(
+                    json.dumps({"agreements": [], "disputes": []}),
+                    cost=0.03,
+                )
+            return self._priced_response("FINAL", cost=0.04)
+
+        observed_search = AsyncMock(
+            return_value=web_api._ObservedWebToolResult(
+                result=[
+                    {
+                        "url": "https://example.test",
+                        "title": "Title",
+                        "snippet": "Snippet",
+                    }
+                ],
+                components=(operation_component, internal_component),
+            )
+        )
+        with (
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+                side_effect=web_tool_members,
+            ),
+            patch.object(web_api, "_search_with_model_observed", observed_search),
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=config,
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(
+            [
+                (component.component_kind, component.provider, component.model)
+                for component in observed.observation.components
+            ],
+            [
+                (BillingComponentKind.MODEL, "p1", "m1"),
+                (BillingComponentKind.OPERATION, None, None),
+                (BillingComponentKind.MODEL, "query-provider", "query-model"),
+                (BillingComponentKind.MODEL, "p1", "m1"),
+                (BillingComponentKind.MODEL, "p1", "judge"),
+                (BillingComponentKind.MODEL, "p1", "main"),
+            ],
+        )
+        self.assertEqual(observed.observation.components[1], operation_component)
+        self.assertEqual(observed.observation.components[2], internal_component)
+        self.assertAlmostEqual(observed.observation.usage.cost, 0.35)
+        self.assertAlmostEqual(observed.response["usage"]["cost"], 0.35)
+        observed_search.assert_awaited_once()
+
+    def test_observed_failed_web_tool_adds_no_operation_component(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        config = self._config()
+        config["panel"] = [{"provider": "p1", "model": "m1"}]
+        config["web_tools"] = {"search_model": "llmgateway/web-search"}
+
+        async def web_tool_members(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            if model == "m1":
+                has_tool_result = any(
+                    message.get("role") == "tool" for message in payload["messages"]
+                )
+                if not has_tool_result:
+                    response, error = _tool_call_response("web_search", {"query": "latest"})
+                    response["usage"]["cost"] = 0.01
+                    return response, error
+                return self._priced_response("panel answer after tool error", cost=0.02)
+            if model == "judge":
+                return self._priced_response(
+                    json.dumps({"agreements": [], "disputes": []}),
+                    cost=0.03,
+                )
+            return self._priced_response("FINAL", cost=0.04)
+
+        with (
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+                side_effect=web_tool_members,
+            ),
+            patch.object(
+                web_api,
+                "_search_with_model_observed",
+                AsyncMock(
+                    side_effect=HTTPException(
+                        status_code=503,
+                        detail="search failed",
+                    )
+                ),
+                create=True,
+            ),
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=config,
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertTrue(
+            all(
+                component.component_kind is BillingComponentKind.MODEL
+                for component in observed.observation.components
+            )
+        )
+
+    def test_failed_web_tool_keeps_completed_internal_model_without_operation(self):
+        internal_component = BillingComponent(
+            provider="query-provider",
+            model="query-model",
+            usage=AccountingUsage(
+                prompt_tokens=2,
+                completion_tokens=1,
+                total_tokens=3,
+                cost=0.05,
+            ),
+            cost_source=CostSource.UPSTREAM,
+        )
+
+        async def failed_search(*_args, _component_accumulator, **_kwargs):
+            _component_accumulator.append(internal_component)
+            raise HTTPException(status_code=503, detail="search failed")
+
+        with patch.object(
+            web_api,
+            "_search_with_model_observed",
+            side_effect=failed_search,
+        ):
+            result_text, _usage, components = run_async(
+                FusionEnsembleService._execute_web_tool(
+                    SimpleNamespace(),
+                    {
+                        "function": {
+                            "name": "web_search",
+                            "arguments": json.dumps({"query": "latest"}),
+                        }
+                    },
+                    {"search_model": "llmgateway/web-search"},
+                    observe=True,
+                )
+            )
+
+        self.assertEqual(result_text, "web_search error: search failed")
+        self.assertEqual(components, (internal_component,))
+        self.assertTrue(
+            all(
+                component.component_kind is BillingComponentKind.MODEL
+                for component in components
+            )
+        )
+
+    def test_invalid_panel_cost_fails_closed_without_terminal_observation(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        seen_models = []
+
+        async def invalid_panel_cost(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            seen_models.append(model)
+            response, error = self._priced_response(f"answer from {model}", cost=0.0)
+            if model == "m1":
+                response["usage"]["cost"] = "invalid"
+            return response, error
+
+        with (
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+                side_effect=invalid_panel_cost,
+            ),
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.ChatTerminalObservation"
+            ) as observation_type,
+        ):
+            with self.assertRaises(AccountingCostError):
+                run_async(
+                    service.run_observed(
+                        request=request,
+                        gateway_model_name="llmgateway/fusion-test",
+                        fusion_config=self._config(),
+                        request_body={"messages": [{"role": "user", "content": "hi"}]},
+                        http_client=None,
+                        proxy_http_clients={},
+                    )
+                )
+
+        self.assertCountEqual(seen_models, ["m1", "m2"])
+        observation_type.assert_not_called()
+
+
 class FusionBaseContextTests(unittest.TestCase):
     def _service(self):
         config_loader = SimpleNamespace(
@@ -332,7 +791,10 @@ class FusionBaseContextTests(unittest.TestCase):
                 "p1": SimpleNamespace(baseUrl="https://p1.example", apikey="K", type="openai"),
             }
         )
-        return FusionEnsembleService(config_loader)
+        return FusionEnsembleService(
+            config_loader,
+            cost_rate_registry=_frozen_cost_rate_registry(config_loader),
+        )
 
     def _fusion_config(self, **overrides):
         config = {
@@ -514,7 +976,10 @@ class FusionWebToolLoopTests(unittest.TestCase):
                 "p1": SimpleNamespace(baseUrl="https://p1.example", apikey="K", type="openai"),
             }
         )
-        return FusionEnsembleService(config_loader)
+        return FusionEnsembleService(
+            config_loader,
+            cost_rate_registry=_frozen_cost_rate_registry(config_loader),
+        )
 
     def _fusion_config(self, web_tools):
         return {
@@ -634,6 +1099,98 @@ class FusionPlaygroundModelsTests(unittest.TestCase):
 
 
 class FusionDispatchIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self._lifespan_events = []
+        coordinator = Mock()
+        coordinator.close = AsyncMock()
+        accounting_service = create_autospec(
+            AccountingService,
+            instance=True,
+            spec_set=True,
+        )
+        accounting_service.start.side_effect = lambda: self._lifespan_events.append(
+            "accounting.start"
+        )
+        accounting_service.stop.side_effect = lambda: self._lifespan_events.append(
+            "accounting.stop"
+        )
+        accounting_service.reset_due_budgets.return_value = ()
+        self._accounting_events = []
+
+        async def reserve(**kwargs):
+            return AccountingReservation(
+                reservation_id=f"reservation-{kwargs['request_id']}",
+                request_id=kwargs["request_id"],
+                api_key_id=kwargs["api_key_id"],
+                reserved_usd=kwargs["estimate_usd"],
+            )
+
+        async def commit(_reservation, event):
+            self._accounting_events.append(event)
+            return AccountingReceipt(
+                source_status=SourceStatus.ACCEPTED,
+                projection_status=ProjectionStatus.APPLIED,
+                event_id=event.event_id,
+                billing_fingerprint=event.billing_fingerprint,
+            )
+
+        accounting_service.reserve.side_effect = reserve
+        accounting_service.commit.side_effect = commit
+        accounting_service.release.return_value = True
+        self.accounting_service = accounting_service
+
+        def write_batcher_factory(db_path, *, queue_maxsize):
+            self.assertEqual(queue_maxsize, main.settings.write_batcher_queue_maxsize)
+            batcher = Mock(name="fusion-write-batcher")
+            batcher.db_path = db_path
+            batcher.start = AsyncMock(
+                side_effect=lambda: self._lifespan_events.append("write-batcher.start")
+            )
+            batcher.stop = AsyncMock(
+                side_effect=lambda: self._lifespan_events.append("write-batcher.stop")
+            )
+            return batcher
+
+        recovery_patcher = patch.object(
+            main.AtomicConfigFileTransaction,
+            "recover_pending",
+        )
+        coordinator_patcher = patch.object(
+            main,
+            "ConfigUpdateCoordinator",
+            return_value=coordinator,
+        )
+        write_batcher_patcher = patch.object(
+            main,
+            "WriteBatcher",
+            side_effect=write_batcher_factory,
+        )
+        accounting_patcher = patch.object(
+            main,
+            "AccountingService",
+            return_value=accounting_service,
+        )
+        recovery_patcher.start()
+        coordinator_patcher.start()
+        write_batcher_patcher.start()
+        accounting_patcher.start()
+        self.addCleanup(self._assert_accounting_lifecycle_order)
+        self.addCleanup(accounting_patcher.stop)
+        self.addCleanup(write_batcher_patcher.stop)
+        self.addCleanup(coordinator_patcher.stop)
+        self.addCleanup(recovery_patcher.stop)
+
+    def _assert_accounting_lifecycle_order(self):
+        self.assertLess(
+            self._lifespan_events.index("write-batcher.start"),
+            self._lifespan_events.index("accounting.start"),
+        )
+        self.assertLess(
+            self._lifespan_events.index("accounting.stop"),
+            self._lifespan_events.index("write-batcher.stop"),
+        )
+
     def _fake_config_loader(self):
         fake = Mock()
         fake.providers_config = {
@@ -654,11 +1211,12 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
         fake.load_providers.return_value = fake.providers_config
         fake.load_fallback_rules.return_value = fake.fallback_rules
         fake.load_fusion_rules.return_value = fake.fusion_rules
+        fake.load_complete.return_value = fake
         return fake
 
     @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_fusion_model_routes_to_ensemble(
         self,
@@ -694,10 +1252,12 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
         self.assertEqual(body["model"], "llmgateway/fusion-test")
         self.assertTrue(body["choices"][0]["message"]["content"].startswith("FINAL ANSWER"))
         self.assertEqual(len(body["fusion"]["panel"]), 2)
+        self.accounting_service.commit.assert_awaited_once()
+        _tokens_usage_db.return_value.insert_usage.assert_not_called()
 
     @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_fusion_main_failure_records_partial_usage(
         self,
@@ -735,17 +1295,13 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 502)
-        _tokens_usage_db.return_value.insert_usage.assert_called_once()
-        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
-        self.assertEqual(usage_row["prompt_tokens"], 3)
-        self.assertEqual(usage_row["completion_tokens"], 3)
-        self.assertEqual(usage_row["total_tokens"], 6)
-        self.assertEqual(usage_row["gateway_model"], "llmgateway/fusion-test")
-        self.assertEqual(usage_row["operation"], "chat")
+        self.accounting_service.commit.assert_not_awaited()
+        self.accounting_service.release.assert_awaited_once()
+        _tokens_usage_db.return_value.insert_usage.assert_not_called()
 
     @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_fusion_main_failure_does_not_price_partial_usage_as_main_model(
         self,
@@ -786,14 +1342,13 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 502)
-        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
-        self.assertEqual(usage_row["prompt_tokens"], 3)
-        self.assertEqual(usage_row["completion_tokens"], 3)
-        self.assertEqual(usage_row["cost"], 0)
+        self.accounting_service.commit.assert_not_awaited()
+        self.accounting_service.release.assert_awaited_once()
+        _tokens_usage_db.return_value.insert_usage.assert_not_called()
 
     @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_nested_fusion_call_is_rejected(
         self,
@@ -823,10 +1378,12 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 400)
+        self.accounting_service.commit.assert_not_awaited()
+        self.accounting_service.release.assert_awaited_once()
 
     @patch("llm_gateway_core.services.fusion_ensemble.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_streaming_fusion_request_is_rejected(
         self,
@@ -854,6 +1411,8 @@ class FusionDispatchIntegrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 400)
+        self.accounting_service.commit.assert_not_awaited()
+        self.accounting_service.release.assert_awaited_once()
 
 
 if __name__ == "__main__":

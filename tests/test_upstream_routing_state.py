@@ -13,6 +13,7 @@ from llm_gateway_core.services.upstream_routing_state import (
     UpstreamRoutingState,
     fingerprint_api_key,
 )
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 class _Clock:
@@ -63,6 +64,7 @@ def _successful_chat_response() -> dict:
 
 def _build_chat_config_loader(*, dynamic_penalty: bool) -> Mock:
     loader = Mock()
+    loader.configured_paths = {}
     loader.providers_config = {
         "first-provider": SimpleNamespace(
             baseUrl="https://first.example",
@@ -98,11 +100,13 @@ def _build_chat_config_loader(*, dynamic_penalty: bool) -> Mock:
     loader.load_model_rules.return_value = loader.model_rules
     loader.load_operation_rules.return_value = loader.operation_rules
     loader.validate_fallback_operation_consistency.return_value = None
+    loader.load_complete.return_value = loader
     return loader
 
 
 def _build_pool_chat_config_loader() -> Mock:
     loader = Mock()
+    loader.configured_paths = {}
     provider = SimpleNamespace(
         baseUrl="https://pool.example",
         apikey=None,
@@ -149,6 +153,7 @@ def _build_pool_chat_config_loader() -> Mock:
     loader.load_model_rules.return_value = loader.model_rules
     loader.load_operation_rules.return_value = loader.operation_rules
     loader.validate_fallback_operation_consistency.return_value = None
+    loader.load_complete.return_value = loader
     return loader
 
 
@@ -177,8 +182,11 @@ def _post_chat_with_loader(
     request_json: dict | None = None,
 ) -> tuple[object, Mock]:
     with ExitStack() as stack:
+        install_main_chat_accounting_double(stack)
         config_loader_cls = stack.enter_context(patch("main.ConfigLoader"))
-        async_client_ctor = stack.enter_context(patch("main.httpx.AsyncClient"))
+        async_client_ctor = stack.enter_context(
+            patch("main.create_shared_http_client")
+        )
         stack.enter_context(patch("main.TokensUsageDB"))
         openrouter_service_cls = stack.enter_context(patch("main.OpenRouterFreeModelsService"))
         fallback_eval_service_cls = stack.enter_context(patch("main.FallbackModelEvalService"))
@@ -189,9 +197,17 @@ def _post_chat_with_loader(
         fake_http_client = Mock()
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        stack.enter_context(
+            patch(
+                "main.ConfigUpdateCoordinator",
+                return_value=config_update_coordinator,
+            )
+        )
 
         openrouter_service = Mock()
-        openrouter_service.start = AsyncMock()
+        openrouter_service.start_runtime = AsyncMock()
         openrouter_service.stop = AsyncMock()
         openrouter_service_cls.return_value = openrouter_service
 
@@ -203,10 +219,12 @@ def _post_chat_with_loader(
 
         stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
         stack.enter_context(patch.object(main.settings, "verify_models_on_startup", "off"))
+        if upstream_state is not None:
+            stack.enter_context(
+                patch("main.UpstreamRoutingState", return_value=upstream_state)
+            )
 
         with TestClient(main.app) as client:
-            if upstream_state is not None:
-                main.app.state.upstream_routing_state = upstream_state
             headers = {"Authorization": "Bearer test-gateway-key"}
             headers.update(request_headers or {})
             response = client.post(

@@ -538,6 +538,8 @@ class CostSavedTests(unittest.TestCase):
             cost_rate_registry=registry,
             primary_provider="primary",
             primary_model="primary-model",
+            fallback_provider="fallback",
+            fallback_model="fallback-model",
         )
 
         self.assertAlmostEqual(result["cost_saved"], 0.0279, places=6)

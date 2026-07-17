@@ -14,13 +14,12 @@ from typing import Any
 
 import httpx
 
-try:
-    from gpt_researcher import GPTResearcher
-except ImportError as exc:  # pragma: no cover - exercised through endpoint tests
-    GPTResearcher = None  # type: ignore[assignment]
-    GPT_RESEARCHER_IMPORT_ERROR: ImportError | None = exc
-else:
-    GPT_RESEARCHER_IMPORT_ERROR = None
+from ..config.paths import OUTPUTS_DIR
+from ..services.image_storage import GeneratedImageStorage
+from .deep_research_adapter import (
+    DeepResearchUnavailableError as DeepResearchUnavailableError,
+    get_gpt_researcher_factory,
+)
 
 _ENV_LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
@@ -35,10 +34,6 @@ ReadCallback = Callable[[str], Awaitable[dict[str, Any]]]
 _CURRENT_IMAGE_ACCUMULATOR: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "_CURRENT_IMAGE_ACCUMULATOR", default=None
 )
-
-
-class DeepResearchUnavailableError(RuntimeError):
-    pass
 
 
 def _raise_if_cancelled(cancellation_event: threading.Event | None) -> None:
@@ -91,14 +86,22 @@ class GatewayImageGenerator:
         self,
         model_name: str | None = None,
         api_key: str | None = None,
-        output_dir: str = "outputs",
+        output_dir: str | Path | None = None,
+        image_storage: GeneratedImageStorage | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.model_name = (model_name or os.environ.get("IMAGE_GENERATION_MODEL", "")).strip()
         self.api_key = api_key or os.environ.get("IMAGE_GENERATION_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
         self.base_url = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
         self.size = os.environ.get("IMAGE_GENERATION_SIZE", "").strip() or None
-        self.output_dir = Path(output_dir)
+        if output_dir is not None and image_storage is not None:
+            raise ValueError("output_dir and image_storage are mutually exclusive")
+        if image_storage is None:
+            outputs_dir = OUTPUTS_DIR if output_dir is None else Path(output_dir)
+            if not outputs_dir.is_absolute():
+                raise ValueError("output_dir must be an absolute path")
+            image_storage = GeneratedImageStorage(outputs_dir / "images")
+        self._image_storage = image_storage
         self._http_client = http_client
 
     def is_available(self) -> bool:
@@ -152,11 +155,6 @@ class GatewayImageGenerator:
             logger.warning("Gateway image generation returned unexpected payload shape.")
             raise RuntimeError("Gateway image generation returned unexpected payload shape.")
 
-        output_path = self.output_dir / "images"
-        if research_id:
-            output_path = output_path / research_id
-        output_path.mkdir(parents=True, exist_ok=True)
-
         generated: list[dict[str, Any]] = []
         for index, item in enumerate(items):
             if not isinstance(item, dict):
@@ -176,14 +174,16 @@ class GatewayImageGenerator:
                     )
                 continue
             filename = _image_filename(prompt, index)
-            filepath = (output_path / filename).resolve()
-            filepath.write_bytes(image_bytes)
-            web_prefix = f"/outputs/images/{research_id}" if research_id else "/outputs/images"
+            published = self._image_storage.publish_png(
+                image_bytes,
+                filename,
+                research_id,
+            )
             generated.append(
                 {
-                    "path": str(filepath),
-                    "url": f"{web_prefix}/{filename}",
-                    "absolute_url": str(filepath),
+                    "path": str(published.path),
+                    "url": published.url,
+                    "absolute_url": str(published.path),
                     "prompt": prompt,
                     "alt_text": _alt_text(prompt),
                 }
@@ -252,12 +252,18 @@ def _install_gateway_image_generator(
     researcher: Any,
     image_generation_model: str,
     http_client: httpx.AsyncClient | None = None,
+    *,
+    image_storage: GeneratedImageStorage | None = None,
 ) -> None:
     image_generator = getattr(researcher, "image_generator", None)
     if image_generator is None:
         raise ValueError("GPT Researcher image generator is not available.")
 
-    provider = GatewayImageGenerator(model_name=image_generation_model, http_client=http_client)
+    provider = GatewayImageGenerator(
+        model_name=image_generation_model,
+        image_storage=image_storage,
+        http_client=http_client,
+    )
     if not provider.is_available():
         raise ValueError("Gateway image generator is missing model, base URL, or API key.")
     image_generator.image_provider = provider
@@ -456,10 +462,7 @@ def _gateway_research_tools(
 
 class DeepResearchManager:
     def _get_researcher_factory(self) -> Any:
-        if GPTResearcher is None:
-            detail = f": {GPT_RESEARCHER_IMPORT_ERROR}" if GPT_RESEARCHER_IMPORT_ERROR else ""
-            raise DeepResearchUnavailableError(f"Python package 'gpt-researcher' is not installed{detail}.")
-        return GPTResearcher
+        return get_gpt_researcher_factory()
 
     async def conduct_deep_research(
         self,
@@ -482,6 +485,7 @@ class DeepResearchManager:
         image_generation_model: str | None = None,
         image_generation_size: str | None = None,
         image_generation_api_key: str | None = None,
+        image_storage: GeneratedImageStorage | None = None,
         gateway_search: SearchCallback | None = None,
         gateway_read: ReadCallback | None = None,
         gateway_callback_loop: asyncio.AbstractEventLoop | None = None,
@@ -542,11 +546,19 @@ class DeepResearchManager:
                         _raise_if_cancelled(cancellation_event)
                         researcher = factory(query=query, report_type=report_type, verbose=verbose)
                         if image_generation_enabled:
-                            _install_gateway_image_generator(
-                                researcher,
-                                image_generation_model.strip(),
-                                http_client=worker_http_client,
-                            )
+                            if image_storage is None:
+                                _install_gateway_image_generator(
+                                    researcher,
+                                    image_generation_model.strip(),
+                                    http_client=worker_http_client,
+                                )
+                            else:
+                                _install_gateway_image_generator(
+                                    researcher,
+                                    image_generation_model.strip(),
+                                    http_client=worker_http_client,
+                                    image_storage=image_storage,
+                                )
                         _raise_if_cancelled(cancellation_event)
                         research_result = await researcher.conduct_research()
                         _raise_if_cancelled(cancellation_event)
@@ -560,14 +572,35 @@ class DeepResearchManager:
                         report = await researcher.write_report()
                         _raise_if_cancelled(cancellation_event)
 
+                    try:
+                        reported_costs = researcher.get_costs()
+                    except Exception:
+                        logger.warning("GPT Researcher diagnostic cost is unavailable.")
+                        reported_costs = None
+
+                    get_research_sources = getattr(researcher, "get_research_sources", None)
+                    get_source_urls = getattr(researcher, "get_source_urls", None)
+                    get_research_context = getattr(researcher, "get_research_context", None)
+                    if not all(
+                        callable(getter)
+                        for getter in (
+                            get_research_sources,
+                            get_source_urls,
+                            get_research_context,
+                        )
+                    ):
+                        raise ValueError(
+                            "GPT Researcher 0.14.8 public result getters are unavailable."
+                        )
+
                     return {
                         "success": True,
                         "query": query,
                         "report": report,
                         "research_result": research_result,
-                        "sources": _as_list(getattr(researcher, "sources", [])),
-                        "source_urls": _as_list(getattr(researcher, "source_urls", [])),
-                        "context": _as_list(getattr(researcher, "context", [])),
-                        "costs": getattr(researcher, "costs", None),
+                        "sources": _as_list(get_research_sources()),
+                        "source_urls": _as_list(get_source_urls()),
+                        "context": _as_list(get_research_context()),
+                        "costs": reported_costs,
                         "generated_images": generated_images,
                     }

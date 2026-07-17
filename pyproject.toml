@@ -1,25 +1,29 @@
+[build-system]
+requires = ["setuptools==83.0.0", "wheel==0.47.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "llmapigateway"
-version = "0.1.0"
+dynamic = ["version"]
 description = "LLM Gateway is a gateway to LLM Providers with advanced support fallback in case of failures"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115.14",
+    "fastapi>=0.139.0",
     "httpx[http2]>=0.27.2",
     "python-dotenv>=1.2.2",
     "pydantic>=2.11.10",
     "uvicorn>=0.32.1",
     "python-json-logger>=2.0.7",
-    "pydantic-settings>=2.6.1",
+    "pydantic-settings>=2.14.2",
     "json5>=0.14.0",
-    "python-multipart>=0.0.27",
+    "python-multipart>=0.0.31",
     "anthropic>=0.84.0",
     "tiktoken>=0.9.0",
     "aiosqlite>=0.20.0",
     "socksio>=1.0.0",
     "nvidia-riva-client>=2.25.1",
-    "cloakbrowser>=0.3.25",
+    "cloakbrowser>=0.3.28",
     "rs-trafilatura>=0.1.1",
     "trafilatura>=2.1.0",
     "youtube-transcript-api>=1.2.4",
@@ -33,12 +37,41 @@ research = [
 ]
 dev = [
     "pytest>=9.0.2",
+    "pytest-playwright>=0.7.2",
+    "pytest-cov>=6.0.0",
+    "httpx2>=2.5.0",
     "ruff>=0.15.6",
     "playwright>=1.58.0",
+    "packaging>=26.0",
+    "pip-audit>=2.9.0",
+    "pip-tools>=7.5.3",
     "gpt-researcher>=0.14.8,<0.15.0",
     "sse-starlette<3.1.0",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "browser: end-to-end browser tests that require Playwright",
+]
+filterwarnings = [
+    "error::DeprecationWarning",
+    'ignore:^`langchain-community` is being sunset and is no longer actively maintained\. See https\x3a//github\.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages\.$:DeprecationWarning:^gpt_researcher\.scraper\.arxiv\.arxiv$',
+]
+
+[[tool.llmgateway.upstream-warning-policy]]
+id = "gpt-researcher-langchain-community"
+package = "gpt-researcher"
+package_version = "0.14.8"
+expires = 2026-10-11
+filter = 'ignore:^`langchain-community` is being sunset and is no longer actively maintained\. See https\x3a//github\.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages\.$:DeprecationWarning:^gpt_researcher\.scraper\.arxiv\.arxiv$'
+reason = "gpt-researcher still imports ArxivRetriever from the sunset langchain-community package"
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+
+[tool.setuptools.packages.find]
+include = ["llm_gateway_core*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "llm_gateway_core.version.__version__"}

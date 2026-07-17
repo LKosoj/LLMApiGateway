@@ -13,6 +13,7 @@ from llm_gateway_core.db.fallback_events_db import FallbackEventsDB, validate_fa
 from llm_gateway_core.api.v1.chat import _build_fallback_error_message, classify_error
 from llm_gateway_core.services.request_handler import RequestErrorDetail
 from tests._async_compat import run_async
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 class ClassifyErrorTests(unittest.TestCase):
@@ -531,22 +532,50 @@ class _FakeTokensUsageDB:
 
 
 class FallbackStatsApiTests(unittest.TestCase):
+    def setUp(self):
+        from llm_gateway_core.api.v1 import stats as stats_module
+
+        self._stats_caches = (
+            stats_module._usage_stats_cache,
+            stats_module._fallback_stats_cache,
+            stats_module._upstream_stats_cache,
+        )
+        self._clear_stats_caches()
+        self.addCleanup(self._clear_stats_caches)
+
+    def _clear_stats_caches(self):
+        for cache in self._stats_caches:
+            cache.invalidate()
+
     @contextmanager
     def _client(self):
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-        fake_config_loader = Mock()
-        fake_config_loader.load_providers.return_value = {}
-        fake_config_loader.load_fallback_rules.return_value = {}
+        from collections.abc import AsyncIterator
+        from contextlib import asynccontextmanager
 
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=fake_config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB", return_value=_FakeTokensUsageDB()))
-            stack.enter_context(patch("main.FallbackEventsDB", return_value=_FakeFallbackEventsDB()))
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-key"))
+        from fastapi import FastAPI
 
-            with TestClient(main.app) as client:
+        from llm_gateway_core.api.v1 import stats as stats_module
+        from llm_gateway_core.middleware.auth import ApiKeyAuthMiddleware
+        from tests.runtime_test_support import installed_runtime
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            async with installed_runtime(
+                app,
+                tokens_usage_db=_FakeTokensUsageDB(),
+                fallback_events_db=_FakeFallbackEventsDB(),
+            ):
+                yield
+
+        app = FastAPI(lifespan=lifespan)
+        app.include_router(stats_module.stats_router, prefix="/v1")
+        app.add_middleware(ApiKeyAuthMiddleware)
+
+        with patch(
+            "llm_gateway_core.middleware.auth.settings.gateway_api_key",
+            "test-key",
+        ):
+            with TestClient(app) as client:
                 yield client
 
     def test_fallback_stats_returns_data(self):
@@ -594,9 +623,30 @@ class FallbackStatsApiTests(unittest.TestCase):
 class FallbackEventsIntegrationTests(unittest.TestCase):
     """Test that fallback events are recorded during chat request processing."""
 
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        install_main_chat_accounting_double(stack)
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        patchers = (
+            patch.object(main.AtomicConfigFileTransaction, "recover_pending"),
+            patch(
+                "llm_gateway_core.services.runtime_candidate."
+                "build_operation_cost_calculator_registry",
+                return_value={},
+            ),
+            patch(
+                "main.ConfigUpdateCoordinator",
+                return_value=config_update_coordinator,
+            ),
+        )
+        for patcher in patchers:
+            stack.enter_context(patcher)
+
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_fallback_events_recorded_on_provider_failure(
         self,
@@ -624,6 +674,7 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -661,7 +712,7 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_fallback_events_record_detailed_error_message_for_generic_400(
         self,
@@ -690,6 +741,7 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -747,7 +799,7 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_fallback_events_record_detailed_error_message_for_timeout(
         self,
@@ -776,6 +828,7 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()

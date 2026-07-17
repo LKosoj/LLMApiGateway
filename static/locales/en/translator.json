@@ -1,0 +1,71 @@
+{
+  "actions": {
+    "anthropicSample": "Anthropic sample",
+    "copied": "Copied!",
+    "copy": "Copy",
+    "openaiSample": "OpenAI sample",
+    "run": "Run translation",
+    "running": "Running…",
+    "toolSample": "Tool-use sample"
+  },
+  "errors": {
+    "copyFailed": "The payload could not be copied.",
+    "invalidMockJson": "Invalid JSON in the mock response.",
+    "invalidRequestJson": "Invalid JSON in the request body.",
+    "invalidResponse": "The translator response has an invalid format.",
+    "unsupportedStep": "The response contains an unsupported translation step."
+  },
+  "heading": "Translator Debugger",
+  "input": {
+    "mockHint": "— leave blank for the default mock",
+    "mockPlaceholder": "Leave blank to use the built-in mock response",
+    "mockResponse": "Mock provider response (JSON, optional)",
+    "requestBody": "Request body (JSON)",
+    "sourceFormat": "Source format",
+    "targetFormat": "Target format",
+    "title": "Input"
+  },
+  "intro": "Inspect how the gateway transforms requests between OpenAI and Anthropic formats. This master-only tool makes no real provider call.",
+  "pageTitle": "LLM Gateway - Translator Debugger",
+  "steps": {
+    "clientRequest": {
+      "notes": "The raw request body received from the client.",
+      "title": "Client request"
+    },
+    "clientResponse": {
+      "notesAlreadyOpenai": "The client expects OpenAI format, so the step 6 payload is forwarded unchanged.",
+      "notesToAnthropic": "The OpenAI response is converted to Anthropic format for the original client by _openai_response_to_anthropic.",
+      "title": "Client response"
+    },
+    "detectedFormat": {
+      "notes": "Formats resolved from the request parameters.",
+      "title": "Detected format"
+    },
+    "emptyAfter": "to see the pipeline steps.",
+    "emptyBefore": "Fill in the input and click",
+    "intermediateOpenaiRequest": {
+      "notesAlreadyOpenai": "The source is already in OpenAI format; no conversion is needed.",
+      "notesFromAnthropic": "The Anthropic request is converted to OpenAI format by _anthropic_request_to_openai_payload.",
+      "title": "Intermediate OpenAI request"
+    },
+    "intermediateOpenaiResponse": {
+      "notesAlreadyOpenai": "The provider returned OpenAI format; no conversion is needed.",
+      "notesFromAnthropic": "The Anthropic provider response is converted back to OpenAI format by _anthropic_response_to_openai.",
+      "title": "Intermediate OpenAI response"
+    },
+    "notes": "Notes",
+    "providerResponseMock": {
+      "notesDefaultAnthropic": "No mock was supplied; the default Anthropic-format mock response is used.",
+      "notesDefaultOpenai": "No mock was supplied; the default OpenAI-format mock response is used.",
+      "notesProvided": "The provider response mock was supplied by the caller.",
+      "title": "Provider response (mock)"
+    },
+    "stepHeading": "Step {step}: {title}",
+    "targetRequest": {
+      "notesAlreadyOpenai": "The target is OpenAI format, so the step 3 payload is forwarded unchanged.",
+      "notesToAnthropic": "The OpenAI request is converted to Anthropic format by _openai_request_to_anthropic_payload.",
+      "title": "Target request (provider format)"
+    },
+    "title": "Translation steps"
+  }
+}

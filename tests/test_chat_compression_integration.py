@@ -1,12 +1,14 @@
 """Integration tests for RTK Token Compression in the chat dispatch pipeline."""
 
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import main
 
 from llm_gateway_core.services.token_compression import compress_messages
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 def _make_long_text(n: int = 600) -> str:
@@ -109,8 +111,25 @@ class DispatchCompressIntegrationTests(unittest.TestCase):
     """Verify that compress_messages is invoked when compress_tool_results is True
     in the fallback rule, using a TestClient that goes through _dispatch_chat_request."""
 
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack,
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        coordinator_patcher = patch(
+            "main.ConfigUpdateCoordinator",
+            return_value=config_update_coordinator,
+        )
+        coordinator_patcher.start()
+        self.addCleanup(coordinator_patcher.stop)
+
     def _make_fake_config_loader(self, compress: bool):
         fake = Mock()
+        fake.configured_paths = {}
+        fake.operation_rules = {}
         fake.providers_config = {
             "test-provider": SimpleNamespace(
                 baseUrl="https://test.example",
@@ -130,12 +149,14 @@ class DispatchCompressIntegrationTests(unittest.TestCase):
         }
         fake.load_providers.return_value = fake.providers_config
         fake.load_fallback_rules.return_value = fake.fallback_rules
+        fake.load_operation_rules.return_value = {}
+        fake.load_complete.return_value = fake
         return fake
 
     @patch("llm_gateway_core.services.token_compression.compress_messages", wraps=compress_messages)
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_compress_tool_results_true_calls_compress_messages(
         self,
@@ -181,7 +202,7 @@ class DispatchCompressIntegrationTests(unittest.TestCase):
     @patch("llm_gateway_core.services.token_compression.compress_messages", wraps=compress_messages)
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_compress_tool_results_false_skips_compress_messages(
         self,

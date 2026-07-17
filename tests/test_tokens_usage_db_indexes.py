@@ -10,16 +10,15 @@ no longer need to re-issue it, which is the whole point of the
 """
 import sqlite3
 import unittest
-from pathlib import Path
 
+from llm_gateway_core.config.paths import resolve_db_dir
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.db.write_batcher import PRAGMAS, RUNTIME_PRAGMAS
 
 
 class TokensUsageDBIndexesTests(unittest.TestCase):
     def test_composite_index_on_timestamp_and_gateway_model_is_created(self):
-        db_path = Path("db/test_tokens_usage_composite_index.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_tokens_usage_composite_index.sqlite"
 
         try:
             TokensUsageDB(db_filename=db_path.name)
@@ -35,8 +34,7 @@ class TokensUsageDBIndexesTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_composite_index_columns_match_query_pattern(self):
-        db_path = Path("db/test_tokens_usage_composite_index_columns.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_tokens_usage_composite_index_columns.sqlite"
 
         try:
             TokensUsageDB(db_filename=db_path.name)

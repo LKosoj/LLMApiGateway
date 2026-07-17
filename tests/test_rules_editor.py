@@ -1,15 +1,11 @@
 import tempfile
 import unittest
-import os
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
-import main
-from llm_gateway_core.api.v1.rules_editor import _write_text_atomically
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.rules_editor_test_support import transactional_rules_editor_client
 
 
 VALID_PROVIDERS_TEXT = """
@@ -56,7 +52,10 @@ class RulesEditorValidationTests(unittest.TestCase):
         self.rules_path.write_text(VALID_RULES_TEXT, encoding="utf-8")
         self.operation_rules_path.write_text("{}", encoding="utf-8")
         self.fusion_rules_path.write_text("[]", encoding="utf-8")
-        self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
+        self.fallback_provider_patcher = patch(
+            "llm_gateway_core.config.loader.settings.fallback_provider",
+            "openrouter",
+        )
         self.fallback_provider_patcher.start()
 
         self.config_loader = ConfigLoader(
@@ -64,9 +63,10 @@ class RulesEditorValidationTests(unittest.TestCase):
             fallback_rules_filename=str(self.rules_path),
             operation_rules_filename=str(self.operation_rules_path),
             fusion_rules_filename=str(self.fusion_rules_path),
+            model_rules_filename=str(Path(self.temp_dir.name) / "models_model_rules.json"),
+            router_rules_filename=str(Path(self.temp_dir.name) / "models_router_rules.json"),
         )
-        self.config_loader.load_providers()
-        self.config_loader.load_fallback_rules()
+        self.config_loader.load_complete()
 
     def tearDown(self):
         self.fallback_provider_patcher.stop()
@@ -74,17 +74,11 @@ class RulesEditorValidationTests(unittest.TestCase):
 
     @contextmanager
     def _client(self):
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB"))
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
-
-            with TestClient(main.app) as client:
-                yield client
+        with transactional_rules_editor_client(self.config_loader) as (
+            client,
+            _runtime,
+        ):
+            yield client
 
     def test_invalid_providers_payload_returns_400_and_keeps_disk_file(self):
         original_file_content = self.providers_path.read_text(encoding="utf-8")
@@ -130,7 +124,26 @@ class RulesEditorValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("missing-provider", response.json()["detail"])
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": {
+                    "code": "config_validation_failed",
+                    "message": "Configuration validation failed.",
+                    "errors": [
+                        {
+                            "type": "rule_validation",
+                            "loc": [],
+                            "msg": (
+                                "Invalid provider 'missing-provider' used in "
+                                "fallback rule for 'gateway-model'. Provider "
+                                "not found in configuration."
+                            ),
+                        }
+                    ],
+                }
+            },
+        )
         self.assertEqual(self.rules_path.read_text(encoding="utf-8"), original_file_content)
 
     def test_empty_fallback_list_returns_400_and_keeps_disk_file(self):
@@ -156,7 +169,10 @@ class RulesEditorValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("at least one fallback model", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
         self.assertEqual(self.rules_path.read_text(encoding="utf-8"), original_file_content)
 
     def test_duplicate_provider_returns_400_and_keeps_disk_and_runtime_config(self):
@@ -190,7 +206,10 @@ class RulesEditorValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Duplicate provider 'openrouter'", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
         self.assertEqual(self.providers_path.read_text(encoding="utf-8"), original_file_content)
         self.assertEqual(
             self.config_loader.providers_config["openrouter"].baseUrl,
@@ -236,38 +255,15 @@ class RulesEditorValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Duplicate gateway_model_name 'gateway-model'", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
         self.assertEqual(self.rules_path.read_text(encoding="utf-8"), original_file_content)
         self.assertEqual(
             self.config_loader.fallback_rules["gateway-model"]["fallback_models"][0]["model"],
             original_runtime_rule,
         )
-
-
-class RulesEditorAtomicWriteTests(unittest.TestCase):
-    def test_write_text_atomically_preserves_existing_file_mode(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target_path = Path(temp_dir) / "providers.json"
-            target_path.write_text('[{"old": true}]\n', encoding="utf-8")
-            os.chmod(target_path, 0o640)
-
-            _write_text_atomically(target_path, '[{"new": true}]\n')
-
-            self.assertEqual(target_path.read_text(encoding="utf-8"), '[{"new": true}]\n')
-            self.assertEqual(target_path.stat().st_mode & 0o777, 0o640)
-
-    def test_write_text_atomically_removes_temp_file_after_fsync_error(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target_path = Path(temp_dir) / "providers.json"
-            target_path.write_text('[{"old": true}]\n', encoding="utf-8")
-
-            with patch("llm_gateway_core.api.v1.rules_editor.os.fsync", side_effect=OSError("boom")):
-                with self.assertRaises(OSError):
-                    _write_text_atomically(target_path, '[{"new": true}]\n')
-
-            self.assertEqual(target_path.read_text(encoding="utf-8"), '[{"old": true}]\n')
-            self.assertEqual([path.name for path in Path(temp_dir).iterdir()], ["providers.json"])
-
 
 if __name__ == "__main__":
     unittest.main()

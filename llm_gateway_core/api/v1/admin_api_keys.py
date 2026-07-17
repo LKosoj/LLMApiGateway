@@ -10,17 +10,28 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from ..accounting_http import (
+    AccountingHttpUse,
+    accounting_error_response,
+)
 from ...config.paths import STATIC_DIR
-from ...db.api_keys_db import ApiKeyRecord, ApiKeysDB, validate_metadata_size
+from ...db.api_keys_db import (
+    VALID_BUDGET_PERIODS,
+    ApiKeyRecord,
+    validate_metadata_size,
+)
 from ...middleware.auth import ROLE_MASTER
-from ...services.access_control import UsdBudgetLedger
+from ...services.accounting import AccountingError
 from ...utils.html_cache import get_template
+
+if TYPE_CHECKING:
+    from ...services.runtime_config import AppServices
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +72,24 @@ def _validate_payload_constraints(payload: ApiKeyCreatePayload | ApiKeyUpdatePay
     validate_metadata_size(payload.metadata)
 
 
+def _validate_update_payload_constraints(payload: ApiKeyUpdatePayload) -> None:
+    _validate_payload_constraints(payload)
+    if (
+        "name" in payload.model_fields_set
+        and payload.name is not None
+        and not payload.name.strip()
+    ):
+        raise ValueError("API key name must not be empty")
+    if "budget_period" in payload.model_fields_set:
+        normalized_period = (
+            "" if payload.budget_period is None else payload.budget_period.strip().lower()
+        )
+        if normalized_period and normalized_period not in VALID_BUDGET_PERIODS:
+            raise ValueError(
+                "budget_period must be one of: " + ", ".join(VALID_BUDGET_PERIODS)
+            )
+
+
 def _require_master(request: Request) -> None:
     role = getattr(request.state, "api_key_role", None)
     if role != ROLE_MASTER:
@@ -70,21 +99,23 @@ def _require_master(request: Request) -> None:
         )
 
 
-def _get_api_keys_db(request: Request) -> ApiKeysDB:
-    db: ApiKeysDB | None = getattr(request.app.state, "api_keys_db", None)
-    if db is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="ApiKeysDB is not initialized",
-        )
-    return db
+def _capture_app_services(request: Request) -> "AppServices":
+    return cast("AppServices", request.app.state.services)
 
 
-def _serialize_record(record: ApiKeyRecord) -> dict[str, Any]:
+def _mask_api_key(api_key: str) -> str:
+    """Mask a secret the same way ``static/api-keys.js``'s ``maskSecret`` does,
+    so re-masking an already-masked value (defense in depth) is a no-op."""
+    if len(api_key) <= 8:
+        return "••••"
+    return f"{api_key[:4]}…{api_key[-4:]}"
+
+
+def _serialize_record(record: ApiKeyRecord, *, reveal: bool = False) -> dict[str, Any]:
     return {
         "id": record.id,
         "name": record.name,
-        "api_key": record.api_key,
+        "api_key": record.api_key if reveal else _mask_api_key(record.api_key),
         "budget_usd": record.budget_usd,
         "spent_usd": record.spent_usd,
         "rpm": record.rpm,
@@ -111,7 +142,7 @@ async def get_api_keys_page(request: Request):
 @admin_api_keys_router.get("/admin/api-keys")
 async def list_api_keys(request: Request) -> dict[str, Any]:
     _require_master(request)
-    db = _get_api_keys_db(request)
+    db = _capture_app_services(request).api_keys_db
     records = await asyncio.to_thread(db.list_all)
     return {"keys": [_serialize_record(record) for record in records]}
 
@@ -119,7 +150,7 @@ async def list_api_keys(request: Request) -> dict[str, Any]:
 @admin_api_keys_router.post("/admin/api-keys", status_code=status.HTTP_201_CREATED)
 async def create_api_key(request: Request, payload: ApiKeyCreatePayload) -> dict[str, Any]:
     _require_master(request)
-    db = _get_api_keys_db(request)
+    db = _capture_app_services(request).api_keys_db
     try:
         _validate_payload_constraints(payload)
         record = await asyncio.to_thread(
@@ -135,27 +166,27 @@ async def create_api_key(request: Request, payload: ApiKeyCreatePayload) -> dict
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     logger.info("Created virtual API key id=%s name=%s", record.id, record.name)
-    return _serialize_record(record)
+    return _serialize_record(record, reveal=True)
 
 
 @admin_api_keys_router.get("/admin/api-keys/{key_id}")
 async def get_api_key(request: Request, key_id: int) -> dict[str, Any]:
     _require_master(request)
-    db = _get_api_keys_db(request)
+    db = _capture_app_services(request).api_keys_db
     record = await asyncio.to_thread(db.get_by_id, key_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
-    return _serialize_record(record)
+    return _serialize_record(record, reveal=True)
 
 
 @admin_api_keys_router.patch("/admin/api-keys/{key_id}")
 async def update_api_key(
     request: Request, key_id: int, payload: ApiKeyUpdatePayload
-) -> dict[str, Any]:
+) -> Any:
     _require_master(request)
-    db = _get_api_keys_db(request)
+    services = _capture_app_services(request)
     try:
-        _validate_payload_constraints(payload)
+        _validate_update_payload_constraints(payload)
         update_fields = {
             field_name: getattr(payload, field_name)
             for field_name in (
@@ -170,45 +201,37 @@ async def update_api_key(
             )
             if field_name in payload.model_fields_set
         }
-        record = await asyncio.to_thread(
-            db.update,
+        record = await services.accounting_service.update_key(
             key_id,
-            **update_fields,
+            changes=update_fields,
             reset_spent=payload.reset_spent,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except AccountingError as exc:
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMIN_MUTATION,
+        )
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
-
-    rate_limiter = getattr(request.app.state, "rate_limiter", None)
-    if rate_limiter is not None and (
-        "rpm" in payload.model_fields_set or "tpm" in payload.model_fields_set
-    ):
-        rate_limiter.reset(key_id)
-
-    ledger = getattr(request.app.state, "usd_budget_ledger", None)
-    if payload.reset_spent and isinstance(ledger, UsdBudgetLedger):
-        ledger.reset_record(
-            record.id,
-            budget_usd=record.budget_usd,
-            spent_usd=record.spent_usd,
-        )
-
     return _serialize_record(record)
 
 
 @admin_api_keys_router.delete("/admin/api-keys/{key_id}")
-async def delete_api_key(request: Request, key_id: int) -> dict[str, Any]:
+async def delete_api_key(request: Request, key_id: int) -> Any:
     _require_master(request)
-    db = _get_api_keys_db(request)
-    deleted = await asyncio.to_thread(db.delete, key_id)
+    try:
+        deleted = await _capture_app_services(request).accounting_service.delete_key(
+            key_id
+        )
+    except AccountingError as exc:
+        return accounting_error_response(
+            request,
+            exc,
+            use=AccountingHttpUse.ADMIN_MUTATION,
+        )
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
-    rate_limiter = getattr(request.app.state, "rate_limiter", None)
-    if rate_limiter is not None:
-        rate_limiter.reset(key_id)
-    ledger = getattr(request.app.state, "usd_budget_ledger", None)
-    if isinstance(ledger, UsdBudgetLedger):
-        ledger.discard_record(key_id)
     return {"deleted": True, "id": key_id}

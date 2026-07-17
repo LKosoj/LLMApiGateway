@@ -2,16 +2,15 @@ import sqlite3
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from pathlib import Path
 
+from llm_gateway_core.config.paths import resolve_db_dir
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from tests._async_compat import run_async
 
 
 class TokensUsageDBSchemaTests(unittest.TestCase):
     def test_init_db_adds_request_id_gateway_model_operation_and_duration_columns_for_existing_database(self):
-        db_path = Path("db/test_request_id_gateway_model_operation_and_duration_migration.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_request_id_gateway_model_operation_and_duration_migration.sqlite"
 
         try:
             with sqlite3.connect(db_path) as conn:
@@ -50,8 +49,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_latest_usage_records_include_request_id_gateway_model_operation_and_duration(self):
-        db_path = Path("db/test_request_id_gateway_model_operation_and_duration_records.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_request_id_gateway_model_operation_and_duration_records.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -85,8 +83,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_insert_usage_once_is_durable_across_db_instances(self):
-        db_path = Path("db/test_usage_idempotency_once.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_usage_idempotency_once.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -129,8 +126,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_insert_usage_once_allows_one_concurrent_insert(self):
-        db_path = Path("db/test_usage_idempotency_concurrent.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_usage_idempotency_concurrent.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -155,8 +151,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_aggregated_usage_groups_by_gateway_model_operation_provider_and_model(self):
-        db_path = Path("db/test_usage_aggregation.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_usage_aggregation.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -212,8 +207,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_init_db_adds_is_estimated_column_for_existing_database(self):
-        db_path = Path("db/test_is_estimated_migration.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_is_estimated_migration.sqlite"
 
         try:
             with sqlite3.connect(db_path) as conn:
@@ -248,8 +242,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_insert_usage_persists_is_estimated_flag(self):
-        db_path = Path("db/test_is_estimated_roundtrip.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_is_estimated_roundtrip.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -282,8 +275,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_aggregated_usage_returns_estimated_count(self):
-        db_path = Path("db/test_is_estimated_aggregation.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_is_estimated_aggregation.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -311,8 +303,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_init_db_adds_cost_saved_column_for_existing_database(self):
-        db_path = Path("db/test_cost_saved_migration.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_cost_saved_migration.sqlite"
 
         try:
             with sqlite3.connect(db_path) as conn:
@@ -347,8 +338,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_insert_usage_persists_cost_saved(self):
-        db_path = Path("db/test_cost_saved_roundtrip.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_cost_saved_roundtrip.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -368,8 +358,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_aggregated_usage_returns_cost_saved_sum(self):
-        db_path = Path("db/test_cost_saved_aggregation.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_cost_saved_aggregation.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -396,8 +385,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_tokens_usage_db_uses_wal_journal_mode(self):
-        db_path = Path("db/test_tokens_usage_wal.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_tokens_usage_wal.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
@@ -411,8 +399,7 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
     def test_dashboard_usage_keeps_incomplete_rows_and_filters_by_key(self):
-        db_path = Path("db/test_dashboard_usage.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_dashboard_usage.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)

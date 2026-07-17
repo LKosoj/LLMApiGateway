@@ -1,11 +1,14 @@
 import asyncio
+import base64
 import json
-import threading
+import os
 import tempfile
 import time
 import unittest
 from contextlib import ExitStack, contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
 from fastapi import HTTPException
@@ -15,10 +18,33 @@ from httpx import ASGITransport, AsyncClient as HttpxAsyncClient
 import main
 from llm_gateway_core.agents import web_research as web_research_agent
 from llm_gateway_core.api.v1 import web as web_api
+from llm_gateway_core.api.v1 import web_adapters as web_adapters_owner
+from llm_gateway_core.api.v1 import web_extraction as web_extraction_owner
+from llm_gateway_core.api.v1 import web_research_orchestration as web_research_owner
+from llm_gateway_core.api.v1 import web_safe_fetch as web_safe_fetch_owner
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
+from llm_gateway_core.middleware.accounting_admission import (
+    take_accounting_request_context,
+)
+from llm_gateway_core.services.accounting import (
+    DEFAULT_OPERATION_COST_USD,
+    AccountingReservation,
+    AccountingUsage,
+)
+from llm_gateway_core.services.deep_research_accounting import (
+    DeepResearchContextTokenCodec,
+)
+from llm_gateway_core.services.deep_research_process import DeepResearchProcessRunner
+from llm_gateway_core.services.deep_research_protocol import (
+    DeepResearchCallbackOperation,
+    DeepResearchCallbackRequest,
+    DeepResearchJob,
+    DeepResearchResult,
+)
 from llm_gateway_core.utils import zai_mcp as zai_mcp_module
 from tests._async_compat import run_async
+from tests.web_accounting_test_support import install_web_accounting_passthrough
 
 
 class _FakeMCPResponse:
@@ -85,6 +111,7 @@ def _make_zai_mcp_handler(*, payload_obj):
 
 def jsonlib_dumps(obj) -> str:
     return json.dumps(obj)
+
 
 _json_dumps = json.dumps
 
@@ -220,6 +247,10 @@ class _FakeApiKeysDB:
         self.record = record
         self.spent_calls = []
 
+    @property
+    def db_path(self) -> Path:
+        return main.resolve_db_dir() / "tokens_usage.db"
+
     def get_by_key(self, api_key: str):
         if self.record and api_key == self.record.api_key:
             return self.record
@@ -233,21 +264,131 @@ class _FakeDeepResearchManager:
     calls = []
     generated_images_override: list[dict] | None = None
 
-    async def conduct_deep_research(self, **kwargs):
-        self.calls.append(kwargs)
-        search_results = await kwargs["gateway_search"]("deep topic", 2)
-        article = await kwargs["gateway_read"](search_results[0]["url"])
-        result = {
-            "report": "Deep report",
-            "sources": [{"title": article["title"], "url": article["url"]}],
-            "source_urls": [article["url"]],
-            "context": [article["content"]],
-            "research_result": {"status": "ok"},
-            "costs": 0.03,
-        }
+    async def run(self, _runner, job, callbacks):
+        call = {"job": job, "callbacks": callbacks, "callback_images": ()}
+        self.calls.append(call)
+        search_results = await callbacks.handle(
+            DeepResearchCallbackRequest(
+                job_id=job.job_id,
+                message_id="search-1",
+                operation=DeepResearchCallbackOperation.SEARCH,
+                arguments={"query": "deep topic", "max_results": 2},
+            )
+        )
+        article = await callbacks.handle(
+            DeepResearchCallbackRequest(
+                job_id=job.job_id,
+                message_id="read-1",
+                operation=DeepResearchCallbackOperation.READ,
+                arguments={"url": search_results[0]["url"]},
+            )
+        )
         if self.__class__.generated_images_override is not None:
-            result["generated_images"] = self.__class__.generated_images_override
-        return result
+            generated_images = tuple(self.__class__.generated_images_override)
+        elif job.image_generation_enabled:
+            generated_images = tuple(
+                await callbacks.handle(
+                    DeepResearchCallbackRequest(
+                        job_id=job.job_id,
+                        message_id="image-1",
+                        operation=DeepResearchCallbackOperation.IMAGE,
+                        arguments={
+                            "prompt": "diagram of a cat",
+                            "context": "research context",
+                            "research_id": job.job_id,
+                            "aspect_ratio": "1:1",
+                            "num_images": 1,
+                            "style": "dark",
+                        },
+                    )
+                )
+            )
+        else:
+            generated_images = ()
+        call["callback_images"] = generated_images
+        return DeepResearchResult(
+            query=job.query,
+            report="Deep report",
+            sources=({"title": article["title"], "url": article["url"]},),
+            source_urls=(article["url"],),
+            context=(article["content"],),
+            research_result={"status": "ok"},
+            costs=0.03,
+            generated_images=generated_images,
+        )
+
+
+class _DeepResearchAccountingPassthrough:
+    def __init__(self) -> None:
+        _handle, self.token = DeepResearchContextTokenCodec.create_process_local().issue_parent(
+            reservation=AccountingReservation(
+                reservation_id="deep-compat-reservation",
+                request_id="deep-compat-request",
+                api_key_id=None,
+                reserved_usd=1.0,
+            ),
+            gateway_model="llmgateway/web-deep-research",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        self.child_routes: list[str] = []
+        self.rollup_cost_usd: float | None = None
+        self._ready = False
+        self._closed = False
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    @property
+    def is_ready(self) -> bool:
+        return self._ready
+
+    def begin(self, _gateway_model: str) -> str:
+        return self.token
+
+    async def run_flat_operation_child(self, *, route_template, work, **_kwargs):
+        self.child_routes.append(route_template)
+        return await work()
+
+    async def seal_for_response(self):
+        self.rollup_cost_usd = 0.0
+        self._ready = True
+        return SimpleNamespace(
+            aggregate_usage=AccountingUsage(cost=len(self.child_routes) * DEFAULT_OPERATION_COST_USD)
+        )
+
+    async def release_if_open(self, *, primary_error=None) -> None:
+        self._closed = True
+
+
+@contextmanager
+def _deep_research_accounting_passthrough():
+    owner = _DeepResearchAccountingPassthrough()
+
+    async def reserve(**kwargs):
+        return AccountingReservation(
+            reservation_id=f"deep-compat-{kwargs['request_id']}",
+            request_id=kwargs["request_id"],
+            api_key_id=kwargs["api_key_id"],
+            reserved_usd=kwargs["estimate_usd"],
+        )
+
+    def take_owner(request):
+        take_accounting_request_context(request.scope)
+        return owner
+
+    accounting_service = main.app.state.services.accounting_service
+    with (
+        patch.object(accounting_service.reserve, "side_effect", reserve),
+        patch.object(accounting_service.release, "return_value", True),
+        patch.object(
+            web_api,
+            "take_deep_research_terminal_owner",
+            side_effect=take_owner,
+        ),
+        patch.object(web_api, "_deep_research_terminal_owner", return_value=owner),
+    ):
+        yield owner
 
 
 class WebApiTests(unittest.TestCase):
@@ -269,6 +410,14 @@ class WebApiTests(unittest.TestCase):
         self.config_loader.load_providers()
         self.config_loader.load_fallback_rules()
         self.config_loader.load_operation_rules()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        coordinator_patcher = patch(
+            "main.ConfigUpdateCoordinator",
+            return_value=config_update_coordinator,
+        )
+        coordinator_patcher.start()
+        self.addCleanup(coordinator_patcher.stop)
         self.generated_query_text = "optimized search query"
         self.generated_query_text_by_model = {}
         _FakeDeepResearchManager.calls = []
@@ -296,48 +445,65 @@ class WebApiTests(unittest.TestCase):
     def test_fetch_host_resolution_is_not_cached(self):
         calls = []
 
-        def fake_getaddrinfo(hostname, port, *, type=None):  # noqa: A002 - mirrors socket API
+        async def fake_getaddrinfo(hostname, port, *, type=None):  # noqa: A002 - mirrors socket API
             calls.append((hostname, port, type))
             return [(None, None, None, None, (f"93.184.216.{len(calls)}", port))]
 
-        with patch.object(web_api.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
-            first = web_api._resolve_fetch_host("example.com", 443)
-            second = web_api._resolve_fetch_host("example.com", 443)
+        async def scenario():
+            loop = asyncio.get_running_loop()
+            with patch.object(loop, "getaddrinfo", side_effect=fake_getaddrinfo):
+                first = await web_api._resolve_fetch_host("example.com", 443)
+                second = await web_api._resolve_fetch_host("example.com", 443)
+            return first, second
+
+        first, second = run_async(scenario())
 
         self.assertEqual(first, ("93.184.216.1",))
         self.assertEqual(second, ("93.184.216.2",))
         self.assertEqual(len(calls), 2)
 
     def test_web_read_url_validation_blocks_mixed_public_and_private_dns(self):
-        def fake_getaddrinfo(_hostname, port, *, type=None):  # noqa: A002 - mirrors socket API
-            return [
-                (None, None, None, None, ("93.184.216.34", port)),
-                (None, None, None, None, ("127.0.0.1", port)),
-            ]
-
         with (
-            patch.object(web_api.socket, "getaddrinfo", side_effect=fake_getaddrinfo),
+            patch.object(
+                web_safe_fetch_owner,
+                "_resolve_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34", "127.0.0.1"),
+            ),
             self.assertRaises(HTTPException) as ctx,
         ):
-            web_api._validate_http_url("https://example.com/article")
+            run_async(web_api._validated_fetch_url("https://example.com/article"))
 
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_public_redirects_revalidate_each_hop_and_block_private_target(self):
-        class _RedirectResponse:
-            status_code = 302
-            headers = {"location": "http://127.0.0.1/private"}
-            url = "https://example.com/article"
-
-        class _FakeClient:
-            async def get(self, *_args, **_kwargs):
-                return _RedirectResponse()
+        # _get_pinned_public_url always builds its own pinned httpx.AsyncClient
+        # rather than accepting one from a caller, so the test swaps only the
+        # transport it uses (via a patched _PinnedHostAsyncHTTPTransport) and
+        # lets the real pinned-fetch code path run end to end.
+        def handler(request):
+            return web_safe_fetch_owner.httpx.Response(
+                302,
+                headers={"Location": "http://127.0.0.1/private"},
+                content=b"",
+                request=request,
+            )
 
         with (
-            patch.object(web_api, "_resolve_fetch_host", return_value=("93.184.216.34",)),
+            patch.object(
+                web_safe_fetch_owner,
+                "_resolve_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch.object(
+                web_safe_fetch_owner,
+                "_PinnedHostAsyncHTTPTransport",
+                lambda **_kwargs: web_safe_fetch_owner.httpx.MockTransport(handler),
+            ),
             self.assertRaises(HTTPException) as ctx,
         ):
-            run_async(web_api._get_with_public_redirects(_FakeClient(), "https://example.com/article"))
+            run_async(web_api._get_with_public_redirects("https://example.com/article"))
 
         self.assertEqual(ctx.exception.status_code, 400)
 
@@ -363,13 +529,13 @@ class WebApiTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(calls, [("93.184.216.34", 443)])
-        with self.assertRaises(web_api.httpcore.ConnectError):
+        with self.assertRaises(web_safe_fetch_owner.httpcore.ConnectError):
             run_async(backend.connect_tcp("other.example", 443))
 
     def test_cloakbrowser_fetch_is_disabled_unless_explicitly_enabled(self):
         with (
             patch.object(web_api.settings, "web_read_cloakbrowser_enabled", False),
-            patch.object(web_api, "_cloakbrowser_render_sync") as render_mock,
+            patch.object(web_extraction_owner, "_cloakbrowser_render_sync") as render_mock,
         ):
             result = run_async(web_api._cloakbrowser_fetch("https://example.com/article"))
 
@@ -402,7 +568,7 @@ class WebApiTests(unittest.TestCase):
                 finally:
                     cancelled.set()
 
-            with patch("llm_gateway_core.api.v1.web.CLIENT_DISCONNECT_POLL_SECONDS", 0):
+            with patch("llm_gateway_core.api.v1.web_research_orchestration.CLIENT_DISCONNECT_POLL_SECONDS", 0):
                 with self.assertRaises(HTTPException) as raised:
                     await web_api._run_with_client_disconnect_cancellation(
                         DisconnectingRequest(),
@@ -417,35 +583,174 @@ class WebApiTests(unittest.TestCase):
 
         run_async(scenario())
 
-    def test_deep_research_worker_cancel_stops_inner_event_loop_task(self):
-        class BlockingDeepResearchManager:
-            started = threading.Event()
-            cancelled = threading.Event()
-
-            async def conduct_deep_research(self, **kwargs):
-                self.__class__.started.set()
-                try:
-                    await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    self.__class__.cancelled.set()
-                    raise
+    def test_outer_cancellation_waits_for_owned_task_cleanup(self):
+        class ConnectedRequest:
+            async def is_disconnected(self):
+                return False
 
         async def scenario():
-            cancellation_event = threading.Event()
-            worker = web_api._DeepResearchWorker(cancellation_event=cancellation_event, query="topic")
-            task = asyncio.create_task(web_api._conduct_deep_research_in_worker(worker))
-            await asyncio.wait_for(asyncio.to_thread(BlockingDeepResearchManager.started.wait), timeout=1.0)
-            worker.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await asyncio.wait_for(task, timeout=1.0)
-            self.assertTrue(cancellation_event.is_set())
-            self.assertTrue(BlockingDeepResearchManager.cancelled.is_set())
+            work_started = asyncio.Event()
+            cleanup_started = asyncio.Event()
+            cleanup_gate = asyncio.Event()
+            on_cancel = Mock()
 
-        with patch(
-            "llm_gateway_core.api.v1.web.DeepResearchManager",
-            return_value=BlockingDeepResearchManager(),
-        ):
-            run_async(scenario())
+            async def work():
+                work_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleanup_started.set()
+                    await cleanup_gate.wait()
+
+            with patch.object(web_research_owner, "CLIENT_DISCONNECT_POLL_SECONDS", 0):
+                outer = asyncio.create_task(
+                    web_api._run_with_client_disconnect_cancellation(
+                        ConnectedRequest(),
+                        web_api.WEB_DEEP_RESEARCH_OPERATION,
+                        work,
+                        on_cancel=on_cancel,
+                    )
+                )
+                await work_started.wait()
+                outer.cancel()
+                await cleanup_started.wait()
+                await asyncio.sleep(0)
+                self.assertFalse(outer.done())
+                outer.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(outer.done())
+                cleanup_gate.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await outer
+
+            on_cancel.assert_called_once_with()
+            self.assertFalse(
+                any(
+                    task.get_name().startswith("web-client-disconnect-")
+                    for task in asyncio.all_tasks()
+                    if task is not asyncio.current_task()
+                )
+            )
+
+        run_async(scenario())
+
+    def test_success_stops_cancellation_swallowing_disconnect_watcher(self):
+        class CancellationSwallowingRequest:
+            def __init__(self):
+                self.calls = 0
+                self.entered = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def is_disconnected(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return False
+                self.entered.set()
+                try:
+                    await self.release.wait()
+                    await asyncio.sleep(0)
+                except asyncio.CancelledError:
+                    return False
+                return False
+
+        async def scenario():
+            request = CancellationSwallowingRequest()
+
+            async def immediate_work():
+                await request.entered.wait()
+                request.release.set()
+                return "done"
+
+            with patch.object(web_research_owner, "CLIENT_DISCONNECT_POLL_SECONDS", 0):
+                result = await asyncio.wait_for(
+                    web_api._run_with_client_disconnect_cancellation(
+                        request,
+                        web_api.WEB_DEEP_RESEARCH_OPERATION,
+                        immediate_work,
+                    ),
+                    timeout=0.5,
+                )
+
+            self.assertEqual(result, "done")
+            self.assertGreaterEqual(request.calls, 2)
+            self.assertFalse(
+                any(
+                    task.get_name().startswith("web-client-disconnect-")
+                    for task in asyncio.all_tasks()
+                    if task is not asyncio.current_task()
+                )
+            )
+
+        run_async(scenario())
+
+    def test_outer_cancellation_waits_for_real_runner_and_reuses_permit(self):
+        class ConnectedRequest:
+            async def is_disconnected(self):
+                return False
+
+        def job(query: str) -> DeepResearchJob:
+            return DeepResearchJob(
+                job_id=f"web-cancel-{query}",
+                query=query,
+                fast_model="llmgateway/fast",
+                smart_model="llmgateway/smart",
+                strategic_model="llmgateway/strategic",
+                embedding_model=None,
+                gateway_base_url="http://127.0.0.1:9000/v1",
+                gateway_api_key="child-secret",
+            )
+
+        async def scenario():
+            runner = DeepResearchProcessRunner(
+                capacity=1,
+                admission_timeout_seconds=0.2,
+                _adapter_module="tests.deep_research_process_fixture",
+            )
+            await runner.start()
+            outer = asyncio.create_task(
+                web_api._run_with_client_disconnect_cancellation(
+                    ConnectedRequest(),
+                    web_api.WEB_DEEP_RESEARCH_OPERATION,
+                    lambda: runner.run(job("block")),
+                )
+            )
+            try:
+                for _attempt in range(500):
+                    if runner.active_process_count:
+                        break
+                    await asyncio.sleep(0.001)
+                self.assertEqual(runner.active_process_count, 1)
+                child_pid = runner.active_process_ids[0]
+
+                outer.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await outer
+                self.assertEqual(runner.active_process_count, 0)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child_pid, 0)
+
+                result = await runner.run(job("permit-reused"))
+                self.assertEqual(result.report, "fixture report")
+                self.assertFalse(
+                    any(
+                        task.get_name().startswith("web-client-disconnect-")
+                        for task in asyncio.all_tasks()
+                        if task is not asyncio.current_task()
+                    )
+                )
+            finally:
+                if not outer.done():
+                    outer.cancel()
+                    await asyncio.gather(outer, return_exceptions=True)
+                await runner.aclose()
+
+        run_async(scenario())
+
+    def test_deep_research_endpoint_has_no_worker_thread_bridge(self):
+        source = Path(web_api.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("_DeepResearchWorker", source)
+        self.assertNotIn("run_coroutine_threadsafe", source)
+        self.assertNotIn("_conduct_deep_research_in_worker", source)
 
     def _fake_post(self, url, *, headers=None, json=None, **kwargs):
         if "text_1" in json and "text_2" in json:
@@ -530,8 +835,11 @@ class WebApiTests(unittest.TestCase):
             )
 
         with ExitStack() as stack:
+            install_web_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient", return_value=fake_http_client)
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.ApiKeysDB", return_value=api_keys_db or _FakeApiKeysDB()))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
@@ -568,27 +876,27 @@ class WebApiTests(unittest.TestCase):
             )
             stack.enter_context(
                 patch.dict(
-                    "llm_gateway_core.api.v1.web._SEARCH_ADAPTERS",
+                    "llm_gateway_core.api.v1.web_adapters._SEARCH_ADAPTERS",
                     search_adapter_mapping,
                     clear=False,
                 )
             )
             stack.enter_context(
                 patch.dict(
-                    "llm_gateway_core.api.v1.web._READ_ADAPTERS",
+                    "llm_gateway_core.api.v1.web_adapters._READ_ADAPTERS",
                     {"zai": read_adapter},
                     clear=False,
                 )
             )
             stack.enter_context(
                 patch(
-                    "llm_gateway_core.api.v1.web._direct_http_fetch",
+                    "llm_gateway_core.api.v1.web_adapters._direct_http_fetch",
                     AsyncMock(return_value=direct_fetch_result),
                 )
             )
             stack.enter_context(
                 patch(
-                    "llm_gateway_core.api.v1.web._cloakbrowser_fetch",
+                    "llm_gateway_core.api.v1.web_adapters._cloakbrowser_fetch",
                     AsyncMock(return_value=cloakbrowser_fetch_result),
                 )
             )
@@ -824,12 +1132,15 @@ class WebApiTests(unittest.TestCase):
 
     def test_web_search_fails_when_no_adapters_configured(self):
         with ExitStack() as stack:
+            install_web_accounting_passthrough(stack)
             fake_http_client = Mock()
             fake_http_client.post = AsyncMock(side_effect=self._fake_post)
             fake_http_client.get = AsyncMock(return_value=_FakeDownstreamResponse({"data": []}))
             fake_http_client.aclose = AsyncMock()
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient", return_value=fake_http_client)
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.ApiKeysDB", return_value=_FakeApiKeysDB()))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
@@ -897,8 +1208,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["model"], "llmgateway/web-research")
         self.assertEqual(payload["output_language"], "русском")
         self.assertIn("Synthesized research answer", payload["output"])
-        self.assertEqual(api_keys_db.spent_calls[0][0], 7)
-        self.assertAlmostEqual(api_keys_db.spent_calls[0][1], 0.11)
+        self.assertEqual(api_keys_db.spent_calls, [])
 
     def test_web_research_searches_ru_en_zh_and_reads_language_limited_sources(self):
         generate_calls = []
@@ -940,12 +1250,23 @@ class WebApiTests(unittest.TestCase):
         search_adapter = AsyncMock(side_effect=fake_search)
         read_adapter = AsyncMock(side_effect=fake_read)
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", side_effect=fake_generate_queries),
-            patch("llm_gateway_core.api.v1.web._resolve_fetch_host", return_value=("93.184.216.34",)),
-            patch("llm_gateway_core.api.v1.web._direct_http_fetch", new_callable=AsyncMock, return_value=None),
-            patch("llm_gateway_core.api.v1.web._cloakbrowser_fetch", new_callable=AsyncMock, return_value=None),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", side_effect=fake_generate_queries),
+            patch(
+                "llm_gateway_core.api.v1.web_safe_fetch._resolve_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch("llm_gateway_core.api.v1.web_adapters._direct_http_fetch", new_callable=AsyncMock, return_value=None),
+            patch(
+                "llm_gateway_core.api.v1.web_adapters._cloakbrowser_fetch", new_callable=AsyncMock, return_value=None
+            ),
         ):
-            with self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (client, _fake_http_client, _, _):
+            with self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                _fake_http_client,
+                _,
+                _,
+            ):
                 response = client.post(
                     "/v1/web/research",
                     json={
@@ -1067,9 +1388,9 @@ class WebApiTests(unittest.TestCase):
             return ""
 
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
             patch(
-                "llm_gateway_core.api.v1.web._call_internal_text_model",
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
                 side_effect=fake_call_internal_text_model,
             ),
             self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
@@ -1150,10 +1471,16 @@ class WebApiTests(unittest.TestCase):
         search_adapter = AsyncMock(side_effect=fake_search)
         read_adapter = AsyncMock(side_effect=fake_read)
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", side_effect=fake_generate_queries),
-            patch("llm_gateway_core.api.v1.web._resolve_fetch_host", return_value=("93.184.216.34",)),
-            patch("llm_gateway_core.api.v1.web._direct_http_fetch", new_callable=AsyncMock, return_value=None),
-            patch("llm_gateway_core.api.v1.web._cloakbrowser_fetch", new_callable=AsyncMock, return_value=None),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", side_effect=fake_generate_queries),
+            patch(
+                "llm_gateway_core.api.v1.web_safe_fetch._resolve_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch("llm_gateway_core.api.v1.web_adapters._direct_http_fetch", new_callable=AsyncMock, return_value=None),
+            patch(
+                "llm_gateway_core.api.v1.web_adapters._cloakbrowser_fetch", new_callable=AsyncMock, return_value=None
+            ),
         ):
             with self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
                 client,
@@ -1241,8 +1568,11 @@ class WebApiTests(unittest.TestCase):
             }
 
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter, read_adapter=AsyncMock(side_effect=fake_read)) as (
                 client,
                 fake_http_client,
@@ -1268,7 +1598,9 @@ class WebApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["output"], "Synthesized answer.")
         self.assertNotIn("evidence_matrix", payload)
-        self.assertEqual([item["url"] for item in payload["articles"]], ["https://example.com/one", "https://example.com/two"])
+        self.assertEqual(
+            [item["url"] for item in payload["articles"]], ["https://example.com/one", "https://example.com/two"]
+        )
         rerank_payloads = [
             call.kwargs["json"]
             for call in fake_http_client.post.await_args_list
@@ -1346,8 +1678,11 @@ class WebApiTests(unittest.TestCase):
         )
 
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
                 client,
                 fake_http_client,
@@ -1476,8 +1811,11 @@ class WebApiTests(unittest.TestCase):
 
         read_adapter = AsyncMock(side_effect=fake_read)
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
                 client,
                 fake_http_client,
@@ -1537,8 +1875,11 @@ class WebApiTests(unittest.TestCase):
             ]
         )
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter) as (
                 client,
                 fake_http_client,
@@ -1598,8 +1939,11 @@ class WebApiTests(unittest.TestCase):
 
         search_adapter = AsyncMock(return_value=[{"url": "https://example.com/a", "title": "A", "snippet": "s"}])
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter) as (
                 client,
                 fake_http_client,
@@ -1665,8 +2009,11 @@ class WebApiTests(unittest.TestCase):
 
         search_adapter = AsyncMock(return_value=[{"url": "https://example.com/a", "title": "A", "snippet": "s"}])
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter) as (
                 client,
                 fake_http_client,
@@ -1748,8 +2095,11 @@ class WebApiTests(unittest.TestCase):
         )
 
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
                 client,
                 fake_http_client,
@@ -1838,8 +2188,11 @@ class WebApiTests(unittest.TestCase):
         )
 
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
                 client,
                 fake_http_client,
@@ -1943,8 +2296,11 @@ class WebApiTests(unittest.TestCase):
         )
 
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
-            patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
             self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
                 client,
                 fake_http_client,
@@ -2014,7 +2370,7 @@ class WebApiTests(unittest.TestCase):
                 }
             ]
         )
-        with patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])):
+        with patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])):
             with self._client(post_side_effect=fake_post, search_adapter=search_adapter) as (
                 client,
                 _fake_http_client,
@@ -2072,7 +2428,10 @@ class WebApiTests(unittest.TestCase):
             return ""
 
         async def run_analysis():
-            with patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model):
+            with patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ):
                 return await web_api._analyze_articles(
                     Mock(),
                     Mock(),
@@ -2119,7 +2478,10 @@ class WebApiTests(unittest.TestCase):
             return ""
 
         async def run_analysis():
-            with patch("llm_gateway_core.api.v1.web._call_internal_text_model", side_effect=fake_call_internal_text_model):
+            with patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ):
                 return await web_api._analyze_articles(
                     Mock(),
                     Mock(),
@@ -2171,15 +2533,27 @@ class WebApiTests(unittest.TestCase):
             spent_usd=0.0,
             rpm=None,
             tpm=None,
-            allowed_models=["llmgateway/web-deep-research", "llmgateway/image-gen"],
+            allowed_models=[
+                "llmgateway/web-deep-research",
+                "llmgateway/web-search",
+                "llmgateway/web-read",
+                "llmgateway/image-gen",
+            ],
         )
         api_keys_db = _FakeApiKeysDB(record)
+        fake_research = _FakeDeepResearchManager()
 
         with (
-            patch("llm_gateway_core.api.v1.web.DeepResearchManager", return_value=_FakeDeepResearchManager()),
-            patch("llm_gateway_core.api.v1.web._generate_queries", new_callable=AsyncMock) as generate_queries,
+            patch.object(
+                web_api,
+                "_run_deep_research_process",
+                side_effect=fake_research.run,
+            ),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", new_callable=AsyncMock) as generate_queries,
             self._client(api_keys_db) as (client, fake_http_client, _search_adapter, _read_adapter),
+            _deep_research_accounting_passthrough() as accounting,
         ):
+            process_image_storage = client.app.state.services.image_storage
             response = client.post(
                 "/v1/web/deep-research",
                 json={
@@ -2197,67 +2571,77 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["model"], "llmgateway/web-deep-research")
         self.assertEqual(payload["output"], "Deep report")
         self.assertEqual(payload["source_urls"], ["https://example.com/article"])
-        self.assertEqual(payload["usage"]["cost"], 0.03)
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["gateway_search"].__name__, "_gateway_search")
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["gateway_read"].__name__, "_gateway_read")
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["fast_model"], "llmgateway/light_model")
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["smart_model"], "llmgateway/light_model")
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["strategic_model"], "llmgateway/light_model")
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["embedding_model"], "llmgateway/embedding")
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["concurrency"], 6)
-        self.assertEqual(_FakeDeepResearchManager.calls[0]["language"], "Chinese")
-        self.assertIs(_FakeDeepResearchManager.calls[0]["image_generation_enabled"], False)
-        self.assertEqual(api_keys_db.spent_calls, [(9, 0.03)])
+        self.assertEqual(payload["usage"]["cost"], 0.2)
+        job = _FakeDeepResearchManager.calls[0]["job"]
+        self.assertTrue(job.gateway_api_key.startswith("dr1."))
+        self.assertNotEqual(job.gateway_api_key, "lgk_deep")
+        self.assertEqual(job.fast_model, "llmgateway/light_model")
+        self.assertEqual(job.smart_model, "llmgateway/light_model")
+        self.assertEqual(job.strategic_model, "llmgateway/light_model")
+        self.assertEqual(job.embedding_model, "llmgateway/embedding")
+        self.assertEqual(job.concurrency, 6)
+        self.assertEqual(job.language, "Chinese")
+        self.assertIs(job.image_generation_enabled, False)
+        callback_context = _FakeDeepResearchManager.calls[0]["callbacks"].handle.__self__
+        self.assertIs(callback_context.services.image_storage, process_image_storage)
+        self.assertEqual(accounting.child_routes, ["/v1/web/search", "/v1/web/read"])
+        self.assertEqual(accounting.rollup_cost_usd, 0.0)
+        self.assertEqual(api_keys_db.spent_calls, [])
         generate_queries.assert_not_awaited()
         fake_http_client.post.assert_not_awaited()
 
     def test_web_deep_research_does_not_block_ui_requests(self):
-        class BlockingDeepResearchManager:
-            started = threading.Event()
-
-            async def conduct_deep_research(self, **kwargs):
-                self.__class__.started.set()
-                time.sleep(0.6)
-                return {
-                    "report": "Deep report",
-                    "sources": [],
-                    "source_urls": [],
-                    "context": [],
-                    "research_result": {"status": "ok"},
-                    "costs": 0.01,
-                }
-
         async def scenario(client):
+            started = asyncio.Event()
+
+            async def slow_process(_runner, job, _callbacks):
+                started.set()
+                await asyncio.sleep(0.6)
+                return DeepResearchResult(
+                    query=job.query,
+                    report="Deep report",
+                    sources=(),
+                    source_urls=(),
+                    context=(),
+                    research_result={"status": "ok"},
+                    costs=0.01,
+                )
+
             transport = ASGITransport(app=client.app)
             headers = {"Authorization": "Bearer test-gateway-key"}
-            async with HttpxAsyncClient(transport=transport, base_url="http://testserver") as async_client:
-                deep_request = asyncio.create_task(
-                    async_client.post(
-                        "/v1/web/deep-research",
-                        json={"model": "llmgateway/web-deep-research", "query": "topic"},
-                        headers=headers,
+            with patch.object(
+                web_api,
+                "_run_deep_research_process",
+                side_effect=slow_process,
+            ):
+                async with HttpxAsyncClient(
+                    transport=transport,
+                    base_url="http://testserver",
+                ) as async_client:
+                    deep_request = asyncio.create_task(
+                        async_client.post(
+                            "/v1/web/deep-research",
+                            json={"model": "llmgateway/web-deep-research", "query": "topic"},
+                            headers=headers,
+                        )
                     )
-                )
-                await asyncio.wait_for(asyncio.to_thread(BlockingDeepResearchManager.started.wait), timeout=1.0)
+                    await asyncio.wait_for(started.wait(), timeout=1.0)
 
-                started_at = time.monotonic()
-                ui_response = await asyncio.wait_for(
-                    async_client.get("/v1/ui/playground", headers=headers),
-                    timeout=0.25,
-                )
-                elapsed = time.monotonic() - started_at
+                    started_at = time.monotonic()
+                    ui_response = await asyncio.wait_for(
+                        async_client.get("/v1/ui/playground", headers=headers),
+                        timeout=0.25,
+                    )
+                    elapsed = time.monotonic() - started_at
 
-                deep_response = await asyncio.wait_for(deep_request, timeout=1.0)
-                return ui_response, deep_response, elapsed
+                    deep_response = await asyncio.wait_for(deep_request, timeout=1.0)
+                    return ui_response, deep_response, elapsed
 
         with (
-            patch(
-                "llm_gateway_core.api.v1.web.DeepResearchManager",
-                return_value=BlockingDeepResearchManager(),
-            ),
             self._client() as (client, _fake_http_client, _search_adapter, _read_adapter),
+            _deep_research_accounting_passthrough(),
         ):
-            ui_response, deep_response, elapsed = run_async(scenario(client))
+            ui_response, deep_response, elapsed = client.portal.call(scenario, client)
 
         self.assertEqual(ui_response.status_code, 200)
         self.assertIn("Playground", ui_response.text)
@@ -2273,33 +2657,64 @@ class WebApiTests(unittest.TestCase):
             spent_usd=0.0,
             rpm=None,
             tpm=None,
-            allowed_models=["llmgateway/web-deep-research", "llmgateway/image-gen"],
+            allowed_models=[
+                "llmgateway/web-deep-research",
+                "llmgateway/web-search",
+                "llmgateway/web-read",
+                "llmgateway/image-gen",
+            ],
         )
         api_keys_db = _FakeApiKeysDB(record)
+        fake_research = _FakeDeepResearchManager()
+
+        async def post(url, **kwargs):
+            if url.endswith("/v1/images/generations"):
+                return _FakeDownstreamResponse({"data": [{"b64_json": base64.b64encode(b"png-bytes").decode()}]})
+            return await self._fake_post(url, **kwargs)
 
         with (
-            patch("llm_gateway_core.api.v1.web.DeepResearchManager", return_value=_FakeDeepResearchManager()),
-            self._client(api_keys_db) as (client, _fake_http_client, _search_adapter, _read_adapter),
+            patch.object(
+                web_api,
+                "_run_deep_research_process",
+                side_effect=fake_research.run,
+            ),
+            self._client(api_keys_db, post_side_effect=post) as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+            _deep_research_accounting_passthrough() as accounting,
         ):
-            response = client.post(
-                "/v1/web/deep-research",
-                json={
-                    "model": "llmgateway/web-deep-research",
-                    "query": "topic",
-                    "image_generation": True,
-                },
-                headers={"Authorization": "Bearer lgk_deep_images"},
-            )
+            image_storage = client.app.state.services.image_storage
+            publish = Mock(side_effect=image_storage.publish_png)
+            with patch.object(image_storage, "publish_png", publish):
+                response = client.post(
+                    "/v1/web/deep-research",
+                    json={
+                        "model": "llmgateway/web-deep-research",
+                        "query": "topic",
+                        "image_generation": True,
+                    },
+                    headers={"Authorization": "Bearer lgk_deep_images"},
+                )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, response.json())
         call = _FakeDeepResearchManager.calls[0]
-        self.assertIs(call["image_generation_enabled"], True)
-        self.assertEqual(call["image_generation_model"], "llmgateway/image-gen")
-        self.assertEqual(call["image_generation_size"], "1024x1024")
-        self.assertEqual(call["image_generation_api_key"], "lgk_deep_images")
-        self.assertEqual(call["language"], "Russian")
-        self.assertNotIn("image_generation_provider", call)
-        self.assertEqual(api_keys_db.spent_calls, [(10, 0.03)])
+        job = call["job"]
+        self.assertIs(job.image_generation_enabled, True)
+        self.assertEqual(job.image_generation_model, "llmgateway/image-gen")
+        self.assertEqual(job.image_generation_size, "1024x1024")
+        self.assertTrue(job.gateway_api_key.startswith("dr1."))
+        self.assertNotEqual(job.gateway_api_key, "lgk_deep_images")
+        self.assertEqual(job.language, "Russian")
+        self.assertEqual(set(call["callback_images"][0]), {"url", "prompt", "alt_text"})
+        self.assertNotIn("path", call["callback_images"][0])
+        self.assertNotIn("absolute_url", call["callback_images"][0])
+        publish.assert_called_once()
+        self.assertEqual(response.json()["images"], list(call["callback_images"]))
+        self.assertEqual(accounting.rollup_cost_usd, 0.0)
+        self.assertEqual(api_keys_db.spent_calls, [])
 
     def test_web_deep_research_rejects_image_generation_when_image_model_disallowed(self):
         record = ApiKeyRecord(
@@ -2314,7 +2729,15 @@ class WebApiTests(unittest.TestCase):
         )
         api_keys_db = _FakeApiKeysDB(record)
 
-        with self._client(api_keys_db) as (client, _fake_http_client, _search_adapter, _read_adapter):
+        with (
+            self._client(api_keys_db) as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+            _deep_research_accounting_passthrough(),
+        ):
             response = client.post(
                 "/v1/web/deep-research",
                 json={
@@ -2329,16 +2752,25 @@ class WebApiTests(unittest.TestCase):
         self.assertIn("llmgateway/image-gen", response.json()["detail"])
 
     def test_web_deep_research_returns_images_field_empty_by_default(self):
-        with self._client() as (client, _fake_http_client, _search_adapter, _read_adapter):
-            with patch(
-                "llm_gateway_core.api.v1.web.DeepResearchManager",
-                return_value=_FakeDeepResearchManager(),
-            ):
-                response = client.post(
-                    "/v1/web/deep-research",
-                    json={"model": "llmgateway/web-deep-research", "query": "topic"},
-                    headers={"Authorization": "Bearer test-gateway-key"},
-                )
+        with (
+            patch.object(
+                web_api,
+                "_run_deep_research_process",
+                side_effect=_FakeDeepResearchManager().run,
+            ),
+            self._client() as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+            _deep_research_accounting_passthrough(),
+        ):
+            response = client.post(
+                "/v1/web/deep-research",
+                json={"model": "llmgateway/web-deep-research", "query": "topic"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -2348,29 +2780,31 @@ class WebApiTests(unittest.TestCase):
     def test_web_deep_research_exposes_generated_images_in_response(self):
         _FakeDeepResearchManager.generated_images_override = [
             {
-                "path": "/tmp/outputs/images/abc/image_deadbeef_0.png",
                 "url": "/outputs/images/abc/image_deadbeef_0.png",
-                "absolute_url": "/tmp/outputs/images/abc/image_deadbeef_0.png",
                 "prompt": "diagram of a cat",
                 "alt_text": "Illustration: diagram of a cat",
-            },
-            {
-                "url": "",
-                "prompt": "ignored because url is empty",
-            },
-            "not a dict — must be skipped",
+            }
         ]
         try:
-            with self._client() as (client, _fake_http_client, _search_adapter, _read_adapter):
-                with patch(
-                    "llm_gateway_core.api.v1.web.DeepResearchManager",
-                    return_value=_FakeDeepResearchManager(),
-                ):
-                    response = client.post(
-                        "/v1/web/deep-research",
-                        json={"model": "llmgateway/web-deep-research", "query": "topic"},
-                        headers={"Authorization": "Bearer test-gateway-key"},
-                    )
+            with (
+                patch.object(
+                    web_api,
+                    "_run_deep_research_process",
+                    side_effect=_FakeDeepResearchManager().run,
+                ),
+                self._client() as (
+                    client,
+                    _fake_http_client,
+                    _search_adapter,
+                    _read_adapter,
+                ),
+                _deep_research_accounting_passthrough(),
+            ):
+                response = client.post(
+                    "/v1/web/deep-research",
+                    json={"model": "llmgateway/web-deep-research", "query": "topic"},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
         finally:
             _FakeDeepResearchManager.generated_images_override = None
 
@@ -2397,7 +2831,15 @@ class WebApiTests(unittest.TestCase):
         )
         self.config_loader.load_operation_rules()
 
-        with self._client() as (client, _fake_http_client, _search_adapter, _read_adapter):
+        with (
+            self._client() as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+            _deep_research_accounting_passthrough(),
+        ):
             response = client.post(
                 "/v1/web/deep-research",
                 json={
@@ -2424,12 +2866,15 @@ class WebApiTests(unittest.TestCase):
         )
 
         with ExitStack() as stack:
+            install_web_accounting_passthrough(stack)
             fake_http_client = Mock()
             fake_http_client.post = AsyncMock(side_effect=self._fake_post)
             fake_http_client.get = AsyncMock(return_value=_FakeDownstreamResponse({"data": []}))
             fake_http_client.aclose = AsyncMock()
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient", return_value=fake_http_client)
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.ApiKeysDB", return_value=_FakeApiKeysDB()))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
@@ -2443,7 +2888,7 @@ class WebApiTests(unittest.TestCase):
             stack.enter_context(patch.object(main.settings, "zai_api_key", "dummy"))
             stack.enter_context(
                 patch.dict(
-                    "llm_gateway_core.api.v1.web._SEARCH_ADAPTERS",
+                    "llm_gateway_core.api.v1.web_adapters._SEARCH_ADAPTERS",
                     {"tavily": primary_adapter, "zai": secondary_adapter},
                     clear=False,
                 )
@@ -2503,9 +2948,7 @@ class WebApiTests(unittest.TestCase):
             def json(self):
                 return self._payload
 
-        zai_search_handler = _make_zai_mcp_handler(
-            payload_obj=[{"link": "https://example.com/zai"}]
-        )
+        zai_search_handler = _make_zai_mcp_handler(payload_obj=[{"link": "https://example.com/zai"}])
         zai_read_handler = _make_zai_mcp_handler(
             payload_obj={
                 "title": "Z.AI title",
@@ -2567,9 +3010,7 @@ class WebApiTests(unittest.TestCase):
 
     def test_web_research_zai_search_uses_mcp_streamable_http(self):
         calls = []
-        mcp_handler = _make_zai_mcp_handler(
-            payload_obj=[{"link": "https://example.com/research", "title": "Research"}]
-        )
+        mcp_handler = _make_zai_mcp_handler(payload_obj=[{"link": "https://example.com/research", "title": "Research"}])
 
         class FakeAsyncClient:
             async def __aenter__(self):
@@ -2706,9 +3147,7 @@ class WebApiTests(unittest.TestCase):
                 return _FakeTranscriptList()
 
         with patch("youtube_transcript_api.YouTubeTranscriptApi", _FakeYouTubeTranscriptApi):
-            result = run_async(
-                web_api._direct_http_fetch("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-            )
+            result = run_async(web_api._direct_http_fetch("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
 
         self.assertEqual(
             result,
@@ -2720,35 +3159,42 @@ class WebApiTests(unittest.TestCase):
         )
 
     def test_direct_fetch_routes_medium_through_freedium(self):
-        class _FakeResponse:
-            status_code = 200
-            headers = {"Content-Type": "text/html; charset=utf-8"}
-            text = "<html><head><title>Medium title</title></head><body>body</body></html>"
-            content = text.encode("utf-8")
+        # _get_pinned_public_url always builds its own pinned httpx.AsyncClient
+        # rather than accepting one from a caller, so the test swaps only the
+        # transport it uses (via a patched _PinnedHostAsyncHTTPTransport) and
+        # lets the real pinned-fetch code path run end to end.
+        requested_urls = []
 
-            def raise_for_status(self):
-                return None
-
-        class _FakeClient:
-            def __init__(self):
-                self.requested_urls = []
-
-            async def get(self, url, **_kwargs):
-                self.requested_urls.append(url)
-                return _FakeResponse()
+        def handler(request):
+            requested_urls.append(str(request.url))
+            return web_safe_fetch_owner.httpx.Response(
+                200,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                content=b"<html><head><title>Medium title</title></head><body>body</body></html>",
+                request=request,
+            )
 
         fake_trafilatura = Mock()
         fake_trafilatura.extract = Mock(return_value="Freedium article content")
-        fake_client = _FakeClient()
 
         with (
-            patch.object(web_api, "_validate_public_fetch_host", return_value=None),
+            patch.object(
+                web_safe_fetch_owner,
+                "_validate_public_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch.object(
+                web_safe_fetch_owner,
+                "_PinnedHostAsyncHTTPTransport",
+                lambda **_kwargs: web_safe_fetch_owner.httpx.MockTransport(handler),
+            ),
             patch.dict("sys.modules", {"trafilatura": fake_trafilatura}),
         ):
-            result = run_async(web_api._direct_http_fetch("https://medium.com/@user/post", fake_client))
+            result = run_async(web_api._direct_http_fetch("https://medium.com/@user/post"))
 
         self.assertEqual(
-            fake_client.requested_urls,
+            requested_urls,
             ["https://freedium-mirror.cfd/https://medium.com/@user/post"],
         )
         self.assertEqual(result["url"], "https://medium.com/@user/post")
@@ -2756,39 +3202,44 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(result["content"], "Freedium article content")
 
     def test_direct_fetch_falls_back_to_medium_when_freedium_fails(self):
-        class _FakeResponse:
-            headers = {"Content-Type": "text/html; charset=utf-8"}
-            text = "<html><head><title>Direct title</title></head><body>body</body></html>"
-            content = text.encode("utf-8")
+        # _get_pinned_public_url always builds its own pinned httpx.AsyncClient
+        # rather than accepting one from a caller, so the test swaps only the
+        # transport it uses (via a patched _PinnedHostAsyncHTTPTransport) and
+        # lets the real pinned-fetch code path (including the real
+        # raise_for_status()) run end to end.
+        requested_urls = []
 
-            def __init__(self, *, ok: bool):
-                self.status_code = 200 if ok else 503
-                self.ok = ok
-
-            def raise_for_status(self):
-                if not self.ok:
-                    raise web_api.httpx.HTTPError("freedium failed")
-
-        class _FakeClient:
-            def __init__(self):
-                self.requested_urls = []
-
-            async def get(self, url, **_kwargs):
-                self.requested_urls.append(url)
-                return _FakeResponse(ok=len(self.requested_urls) > 1)
+        def handler(request):
+            requested_urls.append(str(request.url))
+            status_code = 503 if len(requested_urls) == 1 else 200
+            return web_safe_fetch_owner.httpx.Response(
+                status_code,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                content=b"<html><head><title>Direct title</title></head><body>body</body></html>",
+                request=request,
+            )
 
         fake_trafilatura = Mock()
         fake_trafilatura.extract = Mock(return_value="Direct Medium content")
-        fake_client = _FakeClient()
 
         with (
-            patch.object(web_api, "_validate_public_fetch_host", return_value=None),
+            patch.object(
+                web_safe_fetch_owner,
+                "_validate_public_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch.object(
+                web_safe_fetch_owner,
+                "_PinnedHostAsyncHTTPTransport",
+                lambda **_kwargs: web_safe_fetch_owner.httpx.MockTransport(handler),
+            ),
             patch.dict("sys.modules", {"trafilatura": fake_trafilatura}),
         ):
-            result = run_async(web_api._direct_http_fetch("https://medium.com/@user/post", fake_client))
+            result = run_async(web_api._direct_http_fetch("https://medium.com/@user/post"))
 
         self.assertEqual(
-            fake_client.requested_urls,
+            requested_urls,
             [
                 "https://freedium-mirror.cfd/https://medium.com/@user/post",
                 "https://medium.com/@user/post",
@@ -2816,34 +3267,41 @@ class WebApiTests(unittest.TestCase):
         </html>
         """
 
-        class _FakeResponse:
-            status_code = 200
-            headers = {"Content-Type": "text/html; charset=utf-8"}
-            text = html
-            content = html.encode("utf-8")
+        # _get_pinned_public_url always builds its own pinned httpx.AsyncClient
+        # rather than accepting one from a caller, so the test swaps only the
+        # transport it uses (via a patched _PinnedHostAsyncHTTPTransport) and
+        # lets the real pinned-fetch code path run end to end.
+        requested_urls = []
 
-            def raise_for_status(self):
-                return None
-
-        class _FakeClient:
-            def __init__(self):
-                self.requested_urls = []
-
-            async def get(self, url, **_kwargs):
-                self.requested_urls.append(url)
-                return _FakeResponse()
+        def handler(request):
+            requested_urls.append(str(request.url))
+            return web_safe_fetch_owner.httpx.Response(
+                200,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                content=html.encode("utf-8"),
+                request=request,
+            )
 
         fake_trafilatura = Mock()
         fake_trafilatura.extract = Mock(return_value="Article body")
-        fake_client = _FakeClient()
 
         with (
-            patch.object(web_api, "_validate_public_fetch_host", return_value=None),
+            patch.object(
+                web_safe_fetch_owner,
+                "_validate_public_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch.object(
+                web_safe_fetch_owner,
+                "_PinnedHostAsyncHTTPTransport",
+                lambda **_kwargs: web_safe_fetch_owner.httpx.MockTransport(handler),
+            ),
             patch.dict("sys.modules", {"trafilatura": fake_trafilatura}),
         ):
-            result = run_async(web_api._direct_http_fetch("https://example.com/post", fake_client))
+            result = run_async(web_api._direct_http_fetch("https://example.com/post"))
 
-        self.assertEqual(fake_client.requested_urls, ["https://example.com/post"])
+        self.assertEqual(requested_urls, ["https://example.com/post"])
         fake_trafilatura.extract.assert_called_once()
         self.assertTrue(fake_trafilatura.extract.call_args.kwargs["include_links"])
         self.assertTrue(fake_trafilatura.extract.call_args.kwargs["include_images"])
@@ -2881,21 +3339,32 @@ class WebApiTests(unittest.TestCase):
         </html>
         """
 
-        class _FakeResponse:
-            status_code = 200
-            headers = {"Content-Type": "text/html; charset=utf-8"}
-            text = html
-            content = html.encode("utf-8")
+        # _get_pinned_public_url always builds its own pinned httpx.AsyncClient
+        # rather than accepting one from a caller, so the test swaps only the
+        # transport it uses (via a patched _PinnedHostAsyncHTTPTransport) and
+        # lets the real pinned-fetch code path run end to end.
+        def handler(request):
+            return web_safe_fetch_owner.httpx.Response(
+                200,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                content=html.encode("utf-8"),
+                request=request,
+            )
 
-            def raise_for_status(self):
-                return None
-
-        class _FakeClient:
-            async def get(self, url, **_kwargs):
-                return _FakeResponse()
-
-        with patch.object(web_api, "_validate_public_fetch_host", return_value=None):
-            result = run_async(web_api._direct_http_fetch("https://example.com/post", _FakeClient()))
+        with (
+            patch.object(
+                web_safe_fetch_owner,
+                "_validate_public_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch.object(
+                web_safe_fetch_owner,
+                "_PinnedHostAsyncHTTPTransport",
+                lambda **_kwargs: web_safe_fetch_owner.httpx.MockTransport(handler),
+            ),
+        ):
+            result = run_async(web_api._direct_http_fetch("https://example.com/post"))
 
         self.assertIsNotNone(result)
         self.assertIn("![", result["content"])
@@ -2984,7 +3453,7 @@ class WebApiTests(unittest.TestCase):
 
         with (
             patch.object(web_api.settings, "zai_api_key", "zai-key"),
-            patch.object(web_api, "zai_mcp_tool_call", fake_call),
+            patch.object(web_adapters_owner, "zai_mcp_tool_call", fake_call),
         ):
             result = run_async(web_api._read_zai(Mock(), "https://example.com/article"))
 
@@ -3067,12 +3536,15 @@ class WebApiTests(unittest.TestCase):
         )
 
         with ExitStack() as stack:
+            install_web_accounting_passthrough(stack)
             fake_http_client = Mock()
             fake_http_client.post = AsyncMock(side_effect=self._fake_post)
             fake_http_client.get = AsyncMock(return_value=_FakeDownstreamResponse({"data": []}))
             fake_http_client.aclose = AsyncMock()
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient", return_value=fake_http_client)
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.ApiKeysDB", return_value=_FakeApiKeysDB()))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
@@ -3085,20 +3557,20 @@ class WebApiTests(unittest.TestCase):
             stack.enter_context(patch.object(main.settings, "zai_api_key", "dummy"))
             stack.enter_context(
                 patch.dict(
-                    "llm_gateway_core.api.v1.web._READ_ADAPTERS",
+                    "llm_gateway_core.api.v1.web_adapters._READ_ADAPTERS",
                     {"tavily": primary_adapter, "zai": secondary_adapter},
                     clear=False,
                 )
             )
             stack.enter_context(
                 patch(
-                    "llm_gateway_core.api.v1.web._direct_http_fetch",
+                    "llm_gateway_core.api.v1.web_adapters._direct_http_fetch",
                     AsyncMock(return_value=None),
                 )
             )
             stack.enter_context(
                 patch(
-                    "llm_gateway_core.api.v1.web._cloakbrowser_fetch",
+                    "llm_gateway_core.api.v1.web_adapters._cloakbrowser_fetch",
                     AsyncMock(return_value=None),
                 )
             )
@@ -3116,7 +3588,6 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(payload["content"], "From secondary reader")
         primary_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
         secondary_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
-
 
     def test_extract_text_with_selectolax_strips_noise_and_returns_main_text(self):
         html = (
@@ -3151,7 +3622,7 @@ class WebApiTests(unittest.TestCase):
 
         async def scenario():
             with patch(
-                "llm_gateway_core.api.v1.web._extract_relevant_article_content",
+                "llm_gateway_core.api.v1.web_research_orchestration._extract_relevant_article_content",
                 side_effect=fake_extract,
             ):
                 return await web_api._prepare_relevant_articles(
@@ -3187,7 +3658,7 @@ class WebApiTests(unittest.TestCase):
         read_adapter = AsyncMock(side_effect=fake_read)
 
         with (
-            patch("llm_gateway_core.api.v1.web._generate_queries", AsyncMock(return_value=["topic"])),
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
             self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
                 client,
                 _fake_http_client,

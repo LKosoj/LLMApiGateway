@@ -16,8 +16,10 @@ from ...config.loader import (
     RESPONSE_FORMAT_NVIDIA_ARTIFACTS,
     RESPONSE_FORMAT_OPENAI_IMAGES,
 )
+from ...config.settings import IMAGE_DATA_URL_OVERHEAD_BYTES
 from ...services.payload_transform import apply_payload_transforms
 from ...services.request_handler import FORBIDDEN_CUSTOM_BODY_PARAM_KEYS
+from .operation_runtime import MultipartFilePayload, ValidatedUpload
 
 DEFAULT_IMAGE_MEDIA_TYPE = "image/png"
 SUPPORTED_OPENAI_IMAGE_RESPONSE_FORMATS = frozenset({"", "b64_json"})
@@ -42,7 +44,7 @@ class PreparedImageRequest:
     transport: Literal["json", "multipart"]
     json_payload: dict[str, Any] | None = None
     multipart_data: list[tuple[str, object]] | None = None
-    multipart_files: list[tuple[str, tuple[str, bytes, str | None]]] | None = None
+    multipart_files: list[tuple[str, MultipartFilePayload]] | None = None
 
 
 def _deepcopy_if_needed(value: Any) -> Any:
@@ -145,10 +147,13 @@ def build_openai_json_payload(payload: dict[str, Any], route: OperationRoute) ->
     return _merge_route_custom_body_params(downstream_payload, route)
 
 
-def build_openai_multipart_payload(payload: dict[str, Any], route: OperationRoute) -> tuple[list[tuple[str, object]], list[tuple[str, tuple[str, bytes, str | None]]]]:
+def build_openai_multipart_payload(
+    payload: dict[str, Any],
+    route: OperationRoute,
+) -> tuple[list[tuple[str, object]], list[tuple[str, MultipartFilePayload]]]:
     payload = _copy_without_configured_client_fields(payload, route)
     data_payload: dict[str, object] = {}
-    files_payload: list[tuple[str, tuple[str, bytes, str | None]]] = []
+    files_payload: list[tuple[str, MultipartFilePayload]] = []
 
     for field_name, field_value in payload.items():
         if field_name == "images":
@@ -197,7 +202,10 @@ def _decode_image_source_string(value: str, *, default_content_type: str | None)
     return _decode_image_base64(stripped_value), default_content_type
 
 
-def _serialize_openai_multipart_image(image_value: Any) -> tuple[str, bytes, str | None]:
+def _serialize_openai_multipart_image(image_value: Any) -> MultipartFilePayload:
+    if isinstance(image_value, ValidatedUpload):
+        return image_value.as_multipart_file()
+
     if isinstance(image_value, str):
         content, content_type = _decode_image_source_string(
             image_value,
@@ -234,6 +242,130 @@ def _serialize_openai_multipart_image(image_value: Any) -> tuple[str, bytes, str
         status_code=400,
         detail="Multipart image payload must contain bytes, data_url, b64_json, base64, image_url, or url.",
     )
+
+
+def _base64_encoded_size(size: int) -> int:
+    return 4 * ((size + 2) // 3)
+
+
+def _collect_validated_uploads(value: Any) -> list[ValidatedUpload]:
+    uploads: list[ValidatedUpload] = []
+    if isinstance(value, ValidatedUpload):
+        uploads.append(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            uploads.extend(_collect_validated_uploads(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            uploads.extend(_collect_validated_uploads(item))
+    return uploads
+
+
+def _estimated_decoded_image_size(value: Any) -> int:
+    if isinstance(value, bytes):
+        return len(value)
+    if isinstance(value, ValidatedUpload):
+        return value.size
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if stripped_value.startswith(("http://", "https://")):
+            return 0
+        data_url_match = DATA_URL_RE.match(stripped_value)
+        encoded_value = data_url_match.group(2) if data_url_match else stripped_value
+        normalized_value = re.sub(r"\s+", "", encoded_value)
+        return 3 * ((len(normalized_value) + 3) // 4)
+    if isinstance(value, dict):
+        raw_bytes = value.get("bytes")
+        if isinstance(raw_bytes, bytes):
+            return len(raw_bytes)
+        for source_key in ("data_url", "b64_json", "base64", "image_url", "url"):
+            source_value = value.get(source_key)
+            if isinstance(source_value, str) and source_value.strip():
+                return _estimated_decoded_image_size(source_value)
+    return 0
+
+
+def estimate_image_request_processing_weight(
+    request_payload: dict[str, Any],
+    route: OperationRoute,
+    operation: str,
+    *,
+    source_transport: Literal["json", "multipart"],
+) -> int | None:
+    """Estimate only the selected route's upload materialization peak."""
+    effective_request_format = route.request_format or REQUEST_FORMAT_OPENAI_IMAGES
+    uploads = _collect_validated_uploads(request_payload)
+
+    if source_transport == "multipart":
+        direct_multipart = operation == "images_edits" and effective_request_format in {
+            REQUEST_FORMAT_OPENAI_IMAGES,
+            REQUEST_FORMAT_OPENAI_IMAGES_MULTIPART,
+        }
+        if direct_multipart:
+            return sum(upload.size for upload in uploads)
+
+        materialized_occurrences: list[tuple[ValidatedUpload, str | None]] = []
+        request_mapping = route.request_mapping or {}
+        fields = request_mapping.get("fields", {})
+        if isinstance(fields, dict):
+            for target_field, mapping_spec in fields.items():
+                if not str(target_field).strip() or not isinstance(mapping_spec, dict):
+                    continue
+                if mapping_spec.get("transform") not in {
+                    "to_data_url",
+                    "to_data_url_list",
+                }:
+                    continue
+                source_path = mapping_spec.get("from")
+                if not isinstance(source_path, str):
+                    continue
+                source_value = extract_path_value(request_payload, source_path)
+                if source_value is not MISSING:
+                    mapping_content_type = mapping_spec.get("content_type")
+                    if not isinstance(mapping_content_type, str):
+                        mapping_content_type = None
+                    materialized_occurrences.extend(
+                        (upload, mapping_content_type)
+                        for upload in _collect_validated_uploads(source_value)
+                    )
+
+        encoded_sizes = []
+        for upload, mapping_content_type in materialized_occurrences:
+            prefix_size = len(
+                (
+                    f"data:{upload.content_type or mapping_content_type or DEFAULT_IMAGE_MEDIA_TYPE};"
+                    "base64,"
+                ).encode("utf-8")
+            )
+            encoded_sizes.append(
+                _base64_encoded_size(upload.size)
+                + max(
+                    IMAGE_DATA_URL_OVERHEAD_BYTES,
+                    prefix_size,
+                )
+            )
+        persistent_encoded = sum(encoded_sizes)
+        largest_temporary_pair = max(
+            (
+                upload.size + encoded_size
+                for (upload, _), encoded_size in zip(
+                    materialized_occurrences,
+                    encoded_sizes,
+                    strict=True,
+                )
+            ),
+            default=0,
+        )
+        return max(1, persistent_encoded + largest_temporary_pair)
+
+    if operation == "images_edits" and effective_request_format == REQUEST_FORMAT_OPENAI_IMAGES_MULTIPART:
+        source_values = list(request_payload.get("images") or [])
+        if "mask" in request_payload:
+            source_values.append(request_payload["mask"])
+        decoded_total = sum(_estimated_decoded_image_size(value) for value in source_values)
+        return max(1, decoded_total)
+
+    return None
 
 
 def _normalize_requested_response_format(request_payload: dict[str, Any]) -> str | None:
@@ -466,6 +598,21 @@ def build_downstream_image_request(
 
 def image_source_to_data_url(value: Any, *, default_content_type: str | None = None) -> str:
     media_type = default_content_type or DEFAULT_IMAGE_MEDIA_TYPE
+
+    if isinstance(value, ValidatedUpload):
+        try:
+            value.file.seek(0)
+            raw_bytes = value.file.read(value.size + 1)
+        finally:
+            value.file.seek(0)
+        if len(raw_bytes) != value.size:
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded image size changed while processing the request.",
+            )
+        content_type = value.content_type or media_type
+        encoded_bytes = base64.b64encode(raw_bytes).decode("ascii")
+        return f"data:{content_type};base64,{encoded_bytes}"
 
     if isinstance(value, str):
         stripped_value = value.strip()

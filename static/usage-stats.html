@@ -1,171 +1,144 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-i18n-page="usage">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Gateway v1.10-  Usage Statistics</title>
+    <title data-i18n="usage:page.title">LLM Gateway - Usage Statistics</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/usage-stats.css">
     <link rel="stylesheet" href="/static/usage-analytics.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
     <script src="/static/theme.js"></script>
 </head>
 <body>
     <div class="top-nav">
         <div class="top-nav-content">
-            <a href="/v1/ui/docs" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
-                Docs
-            </a>
-            <a href="/v1/ui/usage-stats" class="nav-button active">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-                Usage Statistics
-            </a>
-            <a href="/v1/ui/quota" class="nav-button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                Quota
-            </a>
-            <a href="/v1/ui/rules-editor" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                Rules Editor
-            </a>
-            <a href="/v1/ui/playground" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/><path d="M2 12h20"/></svg>
-                Playground
-            </a>
-            <a href="/v1/ui/api-keys" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4"/><path d="M18 5l2 2"/><path d="M15 8l2 2"/></svg>
-                API Keys
-            </a>
-            <a href="/v1/ui/rejections" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Rejections
-            </a>
-            <a href="/v1/ui/translator-debug" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                Translator Debug
-            </a>
-            <a href="/v1/ui/pricing" class="nav-button" data-master-only>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: text-bottom;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                Pricing
-            </a>
-            <button id="darkModeToggle" aria-label="Toggle dark mode" class="theme-toggle">
-                <span class="icon-placeholder"></span>
-            </button>
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
         </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
     </div>
     <div class="container">
-        <h1>LLM Gateway - Usage Statistics <span class="page-version">(v1.10)</span></h1>
+        <h1><span data-i18n="usage:page.heading">LLM Gateway - Usage Statistics</span> <span class="page-version" data-product-version aria-label="Product version" data-i18n-aria-label="usage:page.productVersionAria"></span></h1>
 
-        <div class="tabs">
-            <button class="tab-button active" data-tab="analytics">Analytics Dashboard</button>
-            <button class="tab-button" data-tab="stats">Usage Statistics</button>
-            <button class="tab-button" data-tab="records">Usage Records</button>
-            <button class="tab-button" data-tab="fallback" data-master-only>Fallback Analytics</button>
-            <button class="tab-button" data-tab="topology">Topology</button>
+        <div class="tabs" role="tablist">
+            <button class="tab-button active" data-tab="analytics" role="tab" data-i18n="usage:tabs.analytics">Analytics Dashboard</button>
+            <button class="tab-button" data-tab="stats" role="tab" data-i18n="usage:tabs.statistics">Usage Statistics</button>
+            <button class="tab-button" data-tab="records" role="tab" data-i18n="usage:tabs.records">Usage Records</button>
+            <button class="tab-button" data-tab="fallback" role="tab" data-master-only hidden data-i18n="usage:tabs.fallback">Fallback Analytics</button>
+            <button class="tab-button" data-tab="topology" role="tab" data-i18n="usage:tabs.topology">Topology</button>
         </div>
 
-        <div id="statsTabContent" class="tab-content">
+        <div id="statsTabContent" class="tab-content" role="tabpanel">
             <div class="controls">
-                <label for="periodSelector">Group by:</label>
+                <label for="periodSelector" data-i18n="usage:period.groupBy">Group by:</label>
                 <select id="periodSelector">
-                    <option value="hour">Hour</option>
-                    <option value="day" selected>Day</option>
-                    <option value="week">Week</option>
-                    <option value="month">Month</option>
+                    <option value="hour" data-i18n="usage:period.hourOption">Hour</option>
+                    <option value="day" selected data-i18n="usage:period.dayOption">Day</option>
+                    <option value="week" data-i18n="usage:period.weekOption">Week</option>
+                    <option value="month" data-i18n="usage:period.monthOption">Month</option>
                 </select>
-                <button id="refreshButton">Refresh</button>
+                <button id="refreshButton" data-i18n="usage:actions.refreshAction">Refresh</button>
             </div>
             <div id="statsArea">
                 <!-- Statistics tables will be rendered here by JavaScript -->
-                <p class="empty-state">Select a period and click 'Refresh' to view statistics.</p>
+                <p class="empty-state" data-i18n="usage:initial.statistics">Select a period and click Refresh to view statistics.</p>
             </div>
         </div>
 
-        <div id="analyticsTabContent" class="tab-content active">
+        <div id="analyticsTabContent" class="tab-content active" role="tabpanel">
             <section class="analytics-shell" aria-labelledby="analyticsTitle">
                 <div class="analytics-header">
-                    <h2 id="analyticsTitle">Analytics Dashboard</h2>
-                    <button id="analyticsRefreshButton" type="button">Refresh</button>
+                    <h2 id="analyticsTitle" data-i18n="usage:sections.analytics">Analytics Dashboard</h2>
+                    <button id="analyticsRefreshButton" type="button" data-i18n="usage:actions.refreshAction">Refresh</button>
                 </div>
 
                 <form id="analyticsFilters" class="analytics-filters">
                     <label>
-                        <span>Range</span>
+                        <span data-i18n="usage:filters.rangeLabel">Range</span>
                         <select id="analyticsRange">
-                            <option value="24h">Last 24 hours</option>
-                            <option value="7d">Last 7 days</option>
-                            <option value="14d">Last 14 days</option>
-                            <option value="30d" selected>Last 30 days</option>
-                            <option value="90d">Last 90 days</option>
-                            <option value="180d">Last 180 days</option>
-                            <option value="365d">Last 365 days</option>
-                            <option value="12m">Last 12 months</option>
+                            <option value="24h" data-i18n="usage:ranges.last24Hours">Last 24 hours</option>
+                            <option value="7d" data-i18n="usage:ranges.last7Days">Last 7 days</option>
+                            <option value="14d" data-i18n="usage:ranges.last14Days">Last 14 days</option>
+                            <option value="30d" selected data-i18n="usage:ranges.last30Days">Last 30 days</option>
+                            <option value="90d" data-i18n="usage:ranges.last90Days">Last 90 days</option>
+                            <option value="180d" data-i18n="usage:ranges.last180Days">Last 180 days</option>
+                            <option value="365d" data-i18n="usage:ranges.last365Days">Last 365 days</option>
+                            <option value="12m" data-i18n="usage:ranges.last12Months">Last 12 months</option>
                         </select>
                     </label>
                     <label>
-                        <span>Bucket</span>
+                        <span data-i18n="usage:filters.bucketLabel">Bucket</span>
                         <select id="analyticsBucket">
-                            <option value="hour">Hour</option>
-                            <option value="day" selected>Day</option>
-                            <option value="week">Week</option>
-                            <option value="month">Month</option>
+                            <option value="hour" data-i18n="usage:period.hourOption">Hour</option>
+                            <option value="day" selected data-i18n="usage:period.dayOption">Day</option>
+                            <option value="week" data-i18n="usage:period.weekOption">Week</option>
+                            <option value="month" data-i18n="usage:period.monthOption">Month</option>
                         </select>
                     </label>
-                    <label data-master-only>
-                        <span>Virtual key</span>
+                    <label data-master-only hidden>
+                        <span data-i18n="usage:filters.virtualKey">Virtual key</span>
                         <select id="analyticsKeyScope">
-                            <option value="all" selected>All keys</option>
-                            <option value="unattributed">Unattributed</option>
+                            <option value="all" selected data-i18n="usage:filters.allKeys">All keys</option>
+                            <option value="unattributed" data-i18n="usage:filters.unattributed">Unattributed</option>
                         </select>
                     </label>
-                    <label data-master-only>
-                        <span>Provider key</span>
+                    <label data-master-only hidden>
+                        <span data-i18n="usage:filters.providerKey">Provider key</span>
                         <select id="analyticsUpstreamKey">
-                            <option value="">All provider keys</option>
+                            <option value="" data-i18n="usage:filters.allProviderKeys">All provider keys</option>
                         </select>
                     </label>
                     <label>
-                        <span>Operation</span>
+                        <span data-i18n="usage:filters.operationLabel">Operation</span>
                         <select id="analyticsOperation">
-                            <option value="">All operations</option>
+                            <option value="" data-i18n="usage:filters.allOperations">All operations</option>
                         </select>
                     </label>
                     <label>
-                        <span>Gateway</span>
+                        <span data-i18n="usage:filters.gatewayLabel">Gateway</span>
                         <select id="analyticsGateway">
-                            <option value="">All gateways</option>
+                            <option value="" data-i18n="usage:filters.allGateways">All gateways</option>
                         </select>
                     </label>
                     <label>
-                        <span>Provider</span>
+                        <span data-i18n="usage:filters.providerLabel">Provider</span>
                         <select id="analyticsProvider">
-                            <option value="">All providers</option>
+                            <option value="" data-i18n="usage:filters.allProviders">All providers</option>
                         </select>
                     </label>
                     <label>
-                        <span>Model</span>
+                        <span data-i18n="usage:filters.modelLabel">Model</span>
                         <select id="analyticsModel">
-                            <option value="">All models</option>
+                            <option value="" data-i18n="usage:filters.allModels">All models</option>
                         </select>
                     </label>
                     <label>
-                        <span>X-Title</span>
+                        <span data-i18n="usage:filters.xTitleLabel">X-Title</span>
                         <select id="analyticsXTitle">
-                            <option value="">All titles</option>
+                            <option value="" data-i18n="usage:filters.allTitles">All titles</option>
                         </select>
                     </label>
                     <label>
-                        <span>Estimated</span>
+                        <span data-i18n="usage:filters.estimatedLabel">Estimated</span>
                         <select id="analyticsEstimated">
-                            <option value="">All usage</option>
-                            <option value="true">Estimated only</option>
-                            <option value="false">Provider usage</option>
+                            <option value="" data-i18n="usage:filters.allUsage">All usage</option>
+                            <option value="true" data-i18n="usage:filters.estimatedOnly">Estimated only</option>
+                            <option value="false" data-i18n="usage:filters.providerUsage">Provider usage</option>
                         </select>
                     </label>
                 </form>
 
                 <div id="analyticsStatus" class="analytics-status" role="status"></div>
+                <div id="analyticsRawDetail" class="analytics-status"></div>
+                <div id="analyticsRequestId" class="analytics-status" hidden></div>
 
                 <div id="analyticsDashboard" class="analytics-dashboard" hidden>
                     <div id="analyticsKpis" class="analytics-kpis"></div>
@@ -173,7 +146,7 @@
                     <div class="analytics-chart-grid">
                         <section class="analytics-panel" aria-labelledby="analyticsTrendTitle">
                             <div class="analytics-panel-head">
-                                <h3 id="analyticsTrendTitle">Token Trend</h3>
+                                <h3 id="analyticsTrendTitle" data-i18n="usage:sections.tokenTrend">Token Trend</h3>
                                 <span id="analyticsTrendMeta"></span>
                             </div>
                             <div id="analyticsLineChart" class="analytics-chart"></div>
@@ -181,7 +154,7 @@
 
                         <section class="analytics-panel" aria-labelledby="analyticsCostTitle">
                             <div class="analytics-panel-head">
-                                <h3 id="analyticsCostTitle">Cost by Provider</h3>
+                                <h3 id="analyticsCostTitle" data-i18n="usage:sections.costByProvider">Cost by Provider</h3>
                                 <span id="analyticsCostMeta"></span>
                             </div>
                             <div id="analyticsBarChart" class="analytics-chart"></div>
@@ -191,35 +164,35 @@
                     <div class="analytics-table-grid">
                         <section class="analytics-panel" aria-labelledby="analyticsBreakdownTitle">
                             <div class="analytics-panel-head">
-                                <h3 id="analyticsBreakdownTitle">Filtered Breakdown</h3>
+                                <h3 id="analyticsBreakdownTitle" data-i18n="usage:sections.filteredBreakdown">Filtered Breakdown</h3>
                             </div>
                             <div id="analyticsBreakdownTable" class="analytics-table-wrap"></div>
                         </section>
 
                         <section class="analytics-panel" aria-labelledby="analyticsXTitleTitle">
                             <div class="analytics-panel-head">
-                                <h3 id="analyticsXTitleTitle">X-Title Breakdown</h3>
+                                <h3 id="analyticsXTitleTitle" data-i18n="usage:sections.xTitleBreakdown">X-Title Breakdown</h3>
                             </div>
                             <div id="analyticsXTitleTable" class="analytics-table-wrap"></div>
                         </section>
 
                         <section class="analytics-panel" aria-labelledby="analyticsReliabilityTitle">
                             <div class="analytics-panel-head">
-                                <h3 id="analyticsReliabilityTitle">Reliability</h3>
+                                <h3 id="analyticsReliabilityTitle" data-i18n="usage:sections.reliabilityTitle">Reliability</h3>
                             </div>
-                            <div id="analyticsReliabilityTable" class="analytics-table-wrap"></div>
+                            <div id="analyticsReliabilityTable" class="analytics-table-wrap" tabindex="0"></div>
                         </section>
 
-                        <section class="analytics-panel" data-master-only aria-labelledby="analyticsKeyTitle">
+                        <section class="analytics-panel" data-master-only hidden aria-labelledby="analyticsKeyTitle">
                             <div class="analytics-panel-head">
-                                <h3 id="analyticsKeyTitle">Virtual Keys</h3>
+                                <h3 id="analyticsKeyTitle" data-i18n="usage:sections.virtualKeys">Virtual Keys</h3>
                             </div>
                             <div id="analyticsKeyTable" class="analytics-table-wrap"></div>
                         </section>
 
                         <section class="analytics-panel" aria-labelledby="analyticsRecentTitle">
                             <div class="analytics-panel-head">
-                                <h3 id="analyticsRecentTitle">Recent Activity</h3>
+                                <h3 id="analyticsRecentTitle" data-i18n="usage:sections.recentActivity">Recent Activity</h3>
                             </div>
                             <div id="analyticsRecentTable" class="analytics-table-wrap"></div>
                         </section>
@@ -228,100 +201,102 @@
             </section>
         </div>
 
-        <div id="recordsTabContent" class="tab-content">
+        <div id="recordsTabContent" class="tab-content" role="tabpanel">
             <div class="records-header">
-                <h2>Latest Usage Records</h2>
+                <h2 data-i18n="usage:sections.latestRecords">Latest Usage Records</h2>
                 <div class="controls">
-                    <button id="recordRefreshButton">Refresh</button>
+                    <button id="recordRefreshButton" data-i18n="usage:actions.refreshAction">Refresh</button>
                 </div>
                 <div class="pagination-controls">
-                    <button id="prevPage">Previous</button>
-                    <span id="pageInfo">Page 1</span>
-                    <button id="nextPage">Next</button>
+                    <button id="prevPage" data-i18n="usage:actions.previousAction">Previous</button>
+                    <span id="pageInfo"></span>
+                    <button id="nextPage" data-i18n="usage:actions.nextAction">Next</button>
                 </div>
             </div>
             <div id="recordsArea">
                 <!-- Usage records table will be rendered here by JavaScript -->
-                <p class="empty-state">Loading usage records...</p>
+                <p class="empty-state" data-i18n="usage:initial.records">Loading usage records…</p>
             </div>
         </div>
-        <div id="fallbackTabContent" class="tab-content">
-            <div class="fallback-sub-tabs">
-                <button class="fallback-sub-tab active" data-subtab="summary">Summary</button>
-                <button class="fallback-sub-tab" data-subtab="chains">Chains</button>
-                <button class="fallback-sub-tab" data-subtab="upstream">Upstream Analytics</button>
+        <div id="fallbackTabContent" class="tab-content" role="tabpanel">
+            <div class="fallback-sub-tabs" role="tablist">
+                <button class="fallback-sub-tab active" data-subtab="summary" role="tab" data-i18n="usage:fallbackTabs.summaryTab">Summary</button>
+                <button class="fallback-sub-tab" data-subtab="chains" role="tab" data-i18n="usage:fallbackTabs.chainsTab">Chains</button>
+                <button class="fallback-sub-tab" data-subtab="upstream" role="tab" data-i18n="usage:fallbackTabs.upstream">Upstream Analytics</button>
             </div>
 
-            <div id="fallbackSummaryContent" class="fallback-sub-content active">
+            <div id="fallbackSummaryContent" class="fallback-sub-content active" role="tabpanel">
                 <div class="controls">
-                    <label for="fallbackPeriodSelector">Group by:</label>
+                    <label for="fallbackPeriodSelector" data-i18n="usage:period.groupBy">Group by:</label>
                     <select id="fallbackPeriodSelector">
-                        <option value="hour">Hour</option>
-                        <option value="day" selected>Day</option>
-                        <option value="week">Week</option>
-                        <option value="month">Month</option>
+                        <option value="hour" data-i18n="usage:period.hourOption">Hour</option>
+                        <option value="day" selected data-i18n="usage:period.dayOption">Day</option>
+                        <option value="week" data-i18n="usage:period.weekOption">Week</option>
+                        <option value="month" data-i18n="usage:period.monthOption">Month</option>
                     </select>
-                    <button id="fallbackRefreshButton">Refresh</button>
+                    <button id="fallbackRefreshButton" data-i18n="usage:actions.refreshAction">Refresh</button>
                 </div>
                 <div id="fallbackStatsArea">
-                    <p class="empty-state">Select a period and click 'Refresh' to view fallback statistics.</p>
+                    <p class="empty-state" data-i18n="usage:initial.fallback">Select a period and click Refresh to view fallback statistics.</p>
                 </div>
             </div>
 
-            <div id="fallbackChainsContent" class="fallback-sub-content">
+            <div id="fallbackChainsContent" class="fallback-sub-content" role="tabpanel">
                 <div class="records-header">
-                    <h2>Fallback Chains</h2>
+                    <h2 data-i18n="usage:sections.fallbackChains">Fallback Chains</h2>
                     <div class="controls">
-                        <button id="fallbackChainsRefreshButton">Refresh</button>
+                        <button id="fallbackChainsRefreshButton" data-i18n="usage:actions.refreshAction">Refresh</button>
                     </div>
                     <div class="pagination-controls">
-                        <button id="fallbackPrevPage">Previous</button>
-                        <span id="fallbackPageInfo">Page 1</span>
-                        <button id="fallbackNextPage">Next</button>
+                        <button id="fallbackPrevPage" data-i18n="usage:actions.previousAction">Previous</button>
+                        <span id="fallbackPageInfo"></span>
+                        <button id="fallbackNextPage" data-i18n="usage:actions.nextAction">Next</button>
                     </div>
                 </div>
                 <div id="fallbackChainsArea">
-                    <p class="empty-state">Loading fallback chains...</p>
+                    <p class="empty-state" data-i18n="usage:initial.chains">Loading fallback chains…</p>
                 </div>
             </div>
 
-            <div id="upstreamAnalyticsContent" class="fallback-sub-content">
+            <div id="upstreamAnalyticsContent" class="fallback-sub-content" role="tabpanel">
                 <div class="controls">
-                    <label for="upstreamPeriodSelector">Group by:</label>
+                    <label for="upstreamPeriodSelector" data-i18n="usage:period.groupBy">Group by:</label>
                     <select id="upstreamPeriodSelector">
-                        <option value="hour">Hour</option>
-                        <option value="day" selected>Day</option>
-                        <option value="week">Week</option>
-                        <option value="month">Month</option>
+                        <option value="hour" data-i18n="usage:period.hourOption">Hour</option>
+                        <option value="day" selected data-i18n="usage:period.dayOption">Day</option>
+                        <option value="week" data-i18n="usage:period.weekOption">Week</option>
+                        <option value="month" data-i18n="usage:period.monthOption">Month</option>
                     </select>
-                    <button id="upstreamRefreshButton">Refresh</button>
+                    <button id="upstreamRefreshButton" data-i18n="usage:actions.refreshAction">Refresh</button>
                 </div>
                 <div id="upstreamStatsArea">
-                    <p class="empty-state">Select a period and click 'Refresh' to view upstream analytics.</p>
+                    <p class="empty-state" data-i18n="usage:initial.upstream">Select a period and click Refresh to view upstream analytics.</p>
                 </div>
             </div>
         </div>
 
-        <div id="topologyTabContent" class="tab-content">
+        <div id="topologyTabContent" class="tab-content" role="tabpanel">
             <div class="topology-toolbar">
-                <button id="topologyRefreshButton">Refresh</button>
-                <label class="topology-auto"><input type="checkbox" id="topologyAutoRefresh" checked> Auto-refresh (5s)</label>
+                <button id="topologyRefreshButton" data-i18n="topology:toolbar.refreshAction">Refresh</button>
+                <label class="topology-auto"><input type="checkbox" id="topologyAutoRefresh" checked> <span data-i18n="topology:toolbar.autoRefresh">Auto-refresh (5s)</span></label>
                 <span class="topology-legend">
-                    <span class="topology-legend-item"><span class="topology-swatch swatch-ok"></span>ok</span>
-                    <span class="topology-legend-item"><span class="topology-swatch swatch-error"></span>error</span>
-                    <span class="topology-legend-item"><span class="topology-swatch swatch-invalid"></span>not configured</span>
-                    <span class="topology-legend-item"><span class="topology-swatch swatch-ctx"></span>context-overflow</span>
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-ok"></span><span data-i18n="topology:legend.healthyLabel">ok</span></span>
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-error"></span><span data-i18n="topology:legend.errorLabel">error</span></span>
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-invalid"></span><span data-i18n="topology:legend.notConfiguredLabel">not configured</span></span>
+                    <span class="topology-legend-item"><span class="topology-swatch swatch-ctx"></span><span data-i18n="topology:legend.contextOverflow">context overflow</span></span>
                 </span>
             </div>
             <div id="topology-container" style="position: relative;"></div>
         </div>
 
         <div id="messageArea"></div>
+        <div id="messageRawDetail"></div>
+        <div id="messageRequestId" hidden></div>
     </div>
 
-    <script src="/static/ui-core.js"></script>
-    <script src="/static/shared-nav.js"></script>
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
     <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
     <script src="/static/usage-analytics.js"></script>
     <script src="/static/usage-stats.js"></script>
 </body>

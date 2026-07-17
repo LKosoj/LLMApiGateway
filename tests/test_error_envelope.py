@@ -3,6 +3,7 @@ import unittest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+import main
 from llm_gateway_core.api.error_envelope import (
     build_error_payload,
     error_type_for_status,
@@ -64,8 +65,6 @@ class ErrorEnvelopeTests(unittest.TestCase):
 
 class HttpExceptionHandlerIntegrationTests(unittest.TestCase):
     def test_http_exception_handler_adds_envelope_without_changing_detail(self):
-        import main
-
         app = FastAPI()
 
         @app.get("/bad")

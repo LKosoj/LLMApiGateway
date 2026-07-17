@@ -5,11 +5,15 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main
 from llm_gateway_core.api.v1 import router as api_v1_router
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.operation_accounting_test_support import (
+    install_embeddings_rerank_accounting_passthrough,
+)
 
 
 VALID_PROVIDERS_TEXT = """
@@ -125,14 +129,25 @@ class EmbeddingsEndpointTests(unittest.TestCase):
         else:
             fake_http_client.post = AsyncMock(return_value=downstream_response)
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
             stack.enter_context(patch.object(main.settings, "fallback_provider", "openai"))
+            install_embeddings_rerank_accounting_passthrough(stack)
 
             with TestClient(main.app) as client:
                 yield client, fake_http_client
@@ -346,12 +361,13 @@ class EmbeddingsEndpointTests(unittest.TestCase):
         self.assertEqual(fake_http_client.post.await_count, 1)
 
     def test_api_v1_router_registers_embeddings_router(self):
-        embeddings_routes = [
-            route
-            for route in api_v1_router.routes
-            if getattr(route, "path", None) == "/embeddings" and "Embeddings V1" in getattr(route, "tags", [])
-        ]
-        self.assertEqual(len(embeddings_routes), 1)
+        app = FastAPI()
+        app.include_router(api_v1_router)
+        schema = app.openapi()
+        embeddings_paths = [path for path in schema["paths"] if path == "/embeddings"]
+
+        self.assertEqual(embeddings_paths, ["/embeddings"])
+        self.assertIn("Embeddings V1", schema["paths"]["/embeddings"]["post"]["tags"])
 
 
 if __name__ == "__main__":

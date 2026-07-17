@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
 from ...config.paths import STATIC_DIR
-from ...db.rejections_db import VALID_CATEGORIES, RejectionsDB
+from ...db.rejections_db import VALID_CATEGORIES
 from ...middleware.auth import ROLE_MASTER
 from ...utils.html_cache import get_template
 
+if TYPE_CHECKING:
+    from ...services.runtime_config import AppServices
+
 admin_rejections_router = APIRouter()
+
+
+def _capture_app_services(request: Request) -> "AppServices":
+    return cast("AppServices", request.app.state.services)
 
 
 def _require_master(request: Request) -> None:
@@ -53,12 +60,7 @@ async def list_rejections(
                 + ", ".join(sorted(VALID_CATEGORIES))
             ),
         )
-    db: RejectionsDB | None = getattr(request.app.state, "rejections_db", None)
-    if db is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="RejectionsDB is not initialized",
-        )
+    db = _capture_app_services(request).rejections_db
     try:
         items, total = await db.get_rejections(
             api_key_id=api_key_id,

@@ -9,9 +9,16 @@ import httpx
 from fastapi.testclient import TestClient
 
 import main
-from llm_gateway_core.api.v1.audio_adapters import AudioAdapterResponse
+from llm_gateway_core.api.v1 import audio as audio_api
+from llm_gateway_core.api.v1.audio_adapters import (
+    AudioAdapterResponse,
+    AudioMaterializationTooLarge,
+)
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.services.request_handler import OperationDispatcher
+from tests.images_audio_accounting_test_support import (
+    install_images_audio_accounting_passthrough,
+)
 
 WAV_BYTES = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
 
@@ -139,23 +146,41 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         fake_http_client = Mock()
         if isinstance(downstream_response, list):
             fake_http_client.post = AsyncMock(side_effect=downstream_response)
+        elif callable(downstream_response):
+            fake_http_client.post = AsyncMock(side_effect=downstream_response)
         else:
             fake_http_client.post = AsyncMock(return_value=downstream_response)
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
+            install_images_audio_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
             stack.enter_context(patch.object(main.settings, "fallback_provider", "openai"))
 
             with TestClient(main.app) as client:
-                dispatcher = getattr(client.app.state, "operation_dispatcher", None)
-                self.assertIsInstance(dispatcher, OperationDispatcher)
-                self.assertIs(client.app.state.http_client, fake_http_client)
-                yield client, dispatcher, fake_http_client
+                services = client.app.state.services
+                self.assertIs(services.http_client, fake_http_client)
+                lease = client.portal.call(services.runtime_manager.acquire_current)
+                try:
+                    dispatcher = lease.snapshot.operation_dispatcher
+                    self.assertIsInstance(dispatcher, OperationDispatcher)
+                    yield client, dispatcher, fake_http_client
+                finally:
+                    client.portal.call(lease.release)
 
     def test_audio_transcriptions_valid_multipart_request_proxies_to_downstream_and_records_usage(self):
         downstream_payload = {
@@ -164,6 +189,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             self.assertIsNotNone(dispatcher.lookup_route("audio_transcriptions", "gateway/audio-transcribe"))
 
             response = client.post(
@@ -204,27 +230,39 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             fake_http_client.post.await_args.kwargs["files"][0][0],
             "file",
         )
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
-        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
-        self.assertIsInstance(call_args.pop("request_id"), str)
-        self.assertEqual(
-            call_args,
-            {
-                "prompt_tokens": 7,
-                "completion_tokens": 3,
-                "total_tokens": 10,
-                "reasoning_tokens": 0,
-                "cached_tokens": 0,
-                "cost": 0,
-                "cost_saved": 0,
-                "is_estimated": False,
-                "gateway_model": "gateway/audio-transcribe",
-                "operation": "audio_transcription",
-                "provider": "openai",
-                "model": "gpt-4o-mini-transcribe",
-            },
-        )
+        tokens_usage_db.insert_usage.assert_not_called()
+
+    def test_audio_transcriptions_closes_parsed_upload_after_success(self):
+        captured_files = []
+        validate_upload = audio_api._validate_upload
+
+        async def capture_upload_file(upload):
+            captured_files.append(upload.file)
+            return await validate_upload(upload)
+
+        async def downstream_response(*_args, **kwargs):
+            upload_stream = kwargs["files"][0][1][1]
+            self.assertFalse(upload_stream.closed)
+            return _FakeDownstreamResponse({"text": "hello world"})
+
+        with patch.object(audio_api, "_validate_upload", new=capture_upload_file):
+            with self._client(downstream_response) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                response = client.post(
+                    "/v1/audio/transcriptions",
+                    data={"model": "gateway/audio-transcribe"},
+                    files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        fake_http_client.post.assert_awaited_once()
+        self.assertEqual(len(captured_files), 1)
+        self.assertIsInstance(captured_files[0], tempfile.SpooledTemporaryFile)
+        self.assertTrue(captured_files[0].closed)
 
     def test_audio_transcriptions_text_response_is_passed_through(self):
         with self._client(
@@ -233,6 +271,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
                 content_type="text/plain; charset=utf-8",
             )
         ) as (client, _dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.post(
                 "/v1/audio/transcriptions",
                 data={"model": "gateway/audio-transcribe", "response_format": "text"},
@@ -244,11 +283,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         self.assertEqual(response.text, "plain transcript body")
         self.assertEqual(response.headers["content-type"], "text/plain; charset=utf-8")
         fake_http_client.post.assert_awaited_once()
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        self.assertEqual(
-            client.app.state.tokens_usage_db.insert_usage.call_args[0][0]["operation"],
-            "audio_transcription",
-        )
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_audio_transcriptions_falls_back_to_next_route_after_downstream_failure(self):
         operation_rules = json.loads(self.operation_rules_path.read_text(encoding="utf-8"))
@@ -270,12 +305,25 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
         }
 
-        with self._client(
-            [
-                _FakeDownstreamResponse({"error": {"message": "primary-down"}}, status_code=503),
-                _FakeDownstreamResponse(downstream_payload, status_code=200),
-            ]
-        ) as (client, _dispatcher, fake_http_client):
+        downstream_responses = [
+            _FakeDownstreamResponse({"error": {"message": "primary-down"}}, status_code=503),
+            _FakeDownstreamResponse(downstream_payload, status_code=200),
+        ]
+        forwarded_uploads = []
+        admission_snapshots = []
+
+        async def downstream_response(*_args, **kwargs):
+            snapshot = client.app.state.services.upload_admission.snapshot
+            admission_snapshots.append(
+                (snapshot.active_bytes, snapshot.active_leases, snapshot.waiters)
+            )
+            upload_stream = kwargs["files"][0][1][1]
+            self.assertFalse(upload_stream.closed)
+            forwarded_uploads.append(upload_stream.read())
+            return downstream_responses.pop(0)
+
+        with self._client(downstream_response) as (client, _dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.post(
                 "/v1/audio/transcriptions",
                 files=[
@@ -285,6 +333,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
                 ],
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
+            terminal_snapshot = client.app.state.services.upload_admission.snapshot
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), downstream_payload)
@@ -309,16 +358,70 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
                 "language": "ru",
             },
         )
+        self.assertEqual(forwarded_uploads, [WAV_BYTES, WAV_BYTES])
         self.assertEqual(
-            fake_http_client.post.await_args_list[1].kwargs["files"][0],
-            ("file", ("sample.wav", WAV_BYTES, "audio/wav")),
+            admission_snapshots,
+            [(len(WAV_BYTES), 1, 0), (len(WAV_BYTES), 1, 0)],
         )
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
-        self.assertEqual(call_args["provider"], "nvidia")
-        self.assertEqual(call_args["model"], "nvidia/fallback-transcribe")
-        self.assertEqual(call_args["gateway_model"], "gateway/audio-transcribe")
-        self.assertEqual(call_args["operation"], "audio_transcription")
+        self.assertEqual(
+            (
+                terminal_snapshot.active_bytes,
+                terminal_snapshot.active_leases,
+                terminal_snapshot.waiters,
+            ),
+            (0, 0, 0),
+        )
+        self.assertEqual(fake_http_client.post.await_args_list[1].kwargs["files"][0][0], "file")
+        self.assertEqual(fake_http_client.post.await_args_list[1].kwargs["files"][0][1][0], "sample.wav")
+        self.assertEqual(fake_http_client.post.await_args_list[1].kwargs["files"][0][1][2], "audio/wav")
+        tokens_usage_db.insert_usage.assert_not_called()
+
+    def test_audio_transcriptions_local_capacity_failure_does_not_fallback(self):
+        operation_rules = json.loads(self.operation_rules_path.read_text(encoding="utf-8"))
+        operation_rules["audio_transcriptions"][0]["routes"].append(
+            {
+                "provider": "nvidia",
+                "model": "nvidia/fallback-transcribe",
+            }
+        )
+        self.operation_rules_path.write_text(json.dumps(operation_rules), encoding="utf-8")
+        self.config_loader.load_operation_rules()
+
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (
+            client,
+            _dispatcher,
+            fake_http_client,
+        ):
+            client.app.state.services.upload_admission.close()
+            response = client.post(
+                "/v1/audio/transcriptions",
+                data={"model": "gateway/audio-transcribe"},
+                files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "Upload processing capacity is unavailable.")
+        fake_http_client.post.assert_not_awaited()
+
+    def test_audio_transcriptions_rejects_more_than_one_file_at_parser_boundary(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (
+            client,
+            _dispatcher,
+            fake_http_client,
+        ):
+            response = client.post(
+                "/v1/audio/transcriptions",
+                files=[
+                    ("file", ("first.wav", WAV_BYTES, "audio/wav")),
+                    ("file", ("second.wav", WAV_BYTES, "audio/wav")),
+                    ("model", (None, "gateway/audio-transcribe")),
+                ],
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        fake_http_client.post.assert_not_awaited()
 
     def test_audio_transcriptions_nvidia_route_ignores_unsupported_openai_fields(self):
         self.operation_rules_path.write_text(
@@ -357,6 +460,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
             ),
         ) as adapter_mock:
             with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
+                tokens_usage_db = client.app.state.services.tokens_usage_db
                 response = client.post(
                     "/v1/audio/transcriptions",
                     files=[
@@ -386,7 +490,44 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         )
         self.assertNotIn("temperature", adapter_mock.await_args.kwargs["request_payload"])
         self.assertNotIn("prompt", adapter_mock.await_args.kwargs["request_payload"])
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
+        tokens_usage_db.insert_usage.assert_not_called()
+
+    def test_audio_transcriptions_local_riva_expansion_413_does_not_fallback(self):
+        operation_rules = json.loads(self.operation_rules_path.read_text(encoding="utf-8"))
+        operation_rules["audio_transcriptions"][0]["routes"] = [
+            {
+                "provider": "nvidia",
+                "model": "nvidia/parakeet-1_1b-rnnt-multilingual-asr",
+                "request_format": "nvidia_riva_grpc",
+                "custom_headers": {"function-id": "func-123"},
+            },
+            {
+                "provider": "openai",
+                "model": "gpt-4o-mini-transcribe",
+            },
+        ]
+        self.operation_rules_path.write_text(json.dumps(operation_rules), encoding="utf-8")
+        self.config_loader.load_operation_rules()
+
+        with patch(
+            "llm_gateway_core.api.v1.audio.transcribe_with_nvidia_riva_grpc",
+            AsyncMock(side_effect=AudioMaterializationTooLarge()),
+        ) as adapter_mock:
+            with self._client(_FakeDownstreamResponse({"unused": True})) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                response = client.post(
+                    "/v1/audio/transcriptions",
+                    data={"model": "gateway/audio-transcribe"},
+                    files={"file": ("sample.wav", WAV_BYTES, "audio/wav")},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 413)
+        adapter_mock.assert_awaited_once()
+        fake_http_client.post.assert_not_awaited()
 
     def test_audio_transcriptions_multipart_works_with_real_async_httpx_client(self):
         captured_request: dict[str, object] = {}
@@ -406,6 +547,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         real_http_client = httpx.AsyncClient(transport=httpx.MockTransport(downstream_handler))
 
         with ExitStack() as stack:
+            install_images_audio_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
             stack.enter_context(patch("main.create_shared_http_client", return_value=real_http_client))
             stack.enter_context(patch("main.TokensUsageDB"))

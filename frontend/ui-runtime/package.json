@@ -1,0 +1,23 @@
+{
+  "name": "llmgateway-ui-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Strict local i18n and shared UI runtime for LLMApiGateway.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/entry.mjs --bundle --format=iife --global-name=GatewayI18nBundle --target=es2020 --minify --legal-comments=none --outfile=../../static/vendor/ui-runtime.bundle.js",
+    "check": "python3 ../../scripts/check_ui_runtime_bundle.py",
+    "check:i18n": "python3 ../../scripts/check_i18n.py",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "i18next": "26.3.6",
+    "i18next-icu": "2.4.4",
+    "intl-messageformat": "11.2.11"
+  },
+  "devDependencies": {
+    "acorn": "8.17.0",
+    "axe-core": "4.12.1",
+    "esbuild": "0.28.1"
+  }
+}

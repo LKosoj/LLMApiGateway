@@ -1,18 +1,16 @@
 import json
+import os
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from llm_gateway_core.api.v1 import stats as stats_module
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.middleware.auth import ROLE_MASTER
 from tests._async_compat import run_async
-
-
-def _unlink_sqlite_files(db_path: Path) -> None:
-    db_path.unlink(missing_ok=True)
-    db_path.with_name(db_path.name + "-wal").unlink(missing_ok=True)
-    db_path.with_name(db_path.name + "-shm").unlink(missing_ok=True)
+from tests.runtime_test_support import make_app_services
 
 
 class _StatsNullRowsDB:
@@ -43,15 +41,23 @@ class _StatsNullRowsDB:
 
 class StatsNullRowsTests(unittest.TestCase):
     def setUp(self):
+        self._clear_caches()
+        self.addCleanup(self._clear_caches)
+
+    @staticmethod
+    def _clear_caches() -> None:
         stats_module._usage_stats_cache.invalidate()
+        stats_module._fallback_stats_cache.invalidate()
+        stats_module._upstream_stats_cache.invalidate()
 
     def test_aggregated_usage_excludes_null_model_provider_and_gateway_model(self):
-        db_path = Path("db/test_stats_null_rows.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        _unlink_sqlite_files(db_path)
-
-        try:
-            db = TokensUsageDB(db_filename=db_path.name)
+        with tempfile.TemporaryDirectory() as temp_root, patch.dict(
+            os.environ,
+            {"GATEWAY_DB_DIR": temp_root},
+        ):
+            root = Path(temp_root).resolve()
+            db = TokensUsageDB(db_filename="test_stats_null_rows.sqlite")
+            self.assertTrue(db.db_path.resolve().is_relative_to(root))
             db.insert_usage(
                 {
                     "prompt_tokens": 4,
@@ -98,13 +104,17 @@ class StatsNullRowsTests(unittest.TestCase):
             self.assertEqual(rows[0]["provider"], "provider")
             self.assertEqual(rows[0]["model"], "model")
             self.assertEqual(rows[0]["total_tokens"], 10)
-        finally:
-            _unlink_sqlite_files(db_path)
 
     def test_stats_handler_does_not_return_null_bucket_items(self):
         fake_db = _StatsNullRowsDB()
+        services = make_app_services(tokens_usage_db=fake_db)
         request = SimpleNamespace(
-            app=SimpleNamespace(state=SimpleNamespace(tokens_usage_db=fake_db)),
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    services=services,
+                    tokens_usage_db=Mock(),
+                )
+            ),
             state=SimpleNamespace(api_key_role=ROLE_MASTER),
         )
 

@@ -2,6 +2,7 @@ import logging
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, cast
 
 import aiosqlite
 
@@ -9,6 +10,9 @@ from ..config.paths import resolve_db_dir
 from ..utils.client_ip import get_client_ip
 from ..utils.usage_tracking import extract_request_x_title
 from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher
+
+if TYPE_CHECKING:
+    from ..services.runtime_config import AppServices
 
 logger = logging.getLogger(__name__)
 
@@ -467,22 +471,14 @@ def record_rejection(
     reason: str,
     category: str,
 ) -> None:
-    """Record a governance rejection into RejectionsDB (resilient noop).
+    """Record a governance rejection through the typed application container.
 
-    If ``rejections_db`` is absent from ``request.app.state``, logs a warning
-    and returns without raising — the caller's error response must not be
-    suppressed.
+    A missing container is an application wiring error and is allowed to
+    propagate. Failures while preparing or writing the audit event are logged
+    and isolated so they cannot suppress the caller's error response.
     """
-    db: RejectionsDB | None = getattr(request.app.state, "rejections_db", None)
-    if db is None:
-        logger.warning(
-            "record_rejection called but rejections_db is not set on app.state "
-            "(path=%s status=%s category=%s)",
-            getattr(request.url, "path", "?"),
-            status_code,
-            category,
-        )
-        return
+    services = cast("AppServices", request.app.state.services)
+    db = services.rejections_db
 
     try:
         request_id = getattr(request.state, "llmgateway_request_id", None) or getattr(

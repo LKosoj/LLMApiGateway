@@ -1,0 +1,57 @@
+{
+  "pageTitle": "LLM Gateway - Pricing",
+  "heading": "LLM Gateway - Pricing",
+  "productVersionLabel": "Product version",
+  "editor": {
+    "title": "Editor",
+    "addRow": "Add Row",
+    "save": "Save Changes",
+    "hintPrefix": "Rates are in",
+    "hintUnit": "USD per 1 million tokens",
+    "hintMiddle": ". Changes are written to",
+    "providersFile": "providers.json",
+    "hintSuffix": " atomically.",
+    "empty": "No pricing configured. Add rows to define per-model rates.",
+    "table": {
+      "provider": "Provider",
+      "model": "Model",
+      "inputRate": "Input rate ($/1M)",
+      "outputRate": "Output rate ($/1M)",
+      "delete": "Delete"
+    }
+  },
+  "calculator": {
+    "title": "Calculator",
+    "model": "Model",
+    "selectModel": "— select model —",
+    "promptTokens": "Prompt tokens",
+    "completionTokens": "Completion tokens",
+    "calculate": "Calculate",
+    "result": {
+      "model": "Model:",
+      "input": "Input:",
+      "output": "Output:",
+      "ratePerMillion": "{amount}/1M"
+    }
+  },
+  "validation": {
+    "providerRequired": "Row {row}: provider must not be empty",
+    "modelRequired": "Row {row}: model must not be empty",
+    "inputRateInvalid": "Row {row}: input_rate must be >= 0",
+    "outputRateInvalid": "Row {row}: output_rate must be >= 0"
+  },
+  "status": {
+    "mustLoad": "Pricing must be loaded before it can be saved",
+    "saved": "Pricing saved successfully",
+    "selectModel": "Please select a model"
+  },
+  "contract": {
+    "missingEtag": "Pricing response omitted ETag",
+    "invalidShape": "Pricing response has an invalid shape"
+  },
+  "conflict": {
+    "title": "Pricing changed on the server",
+    "message": "Your local edits were kept. Reload the latest pricing only when you are ready to discard those edits.",
+    "reload": "Reload and discard local edits"
+  }
+}

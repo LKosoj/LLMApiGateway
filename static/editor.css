@@ -181,7 +181,7 @@ code {
     background-color: transparent;
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text);
     border-radius: var(--radius-sm);
     transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
     flex: 0 0 auto;
@@ -273,7 +273,7 @@ div[style*="position:relative"] {
 }
 
 .rules-toolbar-copy span {
-    color: var(--text-muted);
+    color: var(--text);
     font-size: 0.92rem;
 }
 
@@ -316,7 +316,7 @@ div[style*="position:relative"] {
     border-radius: var(--radius-lg);
     padding: 32px 20px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text);
     background: var(--bg-sunken);
 }
 
@@ -539,6 +539,10 @@ div[style*="position:relative"] {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.cost-calculator-field {
+    max-width: 360px;
 }
 
 .field-hint {
@@ -865,6 +869,10 @@ div[style*="position:relative"] {
 }
 
 .model-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
     font-size: 0.9rem;
     color: var(--text-muted);
 }
@@ -873,17 +881,25 @@ div[style*="position:relative"] {
     color: var(--accent-text);
 }
 
-.model-status[data-state="success"] {
+.model-status[data-state="ready"],
+.model-status[data-state="selected"] {
     color: var(--success);
 }
 
-.model-status[data-state="warning"] {
+.model-status[data-state="empty"],
+.model-status[data-state="unavailable"] {
     color: var(--warning);
 }
 
 .model-status[data-state="error"] {
     color: var(--error);
     font-weight: 600;
+}
+
+.model-catalog-retry {
+    width: auto;
+    padding: 4px 10px;
+    font-size: 0.82rem;
 }
 
 .advanced-options {
@@ -948,7 +964,6 @@ div[style*="position:relative"] {
     padding-inline: 12px;
 }
 
-.secondary-button,
 .icon-button {
     border: 1px solid var(--border);
     background: var(--bg-elevated);
@@ -963,14 +978,12 @@ div[style*="position:relative"] {
     box-shadow: var(--shadow-sm);
 }
 
-.secondary-button:hover,
 .icon-button:hover {
     background: var(--bg-sunken);
     border-color: var(--border-strong);
     color: var(--text-strong);
 }
 
-.secondary-button:active,
 .icon-button:active {
     transform: translateY(1px) scale(0.98);
     box-shadow: none;
@@ -1021,6 +1034,53 @@ div[style*="position:relative"] {
     transform: translateY(1px) scale(0.99);
 }
 
+#saveButton[data-editor-dirty="true"] {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 55%, transparent), var(--shadow-sm);
+}
+
+.editor-conflict-state {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin: 14px 0;
+    padding: 14px 16px;
+    border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+    border-left: 4px solid var(--warning);
+    border-radius: var(--radius-md);
+    background: var(--warning-soft);
+    color: var(--text-strong);
+}
+
+.editor-conflict-state[hidden] {
+    display: none;
+}
+
+.editor-conflict-state:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--warning) 70%, transparent);
+    outline-offset: 3px;
+}
+
+.editor-conflict-copy {
+    display: grid;
+    gap: 4px;
+}
+
+.editor-conflict-copy strong {
+    color: var(--warning);
+    font-size: 0.98rem;
+}
+
+.editor-conflict-copy span {
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+
+.editor-conflict-state .secondary-button {
+    flex: 0 0 auto;
+    margin: 0;
+}
+
 #messageArea {
     margin-top: 10px;
     margin-bottom: 5px;
@@ -1035,7 +1095,7 @@ div[style*="position:relative"] {
 
 #messageArea.success {
     background-color: var(--success-soft);
-    color: var(--success);
+    color: var(--text);
     border: 1px solid var(--success);
     border-color: color-mix(in srgb, var(--success) 30%, transparent);
 }
@@ -1163,6 +1223,11 @@ select:focus {
     .rules-toolbar-actions,
     .secondary-button {
         width: 100%;
+    }
+
+    .editor-conflict-state {
+        align-items: stretch;
+        flex-direction: column;
     }
 
     .fallback-row-grid,

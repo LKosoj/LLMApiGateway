@@ -83,11 +83,20 @@ dmypy.json
 
 /.*/
 
-# Node tooling for the topology vendor bundle (`frontend/topology/`).
-# We do commit the built artefact at `static/vendor/topology.bundle.mjs`,
-# but never the install tree.
+# Keep root dot-directories ignored, except tracked GitHub Actions workflows.
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/*.yml
+
+# Node tooling for pinned frontend vendor bundles; commit their generated
+# static artefacts and exact lock files, but never an install tree.
 node_modules/
 frontend/*/package-lock.json
+!frontend/editor/package-lock.json
+!frontend/topology/package-lock.json
+!frontend/ui-runtime/package-lock.json
 
 # Pyre type checker
 .pyre/
@@ -96,12 +105,14 @@ frontend/*/package-lock.json
 AGENTS.md
 MANAGER_PLAN.json
 .cli-proxy/
+/docs
 
 # pytype static type analyzer
 .pytype/
 
 # Suggested docker volume
 data/
+/config/
 
 # Cython debug symbols
 cython_debug/
@@ -113,3 +124,4 @@ models_*_rules.secret.json
 model_rotation.sqlite
 *:Zone.Identifier
 /scripts/fix_config_perms.sh
+.cli-proxy/runtime/

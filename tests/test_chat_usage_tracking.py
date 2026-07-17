@@ -1,4 +1,5 @@
 import unittest
+from contextlib import ExitStack, asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -8,25 +9,54 @@ from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.v1 import chat
 from llm_gateway_core.middleware import chat_logging
+from llm_gateway_core.middleware.response_observation import (
+    ResponseObservationMiddleware,
+)
+from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
+from llm_gateway_core.utils.usage_tracking import ModelCostRates
+from tests.chat_accounting_test_support import install_legacy_chat_logging_passthrough
+from tests.runtime_test_support import bind_app_services, installed_runtime
+
+
+def _install_chat_logging(
+    app: FastAPI,
+    *,
+    tokens_usage_db,
+    cost_rate_registry=None,
+) -> None:
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        async with installed_runtime(
+            _app,
+            tokens_usage_db=tokens_usage_db,
+            snapshot_overrides={
+                "cost_rate_registry": dict(cost_rate_registry or {}),
+            },
+        ):
+            yield
+
+    app.router.lifespan_context = lifespan
+    app.add_middleware(
+        ResponseObservationMiddleware,
+        request_preparer=chat_logging.prepare_chat_response_observation,
+    )
+    app.add_middleware(RuntimeSnapshotMiddleware)
 
 
 class ChatUsageTrackingTests(unittest.TestCase):
     def setUp(self):
-        # chat_logging no longer ships with a module-level TokensUsageDB;
-        # each test binds its own Mock so insert_usage calls can be observed.
-        self._original_db = chat_logging.state.tokens_usage_db
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        install_legacy_chat_logging_passthrough(self._accounting_stack)
         self._fake_db = Mock()
-        chat_logging.set_tokens_usage_db(self._fake_db)
-
-    def tearDown(self):
-        chat_logging.set_tokens_usage_db(self._original_db)
 
     def test_usage_stats_record_incoming_x_title_header(self):
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "provider-name"
             request.state.llmgateway_provider_model = "provider-model"
             return JSONResponse(
@@ -42,7 +72,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
             )
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
-            with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+            with patch.object(
+                chat_logging,
+                "record_chat_observability",
+                wraps=chat_logging.record_chat_observability,
+            ) as observability_mock:
                 with TestClient(app) as client:
                     response = client.post(
                         "/v1/chat/completions",
@@ -51,17 +85,18 @@ class ChatUsageTrackingTests(unittest.TestCase):
                     )
 
         self.assertEqual(response.status_code, 200)
-        insert_usage_mock.assert_called_once()
-        call_args = dict(insert_usage_mock.call_args[0][0])
+        observability_mock.assert_called_once()
+        call_args = dict(observability_mock.call_args.args[3])
         self.assertEqual(call_args["x_title"], "tgBot")
 
-    def test_chat_logging_prefers_app_state_db_over_module_fallback(self):
+    def test_chat_logging_uses_typed_runtime_services(self):
         app = FastAPI()
-        app.state.tokens_usage_db = Mock()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        typed_db = Mock()
+        _install_chat_logging(app, tokens_usage_db=typed_db)
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "provider-name"
             request.state.llmgateway_provider_model = "provider-model"
             return JSONResponse(
@@ -77,23 +112,34 @@ class ChatUsageTrackingTests(unittest.TestCase):
             )
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
-            with TestClient(app) as client:
-                response = client.post("/v1/chat/completions", json={"model": "demo-model"})
+            with patch.object(
+                chat_logging,
+                "record_chat_observability",
+                wraps=chat_logging.record_chat_observability,
+            ) as observability_mock:
+                with TestClient(app) as client:
+                    response = client.post("/v1/chat/completions", json={"model": "demo-model"})
 
         self.assertEqual(response.status_code, 200)
-        app.state.tokens_usage_db.insert_usage.assert_called_once()
+        observability_mock.assert_called_once()
+        self.assertIs(
+            observability_mock.call_args.kwargs["services"].tokens_usage_db,
+            typed_db,
+        )
+        typed_db.insert_usage.assert_not_called()
         self._fake_db.insert_usage.assert_not_called()
 
     def test_chat_logging_keeps_two_app_instances_isolated(self):
         first_app = FastAPI()
-        first_app.state.tokens_usage_db = Mock()
-        first_app.middleware("http")(chat_logging.log_chat_completions)
+        first_db = Mock()
+        _install_chat_logging(first_app, tokens_usage_db=first_db)
 
         second_app = FastAPI()
-        second_app.state.tokens_usage_db = Mock()
-        second_app.middleware("http")(chat_logging.log_chat_completions)
+        second_db = Mock()
+        _install_chat_logging(second_app, tokens_usage_db=second_db)
 
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "provider-name"
             request.state.llmgateway_provider_model = "provider-model"
             return JSONResponse(
@@ -108,45 +154,63 @@ class ChatUsageTrackingTests(unittest.TestCase):
         second_app.post("/v1/chat/completions")(completions)
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
-            with TestClient(first_app) as first_client:
-                first_response = first_client.post("/v1/chat/completions", json={"model": "first-model"})
-            with TestClient(second_app) as second_client:
-                second_response = second_client.post("/v1/chat/completions", json={"model": "second-model"})
+            with patch.object(
+                chat_logging,
+                "record_chat_observability",
+                wraps=chat_logging.record_chat_observability,
+            ) as observability_mock:
+                with TestClient(first_app) as first_client:
+                    first_response = first_client.post("/v1/chat/completions", json={"model": "first-model"})
+                with TestClient(second_app) as second_client:
+                    second_response = second_client.post("/v1/chat/completions", json={"model": "second-model"})
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
-        first_app.state.tokens_usage_db.insert_usage.assert_called_once()
-        second_app.state.tokens_usage_db.insert_usage.assert_called_once()
+        self.assertEqual(observability_mock.call_count, 2)
         self.assertEqual(
-            first_app.state.tokens_usage_db.insert_usage.call_args.args[0]["gateway_model"],
+            observability_mock.call_args_list[0].args[3]["gateway_model"],
             "first-model",
         )
         self.assertEqual(
-            second_app.state.tokens_usage_db.insert_usage.call_args.args[0]["gateway_model"],
+            observability_mock.call_args_list[1].args[3]["gateway_model"],
             "second-model",
         )
+        self.assertIs(
+            observability_mock.call_args_list[0].kwargs["services"].tokens_usage_db,
+            first_db,
+        )
+        self.assertIs(
+            observability_mock.call_args_list[1].kwargs["services"].tokens_usage_db,
+            second_db,
+        )
+        first_db.insert_usage.assert_not_called()
+        second_db.insert_usage.assert_not_called()
         self._fake_db.insert_usage.assert_not_called()
 
-    def test_model_rotation_db_prefers_request_app_state(self):
-        app_db = Mock()
-        global_db = Mock()
-        request = SimpleNamespace(
-            app=SimpleNamespace(state=SimpleNamespace(model_rotation_db=app_db))
-        )
+    def test_model_rotation_db_uses_typed_services_identity(self):
+        app = FastAPI()
+        typed_db = Mock()
+        legacy_db = Mock()
+        bind_app_services(app, model_rotation_db=typed_db)
+        app.state.model_rotation_db = legacy_db
+        request = SimpleNamespace(app=app)
 
-        original_db = chat.model_rotation_db
-        try:
-            chat.set_model_rotation_db(global_db)
-            self.assertIs(chat._require_model_rotation_db(request), app_db)
-        finally:
-            chat.set_model_rotation_db(original_db)
+        self.assertIs(chat._require_model_rotation_db(request), typed_db)
+        self.assertIsNot(chat._require_model_rotation_db(request), legacy_db)
+
+    def test_model_rotation_db_fails_closed_without_services(self):
+        request = SimpleNamespace(app=FastAPI())
+
+        with self.assertRaises(AttributeError):
+            chat._require_model_rotation_db(request)
 
     def test_usage_stats_are_recorded_even_when_file_logging_is_disabled(self):
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "provider-name"
             request.state.llmgateway_provider_model = "provider-model"
             return JSONResponse(
@@ -172,15 +236,20 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post("/v1/chat/completions", json={"model": "demo-model"})
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = dict(insert_usage_mock.call_args[0][0])
+        observability_mock.assert_called_once()
+        call_args = dict(observability_mock.call_args.args[3])
         self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
+        call_args.pop("_upstream_cost_present")
         self.assertEqual(
             call_args,
             {
@@ -200,10 +269,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
     def test_usage_stats_prefer_actual_gateway_provider_model_over_short_response_model(self):
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "devbox"
             request.state.llmgateway_provider_model = "zai.glm-5"
             return JSONResponse(
@@ -229,15 +299,20 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post("/v1/chat/completions", json={"model": "demo-model"})
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = dict(insert_usage_mock.call_args[0][0])
+        observability_mock.assert_called_once()
+        call_args = dict(observability_mock.call_args.args[3])
         self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
+        call_args.pop("_upstream_cost_present")
         self.assertEqual(
             call_args,
             {
@@ -294,10 +369,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
     def test_usage_stats_are_recorded_for_anthropic_messages_endpoint(self):
         """Проверка, что статистика собирается для Anthropic /v1/messages эндпоинта."""
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/messages")
         async def anthropic_messages(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "anthropic"
             request.state.llmgateway_provider_model = "claude-sonnet-4-20250514"
             return JSONResponse(
@@ -316,7 +392,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post(
                             "/v1/messages",
@@ -329,8 +409,8 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = insert_usage_mock.call_args[0][0]
+        observability_mock.assert_called_once()
+        call_args = observability_mock.call_args.args[3]
         self.assertEqual(call_args["gateway_model"], "claude-sonnet-4-20250514")
         self.assertEqual(call_args["provider"], "anthropic")
         # Для Anthropic /v1/messages должен быть тип операции "messages", а не "chat"
@@ -344,10 +424,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
     def test_usage_stats_use_chat_operation_for_openai_completions(self):
         """Проверка, что для OpenAI /v1/chat/completions используется operation='chat'."""
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "openai"
             request.state.llmgateway_provider_model = "gpt-4"
             return JSONResponse(
@@ -373,14 +454,18 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post("/v1/chat/completions", json={"model": "demo-model"})
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = insert_usage_mock.call_args[0][0]
+        observability_mock.assert_called_once()
+        call_args = observability_mock.call_args.args[3]
         self.assertEqual(call_args["operation"], "chat")
         self.assertEqual(call_args["provider"], "openai")
         self.assertEqual(call_args["model"], "gpt-4")
@@ -388,22 +473,17 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
     def test_usage_stats_calculate_cost_from_local_rates_when_upstream_omits_cost(self):
         app = FastAPI()
-        app.state.config_loader = SimpleNamespace(
-            providers_config={
-                "openai": {
-                    "models": {
-                        "gpt-4": {
-                            "input_rate": 1000,
-                            "output_rate": 2000,
-                        },
-                    },
-                },
-            }
+        _install_chat_logging(
+            app,
+            tokens_usage_db=self._fake_db,
+            cost_rate_registry={
+                ("openai", "gpt-4"): ModelCostRates(1000, 2000),
+            },
         )
-        app.middleware("http")(chat_logging.log_chat_completions)
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "openai"
             request.state.llmgateway_provider_model = "gpt-4"
             return JSONResponse(
@@ -420,34 +500,33 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post("/v1/chat/completions", json={"model": "demo-model"})
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = insert_usage_mock.call_args[0][0]
+        observability_mock.assert_called_once()
+        call_args = observability_mock.call_args.args[3]
         self.assertAlmostEqual(call_args["cost"], 0.011, places=6)
 
     def test_usage_stats_preserve_explicit_upstream_zero_cost(self):
         app = FastAPI()
-        app.state.config_loader = SimpleNamespace(
-            providers_config={
-                "openai": {
-                    "models": {
-                        "gpt-4": {
-                            "input_rate": 1000,
-                            "output_rate": 2000,
-                        },
-                    },
-                },
-            }
+        _install_chat_logging(
+            app,
+            tokens_usage_db=self._fake_db,
+            cost_rate_registry={
+                ("openai", "gpt-4"): ModelCostRates(1000, 2000),
+            },
         )
-        app.middleware("http")(chat_logging.log_chat_completions)
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "openai"
             request.state.llmgateway_provider_model = "gpt-4"
             return JSONResponse(
@@ -465,22 +544,27 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post("/v1/chat/completions", json={"model": "demo-model"})
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = insert_usage_mock.call_args[0][0]
+        observability_mock.assert_called_once()
+        call_args = observability_mock.call_args.args[3]
         self.assertEqual(call_args["cost"], 0)
 
     def test_usage_stats_are_recorded_for_responses_endpoint(self):
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/responses")
         async def responses(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "openai"
             request.state.llmgateway_provider_model = "gpt-4.1"
             request.state.llmgateway_gateway_model = "gateway-model"
@@ -513,14 +597,18 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post("/v1/responses", json={"model": "gateway-model", "input": "Hi"})
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = dict(insert_usage_mock.call_args[0][0])
+        observability_mock.assert_called_once()
+        call_args = dict(observability_mock.call_args.args[3])
         self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
         self.assertEqual(
             call_args,
@@ -540,10 +628,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
     def test_streaming_responses_usage_stats_are_recorded_from_response_completed_event(self):
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/responses")
         async def responses(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "openai"
             request.state.llmgateway_provider_model = "gpt-4.1"
 
@@ -556,7 +645,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         with client.stream(
                             "POST",
@@ -567,8 +660,8 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = dict(insert_usage_mock.call_args[0][0])
+        observability_mock.assert_called_once()
+        call_args = dict(observability_mock.call_args.args[3])
         self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
         self.assertEqual(
             call_args,
@@ -586,12 +679,13 @@ class ChatUsageTrackingTests(unittest.TestCase):
             },
         )
 
-    def test_streaming_usage_write_path_enriches_request_metadata(self):
+    def test_streaming_observability_path_enriches_request_metadata(self):
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/responses")
         async def responses(request: Request):
+            await request.body()
             request.state.llmgateway_provider = "openai"
             request.state.llmgateway_provider_model = "gpt-4.1"
             request.state.llmgateway_request_id = "req-stream"
@@ -607,7 +701,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         with client.stream(
                             "POST",
@@ -619,8 +717,8 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_called_once()
-        call_args = dict(insert_usage_mock.call_args[0][0])
+        observability_mock.assert_called_once()
+        call_args = dict(observability_mock.call_args.args[3])
         self.assertEqual(call_args["request_id"], "req-stream")
         self.assertEqual(call_args["api_key_id"], 42)
         self.assertEqual(call_args["upstream_key_fingerprint"], "fp-stream")
@@ -631,7 +729,7 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
     def test_messages_count_tokens_requests_are_not_recorded_in_usage_stats(self):
         app = FastAPI()
-        app.middleware("http")(chat_logging.log_chat_completions)
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
 
         @app.post("/v1/messages/count_tokens")
         async def count_tokens():
@@ -639,7 +737,11 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         with patch.object(chat_logging.settings, "log_chat_messages", False):
             with patch.object(chat_logging, "write_log") as write_log_mock:
-                with patch.object(self._fake_db, "insert_usage") as insert_usage_mock:
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
                     with TestClient(app) as client:
                         response = client.post(
                             "/v1/messages/count_tokens",
@@ -652,7 +754,7 @@ class ChatUsageTrackingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         write_log_mock.assert_not_called()
-        insert_usage_mock.assert_not_called()
+        observability_mock.assert_not_called()
 
 
 if __name__ == "__main__":

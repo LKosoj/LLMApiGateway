@@ -1,14 +1,15 @@
 import re
 import unittest
-from types import SimpleNamespace
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.v1.rules_editor import editor_router
-from llm_gateway_core.config.loader import ProviderDetails
+from llm_gateway_core.config.loader import ConfigLoader, ProviderDetails
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
+from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
 from llm_gateway_core.services.fallback_model_evals import (
     FallbackModelEvalService,
     HEALTH_PROBE_MAX_TOKENS,
@@ -16,6 +17,11 @@ from llm_gateway_core.services.fallback_model_evals import (
     _collect_unique_fallback_targets,
 )
 from tests._async_compat import run_async
+from tests.runtime_test_support import (
+    install_test_runtime_snapshot,
+    make_app_services,
+    make_runtime_snapshot,
+)
 
 
 class FakeResponse:
@@ -409,8 +415,53 @@ class FallbackModelEvalServiceTests(unittest.TestCase):
 
 
 class FallbackModelEvalApiTests(unittest.TestCase):
-    def _app_with_role(self, role: str) -> FastAPI:
-        app = FastAPI()
+    def _app_with_role(
+        self,
+        role: str,
+        *,
+        service=None,
+        config_loader: ConfigLoader | None = None,
+        http_client=None,
+        proxy_http_clients=None,
+    ) -> FastAPI:
+        selected_service = service or FallbackModelEvalService()
+        loader = config_loader or ConfigLoader()
+        for attribute in (
+            "providers_config",
+            "fallback_rules",
+            "operation_rules",
+            "fusion_rules",
+            "model_rules",
+            "router_rules",
+        ):
+            if not hasattr(loader, attribute):
+                setattr(loader, attribute, {})
+        loader._fallback_rules_base = getattr(loader, "_fallback_rules_base", {})
+        shared_client = http_client or httpx.AsyncClient()
+
+        @asynccontextmanager
+        async def lifespan(app):
+            services = make_app_services(
+                http_client=shared_client,
+                fallback_model_eval_service=selected_service,
+            )
+            snapshot = make_runtime_snapshot(
+                config_loader=loader,
+                http_client=shared_client,
+                proxy_http_clients=proxy_http_clients or {},
+            )
+            install_test_runtime_snapshot(services.runtime_manager, snapshot)
+            app.state.services = services
+            app.state.fallback_model_eval_service = object()
+            try:
+                yield
+            finally:
+                del app.state.services
+                await services.runtime_manager.shutdown()
+                if http_client is None:
+                    await shared_client.aclose()
+
+        app = FastAPI(lifespan=lifespan)
 
         @app.middleware("http")
         async def set_role(request, call_next):
@@ -418,20 +469,23 @@ class FallbackModelEvalApiTests(unittest.TestCase):
             return await call_next(request)
 
         app.include_router(editor_router, prefix="/v1")
+        app.add_middleware(RuntimeSnapshotMiddleware)
         return app
 
-    def test_status_endpoint_returns_disabled_payload_without_service(self):
+    def test_status_endpoint_returns_typed_service_payload(self):
         app = self._app_with_role(ROLE_MASTER)
 
-        response = TestClient(app).get("/v1/fallback-model-evals")
+        with TestClient(app) as client:
+            response = client.get("/v1/fallback-model-evals")
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.json()["configured"])
+        self.assertTrue(response.json()["configured"])
 
     def test_status_endpoint_rejects_non_master_role(self):
         app = self._app_with_role(ROLE_USER)
 
-        response = TestClient(app).get("/v1/fallback-model-evals")
+        with TestClient(app) as client:
+            response = client.get("/v1/fallback-model-evals")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(
@@ -443,50 +497,69 @@ class FallbackModelEvalApiTests(unittest.TestCase):
         class FakeService:
             def __init__(self):
                 self.called = False
-                self.providers_config = None
-                self.fallback_rules = None
+                self.runtime_snapshot = None
                 self.http_client = None
-                self.proxy_http_clients = None
 
-            async def start_eval(self, *, providers_config, fallback_rules, http_client, proxy_http_clients=None):
+            async def start_eval_with_runtime(self, *, runtime_lease, http_client):
                 self.called = True
-                self.providers_config = providers_config
-                self.fallback_rules = fallback_rules
+                self.runtime_snapshot = runtime_lease.snapshot
                 self.http_client = http_client
-                self.proxy_http_clients = proxy_http_clients
+                runtime_lease.release()
 
             async def get_status(self):
                 return {"configured": True, "running": True, "snapshot": None}
 
         service = FakeService()
-        config_loader = SimpleNamespace(
-            providers_config={"provider-a": ProviderDetails(baseUrl="https://provider.example/v1", apikey="key")},
-            fallback_rules={"gateway/a": {"fallback_models": [{"provider": "provider-a", "model": "model-one"}]}},
+        config_loader = ConfigLoader()
+        config_loader.providers_config = {
+            "provider-a": ProviderDetails(
+                baseUrl="https://provider.example/v1",
+                apikey="key",
+            )
+        }
+        config_loader.fallback_rules = {
+            "gateway/a": {
+                "fallback_models": [
+                    {"provider": "provider-a", "model": "model-one"}
+                ]
+            }
+        }
+        config_loader.operation_rules = {}
+        config_loader.fusion_rules = {}
+        config_loader.model_rules = {}
+        config_loader.router_rules = {}
+        config_loader._fallback_rules_base = {}
+        shared_http_client = httpx.AsyncClient()
+        proxy_client = httpx.AsyncClient()
+
+        app = self._app_with_role(
+            ROLE_MASTER,
+            service=service,
+            config_loader=config_loader,
+            http_client=shared_http_client,
+            proxy_http_clients={"provider-a": proxy_client},
         )
-        shared_http_client = object()
-        proxy_client = object()
-
-        app = self._app_with_role(ROLE_MASTER)
-        app.state.fallback_model_eval_service = service
-        app.state.config_loader = config_loader
-        app.state.http_client = shared_http_client
-        app.state.proxy_http_clients = {"provider-a": proxy_client}
-
-        response = TestClient(app).post("/v1/fallback-model-evals/run")
+        with TestClient(app) as client:
+            response = client.post("/v1/fallback-model-evals/run")
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["running"])
         self.assertTrue(service.called)
-        self.assertIs(service.providers_config, config_loader.providers_config)
-        self.assertIs(service.fallback_rules, config_loader.fallback_rules)
+        self.assertIs(service.runtime_snapshot.config_loader, config_loader)
+        self.assertEqual(
+            service.runtime_snapshot.proxy_http_clients,
+            {"provider-a": proxy_client},
+        )
         self.assertIs(service.http_client, shared_http_client)
-        self.assertEqual(service.proxy_http_clients, {"provider-a": proxy_client})
+        run_async(shared_http_client.aclose())
+        self.assertTrue(proxy_client.is_closed)
 
     def test_run_endpoint_rejects_non_master_role(self):
         app = self._app_with_role(ROLE_USER)
         app.state.fallback_model_eval_service = object()
 
-        response = TestClient(app).post("/v1/fallback-model-evals/run")
+        with TestClient(app) as client:
+            response = client.post("/v1/fallback-model-evals/run")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(

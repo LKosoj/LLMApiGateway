@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi.testclient import TestClient
 
 import main
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 def _successful_chat_response() -> dict:
@@ -24,6 +25,7 @@ def _successful_chat_response() -> dict:
 
 def _build_config_loader() -> Mock:
     loader = Mock()
+    loader.configured_paths = {}
     loader.providers_config = {
         "first-provider": SimpleNamespace(
             baseUrl="https://first.example",
@@ -56,14 +58,18 @@ def _build_config_loader() -> Mock:
     loader.load_fallback_rules.return_value = loader.fallback_rules
     loader.load_operation_rules.return_value = loader.operation_rules
     loader.validate_fallback_operation_consistency.return_value = None
+    loader.load_complete.return_value = loader
     return loader
 
 
 class DiagnosticHeadersTests(unittest.TestCase):
     def _post_chat(self, *, routing_diagnostic_headers: bool):
         with ExitStack() as stack:
+            install_main_chat_accounting_double(stack)
             config_loader_cls = stack.enter_context(patch("main.ConfigLoader"))
-            async_client_ctor = stack.enter_context(patch("main.httpx.AsyncClient"))
+            async_client_ctor = stack.enter_context(
+                patch("main.create_shared_http_client")
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             openrouter_service_cls = stack.enter_context(patch("main.OpenRouterFreeModelsService"))
             fallback_eval_service_cls = stack.enter_context(patch("main.FallbackModelEvalService"))
@@ -74,9 +80,17 @@ class DiagnosticHeadersTests(unittest.TestCase):
             fake_http_client = Mock()
             fake_http_client.aclose = AsyncMock()
             async_client_ctor.return_value = fake_http_client
+            config_update_coordinator = Mock()
+            config_update_coordinator.close = AsyncMock()
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
 
             openrouter_service = Mock()
-            openrouter_service.start = AsyncMock()
+            openrouter_service.start_runtime = AsyncMock()
             openrouter_service.stop = AsyncMock()
             openrouter_service_cls.return_value = openrouter_service
 

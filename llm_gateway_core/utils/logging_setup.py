@@ -1,15 +1,10 @@
 import logging
-import os
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
+from ..config.paths import resolve_log_dir
 from ..config.settings import settings
-
-# Env override used by the test suite to redirect file logs when the real
-# ``logs/gateway.log`` is not writable (e.g. owned by root in shared dev envs).
-_LOG_DIR_ENV = "LLMGATEWAY_LOG_DIR"
 
 class CustomJsonFormatter(JsonFormatter):
     def add_fields(self, log_record, record, message_dict):
@@ -18,10 +13,9 @@ class CustomJsonFormatter(JsonFormatter):
             del log_record['taskName']
 
 def configure_logging():
-    override = os.environ.get(_LOG_DIR_ENV)
-    log_dir = Path(override) if override else Path("logs")
+    log_dir = resolve_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file_path = log_dir.joinpath("gateway.log").resolve()
+    log_file_path = log_dir / "gateway.log"
     log_level = settings.log_level
 
     root_logger = logging.getLogger()

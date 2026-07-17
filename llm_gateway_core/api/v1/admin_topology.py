@@ -28,21 +28,41 @@ Access rules:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
-from llm_gateway_core.services.active_requests import get_active_requests_registry
-from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 from llm_gateway_core.utils.ttl_cache import AsyncTtlCache
+
+if TYPE_CHECKING:
+    from llm_gateway_core.services.runtime_config import AppServices, RuntimeSnapshot
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_topology_cache = AsyncTtlCache(5.0)
+_topology_cache = AsyncTtlCache(5.0, max_entries=128)
+
+
+def _capture_app_services(request: Request) -> "AppServices":
+    return cast("AppServices", request.app.state.services)
+
+
+def _capture_runtime_snapshot(request: Request) -> "RuntimeSnapshot":
+    return cast("RuntimeSnapshot", request.state.runtime_snapshot)
+
+
+def _effective_scope(request: Request) -> tuple[str, int | None]:
+    role = getattr(request.state, "api_key_role", None)
+    if role == ROLE_MASTER:
+        return role, None
+    if role == ROLE_USER:
+        key_id = getattr(request.state, "api_key_id", None)
+        if type(key_id) is int and key_id > 0:
+            return role, key_id
+    raise HTTPException(status_code=401, detail="Authentication required.")
 
 
 def _provider_health(provider: str, status_rows: list[dict[str, Any]]) -> str:
@@ -97,29 +117,21 @@ def _referenced_providers(fallback_rules: dict[str, Any]) -> set[str]:
 @router.get("/topology", tags=["Topology"])
 async def get_topology(request: Request) -> JSONResponse:
     """Return the routing-map topology graph for the ReactFlow UI."""
-    role = getattr(request.state, "api_key_role", ROLE_USER)
-    key_id: int | None = getattr(request.state, "api_key_id", None)
-
+    role, key_id = _effective_scope(request)
     is_master = role == ROLE_MASTER
-    cache_key = ("topology", role, key_id)
+    services = _capture_app_services(request)
+    runtime_snapshot = _capture_runtime_snapshot(request)
+    config_loader = runtime_snapshot.config_loader
+    registry = services.active_requests_registry
+    upstream_state = services.upstream_routing_state
+    cache_key = (runtime_snapshot.generation, role, key_id)
 
     async def _build() -> dict[str, Any]:
-        config_loader = getattr(request.app.state, "config_loader", None)
-        providers_config: dict[str, Any] = {}
-        fallback_rules: dict[str, Any] = {}
-        if config_loader is not None:
-            providers_config = config_loader.providers_config or {}
-            fallback_rules = getattr(config_loader, "fallback_rules", None) or {}
-
-        registry = get_active_requests_registry(request.app)
+        providers_config: dict[str, Any] = config_loader.providers_config or {}
+        fallback_rules: dict[str, Any] = config_loader.fallback_rules or {}
         active_records = registry.list_records(api_key_id=None if is_master else key_id)
 
-        upstream_state: UpstreamRoutingState | None = getattr(
-            request.app.state, "upstream_routing_state", None
-        )
-        status_rows: list[dict[str, Any]] = []
-        if isinstance(upstream_state, UpstreamRoutingState):
-            status_rows = upstream_state.get_status_rows()
+        status_rows: list[dict[str, Any]] = upstream_state.get_status_rows()
 
         # Active request tallies. Each record carries both ``gateway_model`` and
         # ``provider`` once routing is resolved, so we can attribute live traffic

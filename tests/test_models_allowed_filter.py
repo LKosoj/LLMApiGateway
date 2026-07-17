@@ -14,6 +14,7 @@ import main
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.db import api_keys_db as api_keys_db_module
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 PROVIDERS_TEXT = """
@@ -99,10 +100,21 @@ class ModelsAllowedFilterTests(unittest.TestCase):
         if "get" not in fake_http_client.__dict__:
             fake_http_client.get = AsyncMock(return_value=_EmptyFallbackResponse())
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
+            install_main_chat_accounting_double(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.ApiKeysDB", return_value=self.api_keys_db))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-master"))

@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -41,10 +42,18 @@ from ..config.loader import (
 )
 from ..services.provider_auth import resolve_provider_auth_material
 from ..services.request_handler import make_llm_request
+from .accounting import (
+    AccountingError,
+    AccountingUsage,
+    AccountingValidationError,
+    BillingComponent,
+)
+from .chat_accounting import ChatTerminalObservation, ObservedChatResponse
+from .operation_accounting import build_token_model_component
 from ..utils.usage_tracking import (
+    ModelCostRates,
     RATE_BASED_COST_SKIP_KEY,
     UPSTREAM_COST_PRESENT_KEY,
-    build_model_cost_rate_registry,
     calculate_model_cost_usd,
     extract_tokens_usage,
 )
@@ -144,14 +153,14 @@ def _messages_to_text(messages: List[Dict[str, Any]]) -> str:
 
 def _add_usage(
     accumulator: Dict[str, Any],
-    usage: Optional[Dict[str, Any]],
+    usage: Mapping[str, Any] | None,
     *,
-    member: Dict[str, Any] | None = None,
-    cost_rate_registry: Dict[tuple[str, str], Any] | None = None,
+    member: Mapping[str, Any] | None = None,
+    cost_rate_registry: Mapping[tuple[str, str], ModelCostRates] | None = None,
 ) -> None:
-    if not isinstance(usage, dict):
+    if not isinstance(usage, Mapping):
         return
-    extracted = extract_tokens_usage({"usage": usage})
+    extracted = extract_tokens_usage({"usage": dict(usage)})
     raw_cost_incomplete = bool(usage.get("_cost_incomplete"))
     prompt = int(extracted.get("prompt_tokens") or 0)
     completion = int(extracted.get("completion_tokens") or 0)
@@ -200,6 +209,15 @@ def _public_usage(usage_total: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in usage_total.items() if not key.startswith("_")}
 
 
+def _public_component_usage(usage: AccountingUsage) -> Dict[str, Any]:
+    return {
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+        "cost": usage.cost,
+    }
+
+
 def _parse_judge_analysis(raw_text: str) -> Dict[str, Any]:
     """Best-effort parse of the judge's JSON analysis.
 
@@ -230,8 +248,14 @@ def _parse_judge_analysis(raw_text: str) -> Dict[str, Any]:
 
 
 class FusionEnsembleService:
-    def __init__(self, config_loader: Any) -> None:
+    def __init__(
+        self,
+        config_loader: Any,
+        *,
+        cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
+    ) -> None:
         self._config_loader = config_loader
+        self._cost_rate_registry = cost_rate_registry
 
     async def run(
         self,
@@ -243,6 +267,63 @@ class FusionEnsembleService:
         http_client: Any,
         proxy_http_clients: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        if fusion_config.get("web_tools"):
+            result = await self._run_pipeline(
+                request=request,
+                gateway_model_name=gateway_model_name,
+                fusion_config=fusion_config,
+                request_body=request_body,
+                http_client=http_client,
+                proxy_http_clients=proxy_http_clients,
+                observe=False,
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("legacy Fusion pipeline returned an invalid result")
+            return result
+        observed = await self.run_observed(
+            request=request,
+            gateway_model_name=gateway_model_name,
+            fusion_config=fusion_config,
+            request_body=request_body,
+            http_client=http_client,
+            proxy_http_clients=proxy_http_clients,
+        )
+        return observed.response
+
+    async def run_observed(
+        self,
+        *,
+        request: Request,
+        gateway_model_name: str,
+        fusion_config: Dict[str, Any],
+        request_body: Dict[str, Any],
+        http_client: Any,
+        proxy_http_clients: Optional[Dict[str, Any]] = None,
+    ) -> ObservedChatResponse:
+        result = await self._run_pipeline(
+            request=request,
+            gateway_model_name=gateway_model_name,
+            fusion_config=fusion_config,
+            request_body=request_body,
+            http_client=http_client,
+            proxy_http_clients=proxy_http_clients,
+            observe=True,
+        )
+        if not isinstance(result, ObservedChatResponse):
+            raise RuntimeError("observed Fusion pipeline returned an invalid result")
+        return result
+
+    async def _run_pipeline(
+        self,
+        *,
+        request: Request,
+        gateway_model_name: str,
+        fusion_config: Dict[str, Any],
+        request_body: Dict[str, Any],
+        http_client: Any,
+        proxy_http_clients: Optional[Dict[str, Any]],
+        observe: bool,
+    ) -> Dict[str, Any] | ObservedChatResponse:
         proxy_http_clients = proxy_http_clients or {}
 
         base_messages = request_body.get("messages")
@@ -256,7 +337,8 @@ class FusionEnsembleService:
         include_details = self._resolve_include_details(request_body, fusion_config)
 
         usage_total: Dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        cost_rate_registry = build_model_cost_rate_registry(getattr(self._config_loader, "providers_config", None))
+        cost_rate_registry = self._cost_rate_registry
+        components: List[BillingComponent] = []
 
         # Base context shared by all members of this run (single timestamp so
         # panel/judge/main agree). Panel members also get a recency cue when web
@@ -277,6 +359,18 @@ class FusionEnsembleService:
                     request,
                     web_tools,
                     cost_rate_registry,
+                    observe=observe,
+                )
+                for member in panel
+            ]
+        elif observe:
+            panel_calls = [
+                self._call_member_observed(
+                    member,
+                    panel_messages,
+                    http_client,
+                    proxy_http_clients,
+                    request,
                 )
                 for member in panel
             ]
@@ -292,13 +386,19 @@ class FusionEnsembleService:
         for member, outcome in zip(panel, panel_raw):
             entry: Dict[str, Any] = {"provider": member.get("provider"), "model": member.get("model")}
             if isinstance(outcome, Exception):
+                if isinstance(outcome, AccountingError):
+                    raise outcome
                 entry["error"] = str(outcome)
                 logger.warning(
                     "Fusion panel member %s/%s failed: %s",
                     member.get("provider"), member.get("model"), outcome,
                 )
             else:
-                content, usage = outcome
+                if observe:
+                    content, usage, member_components = outcome
+                    components.extend(member_components)
+                else:
+                    content, usage = outcome
                 entry["content"] = content
                 _add_usage(usage_total, usage, member=member, cost_rate_registry=cost_rate_registry)
                 successful.append({"provider": member.get("provider"), "model": member.get("model"), "content": content})
@@ -328,12 +428,24 @@ class FusionEnsembleService:
             },
         ]
         try:
-            judge_text, judge_usage = await self._call_member(
-                judge_member, judge_messages, http_client, proxy_http_clients, request
-            )
+            if observe:
+                judge_text, judge_usage, judge_components = await self._call_member_observed(
+                    judge_member,
+                    judge_messages,
+                    http_client,
+                    proxy_http_clients,
+                    request,
+                )
+                components.extend(judge_components)
+            else:
+                judge_text, judge_usage = await self._call_member(
+                    judge_member, judge_messages, http_client, proxy_http_clients, request
+                )
             _add_usage(usage_total, judge_usage, member=judge_member, cost_rate_registry=cost_rate_registry)
             _sync_request_usage_tracker(request, usage_total)
             analysis = _parse_judge_analysis(judge_text)
+        except AccountingError:
+            raise
         except Exception as exc:  # judge analysis is auxiliary — never fail the request on it
             logger.warning("Fusion judge failed: %s", exc)
             analysis = {"error": str(exc)}
@@ -357,9 +469,21 @@ class FusionEnsembleService:
         request.state.llmgateway_provider_model = main_member.get("model")
 
         try:
-            final_content, main_usage = await self._call_member(
-                main_member, main_messages, http_client, proxy_http_clients, request
-            )
+            if observe:
+                final_content, main_usage, main_components = await self._call_member_observed(
+                    main_member,
+                    main_messages,
+                    http_client,
+                    proxy_http_clients,
+                    request,
+                )
+            else:
+                final_content, main_usage = await self._call_member(
+                    main_member, main_messages, http_client, proxy_http_clients, request
+                )
+                main_components = ()
+        except AccountingError:
+            raise
         except Exception as exc:
             _sync_request_usage_tracker(request, usage_total)
             raise HTTPException(
@@ -369,22 +493,37 @@ class FusionEnsembleService:
 
         _add_usage(usage_total, main_usage, member=main_member, cost_rate_registry=cost_rate_registry)
         _sync_request_usage_tracker(request, usage_total)
+        components.extend(main_components)
 
         if include_details:
             footer = _render_analysis_footer(analysis)
             if footer:
                 final_content = f"{final_content}\n\n{footer}"
 
-        return self._build_response(
+        observation: ChatTerminalObservation | None = None
+        response_usage = usage_total
+        if observe:
+            observation = ChatTerminalObservation(
+                top_provider=main_member.get("provider"),
+                top_model=main_member.get("model"),
+                components=tuple(components),
+            )
+            response_usage = _public_component_usage(observation.usage)
+            _sync_request_usage_tracker(request, response_usage)
+
+        response = self._build_response(
             gateway_model_name=gateway_model_name,
             final_content=final_content,
-            usage_total=usage_total,
+            usage_total=response_usage,
             panel_results=panel_results,
             analysis=analysis,
             main_member=main_member,
             judge_member=judge_member,
             include_details=include_details,
         )
+        if observation is None:
+            return response
+        return ObservedChatResponse(response=response, observation=observation)
 
     @staticmethod
     def _resolve_include_details(request_body: Dict[str, Any], fusion_config: Dict[str, Any]) -> bool:
@@ -407,6 +546,37 @@ class FusionEnsembleService:
             member, messages, http_client, proxy_http_clients, request
         )
         return _extract_text(openai_response), openai_response.get("usage") or {}
+
+    async def _call_member_observed(
+        self,
+        member: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        http_client: Any,
+        proxy_http_clients: Dict[str, Any],
+        request: Request,
+    ) -> Tuple[str, Dict[str, Any], tuple[BillingComponent, ...]]:
+        openai_response = await self._raw_chat_call(
+            member,
+            messages,
+            http_client,
+            proxy_http_clients,
+            request,
+        )
+        provider = member.get("provider")
+        model = member.get("model")
+        if not isinstance(provider, str) or not isinstance(model, str):
+            raise AccountingValidationError
+        component = build_token_model_component(
+            openai_response,
+            provider=provider,
+            model=model,
+            cost_rate_registry=self._cost_rate_registry,
+        )
+        return (
+            _extract_text(openai_response),
+            openai_response.get("usage") or {},
+            (component,),
+        )
 
     async def _raw_chat_call(
         self,
@@ -504,8 +674,13 @@ class FusionEnsembleService:
         proxy_http_clients: Dict[str, Any],
         request: Request,
         web_tools: Dict[str, Any],
-        cost_rate_registry: Dict[tuple[str, str], Any],
-    ) -> Tuple[str, Dict[str, Any]]:
+        cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
+        *,
+        observe: bool = False,
+    ) -> (
+        Tuple[str, Dict[str, Any]]
+        | Tuple[str, Dict[str, Any], tuple[BillingComponent, ...]]
+    ):
         """Run a panel member in an agentic web-tool loop and return (text, usage).
 
         The member is offered ``web_search`` (+ optional ``web_fetch``) tools.
@@ -519,6 +694,7 @@ class FusionEnsembleService:
 
         convo: List[Dict[str, Any]] = list(messages)
         usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        components: List[BillingComponent] = []
         tool_calls_made = 0
 
         for _iteration in range(max_iterations):
@@ -527,6 +703,19 @@ class FusionEnsembleService:
                 member, convo, http_client, proxy_http_clients, request,
                 tools=tool_schemas if offer_tools else None,
             )
+            if observe:
+                provider = member.get("provider")
+                model = member.get("model")
+                if not isinstance(provider, str) or not isinstance(model, str):
+                    raise AccountingValidationError
+                components.append(
+                    build_token_model_component(
+                        response,
+                        provider=provider,
+                        model=model,
+                        cost_rate_registry=self._cost_rate_registry,
+                    )
+                )
             _add_usage(
                 usage_total,
                 response.get("usage") or {},
@@ -536,6 +725,8 @@ class FusionEnsembleService:
             message = ((response.get("choices") or [{}])[0] or {}).get("message") or {}
             tool_calls = message.get("tool_calls") if offer_tools else None
             if not tool_calls:
+                if observe:
+                    return _extract_text(response), usage_total, tuple(components)
                 return _extract_text(response), usage_total
 
             # Record the assistant turn that requested the tools.
@@ -551,9 +742,17 @@ class FusionEnsembleService:
                         "already gathered."
                     )
                 else:
-                    result_text, tool_usage = await self._execute_web_tool(
-                        request, tool_call, web_tools
+                    tool_result = await self._execute_web_tool(
+                        request,
+                        tool_call,
+                        web_tools,
+                        observe=observe,
                     )
+                    if observe:
+                        result_text, tool_usage, tool_components = tool_result
+                        components.extend(tool_components)
+                    else:
+                        result_text, tool_usage = tool_result
                     _add_usage(usage_total, tool_usage)
                     tool_calls_made += 1
                 convo.append({
@@ -566,12 +765,27 @@ class FusionEnsembleService:
         final_response = await self._raw_chat_call(
             member, convo, http_client, proxy_http_clients, request=request, tools=None
         )
+        if observe:
+            provider = member.get("provider")
+            model = member.get("model")
+            if not isinstance(provider, str) or not isinstance(model, str):
+                raise AccountingValidationError
+            components.append(
+                build_token_model_component(
+                    final_response,
+                    provider=provider,
+                    model=model,
+                    cost_rate_registry=self._cost_rate_registry,
+                )
+            )
         _add_usage(
             usage_total,
             final_response.get("usage") or {},
             member=member,
             cost_rate_registry=cost_rate_registry,
         )
+        if observe:
+            return _extract_text(final_response), usage_total, tuple(components)
         return _extract_text(final_response), usage_total
 
     @staticmethod
@@ -579,7 +793,12 @@ class FusionEnsembleService:
         request: Request,
         tool_call: Dict[str, Any],
         web_tools: Dict[str, Any],
-    ) -> Tuple[str, Dict[str, Any]]:
+        *,
+        observe: bool = False,
+    ) -> (
+        Tuple[str, Dict[str, Any]]
+        | Tuple[str, Dict[str, Any], tuple[BillingComponent, ...]]
+    ):
         """Execute one web tool call in-process and return (result_text, usage)."""
         function = tool_call.get("function") or {}
         name = function.get("name")
@@ -591,14 +810,50 @@ class FusionEnsembleService:
             arguments = {}
 
         # Lazy import to avoid an import cycle with the web API module.
-        from ..api.v1.web import _UsageAccumulator, _read_with_model, _search_with_model
+        from ..api.v1.web import (
+            _UsageAccumulator,
+            _read_with_model,
+            _read_with_model_observed,
+            _search_with_model,
+            _search_with_model_observed,
+        )
 
         accumulator = _UsageAccumulator()
+        internal_components: list[BillingComponent] = []
+
+        def _result(
+            text: str,
+            components: tuple[BillingComponent, ...] = (),
+        ) -> (
+            Tuple[str, Dict[str, Any]]
+            | Tuple[str, Dict[str, Any], tuple[BillingComponent, ...]]
+        ):
+            usage = dict(accumulator.usage)
+            if observe:
+                return text, usage, components
+            return text, usage
+
         try:
             if name == "web_search":
                 query = arguments.get("query")
                 if not isinstance(query, str) or not query.strip():
-                    return "web_search error: 'query' is required.", {}
+                    return _result("web_search error: 'query' is required.")
+                if observe:
+                    observed = await _search_with_model_observed(
+                        request,
+                        search_model=web_tools["search_model"],
+                        query=query.strip(),
+                        max_results=int(web_tools.get("max_results") or 5),
+                        num_queries=1,
+                        language="en",
+                        usage_accumulator=accumulator,
+                        expand_query=False,
+                        _component_accumulator=internal_components,
+                    )
+                    return _result(
+                        _format_search_results(observed.result),
+                        observed.components,
+                    )
                 results = await _search_with_model(
                     request,
                     search_model=web_tools["search_model"],
@@ -609,27 +864,48 @@ class FusionEnsembleService:
                     usage_accumulator=accumulator,
                     expand_query=False,
                 )
-                return _format_search_results(results), dict(accumulator.usage)
+                return _result(_format_search_results(results))
             if name == "web_fetch":
                 read_model = web_tools.get("read_model")
                 if not read_model:
-                    return "web_fetch error: this Fusion model has no read_model configured.", {}
+                    return _result(
+                        "web_fetch error: this Fusion model has no read_model configured."
+                    )
                 url = arguments.get("url")
                 if not isinstance(url, str) or not url.strip():
-                    return "web_fetch error: 'url' is required.", {}
+                    return _result("web_fetch error: 'url' is required.")
+                if observe:
+                    observed = await _read_with_model_observed(
+                        request,
+                        read_model=read_model,
+                        url=url.strip(),
+                        output_format="markdown",
+                    )
+                    return _result(
+                        _format_read_result(observed.result),
+                        observed.components,
+                    )
                 article = await _read_with_model(
                     request,
                     read_model=read_model,
                     url=url.strip(),
                     output_format="markdown",
                 )
-                return _format_read_result(article), dict(accumulator.usage)
+                return _result(_format_read_result(article))
+        except AccountingError:
+            raise
         except HTTPException as exc:
-            return f"{name} error: {exc.detail}", dict(accumulator.usage)
+            return _result(
+                f"{name} error: {exc.detail}",
+                tuple(internal_components),
+            )
         except Exception as exc:  # surface the failure to the model, do not abort the panel member
             logger.warning("Fusion web tool '%s' failed: %s", name, exc)
-            return f"{name} error: {exc}", dict(accumulator.usage)
-        return f"Unknown tool '{name}'.", {}
+            return _result(
+                f"{name} error: {exc}",
+                tuple(internal_components),
+            )
+        return _result(f"Unknown tool '{name}'.")
 
     @staticmethod
     def _build_response(

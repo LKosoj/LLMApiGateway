@@ -4,7 +4,8 @@
   "private": true,
   "description": "Local ESM bundle of React + @xyflow/react for the Topology tab — vendored so the UI works without internet access to esm.sh / unpkg.",
   "scripts": {
-    "build": "esbuild entry.mjs --bundle --format=esm --target=es2020 --minify --outfile=../../static/vendor/topology.bundle.mjs"
+    "build": "esbuild entry.mjs --bundle --format=esm --target=es2020 --minify --outfile=../../static/vendor/topology.bundle.mjs",
+    "check": "python3 ../../scripts/check_topology_bundle.py"
   },
   "dependencies": {
     "@xyflow/react": "12.3.6",
@@ -12,6 +13,6 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "esbuild": "0.24.0"
+    "esbuild": "0.28.1"
   }
 }

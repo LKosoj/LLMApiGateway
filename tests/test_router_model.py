@@ -1,25 +1,43 @@
 import json
 import unittest
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from llm_gateway_core.api.v1.chat import _dispatch_chat_request
 from llm_gateway_core.config.loader import ConfigLoader, ProviderDetails
+from llm_gateway_core.services.accounting import (
+    AccountingCostError,
+    AccountingErrorCode,
+    CostSource,
+)
 from llm_gateway_core.services.router_model import RouterModelService
+from llm_gateway_core.utils.usage_tracking import (
+    build_model_cost_rate_registry,
+)
 from tests._async_compat import run_async
+from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
 
-def _openai_response(content: str, *, prompt_tokens: int = 1, completion_tokens: int = 1):
+def _openai_response(
+    content: str,
+    *,
+    prompt_tokens: int = 1,
+    completion_tokens: int = 1,
+    cost: float | None = 0.0,
+):
+    usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    if cost is not None:
+        usage["cost"] = cost
     return (
         {
             "choices": [{"message": {"role": "assistant", "content": content}}],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
+            "usage": usage,
         },
         None,
     )
@@ -145,6 +163,7 @@ class RouterDispatchTests(unittest.TestCase):
             },
         }
         loader.fusion_rules = {}
+        loader.operation_rules = {}
         loader.router_rules = {
             "gateway/router": {
                 "selector_model": "gateway/selector",
@@ -154,18 +173,40 @@ class RouterDispatchTests(unittest.TestCase):
         loader.model_rules = {}
         return loader
 
-    def _request(self, config_loader):
+    def _request(self, config_loader, *, cost_rate_registry=None):
+        if cost_rate_registry is None:
+            cost_rate_registry = MappingProxyType(
+                build_model_cost_rate_registry(config_loader.providers_config)
+            )
+        runtime_http_client = object()
+        services = make_app_services(http_client=runtime_http_client)
+        router_model_service = RouterModelService(
+            config_loader,
+            cost_rate_registry=cost_rate_registry,
+        )
+        runtime_snapshot = make_runtime_snapshot(
+            config_loader=config_loader,
+            http_client=runtime_http_client,
+            cost_rate_registry=cost_rate_registry,
+            router_model_service=router_model_service,
+        )
         app = SimpleNamespace(
             state=SimpleNamespace(
-                config_loader=config_loader,
+                services=services,
+                config_loader=object(),
                 http_client=object(),
-                proxy_http_clients={},
+                proxy_http_clients={"p1": object()},
                 fallback_events_db=None,
-                upstream_routing_state=None,
-                router_model_service=RouterModelService(config_loader),
+                fusion_service=object(),
+                router_model_service=object(),
+                upstream_routing_state=object(),
             )
         )
-        return SimpleNamespace(app=app, state=SimpleNamespace(), headers={})
+        return SimpleNamespace(
+            app=app,
+            state=SimpleNamespace(runtime_snapshot=runtime_snapshot),
+            headers={},
+        )
 
     def test_fallback_entry_target_starts_at_selected_index_and_continues_chain(self):
         config_loader = self._config_loader(
@@ -248,7 +289,12 @@ class RouterDispatchTests(unittest.TestCase):
                 )
                 response["usage"]["cost"] = 0.01
                 return response, error
-            return _openai_response("final from model-a", prompt_tokens=3, completion_tokens=4)
+            return _openai_response(
+                "final from model-a",
+                prompt_tokens=3,
+                completion_tokens=4,
+                cost=None,
+            )
 
         with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
             response = run_async(
@@ -263,7 +309,78 @@ class RouterDispatchTests(unittest.TestCase):
         self.assertEqual(response["usage"]["total_tokens"], 10)
         self.assertAlmostEqual(response["usage"]["cost"], 0.021, places=6)
 
-    def test_selector_usage_is_kept_when_delegate_usage_is_empty_or_missing(self):
+    def test_captured_cost_registry_is_stable_and_preserves_upstream_zero(self):
+        config_loader = self._config_loader(
+            [{"type": "gateway_model", "model": "gateway/high"}]
+        )
+        config_loader.providers_config["p1"].models = {
+            "selector-upstream": {
+                "input_rate": 1000,
+                "output_rate": 2000,
+            },
+            "model-a": {
+                "input_rate": 1000,
+                "output_rate": 2000,
+            },
+        }
+        cost_rate_registry = MappingProxyType(
+            build_model_cost_rate_registry(config_loader.providers_config)
+        )
+        config_loader.providers_config["p1"].models = {
+            "selector-upstream": {
+                "input_rate": 800_000,
+                "output_rate": 800_000,
+            },
+            "model-a": {
+                "input_rate": 800_000,
+                "output_rate": 800_000,
+            },
+        }
+
+        for selector_upstream_cost, expected_cost in ((None, 0.015), (0.0, 0.011)):
+            with self.subTest(selector_upstream_cost=selector_upstream_cost):
+                request = self._request(
+                    config_loader,
+                    cost_rate_registry=cost_rate_registry,
+                )
+                router_service = request.state.runtime_snapshot.router_model_service
+                self.assertIs(router_service._cost_rate_registry, cost_rate_registry)
+
+                async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+                    if payload["model"] == "selector-upstream":
+                        response, error = _openai_response(
+                            json.dumps({"candidate_id": "gateway:gateway/high"}),
+                            prompt_tokens=2,
+                            completion_tokens=1,
+                            cost=None,
+                        )
+                        if selector_upstream_cost is not None:
+                            response["usage"]["cost"] = selector_upstream_cost
+                        return response, error
+                    return _openai_response(
+                        "final from model-a",
+                        prompt_tokens=3,
+                        completion_tokens=4,
+                        cost=None,
+                    )
+
+                with patch(
+                    "llm_gateway_core.api.v1.chat.make_llm_request",
+                    side_effect=fake_make_llm_request,
+                ):
+                    response = run_async(
+                        _dispatch_chat_request(
+                            request,
+                            {
+                                "model": "gateway/router",
+                                "messages": [{"role": "user", "content": "hard task"}],
+                            },
+                        )
+                    )
+
+                self.assertAlmostEqual(response["usage"]["cost"], expected_cost, places=6)
+
+    def test_delegate_success_without_actual_usage_fails_closed(self):
         for delegate_usage in ({}, None):
             with self.subTest(delegate_usage=delegate_usage):
                 config_loader = self._config_loader(
@@ -286,17 +403,17 @@ class RouterDispatchTests(unittest.TestCase):
                     return response, None
 
                 with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
-                    response = run_async(
-                        _dispatch_chat_request(
-                            request,
-                            {"model": "gateway/router", "messages": [{"role": "user", "content": "hard task"}]},
+                    with self.assertRaises(AccountingCostError) as error:
+                        run_async(
+                            _dispatch_chat_request(
+                                request,
+                                {
+                                    "model": "gateway/router",
+                                    "messages": [{"role": "user", "content": "hard task"}],
+                                },
+                            )
                         )
-                    )
-
-                self.assertEqual(response["usage"]["prompt_tokens"], 2)
-                self.assertEqual(response["usage"]["completion_tokens"], 1)
-                self.assertEqual(response["usage"]["total_tokens"], 3)
-                self.assertNotIn("cost", response["usage"])
+                    self.assertIs(error.exception.code, AccountingErrorCode.COST_UNAVAILABLE)
 
     def test_selector_usage_is_added_to_raw_anthropic_delegate_response(self):
         config_loader = self._config_loader(
@@ -335,6 +452,7 @@ class RouterDispatchTests(unittest.TestCase):
                     json.dumps({"candidate_id": "gateway:gateway/high"}),
                     prompt_tokens=2,
                     completion_tokens=1,
+                    cost=None,
                 )
             return (
                 {
@@ -382,6 +500,251 @@ class RouterDispatchTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.status_code, 502)
         self.assertIn("unknown candidate_id", str(ctx.exception.detail))
+
+    def test_run_observed_returns_selector_then_delegate_components_without_synthetic_reuse(self):
+        config_loader = self._config_loader(
+            [{"type": "gateway_model", "model": "gateway/high"}]
+        )
+        config_loader.providers_config["p1"].models = {
+            "selector-upstream": {"input_rate": 1000, "output_rate": 2000},
+            "model-a": {"input_rate": 1000, "output_rate": 2000},
+        }
+        request = self._request(config_loader)
+        service = request.state.runtime_snapshot.router_model_service
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+            if payload["model"] == "selector-upstream":
+                response, error = _openai_response(
+                    json.dumps({"candidate_id": "gateway:gateway/high"}),
+                    prompt_tokens=2,
+                    completion_tokens=1,
+                )
+                response["usage"]["cost"] = 0.01
+                return response, error
+            response, error = _openai_response(
+                "final from model-a",
+                prompt_tokens=3,
+                completion_tokens=4,
+            )
+            response["usage"]["cost"] = 0.02
+            return response, error
+
+        with patch(
+            "llm_gateway_core.api.v1.chat.make_llm_request",
+            side_effect=fake_make_llm_request,
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="gateway/router",
+                    router_config=config_loader.router_rules["gateway/router"],
+                    request_body={
+                        "model": "gateway/router",
+                        "messages": [{"role": "user", "content": "hard task"}],
+                    },
+                )
+            )
+
+        self.assertEqual(
+            [(component.provider, component.model) for component in observed.observation.components],
+            [("p1", "selector-upstream"), ("p1", "model-a")],
+        )
+        self.assertEqual(
+            [component.usage.cost for component in observed.observation.components],
+            [0.01, 0.02],
+        )
+        self.assertEqual(
+            [component.cost_source for component in observed.observation.components],
+            [CostSource.UPSTREAM, CostSource.UPSTREAM],
+        )
+        self.assertAlmostEqual(observed.observation.usage.cost, 0.03)
+        self.assertAlmostEqual(observed.response["usage"]["cost"], 0.03)
+        self.assertEqual(observed.observation.top_provider, "p1")
+        self.assertEqual(observed.observation.top_model, "model-a")
+
+    def test_run_observed_records_only_successful_selector_and_delegate_after_retries(self):
+        config_loader = self._config_loader(
+            [{"type": "gateway_model", "model": "gateway/high"}]
+        )
+        config_loader.fallback_rules["gateway/selector"]["fallback_models"] = [
+            {"provider": "p1", "model": "selector-broken"},
+            {"provider": "p1", "model": "selector-upstream"},
+        ]
+        request = self._request(config_loader)
+        service = request.state.runtime_snapshot.router_model_service
+        seen_models = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            seen_models.append(model)
+            if model in {"selector-broken", "model-a"}:
+                return None, f"{model} unavailable"
+            if model == "selector-upstream":
+                response, error = _openai_response(
+                    json.dumps({"candidate_id": "gateway:gateway/high"})
+                )
+                response["usage"]["cost"] = 0.0
+                return response, error
+            response, error = _openai_response("final from model-b")
+            response["usage"]["cost"] = 0.0
+            return response, error
+
+        with patch(
+            "llm_gateway_core.api.v1.chat.make_llm_request",
+            side_effect=fake_make_llm_request,
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="gateway/router",
+                    router_config=config_loader.router_rules["gateway/router"],
+                    request_body={
+                        "model": "gateway/router",
+                        "messages": [{"role": "user", "content": "hard task"}],
+                    },
+                )
+            )
+
+        self.assertEqual(
+            seen_models,
+            ["selector-broken", "selector-upstream", "model-a", "model-b"],
+        )
+        self.assertEqual(
+            [component.model for component in observed.observation.components],
+            ["selector-upstream", "model-b"],
+        )
+
+    def test_run_observed_uses_registry_for_missing_component_costs(self):
+        config_loader = self._config_loader(
+            [{"type": "gateway_model", "model": "gateway/high"}]
+        )
+        config_loader.providers_config["p1"].models = {
+            "selector-upstream": {"input_rate": 1000, "output_rate": 2000},
+            "model-a": {"input_rate": 1000, "output_rate": 2000},
+        }
+        request = self._request(config_loader)
+        service = request.state.runtime_snapshot.router_model_service
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+            if payload["model"] == "selector-upstream":
+                return _openai_response(
+                    json.dumps({"candidate_id": "gateway:gateway/high"}),
+                    prompt_tokens=2,
+                    completion_tokens=1,
+                    cost=None,
+                )
+            return _openai_response(
+                "final from model-a",
+                prompt_tokens=3,
+                completion_tokens=4,
+                cost=None,
+            )
+
+        with patch(
+            "llm_gateway_core.api.v1.chat.make_llm_request",
+            side_effect=fake_make_llm_request,
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="gateway/router",
+                    router_config=config_loader.router_rules["gateway/router"],
+                    request_body={
+                        "model": "gateway/router",
+                        "messages": [{"role": "user", "content": "hard task"}],
+                    },
+                )
+            )
+
+        self.assertEqual(
+            [component.cost_source for component in observed.observation.components],
+            [CostSource.TOKEN_REGISTRY, CostSource.TOKEN_REGISTRY],
+        )
+        self.assertEqual(
+            [component.usage.cost for component in observed.observation.components],
+            [0.004, 0.011],
+        )
+
+    def test_invalid_selector_cost_fails_before_delegate_and_without_terminal_observation(self):
+        config_loader = self._config_loader(
+            [{"type": "gateway_model", "model": "gateway/high"}]
+        )
+        request = self._request(config_loader)
+        service = request.state.runtime_snapshot.router_model_service
+        seen_models = []
+
+        async def invalid_selector_cost(client, url, headers, payload, is_streaming):
+            seen_models.append(payload["model"])
+            response, error = _openai_response(
+                json.dumps({"candidate_id": "gateway:gateway/high"})
+            )
+            response["usage"]["cost"] = "invalid"
+            return response, error
+
+        with (
+            patch(
+                "llm_gateway_core.api.v1.chat.make_llm_request",
+                side_effect=invalid_selector_cost,
+            ),
+            patch(
+                "llm_gateway_core.services.router_model.ChatTerminalObservation"
+            ) as observation_type,
+        ):
+            with self.assertRaises(AccountingCostError):
+                run_async(
+                    service.run_observed(
+                        request=request,
+                        gateway_model_name="gateway/router",
+                        router_config=config_loader.router_rules["gateway/router"],
+                        request_body={
+                            "model": "gateway/router",
+                            "messages": [{"role": "user", "content": "hard task"}],
+                        },
+                    )
+                )
+
+        self.assertEqual(seen_models, ["selector-upstream"])
+        observation_type.assert_not_called()
+
+    def test_delegate_failure_does_not_construct_terminal_observation(self):
+        config_loader = self._config_loader(
+            [{"type": "gateway_model", "model": "gateway/high"}]
+        )
+        request = self._request(config_loader)
+        service = request.state.runtime_snapshot.router_model_service
+
+        async def fail_delegate(client, url, headers, payload, is_streaming):
+            if payload["model"] == "selector-upstream":
+                response, error = _openai_response(
+                    json.dumps({"candidate_id": "gateway:gateway/high"})
+                )
+                response["usage"]["cost"] = 0.0
+                return response, error
+            return None, "delegate unavailable"
+
+        with (
+            patch(
+                "llm_gateway_core.api.v1.chat.make_llm_request",
+                side_effect=fail_delegate,
+            ),
+            patch(
+                "llm_gateway_core.services.router_model.ChatTerminalObservation"
+            ) as observation_type,
+        ):
+            with self.assertRaises(HTTPException):
+                run_async(
+                    service.run_observed(
+                        request=request,
+                        gateway_model_name="gateway/router",
+                        router_config=config_loader.router_rules["gateway/router"],
+                        request_body={
+                            "model": "gateway/router",
+                            "messages": [{"role": "user", "content": "hard task"}],
+                        },
+                    )
+                )
+
+        observation_type.assert_not_called()
 
 
 if __name__ == "__main__":

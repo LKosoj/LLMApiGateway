@@ -1,14 +1,13 @@
 import tempfile
 import unittest
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
-from fastapi.testclient import TestClient
 
-import main
 from llm_gateway_core.config.loader import ConfigLoader
+from tests.rules_editor_test_support import transactional_rules_editor_client
 
 
 VALID_PROVIDERS_TEXT = """
@@ -53,12 +52,17 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.operation_rules_path = Path(self.temp_dir.name) / "models_operation_rules.json"
         self.fusion_rules_path = Path(self.temp_dir.name) / "models_fusion_rules.json"
         self.model_rules_path = Path(self.temp_dir.name) / "models_model_rules.json"
+        self.router_rules_path = Path(self.temp_dir.name) / "models_router_rules.json"
         self.providers_path.write_text(VALID_PROVIDERS_TEXT, encoding="utf-8")
         self.rules_path.write_text(VALID_RULES_TEXT, encoding="utf-8")
         self.operation_rules_path.write_text("{}", encoding="utf-8")
         self.fusion_rules_path.write_text("[]", encoding="utf-8")
         self.model_rules_path.write_text("{}\n", encoding="utf-8")
-        self.fallback_provider_patcher = patch.object(main.settings, "fallback_provider", "openrouter")
+        self.router_rules_path.write_text("[]", encoding="utf-8")
+        self.fallback_provider_patcher = patch(
+            "llm_gateway_core.config.loader.settings.fallback_provider",
+            "openrouter",
+        )
         self.fallback_provider_patcher.start()
 
         self.config_loader = ConfigLoader(
@@ -67,10 +71,9 @@ class RulesEditorStructuredTests(unittest.TestCase):
             operation_rules_filename=str(self.operation_rules_path),
             fusion_rules_filename=str(self.fusion_rules_path),
             model_rules_filename=str(self.model_rules_path),
+            router_rules_filename=str(self.router_rules_path),
         )
-        self.config_loader.load_providers()
-        self.config_loader.load_fallback_rules()
-        self.config_loader.load_model_rules()
+        self.config_loader.load_complete()
 
     def tearDown(self):
         self.fallback_provider_patcher.stop()
@@ -79,18 +82,29 @@ class RulesEditorStructuredTests(unittest.TestCase):
     @contextmanager
     def _client(self, fake_http_client: Mock | None = None):
         fake_http_client = fake_http_client or Mock()
-        fake_http_client.aclose = AsyncMock()
-        if not hasattr(fake_http_client, "get"):
-            fake_http_client.get = AsyncMock()
+        if not isinstance(fake_http_client.get, AsyncMock):
+            fake_http_client.get = AsyncMock(
+                return_value=httpx.Response(
+                    200,
+                    json={"data": [{"id": "provider-model"}]},
+                    request=httpx.Request(
+                        "GET", "https://devbox.example/models"
+                    ),
+                )
+            )
 
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB"))
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
+        async def catalog_handler(request: httpx.Request) -> httpx.Response:
+            return await fake_http_client.get(str(request.url))
 
-            with TestClient(main.app) as client:
-                yield client, fake_http_client
+        transport = httpx.MockTransport(catalog_handler)
+        with transactional_rules_editor_client(
+            self.config_loader,
+            transport=transport,
+        ) as (client, runtime):
+            yield client, fake_http_client
+            generation_response = client.get("/_test/runtime-generation")
+            self.assertEqual(generation_response.status_code, 200)
+            self.published_snapshot = runtime.observed_snapshot
 
     def test_get_models_rules_structured_returns_rules_and_providers(self):
         with self._client() as (client, _):
@@ -140,7 +154,11 @@ class RulesEditorStructuredTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("provider-model", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
+        self.assertNotIn("provider-model", response.text)
         self.assertEqual(self.rules_path.read_text(encoding="utf-8"), original_file_content)
         self.assertEqual(
             self.config_loader.fallback_rules["gateway-model"]["fallback_models"][0]["model"],
@@ -260,7 +278,9 @@ class RulesEditorStructuredTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            self.config_loader.fallback_rules["gateway-model"]["context_overflow_fallback"]["model"],
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["context_overflow_fallback"]["model"],
             "large-context-model",
         )
         self.assertEqual(
@@ -339,13 +359,15 @@ class RulesEditorStructuredTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            self.config_loader.fallback_rules["gateway-model"]["max_total_attempts"],
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["max_total_attempts"],
             7,
         )
         self.assertTrue(
-            self.config_loader.fallback_rules["gateway-model"]["fallback_models"][0][
-                "use_provider_order_as_fallback"
-            ]
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["fallback_models"][0]["use_provider_order_as_fallback"]
         )
 
         on_disk = self.rules_path.read_text(encoding="utf-8")
@@ -415,7 +437,9 @@ class RulesEditorStructuredTests(unittest.TestCase):
             "main",
         )
         self.assertEqual(
-            self.config_loader.fallback_rules["gateway-model"]["fallback_models"][0]["upstream_key_pool"],
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["fallback_models"][0]["upstream_key_pool"],
             "main",
         )
         self.assertIn('"upstream_key_pool": "main"', self.rules_path.read_text(encoding="utf-8"))
@@ -471,7 +495,11 @@ class RulesEditorStructuredTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["rules"][0]["dynamic_penalty"])
-        self.assertTrue(self.config_loader.fallback_rules["gateway-model"]["dynamic_penalty"])
+        self.assertTrue(
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["dynamic_penalty"]
+        )
         self.assertIn('"dynamic_penalty": true', self.rules_path.read_text(encoding="utf-8"))
 
     def test_structured_save_persists_strip_think_tags(self):
@@ -507,7 +535,11 @@ class RulesEditorStructuredTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["rules"][0]["strip_think_tags"])
-        self.assertTrue(self.config_loader.fallback_rules["gateway-model"]["strip_think_tags"])
+        self.assertTrue(
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["strip_think_tags"]
+        )
         self.assertIn('"strip_think_tags": true', self.rules_path.read_text(encoding="utf-8"))
 
     def test_structured_save_persists_compress_tool_results(self):
@@ -550,7 +582,11 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.assertTrue(response.json()["rules"][0]["compress_tool_results"])
         self.assertEqual(get_response.status_code, 200)
         self.assertTrue(get_response.json()["rules"][0]["compress_tool_results"])
-        self.assertTrue(self.config_loader.fallback_rules["gateway-model"]["compress_tool_results"])
+        self.assertTrue(
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["compress_tool_results"]
+        )
         self.assertIn('"compress_tool_results": true', self.rules_path.read_text(encoding="utf-8"))
 
     def test_structured_save_persists_available_models_and_short_circuits_models_endpoint(self):
@@ -639,9 +675,16 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.assertEqual(devbox["routing"]["strategy"], "priority")
         self.assertTrue(devbox["routing"]["session_affinity"])
         self.assertEqual(devbox["upstream_key_pools"]["main"]["keys"][0]["id"], "primary")
-        self.assertEqual(self.config_loader.providers_config["devbox"].apikey, "DIRECT-KEY")
+        published_loader = self.published_snapshot.config_loader
         self.assertEqual(
-            self.config_loader.providers_config["devbox"].upstream_key_pools["main"].keys[0].priority,
+            published_loader.providers_config["devbox"].apikey,
+            "DIRECT-KEY",
+        )
+        self.assertEqual(
+            published_loader.providers_config["devbox"]
+            .upstream_key_pools["main"]
+            .keys[0]
+            .priority,
             100,
         )
         persisted = self.providers_path.read_text(encoding="utf-8")
@@ -675,7 +718,11 @@ class RulesEditorStructuredTests(unittest.TestCase):
             )
 
         self.assertEqual(save_response.status_code, 400, save_response.text)
-        self.assertIn("codex_oauth", save_response.text)
+        self.assertEqual(
+            save_response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
+        self.assertNotIn("codex_oauth", save_response.text)
 
     def test_structured_save_persists_payload_transforms_on_fallback_rows(self):
         fake_http_client = Mock()
@@ -713,7 +760,9 @@ class RulesEditorStructuredTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        transforms = self.config_loader.fallback_rules["gateway-model"]["fallback_models"][0]["payload_transforms"]
+        transforms = self.published_snapshot.config_loader.fallback_rules[
+            "gateway-model"
+        ]["fallback_models"][0]["payload_transforms"]
         self.assertEqual(transforms["filters"], ["seed"])
         self.assertIn('"payload_transforms"', self.rules_path.read_text(encoding="utf-8"))
 
@@ -748,7 +797,10 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(get_response.status_code, 200, get_response.text)
         self.assertIn('"public-fast"', get_response.text)
-        self.assertIn("pool-fast", self.config_loader.fallback_rules)
+        self.assertIn(
+            "pool-fast",
+            self.published_snapshot.config_loader.fallback_rules,
+        )
         self.assertIn('"upstream_model_pools"', self.model_rules_path.read_text(encoding="utf-8"))
 
     def test_models_rules_raw_save_rejects_existing_alias_that_new_rules_break(self):
@@ -756,7 +808,14 @@ class RulesEditorStructuredTests(unittest.TestCase):
             '{"aliases": {"public-model": "gateway-model"}}\n',
             encoding="utf-8",
         )
-        self.config_loader.load_model_rules()
+        self.config_loader = ConfigLoader(
+            providers_filename=str(self.providers_path),
+            fallback_rules_filename=str(self.rules_path),
+            operation_rules_filename=str(self.operation_rules_path),
+            fusion_rules_filename=str(self.fusion_rules_path),
+            model_rules_filename=str(self.model_rules_path),
+            router_rules_filename=str(self.router_rules_path),
+        ).load_complete()
         original_rules_text = self.rules_path.read_text(encoding="utf-8")
         payload = """
         [
@@ -781,7 +840,23 @@ class RulesEditorStructuredTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400, response.text)
-        self.assertIn("public-model", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "config_validation_failed",
+        )
+        self.assertEqual(
+            response.json()["detail"]["errors"],
+            [
+                {
+                    "type": "rule_validation",
+                    "loc": [],
+                    "msg": (
+                        "model_rules alias 'public-model' references unknown "
+                        "target model 'gateway-model'."
+                    ),
+                }
+            ],
+        )
         self.assertEqual(self.rules_path.read_text(encoding="utf-8"), original_rules_text)
 
 

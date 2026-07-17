@@ -1,12 +1,13 @@
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Request
 
+if TYPE_CHECKING:
+    from .runtime_config import AppServices
 
-ACTIVE_REQUESTS_STATE_KEY = "active_requests_registry"
 
 _PATH_OPERATION_SUFFIXES = (
     ("/chat/completions", "chat"),
@@ -141,11 +142,8 @@ class ActiveRequestsRegistry:
 
 
 def get_active_requests_registry(app: Any) -> ActiveRequestsRegistry:
-    registry = getattr(app.state, ACTIVE_REQUESTS_STATE_KEY, None)
-    if not isinstance(registry, ActiveRequestsRegistry):
-        registry = ActiveRequestsRegistry()
-        setattr(app.state, ACTIVE_REQUESTS_STATE_KEY, registry)
-    return registry
+    services = cast("AppServices", app.state.services)
+    return services.active_requests_registry
 
 
 def active_request_id(request: Request) -> str | None:
@@ -174,11 +172,7 @@ def update_active_request(
     request_id = active_request_id(request)
     if not request_id:
         return
-    try:
-        app = request.app
-    except KeyError:
-        return
-    get_active_requests_registry(app).update(
+    get_active_requests_registry(request.app).update(
         request_id,
         gateway_model=gateway_model,
         operation=operation,

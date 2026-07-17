@@ -59,12 +59,22 @@ body.dark-mode .docs-kicker {
     color: var(--text);
 }
 
+.docs-transport-warning {
+    max-width: 820px;
+    margin-top: 14px;
+    border-left: 4px solid var(--error);
+    padding: 10px 12px;
+    background: var(--error-soft);
+    color: var(--error);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
 body.dark-mode .docs-lead {
     color: var(--text);
 }
 
 .docs-status {
-    flex: 0 0 260px;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 12px 14px;
@@ -72,6 +82,18 @@ body.dark-mode .docs-lead {
     color: var(--text);
     font-size: 13px;
     line-height: 1.45;
+}
+
+.docs-status-block {
+    flex: 0 0 260px;
+}
+
+.docs-status-detail {
+    margin-top: 8px;
+    color: var(--error);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
 }
 
 .docs-status.ready {
@@ -244,6 +266,7 @@ body.dark-mode .docs-section p {
 }
 
 .docs-panel {
+    min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--bg-elevated);
@@ -347,7 +370,7 @@ body.dark-mode .service-card h3 {
 .param-label {
     display: block;
     margin-top: 4px;
-    color: var(--text-muted);
+    color: var(--text);
     font-size: 11px;
     font-weight: 700;
 }
@@ -370,7 +393,7 @@ body.dark-mode .params-table th {
 }
 
 body.dark-mode .param-label {
-    color: var(--text-muted);
+    color: var(--text);
 }
 
 body.dark-mode .param-label.required {
@@ -575,9 +598,13 @@ body.dark-mode .markdown-error {
     }
 
     .docs-status {
-        flex-basis: auto;
         width: 100%;
         box-sizing: border-box;
+    }
+
+    .docs-status-block {
+        flex-basis: auto;
+        width: 100%;
     }
 
     .two-columns,

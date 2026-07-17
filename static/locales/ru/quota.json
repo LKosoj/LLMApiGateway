@@ -1,0 +1,32 @@
+{
+  "budget": "Бюджет",
+  "disabled": "отключён",
+  "emptyAction": "Открыть API-ключи",
+  "emptyHint": "Создайте виртуальный ключ на странице API-ключей, чтобы увидеть здесь использование квот.",
+  "emptyTitle": "API-ключи не найдены.",
+  "fallbacks24h": "Переключения (24 ч):",
+  "heading": "Панель квот",
+  "initialError": "Не удалось загрузить данные квот.",
+  "lastUpdated": "Обновлено: {time}",
+  "left": "Осталось: {count}",
+  "loading": "Загрузка данных квот…",
+  "noLimit": "без ограничений",
+  "pageTitle": "LLM Gateway — Панель квот",
+  "plan": "Тариф: {plan}",
+  "requestsPerMinute": "Запросы / мин (RPM)",
+  "resets": "Сброс: {date}",
+  "retry": "Повторить",
+  "spent": "Потрачено: {amount}",
+  "stale": "Данные квот могут быть устаревшими. Последнее обновление: {time}",
+  "tokensPerMinute": "Токены / мин (TPM)",
+  "unlimited": "без ограничений",
+  "upstreamError": "ошибка",
+  "upstreamErrorSummary": "Не удалось загрузить квоту провайдера.",
+  "upstreamKinds": {
+    "antigravity": "Antigravity",
+    "geminiCli": "Gemini CLI",
+    "githubCopilot": "GitHub Copilot"
+  },
+  "upstreamTitle": "Квоты провайдеров",
+  "upstreamTrackedExternally": "Квота отслеживается в панели провайдера."
+}

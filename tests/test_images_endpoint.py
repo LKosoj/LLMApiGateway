@@ -10,8 +10,19 @@ import httpx
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1 import images as images_api
+from llm_gateway_core.api.v1.image_adapters import (
+    _base64_encoded_size,
+    build_downstream_image_request,
+    estimate_image_request_processing_weight,
+)
+from llm_gateway_core.api.v1.operation_runtime import ValidatedUpload
+from llm_gateway_core.config.loader import ConfigLoader, OperationRoute
+from llm_gateway_core.config.settings import IMAGE_DATA_URL_OVERHEAD_BYTES
 from llm_gateway_core.services.request_handler import OperationDispatcher
-from llm_gateway_core.config.loader import ConfigLoader
+from tests.images_audio_accounting_test_support import (
+    install_images_audio_accounting_passthrough,
+)
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 MASK_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
@@ -260,23 +271,41 @@ class ImagesEndpointTests(unittest.TestCase):
         fake_http_client = Mock()
         if isinstance(downstream_response, (list, tuple)):
             fake_http_client.post = AsyncMock(side_effect=downstream_response)
+        elif callable(downstream_response):
+            fake_http_client.post = AsyncMock(side_effect=downstream_response)
         else:
             fake_http_client.post = AsyncMock(return_value=downstream_response)
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
+            install_images_audio_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
             stack.enter_context(patch.object(main.settings, "fallback_provider", "openai"))
 
             with TestClient(main.app) as client:
-                dispatcher = getattr(client.app.state, "operation_dispatcher", None)
-                self.assertIsInstance(dispatcher, OperationDispatcher)
-                self.assertIs(client.app.state.http_client, fake_http_client)
-                yield client, dispatcher, fake_http_client
+                services = client.app.state.services
+                self.assertIs(services.http_client, fake_http_client)
+                lease = client.portal.call(services.runtime_manager.acquire_current)
+                try:
+                    dispatcher = lease.snapshot.operation_dispatcher
+                    self.assertIsInstance(dispatcher, OperationDispatcher)
+                    yield client, dispatcher, fake_http_client
+                finally:
+                    client.portal.call(lease.release)
 
     def test_post_images_alias_uses_generation_route_and_records_usage(self):
         downstream_payload = {
@@ -286,6 +315,7 @@ class ImagesEndpointTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             self.assertIsNotNone(dispatcher.lookup_route("images_generations", "gateway/image-gen"))
 
             response = client.post(
@@ -311,11 +341,7 @@ class ImagesEndpointTests(unittest.TestCase):
                 "quality": "high",
             },
         )
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        self.assertEqual(
-            client.app.state.tokens_usage_db.insert_usage.call_args[0][0]["operation"],
-            "images_generation",
-        )
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_post_images_generations_falls_back_after_downstream_error_status(self):
         fallback_payload = {
@@ -329,6 +355,7 @@ class ImagesEndpointTests(unittest.TestCase):
                 _FakeDownstreamResponse(fallback_payload),
             ]
         ) as (client, _dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.post(
                 "/v1/images/generations",
                 json={
@@ -346,7 +373,7 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(first_call.kwargs["json"]["model"], "gpt-image-1")
         self.assertEqual(second_call.kwargs["json"]["model"], "gpt-image-1-fallback")
         self.assertEqual(second_call.kwargs["json"]["quality"], "auto")
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_post_images_generations_rejects_streaming(self):
         with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
@@ -439,6 +466,7 @@ class ImagesEndpointTests(unittest.TestCase):
                 _FakeDownstreamResponse(fallback_payload),
             ]
         ) as (client, _dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.post(
                 "/v1/images/edits",
                 json={
@@ -460,31 +488,54 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(second_call.args[0], "https://openai.example/v1/images/edits")
         self.assertEqual(second_call.kwargs["json"]["model"], "gpt-image-1-fallback")
         self.assertEqual(second_call.kwargs["json"]["input_fidelity"], "low")
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_post_images_edits_multipart_falls_back_after_payload_too_large(self):
         fallback_payload = {
             "created": 458,
             "data": [{"b64_json": "fallback-edited-image"}],
         }
+        captured_files = []
+        attempted_contents = []
+        admission_snapshots = []
+        validate_upload = images_api._validate_image_upload
 
-        with self._client(
-            [
-                _FakeDownstreamResponse({"error": {"message": "payload too large"}}, status_code=413),
-                _FakeDownstreamResponse(fallback_payload),
-            ]
-        ) as (client, _dispatcher, fake_http_client):
-            response = client.post(
-                "/v1/images/edits",
-                data={
-                    "model": "gateway/image-edit",
-                    "prompt": "Add a red border",
-                },
-                files={
-                    "image": ("source.png", io.BytesIO(PNG_BYTES), "image/png"),
-                },
-                headers={"Authorization": "Bearer test-gateway-key"},
+        async def capture_upload_file(upload):
+            validated = await validate_upload(upload)
+            captured_files.append(validated.file)
+            return validated
+
+        async def downstream_post(*_args, **kwargs):
+            snapshot = client.app.state.services.upload_admission.snapshot
+            admission_snapshots.append(
+                (snapshot.active_bytes, snapshot.active_leases, snapshot.waiters)
             )
+            upload_file = kwargs["files"][0][1][1]
+            self.assertIs(upload_file, captured_files[0])
+            self.assertFalse(upload_file.closed)
+            attempted_contents.append(upload_file.read())
+            if len(attempted_contents) == 1:
+                return _FakeDownstreamResponse(
+                    {"error": {"message": "payload too large"}},
+                    status_code=413,
+                )
+            return _FakeDownstreamResponse(fallback_payload)
+
+        with patch.object(images_api, "_validate_image_upload", new=capture_upload_file):
+            with self._client(downstream_post) as (client, _dispatcher, fake_http_client):
+                tokens_usage_db = client.app.state.services.tokens_usage_db
+                response = client.post(
+                    "/v1/images/edits",
+                    data={
+                        "model": "gateway/image-edit",
+                        "prompt": "Add a red border",
+                    },
+                    files={
+                        "image": ("source.png", io.BytesIO(PNG_BYTES), "image/png"),
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+                terminal_snapshot = client.app.state.services.upload_admission.snapshot
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), fallback_payload)
@@ -493,7 +544,21 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(first_call.kwargs["data"]["model"], "gpt-image-1")
         self.assertEqual(second_call.kwargs["data"]["model"], "gpt-image-1-fallback")
         self.assertEqual(second_call.kwargs["data"]["input_fidelity"], "low")
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
+        self.assertEqual(attempted_contents, [PNG_BYTES, PNG_BYTES])
+        self.assertEqual(
+            admission_snapshots,
+            [(len(PNG_BYTES), 1, 0), (len(PNG_BYTES), 1, 0)],
+        )
+        self.assertEqual(
+            (
+                terminal_snapshot.active_bytes,
+                terminal_snapshot.active_leases,
+                terminal_snapshot.waiters,
+            ),
+            (0, 0, 0),
+        )
+        self.assertTrue(captured_files[0].closed)
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_post_images_edits_json_can_force_openai_multipart_downstream(self):
         downstream_payload = {
@@ -571,6 +636,7 @@ class ImagesEndpointTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, _dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.post(
                 "/v1/images/edits",
                 data={
@@ -598,11 +664,45 @@ class ImagesEndpointTests(unittest.TestCase):
             },
         )
         self.assertEqual([field_name for field_name, _ in post_kwargs["files"]], ["image[]", "mask"])
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        self.assertEqual(
-            client.app.state.tokens_usage_db.insert_usage.call_args[0][0]["operation"],
-            "images_edit",
-        )
+        tokens_usage_db.insert_usage.assert_not_called()
+
+    def test_post_images_edits_closes_parsed_upload_after_success(self):
+        captured_files = []
+        validate_upload = images_api._validate_image_upload
+
+        async def capture_upload_file(upload):
+            validated = await validate_upload(upload)
+            captured_files.append(validated.file)
+            return validated
+
+        async def downstream_post(*_args, **kwargs):
+            upload_file = kwargs["files"][0][1][1]
+            self.assertIs(upload_file, captured_files[0])
+            self.assertFalse(upload_file.closed)
+            self.assertEqual(upload_file.read(), PNG_BYTES)
+            return _FakeDownstreamResponse({"data": [{"b64_json": "edited-image"}]})
+
+        with patch.object(images_api, "_validate_image_upload", new=capture_upload_file):
+            with self._client(downstream_post) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                response = client.post(
+                    "/v1/images/edits",
+                    data={
+                        "model": "gateway/image-edit",
+                        "prompt": "Add a red border",
+                    },
+                    files={"image": ("source.png", PNG_BYTES, "image/png")},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        fake_http_client.post.assert_awaited_once()
+        self.assertEqual(len(captured_files), 1)
+        self.assertIsInstance(captured_files[0], tempfile.SpooledTemporaryFile)
+        self.assertTrue(captured_files[0].closed)
 
     def test_post_images_edits_multipart_rejects_invalid_image_upload(self):
         with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
@@ -621,6 +721,165 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"], "Invalid image file content.")
         fake_http_client.post.assert_not_awaited()
+
+    def test_post_images_edits_multipart_enforces_file_total_and_count_limits(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
+            with patch.object(images_api.settings, "image_upload_max_file_bytes", len(PNG_BYTES) - 1):
+                per_file_response = client.post(
+                    "/v1/images/edits",
+                    data={"model": "gateway/image-edit", "prompt": "Edit"},
+                    files={"image": ("source.png", PNG_BYTES, "image/png")},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+            with (
+                patch.object(images_api.settings, "image_upload_max_file_bytes", len(PNG_BYTES)),
+                patch.object(images_api.settings, "image_upload_max_total_bytes", (2 * len(PNG_BYTES)) - 1),
+            ):
+                total_response = client.post(
+                    "/v1/images/edits",
+                    data={"model": "gateway/image-edit", "prompt": "Edit"},
+                    files=[
+                        ("image", ("first.png", PNG_BYTES, "image/png")),
+                        ("image[]", ("second.png", PNG_BYTES, "image/png")),
+                    ],
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+            count_response = client.post(
+                "/v1/images/edits",
+                data={"model": "gateway/image-edit", "prompt": "Edit"},
+                files=[
+                    ("image", (f"source-{index}.png", PNG_BYTES, "image/png"))
+                    for index in range(5)
+                ],
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(per_file_response.status_code, 413)
+        self.assertEqual(total_response.status_code, 413)
+        self.assertEqual(count_response.status_code, 400)
+        self.assertIn("At most four", count_response.json()["detail"])
+        fake_http_client.post.assert_not_awaited()
+
+    def test_local_upload_capacity_failure_does_not_fall_back(self):
+        with patch.object(main.settings, "upload_admission_timeout_seconds", 0.01):
+            with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
+                admission = client.app.state.services.upload_admission
+                blocking_lease = client.portal.call(
+                    admission.acquire,
+                    admission.snapshot.max_bytes,
+                )
+                try:
+                    response = client.post(
+                        "/v1/images/edits",
+                        data={"model": "gateway/image-edit", "prompt": "Edit"},
+                        files={"image": ("source.png", PNG_BYTES, "image/png")},
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+                finally:
+                    client.portal.call(blocking_lease.release)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            "Upload processing capacity is unavailable.",
+        )
+        fake_http_client.post.assert_not_awaited()
+
+    def test_image_adapter_materializes_validated_upload_only_for_json_route(self):
+        upload_file = io.BytesIO(PNG_BYTES)
+        second_upload_file = io.BytesIO(PNG_BYTES)
+        client_content_type = "image/png;" + ("a" * 256)
+        mapping_content_type = "image/png;" + ("b" * 512)
+        client_typed_upload = ValidatedUpload(
+            filename="source.png",
+            content_type=client_content_type,
+            size=len(PNG_BYTES),
+            file=upload_file,
+        )
+        mapping_typed_upload = ValidatedUpload(
+            filename="source-without-type.png",
+            content_type=None,
+            size=len(PNG_BYTES),
+            file=second_upload_file,
+        )
+        route = OperationRoute(
+            provider="nvidia",
+            model="image-model",
+            target_path="/images/edits",
+            request_format="nvidia_genai_json",
+            request_mapping={
+                "fields": {
+                    "prompt": "prompt",
+                    "image": {
+                        "from": "images",
+                        "transform": "to_data_url_list",
+                        "content_type": mapping_content_type,
+                    },
+                    "image_copy": {
+                        "from": "images",
+                        "transform": "to_data_url_list",
+                        "content_type": mapping_content_type,
+                    },
+                }
+            },
+        )
+        payload = {
+            "model": "gateway/model",
+            "prompt": "Edit",
+            "images": [client_typed_upload, mapping_typed_upload],
+        }
+
+        weight = estimate_image_request_processing_weight(
+            payload,
+            route,
+            "images_edits",
+            source_transport="multipart",
+        )
+        prepared = build_downstream_image_request(
+            payload,
+            route,
+            "images_edits",
+            source_transport="multipart",
+        )
+
+        client_encoded_size = (
+            _base64_encoded_size(len(PNG_BYTES))
+            + max(
+                IMAGE_DATA_URL_OVERHEAD_BYTES,
+                len(f"data:{client_content_type};base64,".encode("utf-8")),
+            )
+        )
+        mapping_encoded_size = (
+            _base64_encoded_size(len(PNG_BYTES))
+            + max(
+                IMAGE_DATA_URL_OVERHEAD_BYTES,
+                len(f"data:{mapping_content_type};base64,".encode("utf-8")),
+            )
+        )
+        self.assertEqual(
+            weight,
+            (2 * (client_encoded_size + mapping_encoded_size))
+            + len(PNG_BYTES)
+            + mapping_encoded_size,
+        )
+        self.assertTrue(
+            prepared.json_payload["image"][0].startswith(
+                f"data:{client_content_type};base64,"
+            )
+        )
+        self.assertTrue(
+            prepared.json_payload["image"][1].startswith(
+                f"data:{mapping_content_type};base64,"
+            )
+        )
+        self.assertEqual(
+            prepared.json_payload["image_copy"],
+            prepared.json_payload["image"],
+        )
+        self.assertEqual(upload_file.tell(), 0)
+        self.assertEqual(second_upload_file.tell(), 0)
 
     def test_post_images_edits_multipart_works_with_real_async_httpx_client(self):
         captured_request: dict[str, object] = {}
@@ -641,6 +900,7 @@ class ImagesEndpointTests(unittest.TestCase):
         real_http_client = httpx.AsyncClient(transport=httpx.MockTransport(downstream_handler))
 
         with ExitStack() as stack:
+            install_images_audio_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
             stack.enter_context(patch("main.create_shared_http_client", return_value=real_http_client))
             stack.enter_context(patch("main.TokensUsageDB"))

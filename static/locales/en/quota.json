@@ -1,0 +1,32 @@
+{
+  "budget": "Budget",
+  "disabled": "key disabled",
+  "emptyAction": "Open API Keys",
+  "emptyHint": "Create a virtual key on the API Keys page to see quota usage here.",
+  "emptyTitle": "No API keys found.",
+  "fallbacks24h": "Fallbacks (24h):",
+  "heading": "Quota Dashboard",
+  "initialError": "Could not load quota data.",
+  "lastUpdated": "Updated: {time}",
+  "left": "{count} left",
+  "loading": "Loading quota data…",
+  "noLimit": "no limit",
+  "pageTitle": "LLM Gateway - Quota Dashboard",
+  "plan": "Plan: {plan}",
+  "requestsPerMinute": "Requests / min (RPM)",
+  "resets": "Resets: {date}",
+  "retry": "Retry",
+  "spent": "{amount} spent",
+  "stale": "Quota data may be outdated. Last updated: {time}",
+  "tokensPerMinute": "Tokens / min (TPM)",
+  "unlimited": "unlimited quota",
+  "upstreamError": "error",
+  "upstreamErrorSummary": "Could not load provider quota.",
+  "upstreamKinds": {
+    "antigravity": "Antigravity",
+    "geminiCli": "Gemini CLI",
+    "githubCopilot": "GitHub Copilot"
+  },
+  "upstreamTitle": "Upstream Subscriptions",
+  "upstreamTrackedExternally": "Quota tracked via provider console."
+}

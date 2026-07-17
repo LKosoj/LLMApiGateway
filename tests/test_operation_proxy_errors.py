@@ -1,3 +1,4 @@
+import io
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -174,6 +175,88 @@ class OperationProxyErrorDisclosureTests(unittest.TestCase):
         self.assertNotIn("SECRET_TOKEN", logged)
         self.assertTrue(warning_mock.call_args_list)
         self.assertTrue(all(call.kwargs.get("exc_info") is not True for call in warning_mock.call_args_list))
+
+    def test_multipart_proxies_rewind_file_payload_before_every_attempt(self):
+        proxy_cases = (
+            ("multipart", proxy_multipart_to_downstream),
+            ("raw_multipart", proxy_multipart_raw_to_downstream),
+        )
+
+        for name, proxy in proxy_cases:
+            with self.subTest(name=name):
+                upload = io.BytesIO(b"complete upload")
+                upload.seek(0, io.SEEK_END)
+                files = [
+                    ("file", ("upload.bin", upload, "application/octet-stream")),
+                    ("inline", ("inline.bin", b"inline bytes", "application/octet-stream")),
+                ]
+                uploaded_contents: list[list[bytes]] = []
+                http_client = Mock(spec=httpx.AsyncClient)
+
+                async def post(*_args, **kwargs):
+                    attempt_contents = []
+                    for _, (_, content, _) in kwargs["files"]:
+                        attempt_contents.append(content if isinstance(content, bytes) else content.read())
+                    uploaded_contents.append(attempt_contents)
+                    status_code = 500 if len(uploaded_contents) == 1 else 200
+                    return _FakeDownstreamResponse(status_code, "ok")
+
+                http_client.post = AsyncMock(side_effect=post)
+
+                run_async(
+                    proxy(
+                        "https://provider.example/v1/run",
+                        {"Authorization": "Bearer secret"},
+                        {"field": "value"},
+                        files,
+                        http_client,
+                        retry_count=1,
+                    )
+                )
+
+                self.assertEqual(
+                    uploaded_contents,
+                    [
+                        [b"complete upload", b"inline bytes"],
+                        [b"complete upload", b"inline bytes"],
+                    ],
+                )
+                self.assertEqual(http_client.post.await_count, 2)
+
+    def test_multipart_rewind_failure_is_local_and_credential_safe(self):
+        class BrokenFile:
+            def seek(self, _offset):
+                raise OSError("SECRET_CREDENTIAL")
+
+        proxy_cases = (
+            ("multipart", proxy_multipart_to_downstream),
+            ("raw_multipart", proxy_multipart_raw_to_downstream),
+        )
+
+        for name, proxy in proxy_cases:
+            with self.subTest(name=name):
+                http_client = Mock(spec=httpx.AsyncClient)
+                http_client.post = AsyncMock()
+
+                with self.assertRaises(HTTPException) as exc_info:
+                    run_async(
+                        proxy(
+                            "https://provider.example/v1/run",
+                            {"Authorization": "Bearer secret"},
+                            {"field": "value"},
+                            [("file", ("upload.bin", BrokenFile(), "application/octet-stream"))],
+                            http_client,
+                            retry_count=2,
+                        )
+                    )
+
+                self.assertEqual(exc_info.exception.status_code, 500)
+                self.assertEqual(
+                    exc_info.exception.detail,
+                    "Unable to prepare uploaded file for downstream request.",
+                )
+                self.assertNotIn("SECRET_CREDENTIAL", str(exc_info.exception.detail))
+                http_client.post.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -4,7 +4,6 @@ import io
 import threading
 import unittest
 import wave
-from types import SimpleNamespace
 
 from llm_gateway_core.api.v1 import audio_adapters
 from tests._async_compat import run_async
@@ -60,12 +59,13 @@ def test_non_wav_ffmpeg_conversion_runs_in_to_thread_and_event_loop_progresses(m
         finally:
             in_to_thread.reset(token)
 
-    def fake_subprocess_run(*_args, **_kwargs):
+    def fake_audio_conversion(_audio_bytes, *, max_bytes):
         state["subprocess_started"] = True
         state["subprocess_was_in_to_thread"] = in_to_thread.get()
         release_ffmpeg.wait(timeout=1.0)
         state["subprocess_saw_loop_tick"] = state["loop_ticks"] > 0
-        return SimpleNamespace(returncode=0, stdout=wav_bytes, stderr=b"")
+        assert len(wav_bytes) <= max_bytes
+        return wav_bytes
 
     def fake_call_nvidia_riva_grpc_sync(**_kwargs):
         return _FakeRivaResponse()
@@ -86,7 +86,11 @@ def test_non_wav_ffmpeg_conversion_runs_in_to_thread_and_event_loop_progresses(m
         return response
 
     monkeypatch.setattr(audio_adapters.asyncio, "to_thread", tracing_to_thread)
-    monkeypatch.setattr(audio_adapters.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(
+        audio_adapters,
+        "_convert_audio_bytes_to_wav",
+        fake_audio_conversion,
+    )
     monkeypatch.setattr(
         audio_adapters,
         "_call_nvidia_riva_grpc_sync",
@@ -99,6 +103,34 @@ def test_non_wav_ffmpeg_conversion_runs_in_to_thread_and_event_loop_progresses(m
     assert audio_adapters._normalize_audio_bytes_for_nvidia in to_thread_funcs
     assert state["subprocess_was_in_to_thread"] is True
     assert state["subprocess_saw_loop_tick"] is True
+
+
+def test_owned_blocking_worker_finishes_before_cancellation_propagates():
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+
+    def blocking_worker():
+        worker_started.set()
+        release_worker.wait(timeout=2.0)
+        worker_finished.set()
+
+    async def scenario():
+        task = asyncio.create_task(audio_adapters._run_owned_blocking(blocking_worker))
+        while not worker_started.is_set():
+            await asyncio.sleep(0)
+
+        task.cancel()
+        await asyncio.sleep(0)
+        assert task.done() is False
+        assert worker_finished.is_set() is False
+
+        release_worker.set()
+        with unittest.TestCase().assertRaises(asyncio.CancelledError):
+            await task
+        assert worker_finished.is_set() is True
+
+    run_async(asyncio.wait_for(scenario(), timeout=2.0))
 
 
 def test_wav_input_keeps_fast_path_without_ffmpeg_or_normalization_thread(monkeypatch):

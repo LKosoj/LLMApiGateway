@@ -4,14 +4,17 @@ Verifies that repeated calls within the TTL window hit the cache and avoid
 re-querying the database, while different periods do not interfere.
 """
 import unittest
-from contextlib import ExitStack, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timezone
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import main
 from llm_gateway_core.api.v1 import stats as stats_module
+from llm_gateway_core.middleware.auth import ApiKeyAuthMiddleware
+from tests.runtime_test_support import installed_runtime
 
 
 class _CountingTokensUsageDB:
@@ -58,26 +61,35 @@ class _CountingFallbackEventsDB:
 
 class StatsTtlCacheTests(unittest.TestCase):
     def setUp(self):
+        self._clear_caches()
+        self.addCleanup(self._clear_caches)
+
+    @staticmethod
+    def _clear_caches() -> None:
         stats_module._usage_stats_cache.invalidate()
         stats_module._fallback_stats_cache.invalidate()
+        stats_module._upstream_stats_cache.invalidate()
 
     @contextmanager
     def _client(self, fake_tokens_db, fake_fallback_db=None):
-        fake_http_client = Mock()
-        fake_http_client.aclose = AsyncMock()
-        fake_config_loader = Mock()
-        fake_config_loader.load_providers.return_value = {}
-        fake_config_loader.load_fallback_rules.return_value = {}
+        service_overrides = {"tokens_usage_db": fake_tokens_db}
+        if fake_fallback_db is not None:
+            service_overrides["fallback_events_db"] = fake_fallback_db
 
-        with ExitStack() as stack:
-            stack.enter_context(patch("main.ConfigLoader", return_value=fake_config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
-            stack.enter_context(patch("main.TokensUsageDB", return_value=fake_tokens_db))
-            if fake_fallback_db is not None:
-                stack.enter_context(patch("main.FallbackEventsDB", return_value=fake_fallback_db))
-            stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            async with installed_runtime(app, **service_overrides):
+                yield
 
-            with TestClient(main.app) as client:
+        app = FastAPI(lifespan=lifespan)
+        app.include_router(stats_module.stats_router, prefix="/v1")
+        app.add_middleware(ApiKeyAuthMiddleware)
+
+        with patch(
+            "llm_gateway_core.middleware.auth.settings.gateway_api_key",
+            "test-gateway-key",
+        ):
+            with TestClient(app) as client:
                 yield client
 
     def test_usage_stats_repeated_calls_within_ttl_hit_cache(self):

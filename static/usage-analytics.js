@@ -1,6 +1,13 @@
 (function initUsageAnalytics(global) {
     const SVG_NS = "http://www.w3.org/2000/svg";
     const DASHBOARD_ENDPOINT = "/v1/api/analytics-dashboard";
+    const RECENT_STATUS_KEYS = Object.freeze({
+        completed: "usage:values.completedLabel",
+        running: "usage:values.runningLabel",
+        in_progress: "usage:values.inProgressLabel",
+        failed: "usage:values.failedLabel",
+    });
+    const i18n = global.gatewayI18n;
 
     const state = {
         initialized: false,
@@ -9,7 +16,19 @@
         identity: null,
         data: null,
         els: {},
+        requestGeneration: 0,
+        requestId: null,
+        hasError: false,
+        statusController: null,
     };
+
+    function t(key, values = {}) {
+        return i18n.t(key, values);
+    }
+
+    function message(key, values = {}) {
+        return Object.freeze({key, values});
+    }
 
     function textNode(tagName, text, className) {
         const el = document.createElement(tagName);
@@ -32,34 +51,71 @@
     }
 
     function formatNumber(value) {
-        return numberValue(value).toLocaleString();
+        return i18n.formatNumber(numberValue(value));
     }
 
     function formatMoney(value) {
-        return `$${numberValue(value).toFixed(4)}`;
+        return i18n.formatCurrency(numberValue(value), "USD", {
+            minimumFractionDigits: 4,
+            maximumFractionDigits: 4,
+        });
     }
 
     function formatRate(value) {
-        return `${numberValue(value).toFixed(2)}%`;
+        return i18n.formatNumber(numberValue(value) / 100, {
+            style: "percent",
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
     }
 
     function formatDuration(value) {
         const ms = numberValue(value);
-        if (!ms) return "N/A";
-        if (ms < 1000) return `${formatNumber(ms)}ms`;
-        return `${(ms / 1000).toFixed(1)}s`;
+        if (!ms) return t("usage:values.notAvailable");
+        if (ms < 1000) return t("usage:format.milliseconds", {value: formatNumber(ms)});
+        return t("usage:format.seconds", {
+            value: i18n.formatNumber(ms / 1000, {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+            }),
+        });
     }
 
     function formatTimestamp(value) {
         const timestamp = typeof value === "string" ? value.trim() : "";
-        if (!timestamp) return "N/A";
-        return timestamp.split(".")[0] || timestamp;
+        if (!timestamp) return t("usage:values.notAvailable");
+        const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp);
+        const parsed = new Date(hasZone ? timestamp : `${timestamp.replace(" ", "T")}Z`);
+        if (Number.isNaN(parsed.getTime())) return timestamp;
+        return i18n.formatDate(parsed, {
+            dateStyle: "medium",
+            timeStyle: "medium",
+            timeZone: "UTC",
+        });
     }
 
-    function setStatus(message, isError = false) {
-        if (!state.els.status) return;
-        state.els.status.textContent = message;
-        state.els.status.classList.toggle("analytics-error", isError);
+    function renderRequestId(requestId) {
+        state.requestId = requestId;
+        if (!state.els.requestId) return;
+        state.els.requestId.hidden = requestId === null;
+        state.els.requestId.textContent = requestId === null
+            ? ""
+            : i18n.t("usage:status.requestId", {id: requestId});
+        if (requestId === null) {
+            state.els.requestId.removeAttribute("lang");
+            state.els.requestId.removeAttribute("dir");
+        } else {
+            state.els.requestId.setAttribute("lang", "und");
+            state.els.requestId.setAttribute("dir", "auto");
+        }
+    }
+
+    function publishStatus(statusMessage, kind = "polite", options = {}) {
+        if (!state.statusController) return;
+        state.statusController[kind](statusMessage, {
+            rawDetail: options.rawDetail ?? null,
+        });
+        renderRequestId(options.requestId ?? null);
     }
 
     function setLoading(isLoading) {
@@ -69,7 +125,7 @@
             state.els.refresh.classList.toggle("loading", isLoading);
         }
         if (isLoading) {
-            setStatus("Loading analytics...");
+            publishStatus(message("usage:status.analyticsLoading"), "busy");
             state.els.dashboard.hidden = true;
         }
     }
@@ -98,6 +154,8 @@
             const option = document.createElement("option");
             option.value = valueKey ? String(item[valueKey] ?? "") : String(item);
             option.textContent = labelKey ? String(item[labelKey] ?? item[valueKey] ?? "") : String(item);
+            option.setAttribute("lang", "und");
+            option.setAttribute("dir", "auto");
             select.appendChild(option);
         });
         select.value = Array.from(select.options).some(option => option.value === current) ? current : "";
@@ -105,12 +163,26 @@
 
     function updateFilterOptions(payload) {
         const options = payload.filter_options || {};
-        replaceOptions(state.els.operation, options.operations || [], "All operations");
-        replaceOptions(state.els.gateway, options.gateway_models || [], "All gateways");
-        replaceOptions(state.els.provider, options.providers || [], "All providers");
-        replaceOptions(state.els.model, options.models || [], "All models");
-        replaceOptions(state.els.xTitle, options.x_titles || [], "All titles");
-        replaceOptions(state.els.upstreamKey, options.upstream_keys || [], "All provider keys");
+        replaceOptions(state.els.operation, options.operations || [], t("usage:filters.allOperations"));
+        replaceOptions(state.els.gateway, options.gateway_models || [], t("usage:filters.allGateways"));
+        replaceOptions(state.els.provider, options.providers || [], t("usage:filters.allProviders"));
+        replaceOptions(state.els.model, options.models || [], t("usage:filters.allModels"));
+        replaceOptions(state.els.xTitle, options.x_titles || [], t("usage:filters.allTitles"));
+        replaceOptions(state.els.upstreamKey, options.upstream_keys || [], t("usage:filters.allProviderKeys"));
+    }
+
+    function updateFilterLabels() {
+        const labels = [
+            [state.els.operation, "usage:filters.allOperations"],
+            [state.els.gateway, "usage:filters.allGateways"],
+            [state.els.provider, "usage:filters.allProviders"],
+            [state.els.model, "usage:filters.allModels"],
+            [state.els.xTitle, "usage:filters.allTitles"],
+            [state.els.upstreamKey, "usage:filters.allProviderKeys"],
+        ];
+        labels.forEach(([select, key]) => {
+            if (select?.options?.length) select.options[0].textContent = t(key);
+        });
     }
 
     function buildDashboardUrl() {
@@ -150,16 +222,16 @@
     function renderKpis(payload) {
         const totals = payload.totals || {};
         const kpis = [
-            ["Requests", formatNumber(totals.requests)],
-            ["Total Tokens", formatNumber(totals.total_tokens)],
-            ["Cost", formatMoney(totals.cost)],
-            ["Cost Saved", formatMoney(totals.cost_saved)],
-            ["Cost / 1M", formatMoney(totals.cost_per_million_tokens)],
-            ["Avg Duration", formatDuration(totals.avg_duration_ms)],
-            ["Active", formatNumber(totals.active_requests)],
-            ["Fallback Errors", formatNumber(totals.fallback_errors)],
-            ["Rejections", formatNumber(totals.rejections)],
-            ["Estimated", formatNumber(totals.estimated_count)],
+            [t("usage:kpis.requestsLabel"), formatNumber(totals.requests)],
+            [t("usage:kpis.totalTokens"), formatNumber(totals.total_tokens)],
+            [t("usage:kpis.costLabel"), formatMoney(totals.cost)],
+            [t("usage:kpis.costSaved"), formatMoney(totals.cost_saved)],
+            [t("usage:kpis.costPerMillion"), formatMoney(totals.cost_per_million_tokens)],
+            [t("usage:kpis.averageDuration"), formatDuration(totals.avg_duration_ms)],
+            [t("usage:kpis.activeLabel"), formatNumber(totals.active_requests)],
+            [t("usage:kpis.fallbackErrors"), formatNumber(totals.fallback_errors)],
+            [t("usage:kpis.rejectionsLabel"), formatNumber(totals.rejections)],
+            [t("usage:kpis.estimatedLabel"), formatNumber(totals.estimated_count)],
         ];
         state.els.kpis.replaceChildren(...kpis.map(([label, value]) => createKpi(label, value)));
     }
@@ -187,9 +259,9 @@
             .slice()
             .sort((a, b) => parsePeriodTime(a.time_period, payload.filters.bucket) - parsePeriodTime(b.time_period, payload.filters.bucket));
 
-        state.els.trendMeta.textContent = `${points.length} buckets`;
+        state.els.trendMeta.textContent = i18n.t("usage:counts.buckets", {count: points.length});
         if (points.length === 0) {
-            renderEmpty(state.els.lineChart, "No trend data for selected filters.");
+            renderEmpty(state.els.lineChart, t("usage:empty.trend"));
             return;
         }
 
@@ -204,7 +276,7 @@
         const linePoints = points.map((point, idx) => `${xFor(idx)},${yFor(point.total_tokens)}`).join(" ");
         const areaPoints = `${pad.left},${pad.top + chartH} ${linePoints} ${pad.left + chartW},${pad.top + chartH}`;
 
-        const svg = svgEl("svg", {viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Token trend line chart"});
+        const svg = svgEl("svg", {viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": t("usage:charts.tokenTrendAria")});
         for (let i = 0; i <= 4; i += 1) {
             const y = pad.top + chartH / 4 * i;
             svg.appendChild(svgEl("line", {x1: pad.left, y1: y, x2: pad.left + chartW, y2: y, class: "analytics-grid-line"}));
@@ -240,9 +312,9 @@
             .sort((a, b) => numberValue(b.cost) - numberValue(a.cost) || numberValue(b.requests) - numberValue(a.requests))
             .slice(0, 8);
 
-        state.els.costMeta.textContent = `${bars.length} providers`;
+        state.els.costMeta.textContent = i18n.t("usage:counts.providers", {count: bars.length});
         if (bars.length === 0) {
-            renderEmpty(state.els.barChart, "No provider data for selected filters.");
+            renderEmpty(state.els.barChart, t("usage:empty.providers"));
             return;
         }
 
@@ -254,7 +326,7 @@
         const maxValue = Math.max(...bars.map(bar => numberValue(bar.cost)), ...bars.map(bar => numberValue(bar.requests)), 1);
         const gap = 12;
         const barW = Math.max(18, (chartW - gap * (bars.length - 1)) / bars.length);
-        const svg = svgEl("svg", {viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Provider cost bar chart"});
+        const svg = svgEl("svg", {viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": t("usage:charts.providerCostAria")});
         svg.appendChild(svgEl("line", {x1: pad.left, y1: pad.top + chartH, x2: pad.left + chartW, y2: pad.top + chartH, class: "analytics-axis"}));
         bars.forEach((bar, idx) => {
             const value = numberValue(bar.cost) || numberValue(bar.requests);
@@ -267,7 +339,9 @@
             valueLabel.setAttribute("y", String(Math.max(12, y - 6)));
             valueLabel.setAttribute("text-anchor", "middle");
             svg.appendChild(valueLabel);
-            const nameLabel = textNode("text", String(bar.label || "unknown").slice(0, 18), "analytics-chart-label");
+            const nameLabel = textNode("text", String(bar.label || t("usage:values.unknownLabel")).slice(0, 18), "analytics-chart-label");
+            nameLabel.setAttribute("lang", "und");
+            nameLabel.setAttribute("dir", "auto");
             nameLabel.setAttribute("x", String(x + barW / 2));
             nameLabel.setAttribute("y", String(height - 22));
             nameLabel.setAttribute("text-anchor", "middle");
@@ -290,7 +364,17 @@
             const tr = document.createElement("tr");
             columns.forEach(column => {
                 const td = document.createElement("td");
-                td.textContent = column.format ? column.format(row[column.key], row) : String(row[column.key] ?? "N/A");
+                const value = row[column.key];
+                td.textContent = column.format
+                    ? column.format(value, row)
+                    : String(value ?? i18n.t("usage:values.notAvailable"));
+                const technical = typeof column.technical === "function"
+                    ? column.technical(value, row)
+                    : column.technical;
+                if (technical) {
+                    td.setAttribute("lang", "und");
+                    td.setAttribute("dir", "auto");
+                }
                 tr.appendChild(td);
             });
             tbody.appendChild(tr);
@@ -302,34 +386,34 @@
     function renderBreakdownTable(payload) {
         const rows = ((payload.breakdowns && payload.breakdowns.resolved_targets) || []).slice(0, 25);
         if (rows.length === 0) {
-            renderEmpty(state.els.breakdownTable, "No rows match the selected filters.");
+            renderEmpty(state.els.breakdownTable, t("usage:empty.breakdown"));
             return;
         }
         state.els.breakdownTable.replaceChildren(createTable([
-            {key: "label", label: "Resolved Target"},
-            {key: "requests", label: "Requests", format: formatNumber},
-            {key: "total_tokens", label: "Tokens", format: formatNumber},
-            {key: "cost", label: "Cost", format: formatMoney},
-            {key: "cost_saved", label: "Saved", format: formatMoney},
-            {key: "estimated_count", label: "Estimated", format: formatNumber},
-            {key: "avg_duration_ms", label: "Avg Duration", format: formatDuration},
+            {key: "label", label: t("usage:columns.resolvedTarget"), technical: true},
+            {key: "requests", label: t("usage:columns.requestsHeader"), format: formatNumber},
+            {key: "total_tokens", label: t("usage:columns.tokensHeader"), format: formatNumber},
+            {key: "cost", label: t("usage:columns.costHeader"), format: formatMoney},
+            {key: "cost_saved", label: t("usage:columns.costSaved"), format: formatMoney},
+            {key: "estimated_count", label: t("usage:columns.estimatedHeader"), format: formatNumber},
+            {key: "avg_duration_ms", label: t("usage:columns.averageDuration"), format: formatDuration},
         ], rows));
     }
 
     function renderXTitleTable(payload) {
         const rows = ((payload.breakdowns && payload.breakdowns.x_titles) || []).slice(0, 20);
         if (rows.length === 0) {
-            renderEmpty(state.els.xTitleTable, "No X-Title rows for selected filters.");
+            renderEmpty(state.els.xTitleTable, t("usage:empty.xTitles"));
             return;
         }
         state.els.xTitleTable.replaceChildren(createTable([
-            {key: "label", label: "X-Title"},
-            {key: "requests", label: "Requests", format: formatNumber},
-            {key: "total_tokens", label: "Tokens", format: formatNumber},
-            {key: "cost", label: "Cost", format: formatMoney},
-            {key: "cost_saved", label: "Saved", format: formatMoney},
-            {key: "estimated_count", label: "Estimated", format: formatNumber},
-            {key: "avg_duration_ms", label: "Avg Duration", format: formatDuration},
+            {key: "label", label: t("usage:columns.xTitleHeader"), technical: true},
+            {key: "requests", label: t("usage:columns.requestsHeader"), format: formatNumber},
+            {key: "total_tokens", label: t("usage:columns.tokensHeader"), format: formatNumber},
+            {key: "cost", label: t("usage:columns.costHeader"), format: formatMoney},
+            {key: "cost_saved", label: t("usage:columns.costSaved"), format: formatMoney},
+            {key: "estimated_count", label: t("usage:columns.estimatedHeader"), format: formatNumber},
+            {key: "avg_duration_ms", label: t("usage:columns.averageDuration"), format: formatDuration},
         ], rows));
     }
 
@@ -338,23 +422,35 @@
         const fallbackSummary = fallback.summary || {};
         const rejections = payload.reliability && payload.reliability.rejections ? payload.reliability.rejections : {};
         const summaryRows = [
-            {metric: "Fallback attempts", value: formatNumber(fallbackSummary.attempts)},
-            {metric: "Fallback errors", value: formatNumber(fallbackSummary.errors)},
-            {metric: "Fallback success", value: formatRate(fallbackSummary.success_rate)},
-            {metric: "Rejections", value: formatNumber(rejections.summary && rejections.summary.rejections)},
+            {metric: t("usage:reliability.fallbackAttempts"), value: formatNumber(fallbackSummary.attempts)},
+            {metric: t("usage:reliability.fallbackErrors"), value: formatNumber(fallbackSummary.errors)},
+            {metric: t("usage:reliability.fallbackSuccess"), value: formatRate(fallbackSummary.success_rate)},
+            {metric: t("usage:reliability.rejectionsMetric"), value: formatNumber(rejections.summary && rejections.summary.rejections)},
         ];
         const errorRows = (fallback.error_types || []).slice(0, 4).map(row => ({
-            metric: `Fallback: ${row.label}`,
+            metric: t("usage:format.fallbackMetric", {value: row.label}),
             value: formatNumber(row.errors),
         }));
         const rejectionRows = (rejections.categories || []).slice(0, 4).map(row => ({
-            metric: `Rejected: ${row.label}`,
+            metric: t("usage:format.rejectedMetric", {value: row.label}),
             value: formatNumber(row.rejections),
         }));
         state.els.reliabilityTable.replaceChildren(createTable([
-            {key: "metric", label: "Metric"},
-            {key: "value", label: "Value"},
+            {key: "metric", label: t("usage:columns.metricHeader")},
+            {key: "value", label: t("usage:columns.valueHeader")},
         ], summaryRows.concat(errorRows, rejectionRows)));
+    }
+
+    function formatApiKeyName(value, row) {
+        if (row.label === "unattributed") return t("usage:filters.unattributed");
+        if (!row.label && row.api_key_id == null) return t("usage:values.unknownLabel");
+        if (
+            row.api_key_id != null
+            && value === `Virtual key #${row.api_key_id}`
+        ) {
+            return t("usage:values.virtualKey", {id: row.api_key_id});
+        }
+        return String(value || t("usage:values.unknownLabel"));
     }
 
     function renderKeyTable(payload) {
@@ -364,35 +460,58 @@
         }
         const rows = ((payload.breakdowns && payload.breakdowns.api_keys) || []).slice(0, 20);
         if (rows.length === 0) {
-            renderEmpty(state.els.keyTable, "No virtual key rows for selected filters.");
+            renderEmpty(state.els.keyTable, t("usage:empty.virtualKeys"));
             return;
         }
         state.els.keyTable.replaceChildren(createTable([
-            {key: "api_key_name", label: "Virtual Key"},
-            {key: "requests", label: "Requests", format: formatNumber},
-            {key: "total_tokens", label: "Tokens", format: formatNumber},
-            {key: "cost", label: "Cost", format: formatMoney},
-            {key: "cost_saved", label: "Saved", format: formatMoney},
-            {key: "avg_duration_ms", label: "Avg Duration", format: formatDuration},
+            {key: "api_key_name", label: t("usage:columns.virtualKey"), format: formatApiKeyName, technical: true},
+            {key: "requests", label: t("usage:columns.requestsHeader"), format: formatNumber},
+            {key: "total_tokens", label: t("usage:columns.tokensHeader"), format: formatNumber},
+            {key: "cost", label: t("usage:columns.costHeader"), format: formatMoney},
+            {key: "cost_saved", label: t("usage:columns.costSaved"), format: formatMoney},
+            {key: "avg_duration_ms", label: t("usage:columns.averageDuration"), format: formatDuration},
         ], rows));
+    }
+
+    function normalizeRecentStatus(value) {
+        return typeof value === "string" ? value.trim().toLowerCase() : "";
+    }
+
+    function isKnownRecentStatus(value) {
+        const normalized = normalizeRecentStatus(value);
+        return normalized === "" || Object.hasOwn(RECENT_STATUS_KEYS, normalized);
+    }
+
+    function formatRecentStatus(value) {
+        const normalized = normalizeRecentStatus(value);
+        if (normalized === "") return t("usage:values.completedLabel");
+        if (Object.hasOwn(RECENT_STATUS_KEYS, normalized)) {
+            return t(RECENT_STATUS_KEYS[normalized]);
+        }
+        return String(value);
     }
 
     function renderRecentTable(payload) {
         const rows = (payload.recent_records || []).slice(0, 15);
         if (rows.length === 0) {
-            renderEmpty(state.els.recentTable, "No recent activity for selected filters.");
+            renderEmpty(state.els.recentTable, t("usage:empty.recent"));
             return;
         }
         state.els.recentTable.replaceChildren(createTable([
-            {key: "timestamp", label: "Timestamp", format: formatTimestamp},
-            {key: "status", label: "Status", format: value => value || "completed"},
-            {key: "gateway_model", label: "Gateway", format: value => value || "N/A"},
-            {key: "operation", label: "Operation", format: value => value || "N/A"},
-            {key: "x_title", label: "X-Title", format: value => value || "N/A"},
-            {key: "provider", label: "Provider", format: value => value || "N/A"},
-            {key: "model", label: "Model", format: value => value || "N/A"},
-            {key: "total_tokens", label: "Tokens", format: formatNumber},
-            {key: "cost", label: "Cost", format: formatMoney},
+            {key: "timestamp", label: t("usage:columns.timestamp"), format: formatTimestamp},
+            {
+                key: "status",
+                label: t("usage:columns.statusHeader"),
+                format: formatRecentStatus,
+                technical: value => !isKnownRecentStatus(value),
+            },
+            {key: "gateway_model", label: t("usage:columns.gatewayHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
+            {key: "operation", label: t("usage:columns.operationHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
+            {key: "x_title", label: t("usage:columns.xTitleHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
+            {key: "provider", label: t("usage:columns.providerHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
+            {key: "model", label: t("usage:columns.modelHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
+            {key: "total_tokens", label: t("usage:columns.tokensHeader"), format: formatNumber},
+            {key: "cost", label: t("usage:columns.costHeader"), format: formatMoney},
         ], rows));
     }
 
@@ -407,7 +526,11 @@
         renderKeyTable(payload);
         renderRecentTable(payload);
         const requestCount = numberValue(payload.totals && payload.totals.requests);
-        setStatus(requestCount === 0 ? "No usage for selected filters." : `Analytics loaded: ${formatNumber(requestCount)} requests.`);
+        publishStatus(
+            requestCount === 0
+                ? message("usage:empty.analytics")
+                : message("usage:status.analyticsLoaded", {count: requestCount})
+        );
     }
 
     async function ensureIdentity() {
@@ -420,25 +543,45 @@
     }
 
     async function loadAnalytics() {
-        if (state.loading) return;
+        const requestGeneration = ++state.requestGeneration;
+        state.hasError = false;
         setLoading(true);
         try {
             await ensureIdentity();
             const response = await global.gatewayAuth.apiFetch(buildDashboardUrl());
-            const payload = await response.json();
+            const payload = await response.json().catch(() => ({}));
+            if (requestGeneration !== state.requestGeneration) return;
             if (!response.ok) {
-                throw new Error(payload.detail || `Analytics dashboard failed: ${response.status}`);
+                state.hasError = true;
+                const descriptor = global.gatewayUi.describeApiError(payload, {
+                    status: response.status,
+                    requestId: response.headers.get("X-Request-ID"),
+                });
+                state.els.dashboard.hidden = true;
+                publishStatus(
+                    message(descriptor.summaryKey, descriptor.summaryValues),
+                    "error",
+                    descriptor,
+                );
+                return;
             }
             state.data = payload;
             state.loaded = true;
             updateFilterOptions(payload);
             renderDashboard(payload);
         } catch (error) {
+            if (requestGeneration !== state.requestGeneration) return;
+            state.hasError = true;
             console.error("Failed to load analytics dashboard:", error);
             state.els.dashboard.hidden = true;
-            setStatus(`Failed to load analytics: ${error.message}`, true);
+            const descriptor = global.gatewayUi.describeApiError(null);
+            publishStatus(
+                message(descriptor.summaryKey, descriptor.summaryValues),
+                "error",
+                {...descriptor, rawDetail: error.message},
+            );
         } finally {
-            setLoading(false);
+            if (requestGeneration === state.requestGeneration) setLoading(false);
         }
     }
 
@@ -480,6 +623,8 @@
             estimated: document.getElementById("analyticsEstimated"),
             refresh: document.getElementById("analyticsRefreshButton"),
             status: document.getElementById("analyticsStatus"),
+            rawDetail: document.getElementById("analyticsRawDetail"),
+            requestId: document.getElementById("analyticsRequestId"),
             dashboard: document.getElementById("analyticsDashboard"),
             kpis: document.getElementById("analyticsKpis"),
             lineChart: document.getElementById("analyticsLineChart"),
@@ -493,6 +638,10 @@
             recentTable: document.getElementById("analyticsRecentTable"),
         };
         if (!state.els.filters || !state.els.dashboard) return;
+        state.statusController = global.gatewayUi.createStatus(state.els.status, {
+            rawDetailElement: state.els.rawDetail,
+            renderMessage: (statusMessage) => t(statusMessage.key, statusMessage.values || {}),
+        });
         bindEvents();
         state.initialized = true;
     }
@@ -500,15 +649,26 @@
     async function activate() {
         init();
         if (!state.initialized) return;
-        if (!state.loaded) {
+        if (!state.loaded || state.hasError) {
             await loadAnalytics();
         } else {
             renderDashboard(state.data);
         }
     }
 
-    global.usageAnalyticsDashboard = {
+    function rerenderLocale() {
+        if (!state.initialized) return;
+        updateFilterLabels();
+        if (state.loaded && state.data && !state.loading && !state.hasError) {
+            renderDashboard(state.data);
+        }
+        state.statusController.rerender();
+        renderRequestId(state.requestId);
+    }
+
+    global.usageAnalyticsDashboard = Object.freeze({
         init,
         activate,
-    };
+        rerenderLocale,
+    });
 })(window);

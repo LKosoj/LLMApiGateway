@@ -1,0 +1,41 @@
+{
+  "actions": {
+    "apply": "Apply",
+    "refresh": "Refresh",
+    "reset": "Reset"
+  },
+  "empty": "No rejections match the current filters.",
+  "errors": {
+    "invalidFilters": "Invalid filter values.",
+    "invalidResponse": "The rejections response has an invalid format."
+  },
+  "filters": {
+    "all": "All",
+    "anyKey": "any",
+    "category": "Category",
+    "keyId": "Key ID",
+    "perPage": "Per page",
+    "sinceUtc": "Since (UTC)"
+  },
+  "heading": "LLM Gateway - Rejections Audit",
+  "intro": "Persistent log of governance rejections the gateway itself returned (401/403/429), not upstream provider errors. Use it to spot abuse, diagnose why clients are blocked, and audit access decisions.",
+  "loading": "Loading rejections…",
+  "pageTitle": "LLM Gateway - Rejections Audit",
+  "pagination": {
+    "empty": "0 of 0",
+    "newer": "← Newer",
+    "older": "Older →",
+    "range": "{start}–{end} of {total}"
+  },
+  "summary": "{count, plural, one {# total rejection} other {# total rejections}} · updated {time}",
+  "table": {
+    "category": "Category",
+    "clientIp": "Client IP",
+    "key": "Key",
+    "method": "Method",
+    "path": "Path",
+    "reason": "Reason",
+    "status": "Status",
+    "time": "Time"
+  }
+}

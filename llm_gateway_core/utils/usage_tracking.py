@@ -4,10 +4,13 @@ import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tiktoken
 from fastapi import Request
+
+if TYPE_CHECKING:
+    from ..config.loader import ConfigLoader
 
 logger = logging.getLogger(__name__)
 
@@ -257,10 +260,13 @@ def _usage_details_as_dict(usage: dict[str, Any], details_key: str) -> dict[str,
     return {}
 
 
-def _first_fallback_rule_for_gateway_model(config_loader: Any, gateway_model: str | None) -> Mapping[str, Any] | None:
+def _first_fallback_rule_for_gateway_model(
+    config_loader: "ConfigLoader",
+    gateway_model: str | None,
+) -> Mapping[str, Any] | None:
     if not gateway_model:
         return None
-    fallback_rules = getattr(config_loader, "fallback_rules", None)
+    fallback_rules = config_loader.fallback_rules
     if not isinstance(fallback_rules, Mapping):
         return None
     model_config = fallback_rules.get(gateway_model)
@@ -281,16 +287,16 @@ def _string_value(value: Any) -> str | None:
 
 def _apply_rate_based_cost_saved(
     tokens_usage: dict[str, Any],
-    request: Request,
+    config_loader: "ConfigLoader",
+    cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
     gateway_model: str | None,
+    provider: str | None,
+    model: str | None,
 ) -> None:
     if tokens_usage.get("cost_saved"):
         return
 
-    app_state = getattr(getattr(request, "app", None), "state", None)
-    config_loader = getattr(app_state, "config_loader", None)
-    registry = build_model_cost_rate_registry(getattr(config_loader, "providers_config", None))
-    if not registry:
+    if not cost_rate_registry:
         return
 
     primary_rule = _first_fallback_rule_for_gateway_model(config_loader, gateway_model)
@@ -299,25 +305,23 @@ def _apply_rate_based_cost_saved(
 
     primary_provider = _string_value(primary_rule.get("provider"))
     primary_model = _string_value(primary_rule.get("model"))
-    fallback_provider = _string_value(tokens_usage.get("provider"))
-    fallback_model = _string_value(tokens_usage.get("model"))
     estimated_cost_saved = _estimate_cost_saved(
         prompt_tokens=tokens_usage.get("prompt_tokens") or 0,
         completion_tokens=tokens_usage.get("completion_tokens") or 0,
         primary_rate=_model_cost_rates_from_registry(
-            registry,
+            cost_rate_registry,
             primary_provider,
             primary_model,
         ),
         fallback_rate=_model_cost_rates_from_registry(
-            registry,
-            fallback_provider,
-            fallback_model,
+            cost_rate_registry,
+            provider,
+            model,
         ),
     )
     if estimated_cost_saved is not None:
         tokens_usage["cost_saved"] = estimated_cost_saved
-    elif primary_provider and primary_model and fallback_provider and fallback_model:
+    elif primary_provider and primary_model and provider and model:
         tokens_usage["cost_saved"] = None
 
 
@@ -393,6 +397,8 @@ def extract_tokens_usage(
                 if cost_value is not None:
                     tokens_usage["cost"] = cost_value
                     tokens_usage[UPSTREAM_COST_PRESENT_KEY] = True
+                else:
+                    tokens_usage[RATE_BASED_COST_SKIP_KEY] = True
             if "reasoning_tokens" in completion_tokens_details:
                 tokens_usage["reasoning_tokens"] = _as_non_negative_int(
                     completion_tokens_details["reasoning_tokens"]
@@ -412,8 +418,6 @@ def extract_tokens_usage(
             if cost_saved_value is not None:
                 tokens_usage["cost_saved"] = cost_saved_value
             else:
-                payload_provider = payload.get("provider") if isinstance(payload.get("provider"), str) else None
-                payload_model = payload.get("model") if isinstance(payload.get("model"), str) else None
                 estimated_cost_saved = _estimate_cost_saved(
                     prompt_tokens=tokens_usage.get("prompt_tokens") or 0,
                     completion_tokens=tokens_usage.get("completion_tokens") or 0,
@@ -424,8 +428,8 @@ def extract_tokens_usage(
                     ),
                     fallback_rate=_model_cost_rates_from_registry(
                         cost_rate_registry,
-                        fallback_provider or payload_provider,
-                        fallback_model or payload_model,
+                        fallback_provider,
+                        fallback_model,
                     ),
                 )
                 if estimated_cost_saved is not None:
@@ -449,6 +453,8 @@ def enrich_tokens_usage(
     tokens_usage: dict[str, Any],
     request: Request,
     *,
+    config_loader: "ConfigLoader",
+    cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
     gateway_model: str | None = None,
     operation: str | None = None,
 ) -> dict[str, Any]:
@@ -481,10 +487,23 @@ def enrich_tokens_usage(
     if x_title:
         enriched_tokens_usage["x_title"] = x_title
 
+    if provider_name and provider_model:
+        apply_rate_based_cost(
+            enriched_tokens_usage,
+            cost_rate_registry,
+            provider=provider_name,
+            model=provider_model,
+        )
+    else:
+        enriched_tokens_usage[RATE_BASED_COST_SKIP_KEY] = True
+
     _apply_rate_based_cost_saved(
         enriched_tokens_usage,
-        request,
+        config_loader,
+        cost_rate_registry,
         requested_gateway_model,
+        provider_name,
+        provider_model,
     )
 
     return enriched_tokens_usage

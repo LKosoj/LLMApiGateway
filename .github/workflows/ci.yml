@@ -1,0 +1,766 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install pinned development dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Rebuild dependency locks
+        run: bash scripts/compile_requirements.sh
+
+      - name: Verify clean dependency bootstrap
+        run: python scripts/check_dependency_contract.py --verify-bootstrap
+
+      - name: Reject dependency lock drift
+        shell: bash
+        run: |
+          git diff --exit-code -- \
+            pyproject.toml \
+            requirements.txt \
+            requirements-dev.txt \
+            requirements-research.txt \
+            requirements-container.txt \
+            compatibility-constraints.txt \
+            security-constraints.txt
+          test -z "$(git status --porcelain --untracked-files=all -- \
+            pyproject.toml \
+            requirements.txt \
+            requirements-dev.txt \
+            requirements-research.txt \
+            requirements-container.txt \
+            compatibility-constraints.txt \
+            security-constraints.txt)"
+
+      - name: Verify installed dependency graph
+        run: python -m pip check
+
+      - name: Verify repository dependency contract
+        run: python scripts/check_dependency_contract.py
+
+      - name: Verify canonical product version contract
+        run: python scripts/check_product_version.py --print
+
+      - name: Audit pinned dependencies
+        run: python -m pip_audit -r requirements-dev.txt
+
+      - name: Verify dependency and CI contracts
+        run: >-
+          python -m pytest -q
+          tests/test_dependencies_sync.py
+          tests/test_ci_workflow_contract.py
+
+      - name: Ruff
+        run: python -m ruff check .
+
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/ui-runtime/package-lock.json
+            frontend/editor/package-lock.json
+
+      - name: Install pinned development dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Install pinned UI runtime dependencies
+        run: npm ci --prefix frontend/ui-runtime
+
+      - name: Install pinned Rules Editor dependencies
+        run: npm ci --prefix frontend/editor
+
+      - name: Verify installed dependency graph
+        run: python -m pip check
+
+      - name: Run non-browser tests with coverage gate
+        run: >-
+          python -m pytest -q -m "not browser"
+          --cov=llm_gateway_core
+          --cov=main
+          --cov-report=term-missing:skip-covered
+          --cov-fail-under=80
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/ui-runtime/package-lock.json
+
+      - name: Install pinned development dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Install pinned UI runtime dependencies
+        run: npm ci --prefix frontend/ui-runtime
+
+      - name: Verify installed dependency graph
+        run: python -m pip check
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Verify Playwright page fixture is registered
+        shell: bash
+        run: python -m pytest --fixtures -q | grep -Eq '^page[[:space:]]'
+
+      - name: Verify exactly 113 browser tests are collected
+        shell: bash
+        run: |
+          collection="$(python -m pytest --collect-only -q -m browser)"
+          printf '%s\n' "$collection"
+          collected="$(printf '%s\n' "$collection" | grep -c '::')"
+          test "$collected" -eq 113
+
+      - name: Run all browser tests without silent skips
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs -m browser | tee browser-pytest.log
+          if grep -Eq '(^|, )[1-9][0-9]* skipped' browser-pytest.log; then
+            echo 'Browser job must not skip browser tests.' >&2
+            exit 1
+          fi
+          if ! grep -Eq '(^|, )113 passed(,| )' browser-pytest.log; then
+            echo 'Browser job must execute all 113 browser tests successfully.' >&2
+            exit 1
+          fi
+
+  ui-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/ui-runtime/package-lock.json
+
+      - name: Install pinned UI runtime dependencies
+        run: npm ci --prefix frontend/ui-runtime
+
+      - name: Run UI runtime unit tests
+        run: npm test --prefix frontend/ui-runtime
+
+      - name: Rebuild and validate the UI runtime bundle and catalogs
+        run: |
+          npm run build --prefix frontend/ui-runtime
+          npm run check --prefix frontend/ui-runtime
+          npm run check:i18n --prefix frontend/ui-runtime
+
+      - name: Reject UI runtime artifact drift
+        shell: bash
+        run: |
+          git diff --exit-code -- \
+            frontend/ui-runtime/package.json \
+            frontend/ui-runtime/package-lock.json \
+            static/vendor/ui-runtime.bundle.js
+          test -z "$(git status --porcelain --untracked-files=all -- \
+            frontend/ui-runtime/package.json \
+            frontend/ui-runtime/package-lock.json \
+            static/vendor/ui-runtime.bundle.js)"
+
+  rules-editor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/editor/package-lock.json
+
+      - name: Install pinned Rules Editor dependencies
+        run: npm ci --prefix frontend/editor
+
+      - name: Run Rules Editor source tests
+        run: npm test --prefix frontend/editor
+
+      - name: Rebuild and validate the Rules Editor bundle
+        run: |
+          npm run build --prefix frontend/editor
+          npm run check --prefix frontend/editor
+
+      - name: Reject Rules Editor artifact drift
+        shell: bash
+        run: |
+          git diff --exit-code -- \
+            frontend/editor/package.json \
+            frontend/editor/package-lock.json \
+            static/editor.js
+          test -z "$(git status --porcelain --untracked-files=all -- \
+            frontend/editor/package.json \
+            frontend/editor/package-lock.json \
+            static/editor.js)"
+
+  topology:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/topology/package-lock.json
+
+      - name: Install pinned topology dependencies
+        run: npm ci --prefix frontend/topology
+
+      - name: Rebuild topology bundle
+        run: npm run build --prefix frontend/topology
+
+      - name: Validate topology bundle
+        run: npm run check --prefix frontend/topology
+
+      - name: Reject generated bundle drift
+        shell: bash
+        run: |
+          git diff --exit-code -- \
+            frontend/topology/package-lock.json \
+            static/vendor/topology.bundle.mjs \
+            static/vendor/topology.bundle.css
+          test -z "$(git status --porcelain --untracked-files=all -- \
+            frontend/topology/package-lock.json \
+            static/vendor/topology.bundle.mjs \
+            static/vendor/topology.bundle.css)"
+
+  docker:
+    needs: [quality, tests, browser, ui-runtime, rules-editor, topology]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Read canonical product version and validate release tag
+        id: product_version
+        shell: bash
+        run: |
+          product_version="$(python3 scripts/check_product_version.py --print)"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${product_version}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} must equal v${product_version}." >&2
+            exit 1
+          fi
+          echo "version=${product_version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Reject missing and mismatched Docker product versions
+        shell: bash
+        run: |
+          if docker build --target version-contract .; then
+            echo 'Docker build without LLMGATEWAY_EXPECTED_PRODUCT_VERSION must fail.' >&2
+            exit 1
+          fi
+          if docker build \
+            --target version-contract \
+            --build-arg LLMGATEWAY_EXPECTED_PRODUCT_VERSION=0.0.0 \
+            .; then
+            echo 'Docker build with a mismatched product version must fail.' >&2
+            exit 1
+          fi
+
+      - name: Validate Docker Compose product version contract
+        env:
+          LLMGATEWAY_EXPECTED_PRODUCT_VERSION: ${{ steps.product_version.outputs.version }}
+        run: docker compose config -q
+
+      - name: Verify pinned arm64 browser asset metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_root="${RUNNER_TEMP}/cloakbrowser-arm64-check"
+          python3 docker/install_cloakbrowser_asset.py \
+            --arch arm64 \
+            --archive-cache "${asset_root}/cache" \
+            --destination "${asset_root}/chromium-146.0.7680.177.3"
+          test -x "${asset_root}/chromium-146.0.7680.177.3/chrome"
+          rm -rf "${asset_root}"
+
+      - name: Build and verify the hermetic Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_date="$(git show -s --format=%cI HEAD)"
+          sentinel="R3_3_DIRTY_CONTEXT_SENTINEL"
+          clean_manifest="${RUNNER_TEMP}/llmgateway-clean-manifest.json"
+          dirty_manifest="${RUNNER_TEMP}/llmgateway-dirty-manifest.json"
+          docker build \
+            --build-arg LLMGATEWAY_EXPECTED_PRODUCT_VERSION="${{ steps.product_version.outputs.version }}" \
+            --build-arg LLMGATEWAY_BUILD_SHA="${GITHUB_SHA}" \
+            --build-arg LLMGATEWAY_BUILD_DATE="${build_date}" \
+            --build-arg LLMGATEWAY_BUILD_REF="${GITHUB_REF}" \
+            -t llmapigateway:ci .
+
+          python3 scripts/check_container_image.py llmapigateway:ci \
+            --sentinel "${sentinel}" \
+            --manifest-out "${clean_manifest}"
+
+          test ! -e llm_gateway_core/providers.json
+          mkdir -p \
+            .r3-dirty-state \
+            tests/.r3-dirty-state \
+            frontend/topology/node_modules/.r3-dirty-state \
+            llm_gateway_core/.r3-dirty-state \
+            llm_gateway_core/tests \
+            llm_gateway_core/node_modules \
+            llm_gateway_core/diagnostics \
+            llm_gateway_core/cache \
+            static/node_modules \
+            static/diagnostics \
+            static/cache \
+            static/playwright-report \
+            docker/nested \
+            scripts/nested
+          printf '%s\n' "${sentinel}" > .r3-dirty-state/sentinel
+          printf '%s\n' "${sentinel}" > tests/.r3-dirty-state/sentinel
+          printf '%s\n' "${sentinel}" > frontend/topology/node_modules/.r3-dirty-state/sentinel
+          printf '%s\n' "${sentinel}" > llm_gateway_core/.r3-dirty-state/sentinel
+          printf '%s\n' "${sentinel}" > llm_gateway_core/providers.json
+          printf '%s\n' "${sentinel}" > llm_gateway_core/tests/sentinel.py
+          printf '%s\n' "${sentinel}" > llm_gateway_core/node_modules/sentinel.js
+          printf '%s\n' "${sentinel}" > llm_gateway_core/diagnostics/sentinel.json
+          printf '%s\n' "${sentinel}" > llm_gateway_core/cache/sentinel.bin
+          printf '%s\n' "${sentinel}" > llm_gateway_core/credentials.json
+          printf '%s\n' "${sentinel}" > static/node_modules/sentinel.js
+          printf '%s\n' "${sentinel}" > static/diagnostics/sentinel.json
+          printf '%s\n' "${sentinel}" > static/cache/sentinel.bin
+          printf '%s\n' "${sentinel}" > static/private.key
+          printf '%s\n' "${sentinel}" > static/dev-diagnostic.txt
+          printf '%s\n' "${sentinel}" > llm_gateway_core/debug_dump.txt
+          printf '%s\n' "${sentinel}" > llm_gateway_core/id_rsa
+          printf '%s\n' "${sentinel}" > llm_gateway_core/service-account.json
+          printf '%s\n' "${sentinel}" > static/playwright-report/index.html
+          printf '%s\n' "${sentinel}" > llm_gateway_core/.arbitrary-hidden
+          printf '%s\n' "${sentinel}" > static/.arbitrary-hidden
+          printf '%s\n' "${sentinel}" > llm_gateway_core/rogue.py
+          printf '%s\n' "${sentinel}" > static/rogue.html
+          printf '%s\n' "${sentinel}" > docker/id_rsa
+          printf '%s\n' "${sentinel}" > docker/nested/service-account.json
+          printf '%s\n' "${sentinel}" > docker/rogue.sh
+          printf '%s\n' "${sentinel}" > scripts/nested/id_rsa
+          printf '%s\n' "${sentinel}" > scripts/rogue.py
+          printf '%s\n' "${sentinel}" > examples/arbitrary-child.md
+
+          docker build \
+            --build-arg LLMGATEWAY_EXPECTED_PRODUCT_VERSION="${{ steps.product_version.outputs.version }}" \
+            --build-arg LLMGATEWAY_BUILD_SHA="${GITHUB_SHA}" \
+            --build-arg LLMGATEWAY_BUILD_DATE="${build_date}" \
+            --build-arg LLMGATEWAY_BUILD_REF="${GITHUB_REF}" \
+            -t llmapigateway:ci-dirty .
+          python3 scripts/check_container_image.py llmapigateway:ci-dirty \
+            --sentinel "${sentinel}" \
+            --manifest-out "${dirty_manifest}"
+          cmp "${clean_manifest}" "${dirty_manifest}"
+          rm -rf \
+            docker/id_rsa \
+            docker/nested \
+            docker/rogue.sh \
+            scripts/nested \
+            scripts/rogue.py \
+            examples/arbitrary-child.md
+
+      - name: Verify canonical OCI image version label
+        run: >-
+          test "$(docker image inspect llmapigateway:ci
+          --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')"
+          = "${{ steps.product_version.outputs.version }}"
+
+      - name: Smoke-test offline production imports and bundled browser
+        run: |
+          docker run --rm \
+            --network none \
+            --read-only \
+            --tmpfs /app/logs:rw,mode=0770,uid=10001,gid=10001 \
+            --tmpfs /app/outputs/images:rw,mode=0770,uid=10001,gid=10001 \
+            --tmpfs /tmp:rw,mode=1777 \
+            --env GATEWAY_API_KEY=ci-smoke-key \
+            --entrypoint python \
+            llmapigateway:ci \
+            -c "import gpt_researcher, main; from cloakbrowser import launch; main.app.openapi(); browser = launch(); page = browser.new_page(); assert page.evaluate('1 + 1') == 2; page.evaluate(\"document.title = 'offline'\"); assert page.title() == 'offline'; browser.close()"
+
+      - name: Smoke-test the container health contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_name="llmapigateway-ci-smoke"
+          missing_config_name="llmapigateway-ci-missing-config"
+          smoke_root="$(mktemp -d)"
+          cleanup() {
+            docker rm --force "${container_name}" >/dev/null 2>&1 || true
+            docker rm --force "${missing_config_name}" >/dev/null 2>&1 || true
+            sudo rm -rf "${smoke_root}"
+          }
+          trap cleanup EXIT
+
+          mkdir -p \
+            "${smoke_root}/config" \
+            "${smoke_root}/missing-config" \
+            "${smoke_root}/db"
+          cat > "${smoke_root}/config/providers.json" <<'JSON'
+          [
+            {
+              "openrouter": {
+                "baseUrl": "http://127.0.0.1:1/v1",
+                "apikey": "ci-smoke-key",
+                "available_models": ["ci-smoke-model"]
+              }
+            }
+          ]
+          JSON
+          cp \
+            "${smoke_root}/config/providers.json" \
+            "${smoke_root}/missing-config/providers.json"
+          printf '%s\n' '[]' > "${smoke_root}/config/models_fallback_rules.json"
+          sudo chown -R 10001:10001 \
+            "${smoke_root}/config" \
+            "${smoke_root}/missing-config" \
+            "${smoke_root}/db"
+
+          if missing_output="$(docker run \
+            --name "${missing_config_name}" \
+            --read-only \
+            --mount "type=bind,src=${smoke_root}/missing-config,dst=/app/config" \
+            llmapigateway:ci true 2>&1)"; then
+            printf '%s\n' "missing fallback config unexpectedly started" >&2
+            exit 1
+          fi
+          test "${missing_output}" = \
+            "container-config-preflight: reason=mandatory-config-missing"
+          test "$(find "${smoke_root}/missing-config" \
+            -mindepth 1 -maxdepth 1 -printf '%f\n')" = "providers.json"
+          docker rm "${missing_config_name}" >/dev/null
+
+          docker run --detach \
+            --name "${container_name}" \
+            --publish 127.0.0.1::9000 \
+            --read-only \
+            --tmpfs /app/logs:rw,mode=0770,uid=10001,gid=10001 \
+            --tmpfs /app/outputs:rw,mode=0770,uid=10001,gid=10001 \
+            --tmpfs /tmp:rw,mode=1777 \
+            --mount "type=bind,src=${smoke_root}/config,dst=/app/config" \
+            --mount "type=bind,src=${smoke_root}/db,dst=/app/db" \
+            --env GATEWAY_API_KEY=ci-smoke-key \
+            --env GATEWAY_DB_DIR=/app/db \
+            llmapigateway:ci
+
+          published_address="$(docker port "${container_name}" 9000/tcp | head -n 1)"
+          health_url="http://127.0.0.1:${published_address##*:}"
+          deadline=$((SECONDS + 60))
+          until curl --fail --silent --show-error \
+            --connect-timeout 2 --max-time 5 \
+            --output "${smoke_root}/health.json" "${health_url}/health"; do
+            if [[ "$(docker inspect --format '{{.State.Running}}' "${container_name}")" != "true" ]] \
+              || (( SECONDS >= deadline )); then
+              docker logs "${container_name}" || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          python3 - "${smoke_root}/health.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert payload["status"] == "ok"
+          PY
+          curl --fail --silent --show-error --head \
+            --connect-timeout 2 --max-time 5 \
+            --output "${smoke_root}/health.headers" "${health_url}/health"
+
+          test "$(docker exec "${container_name}" sh -c 'printf "%s:%s" "$(id -u)" "$(id -g)"')" = \
+            "10001:10001"
+          docker exec --interactive "${container_name}" python - <<'PY'
+          from pathlib import Path
+
+          for denied in (
+              Path("/app/.ci-write-denied"),
+              Path("/opt/venv/.ci-write-denied"),
+              Path("/opt/cloakbrowser/.ci-write-denied"),
+          ):
+              try:
+                  denied.write_bytes(b"must fail")
+              except OSError:
+                  pass
+              else:
+                  raise AssertionError(f"unexpected writable path: {denied}")
+
+          for allowed in (
+              Path("/app/db/.ci-write-allowed"),
+              Path("/app/logs/.ci-write-allowed"),
+              Path("/app/outputs/.ci-write-allowed"),
+              Path("/tmp/.ci-write-allowed"),
+          ):
+              allowed.write_bytes(b"ok")
+          PY
+          docker exec --interactive "${container_name}" \
+            python - /app/config/models_operation_rules.json <<'PY'
+          import os
+          import pathlib
+          import sys
+
+          destination = pathlib.Path(sys.argv[1])
+          temporary = destination.with_name(".ci-operation-rules.replace")
+          temporary.write_bytes(b'{"ci_replace_visible":true}\n')
+          os.replace(temporary, destination)
+          PY
+          test "$(cat "${smoke_root}/config/models_operation_rules.json")" = \
+            '{"ci_replace_visible":true}'
+
+      - name: Verify persistent generated-image volume lifecycle
+        shell: bash
+        env:
+          LLMGATEWAY_EXPECTED_PRODUCT_VERSION: ${{ steps.product_version.outputs.version }}
+        run: |
+          set -euo pipefail
+          smoke_root="$(mktemp -d)"
+          sentinel_mtime_ns="$(python3 -c 'import time; print(time.time_ns())')"
+          project_a="llmgateway-r34-a"
+          project_b="llmgateway-r34-b"
+          volume_a="${project_a}_gateway_outputs"
+          volume_b="${project_b}_gateway_outputs"
+          override="${smoke_root}/compose.override.yml"
+          cleanup() {
+            docker compose --project-name "${project_a}" --file docker-compose.yml --file "${override}" down -v >/dev/null 2>&1 || true
+            docker compose --project-name "${project_b}" --file docker-compose.yml --file "${override}" down -v >/dev/null 2>&1 || true
+            docker volume rm --force "${volume_a}" "${volume_b}" >/dev/null 2>&1 || true
+            sudo rm -rf "${smoke_root}"
+          }
+          trap cleanup EXIT
+
+          mkdir -p "${smoke_root}/config" "${smoke_root}/db" "${smoke_root}/backup"
+          cat > "${smoke_root}/config/providers.json" <<'JSON'
+          [
+            {
+              "openrouter": {
+                "baseUrl": "http://127.0.0.1:1/v1",
+                "apikey": "ci-smoke-key",
+                "available_models": ["ci-smoke-model"]
+              }
+            }
+          ]
+          JSON
+          printf '%s\n' '[]' > "${smoke_root}/config/models_fallback_rules.json"
+          sudo chown -R 10001:10001 "${smoke_root}/config" "${smoke_root}/db"
+          sudo chown 0:0 "${smoke_root}/backup"
+          sudo chmod 0700 "${smoke_root}/backup"
+          cat > "${override}" <<YAML
+          services:
+            outputs-init:
+              image: llmapigateway:ci
+            llm-gateway:
+              image: llmapigateway:ci
+              volumes:
+                - ${smoke_root}/config:/app/config
+                - ${smoke_root}/db:/app/db
+                - gateway_outputs:/app/outputs
+              environment:
+                - GATEWAY_API_KEY=ci-smoke-key
+                - GATEWAY_DB_DIR=/app/db
+                - GATEWAY_OUTPUTS_DIR=/app/outputs
+                - GATEWAY_WORKERS=1
+          YAML
+
+          compose_a() {
+            docker compose --project-name "${project_a}" --file docker-compose.yml --file "${override}" "$@"
+          }
+          compose_b() {
+            docker compose --project-name "${project_b}" --file docker-compose.yml --file "${override}" "$@"
+          }
+          wait_for_health() {
+            local deadline=$((SECONDS + 60))
+            until curl --fail --silent --show-error \
+              --connect-timeout 2 --max-time 5 \
+              --output /dev/null http://127.0.0.1:9000/health; do
+              if (( SECONDS >= deadline )); then
+                compose_a logs llm-gateway || true
+                return 1
+              fi
+              sleep 1
+            done
+          }
+          assert_image_identity() {
+            local container
+            container="$(compose_a ps -q llm-gateway)"
+            docker exec --interactive "${container}" python - "${sentinel_mtime_ns}" <<'PY'
+          import hashlib
+          import sys
+          from pathlib import Path
+
+          image = Path("/app/outputs/images/ci/image_deadbeef_0.png")
+          assert image.is_file()
+          assert hashlib.sha256(image.read_bytes()).hexdigest() == "8588030b2ae7f6381635a67c0009ed6ae15e5b00a7f6b23b453846d6fd4d1b88"
+          assert image.stat().st_mtime_ns == int(sys.argv[1])
+          PY
+            curl --fail --silent --show-error \
+              --header 'Authorization: Bearer ci-smoke-key' \
+              --output "${smoke_root}/fetched.png" \
+              http://127.0.0.1:9000/outputs/images/ci/image_deadbeef_0.png
+            test "$(sha256sum "${smoke_root}/fetched.png" | cut -d' ' -f1)" = \
+              "8588030b2ae7f6381635a67c0009ed6ae15e5b00a7f6b23b453846d6fd4d1b88"
+          }
+
+          compose_a up -d --no-build llm-gateway
+          wait_for_health
+          gateway_a="$(compose_a ps -q llm-gateway)"
+          docker exec --interactive "${gateway_a}" python - "${sentinel_mtime_ns}" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+          from llm_gateway_core.services.image_storage import GeneratedImageStorage
+
+          storage = GeneratedImageStorage(Path("/app/outputs/images"))
+          published = storage.publish_png(
+              b"CI_R3_4_SENTINEL",
+              "image_deadbeef_0.png",
+              research_id="ci",
+          )
+          expected_mtime_ns = int(sys.argv[1])
+          os.utime(published.path, ns=(expected_mtime_ns,) * 2)
+          PY
+          assert_image_identity
+
+          compose_a up -d --no-build --force-recreate llm-gateway
+          wait_for_health
+          assert_image_identity
+          compose_a down
+          compose_a up -d --no-build llm-gateway
+          wait_for_health
+          assert_image_identity
+
+          compose_b run --rm --no-deps outputs-init
+          docker run --rm --network none --read-only \
+            --volume "${volume_b}:/data:ro" \
+            --entrypoint python llmapigateway:ci \
+            -c "from pathlib import Path; assert not Path('/data/images/ci/image_deadbeef_0.png').exists()"
+          compose_b down -v
+          if docker volume inspect "${volume_b}" >/dev/null 2>&1; then
+            echo "project B output volume survived down -v" >&2
+            exit 1
+          fi
+
+          compose_a stop llm-gateway
+          docker run --rm --user 0:0 --network none --read-only \
+            --volume "${volume_a}:/app/outputs" \
+            --volume "${smoke_root}/backup:/backup" \
+            --entrypoint python llmapigateway:ci \
+            -m llm_gateway_core.services.image_storage_cli backup \
+            --outputs-dir /app/outputs \
+            --archive /backup/generated-images.tar \
+            --manifest /backup/generated-images.manifest.json
+          test "$(sudo stat -c '%a' "${smoke_root}/backup/generated-images.tar")" = "600"
+          test "$(sudo stat -c '%a' "${smoke_root}/backup/generated-images.manifest.json")" = "600"
+
+          compose_a down -v
+          if docker volume inspect "${volume_a}" >/dev/null 2>&1; then
+            echo "project A output volume survived down -v" >&2
+            exit 1
+          fi
+          compose_a run --rm --no-deps outputs-init
+          docker run --rm --user 0:0 --network none --read-only \
+            --volume "${volume_a}:/app/outputs" \
+            --volume "${smoke_root}/backup:/backup:ro" \
+            --entrypoint python llmapigateway:ci \
+            -m llm_gateway_core.services.image_storage_cli restore \
+            --outputs-dir /app/outputs \
+            --archive /backup/generated-images.tar \
+            --manifest /backup/generated-images.manifest.json
+          compose_a up -d --no-build llm-gateway
+          wait_for_health
+          assert_image_identity
+
+          compose_b run --rm --no-deps outputs-init
+          sudo cp "${smoke_root}/backup/generated-images.tar" "${smoke_root}/backup/tampered.tar"
+          sudo python3 - "${smoke_root}/backup/tampered.tar" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          payload = bytearray(path.read_bytes())
+          marker = b"CI_R3_4_SENTINEL"
+          offset = payload.index(marker)
+          payload[offset] ^= 1
+          path.write_bytes(payload)
+          PY
+          if docker run --rm --user 0:0 --network none --read-only \
+            --volume "${volume_b}:/app/outputs" \
+            --volume "${smoke_root}/backup:/backup:ro" \
+            --entrypoint python llmapigateway:ci \
+            -m llm_gateway_core.services.image_storage_cli restore \
+            --outputs-dir /app/outputs \
+            --archive /backup/tampered.tar \
+            --manifest /backup/generated-images.manifest.json; then
+            echo "tampered generated-image backup unexpectedly restored" >&2
+            exit 1
+          fi
+          if docker run --rm --network none --read-only \
+            --volume "${volume_b}:/app/outputs" \
+            --entrypoint python llmapigateway:ci \
+            -c "from pathlib import Path; from llm_gateway_core.services.image_storage import GeneratedImageStorage; GeneratedImageStorage(Path('/app/outputs/images')).probe()"; then
+            echo "incomplete restore marker did not block startup probe" >&2
+            exit 1
+          fi
+          compose_b down -v
+          compose_a down -v
+          test "$(docker volume ls --quiet --filter "name=^${project_a}_gateway_outputs$")" = ""
+          test "$(docker volume ls --quiet --filter "name=^${project_b}_gateway_outputs$")" = ""

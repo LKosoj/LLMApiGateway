@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import copy
 import logging
-import httpx
 import time
+from typing import TYPE_CHECKING, cast
+
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 # Relative imports from the new structure
@@ -18,6 +22,9 @@ from ...services.model_policy import (
 )
 from ...services.provider_models import provider_explicit_models
 from ...services.provider_auth import resolve_provider_auth_headers
+
+if TYPE_CHECKING:
+    from ...services.runtime_config import AppServices, RuntimeSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -350,36 +357,16 @@ async def get_models(request: Request):
     Returns response in Anthropic format if request uses X-Api-Key header,
     otherwise returns OpenAI-compatible format.
     """
-    is_anthropic = _is_anthropic_request(request)
-    
-    http_client: object = getattr(request.app.state, "http_client", None)
-    if http_client is None:
-        logger.error("Shared httpx.AsyncClient not found in application state within get_models.")
-        raise HTTPException(status_code=500, detail="Internal server error: Shared HTTP client not available.")
-    config_loader_instance: ConfigLoader = request.app.state.config_loader
-    if not config_loader_instance:
-        logger.error("ConfigLoader not found in application state within get_models.")
-        raise HTTPException(status_code=500, detail="Internal server error: Core configuration not available.")
+    services = cast("AppServices", request.app.state.services)
+    runtime_snapshot = cast("RuntimeSnapshot", request.state.runtime_snapshot)
+    http_client = services.http_client
+    config_loader_instance: ConfigLoader = runtime_snapshot.config_loader
 
     providers_config = config_loader_instance.providers_config
     fallback_rules = config_loader_instance.fallback_rules
-    operation_rules = getattr(
-        request.app.state,
-        "operation_rules",
-        {
-            "embeddings": {},
-            "rerank": {},
-            "images_generations": {},
-            "images_edits": {},
-            "audio_speech": {},
-            "audio_transcriptions": {},
-            "pdf_conversions": {},
-            "web_search": {},
-            "web_read": {},
-            "web_research": {},
-            "web_deep_research": {},
-        },
-    )
+    operation_rules = config_loader_instance.operation_rules
+    model_rules = getattr(config_loader_instance, "model_rules", None)
+    is_anthropic = _is_anthropic_request(request)
 
     gateway_models = {} # Use dict to avoid duplicates easily
     # 1. Add models defined in the gateway's fallback rules
@@ -487,7 +474,7 @@ async def get_models(request: Request):
 
     gateway_models = _apply_model_rules_to_gateway_models(
         gateway_models,
-        getattr(config_loader_instance, "model_rules", None),
+        model_rules,
     )
 
     # 3. Restrict to models allowed for the caller's virtual key, if any.
@@ -525,36 +512,15 @@ async def get_model(model_id: str, request: Request):
     Returns response in Anthropic format if request uses X-Api-Key header,
     otherwise returns OpenAI-compatible format.
     """
-    is_anthropic = _is_anthropic_request(request)
-    
-    http_client: object = getattr(request.app.state, "http_client", None)
-    if http_client is None:
-        logger.error("Shared httpx.AsyncClient not found in application state within get_model.")
-        raise HTTPException(status_code=500, detail="Internal server error: Shared HTTP client not available.")
-    config_loader_instance: ConfigLoader = request.app.state.config_loader
-    if not config_loader_instance:
-        logger.error("ConfigLoader not found in application state within get_model.")
-        raise HTTPException(status_code=500, detail="Internal server error: Core configuration not available.")
+    services = cast("AppServices", request.app.state.services)
+    runtime_snapshot = cast("RuntimeSnapshot", request.state.runtime_snapshot)
+    http_client = services.http_client
+    config_loader_instance: ConfigLoader = runtime_snapshot.config_loader
 
     providers_config = config_loader_instance.providers_config
     fallback_rules = config_loader_instance.fallback_rules
-    operation_rules = getattr(
-        request.app.state,
-        "operation_rules",
-        {
-            "embeddings": {},
-            "rerank": {},
-            "images_generations": {},
-            "images_edits": {},
-            "audio_speech": {},
-            "audio_transcriptions": {},
-            "pdf_conversions": {},
-            "web_search": {},
-            "web_read": {},
-            "web_research": {},
-            "web_deep_research": {},
-        },
-    )
+    operation_rules = config_loader_instance.operation_rules
+    is_anthropic = _is_anthropic_request(request)
 
     # Reject the request early if the caller's virtual key forbids this model.
     # Master/legacy callers have ``api_key_record is None`` and pass through.

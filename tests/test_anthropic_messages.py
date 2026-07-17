@@ -1,6 +1,6 @@
-import asyncio
 import json
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,10 +11,13 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 import main
+from tests._async_compat import run_async
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 def _build_fake_config_loader() -> Mock:
     fake_config_loader = Mock()
+    fake_config_loader.configured_paths = {}
     fake_config_loader.providers_config = {
         "test-provider": SimpleNamespace(
             baseUrl="https://provider.example",
@@ -35,6 +38,9 @@ def _build_fake_config_loader() -> Mock:
     }
     fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
     fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+    fake_config_loader.load_operation_rules.return_value = {}
+    fake_config_loader.operation_rules = {}
+    fake_config_loader.load_complete.return_value = fake_config_loader
     return fake_config_loader
 
 
@@ -130,9 +136,24 @@ def _build_streaming_openai_error_response() -> StreamingResponse:
 
 
 class AnthropicMessagesTests(unittest.TestCase):
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        coordinator_patcher = patch(
+            "main.ConfigUpdateCoordinator",
+            return_value=config_update_coordinator,
+        )
+        coordinator_patcher.start()
+        self.addCleanup(coordinator_patcher.stop)
+
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_translates_anthropic_request_and_response(
         self,
@@ -142,6 +163,9 @@ class AnthropicMessagesTests(unittest.TestCase):
         make_llm_request_mock,
     ):
         fake_config_loader = Mock()
+        fake_config_loader.configured_paths = {}
+        fake_config_loader.operation_rules = {}
+        fake_config_loader.load_operation_rules.return_value = {}
         fake_config_loader.providers_config = {
             "test-provider": SimpleNamespace(
                 baseUrl="https://provider.example",
@@ -162,6 +186,7 @@ class AnthropicMessagesTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -234,19 +259,12 @@ class AnthropicMessagesTests(unittest.TestCase):
         self.assertEqual(provider_payload["max_tokens"], 32)
         self.assertFalse(provider_payload["stream"])
 
-        _tokens_usage_db.return_value.insert_usage.assert_called_once()
-        usage_row = _tokens_usage_db.return_value.insert_usage.call_args.args[0]
-        self.assertEqual(usage_row["prompt_tokens"], 10)
-        self.assertEqual(usage_row["completion_tokens"], 5)
-        self.assertEqual(usage_row["total_tokens"], 15)
-        self.assertEqual(usage_row["cached_tokens"], 4)
-        self.assertEqual(usage_row["reasoning_tokens"], 2)
-        self.assertEqual(usage_row["cost"], 0.045)
-        self.assertFalse(usage_row.get("is_estimated", False))
+        _tokens_usage_db.return_value.insert_usage.assert_not_called()
+        self.accounting_service.release.assert_awaited_once()
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_translates_anthropic_tools_roundtrip(
         self,
@@ -256,6 +274,9 @@ class AnthropicMessagesTests(unittest.TestCase):
         make_llm_request_mock,
     ):
         fake_config_loader = Mock()
+        fake_config_loader.configured_paths = {}
+        fake_config_loader.operation_rules = {}
+        fake_config_loader.load_operation_rules.return_value = {}
         fake_config_loader.providers_config = {
             "test-provider": SimpleNamespace(
                 baseUrl="https://provider.example",
@@ -276,6 +297,7 @@ class AnthropicMessagesTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -437,7 +459,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_stream_translates_openai_sse_to_anthropic_sse(
         self,
@@ -447,6 +469,9 @@ class AnthropicMessagesTests(unittest.TestCase):
         make_llm_request_mock,
     ):
         fake_config_loader = Mock()
+        fake_config_loader.configured_paths = {}
+        fake_config_loader.operation_rules = {}
+        fake_config_loader.load_operation_rules.return_value = {}
         fake_config_loader.providers_config = {
             "test-provider": SimpleNamespace(
                 baseUrl="https://provider.example",
@@ -467,6 +492,7 @@ class AnthropicMessagesTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -510,7 +536,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_stream_error_chunk_emits_anthropic_error_event(
         self,
@@ -549,7 +575,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_stream_translates_tool_calls_to_anthropic_tool_events(
         self,
@@ -559,6 +585,9 @@ class AnthropicMessagesTests(unittest.TestCase):
         make_llm_request_mock,
     ):
         fake_config_loader = Mock()
+        fake_config_loader.configured_paths = {}
+        fake_config_loader.operation_rules = {}
+        fake_config_loader.load_operation_rules.return_value = {}
         fake_config_loader.providers_config = {
             "test-provider": SimpleNamespace(
                 baseUrl="https://provider.example",
@@ -579,6 +608,7 @@ class AnthropicMessagesTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -633,7 +663,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_stream_preserves_split_utf8_chunks(
         self,
@@ -671,7 +701,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_stream_preserves_unterminated_final_event(
         self,
@@ -712,7 +742,7 @@ class AnthropicMessagesTests(unittest.TestCase):
         self.assertIn('"text":"lo"', response_text)
 
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_translates_anthropic_image_blocks_to_openai_content(
         self,
@@ -777,7 +807,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_passes_through_openai_supported_fields(
         self,
@@ -846,7 +876,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_translates_document_and_assistant_thinking_blocks(
         self,
@@ -920,7 +950,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_omits_unsigned_reasoning_blocks_from_json_response(
         self,
@@ -985,7 +1015,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_endpoint_stream_preserves_legacy_reasoning_events(
         self,
@@ -1069,7 +1099,7 @@ class AnthropicMessagesTests(unittest.TestCase):
             self.assertEqual(response.usage.input_tokens, 10)
             self.assertEqual(response.usage.output_tokens, 4)
 
-        asyncio.run(scenario())
+        run_async(scenario())
 
     def test_official_anthropic_sdk_messages_stream_works_with_x_api_key(self):
         async def scenario():
@@ -1106,10 +1136,10 @@ class AnthropicMessagesTests(unittest.TestCase):
             self.assertEqual(final_message.usage.input_tokens, 10)
             self.assertEqual(final_message.usage.output_tokens, 5)
 
-        asyncio.run(scenario())
+        run_async(scenario())
 
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_count_tokens_endpoint_returns_deterministic_input_tokens(
         self,
@@ -1175,7 +1205,7 @@ class AnthropicMessagesTests(unittest.TestCase):
                 self.assertEqual(response2.json()["input_tokens"], response_data["input_tokens"])
 
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_count_tokens_rejects_excluded_model(
         self,
@@ -1206,7 +1236,7 @@ class AnthropicMessagesTests(unittest.TestCase):
         self.assertIn("excluded", response.json()["detail"])
 
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("main.create_shared_http_client")
     @patch("main.ConfigLoader")
     def test_messages_count_tokens_rejects_alias_without_chat_route(
         self,
@@ -1261,7 +1291,7 @@ class AnthropicMessagesTests(unittest.TestCase):
 
             self.assertGreater(response.input_tokens, 0)
 
-        asyncio.run(scenario())
+        run_async(scenario())
 
 
 if __name__ == "__main__":

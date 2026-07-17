@@ -1,31 +1,22 @@
 import base64
-import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
-import secrets
-import subprocess
 import time
+from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.ui_server_helpers import get_free_port, wait_for_gateway
+from tests.ui_server_helpers import (
+    create_authenticated_session,
+    get_free_port,
+    isolated_gateway_process,
+    wait_for_gateway,
+)
 
 
-def build_session_signature(issued_at: int, expires_at: int, nonce: str, gateway_api_key: str) -> str:
-    secret = gateway_api_key.encode("utf-8")
-    payload = f"{issued_at}.{expires_at}.{nonce}.master.".encode("utf-8")
-    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
-
-
-def create_authenticated_session(gateway_api_key: str) -> str:
-    issued_at = int(time.time())
-    expires_at = issued_at + 365 * 24 * 60 * 60
-    nonce = secrets.token_urlsafe(24)
-    signature = build_session_signature(issued_at, expires_at, nonce, gateway_api_key)
-    return f"{issued_at}.{expires_at}.{nonce}.master..{signature}"
+pytestmark = pytest.mark.browser
 
 
 @pytest.fixture(scope="function")
@@ -83,24 +74,13 @@ def server():
         env["LOG_LEVEL"] = "DEBUG"
         base_url = f"http://localhost:{port}"
 
-        proc = subprocess.Popen(
-            ["./.venv/bin/python", "main.py"],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-        wait_for_gateway(base_url, proc)
-
-        yield base_url
-
-        proc.terminate()
-        proc.wait()
+        with isolated_gateway_process(env=env, temp_path=temp_path) as proc:
+            wait_for_gateway(base_url, proc)
+            yield base_url
 
 
 def add_session(page: Page, server: str) -> None:
-    session = create_authenticated_session("test-key")
+    session = create_authenticated_session(server, "test-key")
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
 
@@ -141,6 +121,8 @@ def test_web_tab_is_visible(page: Page, server):
 def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, server):
     add_session(page, server)
     page.set_viewport_size({"width": 1024, "height": 900})
+    api_base = f"{server}/v1"
+    page.add_init_script("localStorage.setItem('llmgateway:locale', 'ru')")
 
     page.goto(f"{server}/v1/ui/docs")
 
@@ -148,8 +130,9 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator("#catalogStatus")).to_contain_text("Загружено gateway-моделей")
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/light_model")).to_have_count(1)
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/rerank")).to_have_count(1)
-    expect(page.locator("#auth")).to_contain_text("http://89.124.76.219:9000/v1")
-    expect(page.locator("body")).not_to_contain_text("http://localhost:9000")
+    expect(page.locator("[data-docs-api-base]")).to_have_count(9)
+    assert page.locator("[data-docs-api-base]").all_inner_texts() == [api_base] * 9
+    expect(page.locator("#insecureTransportWarning")).to_be_hidden()
     expect(page.locator("#text .service-card")).to_have_count(3)
     expect(page.locator("#text")).to_contain_text("OpenAI-compatible chat completion")
     expect(page.locator("#rerank")).to_contain_text("POST /v1/rerank")
@@ -168,16 +151,16 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator("#pdf")).to_contain_text("password")
     expect(page.locator("#pdf")).to_contain_text("ocr_preprocess_save")
     expect(page.locator("#pdf")).to_contain_text("preprocessed-pdf")
-    expect(page.locator("#pdf")).to_contain_text("curl -s http://89.124.76.219:9000/v1/pdf/jobs")
+    expect(page.locator("#pdf")).to_contain_text(f"curl -s {api_base}/pdf/jobs")
     expect(page.locator("#web")).to_contain_text("/v1/web/deep-research")
     expect(page.locator("#web")).to_contain_text("/v1/tavily/search")
     expect(page.locator("#web")).to_contain_text("/v1/tavily/extract")
-    expect(page.locator("#web")).to_contain_text("curl -s http://89.124.76.219:9000/v1/web/search")
-    expect(page.locator("#web")).to_contain_text("curl -s http://89.124.76.219:9000/v1/web/read")
-    expect(page.locator("#web")).to_contain_text("curl -s http://89.124.76.219:9000/v1/web/research")
-    expect(page.locator("#web")).to_contain_text("curl -s http://89.124.76.219:9000/v1/web/deep-research")
-    expect(page.locator("#web")).to_contain_text("curl -s http://89.124.76.219:9000/v1/tavily/search")
-    expect(page.locator("#web")).to_contain_text("curl -s http://89.124.76.219:9000/v1/tavily/extract")
+    expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/web/search")
+    expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/web/read")
+    expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/web/research")
+    expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/web/deep-research")
+    expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/tavily/search")
+    expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/tavily/extract")
     expect(page.locator("#web")).to_contain_text('"image_generation": true')
     expect(page.locator("#web")).to_contain_text("include_raw_content")
     expect(page.locator("#web")).to_contain_text("failed_results[]")
@@ -234,13 +217,166 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     )
     assert overflowing_elements == []
 
-    expect(page.get_by_role("tab", name="Free-tier Providers")).to_be_visible()
-    page.get_by_role("tab", name="Free-tier Providers").click()
+    expect(page.get_by_role("tab", name="Free-tier провайдеры")).to_be_visible()
+    page.get_by_role("tab", name="Free-tier провайдеры").click()
     expect(page.locator("#freeTierMarkdown")).to_contain_text("Каталог free-tier провайдеров")
     expect(page.locator("#freeTierDocStatus")).to_be_hidden()
     expect(page.locator("#freeTierMarkdown table")).to_have_count(1)
     expect(page.locator("#freeTierMarkdown pre code")).to_contain_text("upstream_limits")
     expect(page.locator("#freeTierMarkdown a[href='https://openrouter.ai/collections/free-models']")).to_have_count(1)
+
+
+def test_gateway_docs_warns_on_public_http_origin(page: Page, server):
+    port = urlsplit(server).port
+    assert port is not None
+    origins = [
+        (f"http://gateway.example:{port}", True),
+        (f"http://docs.localhost:{port}", False),
+        (f"http://127.23.45.67:{port}", False),
+        (f"http://[::1]:{port}", False),
+        (f"https://secure-gateway.example:{port}", False),
+    ]
+    session = create_authenticated_session(server, "test-key")
+    page.context.add_cookies(
+        [
+            {"name": "llmgateway_session", "value": session, "url": origin}
+            for origin, _ in origins
+        ]
+    )
+
+    def route_docs_origin(route):
+        request_url = urlsplit(route.request.url)
+        request_origin = f"{request_url.scheme}://{request_url.netloc}"
+        mapped_url = route.request.url.replace(request_origin, server, 1)
+        route.fulfill(response=route.fetch(url=mapped_url))
+
+    for origin, should_warn in origins:
+        page.route(f"{origin}/**", route_docs_origin)
+        page.goto(f"{origin}/v1/ui/docs")
+        expect(page.locator("html")).to_have_attribute("data-i18n-state", "ready")
+        assert page.evaluate("window.gatewayI18n.currentLocale") == "en"
+
+        expect(page.locator("[data-docs-api-base]")).to_have_count(9)
+        assert page.locator("[data-docs-api-base]").all_inner_texts() == [f"{origin}/v1"] * 9
+        warning = page.locator("#insecureTransportWarning")
+        expect(warning).to_have_attribute("role", "note")
+        if should_warn:
+            expect(warning).to_contain_text("This page uses public HTTP")
+            expect(warning).to_be_visible()
+        else:
+            expect(warning).to_be_hidden()
+            expect(warning).to_have_text("")
+
+
+def test_gateway_docs_free_tier_catalog_tracks_locale_without_fallback(page: Page, server):
+    add_session(page, server)
+    page.add_init_script("localStorage.setItem('llmgateway:locale', 'ru')")
+    requests_by_locale = {"en": 0, "ru": 0}
+    pending_ru_routes = []
+
+    def route_free_tier_doc(route):
+        locale = "ru" if "/ru/" in route.request.url else "en"
+        requests_by_locale[locale] += 1
+        if locale == "ru" and requests_by_locale[locale] == 1:
+            pending_ru_routes.append(route)
+            return
+        if locale == "ru":
+            route.abort("failed")
+            return
+        route.fulfill(
+            status=200,
+            content_type="text/markdown; charset=utf-8",
+            body="# Free-tier provider catalog\n\nENGLISH MARKER",
+        )
+
+    page.route("**/static/locales/*/free-tier-providers.md", route_free_tier_doc)
+    page.goto(f"{server}/v1/ui/docs")
+
+    assert requests_by_locale == {"en": 0, "ru": 0}
+    page.locator("#localeSelect").select_option("en")
+    expect(page.locator("html")).to_have_attribute("lang", "en")
+    page.locator("#localeSelect").select_option("ru")
+    expect(page.locator("html")).to_have_attribute("lang", "ru")
+    assert requests_by_locale == {"en": 0, "ru": 0}
+
+    page.get_by_role("tab", name="Free-tier провайдеры").click()
+    expect(page.locator("#freeTierDocStatus")).to_contain_text("Загрузка каталога free-tier")
+    assert len(pending_ru_routes) == 1
+    page.get_by_role("tab", name="Free-tier провайдеры").click()
+    assert requests_by_locale == {"en": 0, "ru": 1}
+
+    page.locator("#localeSelect").select_option("en")
+    expect(page.locator("html")).to_have_attribute("lang", "en")
+    expect(page.locator("#freeTierMarkdown")).to_contain_text("ENGLISH MARKER")
+    expect(page.locator("#freeTierMarkdown")).not_to_contain_text("РУССКИЙ МАРКЕР")
+    expect(page.locator("#freeTierDocStatus")).to_be_hidden()
+
+    page.locator("#localeSelect").select_option("ru")
+    expect(page.locator("html")).to_have_attribute("lang", "ru")
+    expect(page.locator("#freeTierDocStatus")).to_contain_text("Каталог free-tier недоступен")
+    expect(page.locator("#freeTierMarkdown")).to_contain_text("Не удалось загрузить русскую версию каталога")
+    expect(page.locator("#freeTierMarkdown")).not_to_contain_text("ENGLISH MARKER")
+
+    page.locator("#localeSelect").select_option("en")
+    expect(page.locator("#freeTierMarkdown")).to_contain_text("ENGLISH MARKER")
+    assert requests_by_locale == {"en": 1, "ru": 2}
+
+    page.evaluate(
+        """() => {
+            const originalFetch = window.fetch.bind(window);
+            window.__staleFreeTierFetches = 0;
+            window.__resolveStaleFreeTier = null;
+            let resolveStaleProcessed;
+            window.__staleFreeTierProcessed = new Promise((resolve) => {
+                resolveStaleProcessed = resolve;
+            });
+            window.fetch = (url, options) => {
+                if (String(url).includes('/ru/free-tier-providers.md')) {
+                    window.__staleFreeTierFetches += 1;
+                    return new Promise((resolve) => {
+                        window.__resolveStaleFreeTier = () => {
+                            resolve(new Response(
+                                '# Каталог free-tier провайдеров\\n\\nSTALE RUSSIAN MARKER',
+                                {status: 200, headers: {'Content-Type': 'text/markdown'}},
+                            ));
+                            requestAnimationFrame(() => resolveStaleProcessed());
+                        };
+                    });
+                }
+                return originalFetch(url, options);
+            };
+        }"""
+    )
+    page.locator("#localeSelect").select_option("ru")
+    expect(page.locator("#freeTierDocStatus")).to_contain_text("Загрузка каталога free-tier")
+    assert page.evaluate("window.__staleFreeTierFetches") == 1
+    page.locator("#localeSelect").select_option("en")
+    expect(page.locator("html")).to_have_attribute("lang", "en")
+    expect(page.locator("#freeTierMarkdown")).to_contain_text("ENGLISH MARKER")
+    page.evaluate("window.__resolveStaleFreeTier()")
+    page.evaluate("window.__staleFreeTierProcessed")
+    expect(page.locator("#freeTierMarkdown")).to_contain_text("ENGLISH MARKER")
+    expect(page.locator("#freeTierMarkdown")).not_to_contain_text("STALE RUSSIAN MARKER")
+
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    page.add_init_script(
+        """window.__unhandledRejections = [];
+        window.addEventListener('unhandledrejection', (event) => {
+            window.__unhandledRejections.push(String(event.reason));
+        });"""
+    )
+    markdown_requests_before = sum(requests_by_locale.values())
+    page.route("**/static/locales/*/docs.json", lambda route: route.abort("failed"))
+    page.goto(f"{server}/v1/ui/docs")
+    expect(page.locator("[data-i18n-bootstrap-error]")).to_be_visible()
+    free_tier_tab = page.get_by_role("tab", name="Free-tier Providers")
+    free_tier_tab.click()
+    expect(free_tier_tab).to_have_attribute("aria-selected", "true")
+    page.evaluate("window.gatewayI18n.ready.catch(() => undefined)")
+    assert sum(requests_by_locale.values()) == markdown_requests_before
+    assert page_errors == []
+    assert page.evaluate("window.__unhandledRejections") == []
 
 
 def test_web_playground_does_not_render_unsafe_result_urls_as_links(page: Page, server):
@@ -598,6 +734,12 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     expect(page.locator("[data-web-panel='search']")).to_be_hidden()
     expect(page.locator("#deepResearchConcurrency")).to_have_value("6")
     expect(page.locator("#deepResearchImageGeneration")).to_be_visible()
+    retention_hint = page.locator("[data-generated-images-retention-hint]")
+    expect(retention_hint).to_be_visible()
+    expect(retention_hint).to_contain_text("Locally published PNGs")
+    expect(retention_hint).to_contain_text("removed after 10 days")
+    expect(retention_hint).to_contain_text("across restart and recreate")
+    expect(retention_hint).to_contain_text("Provider-hosted URLs")
 
     page.click("[data-playground-section-tab='audio-speech']")
     expect(page.locator("[data-playground-section-panel='audio-speech']")).to_be_visible()

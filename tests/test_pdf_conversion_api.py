@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1 import pdf as pdf_api
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.services.request_handler import OperationDispatcher
+from tests.pdf_accounting_test_support import install_pdf_accounting_passthrough
 
 PDF_BYTES = b"%PDF-1.7\n%test\n"
 
@@ -127,13 +129,42 @@ class PdfConversionApiTests(unittest.TestCase):
     @contextmanager
     def _client(self, downstream_response):
         fake_http_client = Mock()
-        fake_http_client.post = AsyncMock(return_value=downstream_response)
+        fake_http_client.uploaded_file_bodies = []
+        fake_http_client.uploaded_files_open = []
+
+        async def post(*_args, **kwargs):
+            uploaded_bodies = []
+            for _field_name, (_filename, content, _content_type) in kwargs.get(
+                "files",
+                [],
+            ):
+                if isinstance(content, bytes):
+                    uploaded_bodies.append(content)
+                    fake_http_client.uploaded_files_open.append(True)
+                else:
+                    fake_http_client.uploaded_files_open.append(not content.closed)
+                    uploaded_bodies.append(content.read())
+            fake_http_client.uploaded_file_bodies.append(uploaded_bodies)
+            return downstream_response
+
+        fake_http_client.post = AsyncMock(side_effect=post)
         fake_http_client.get = AsyncMock(return_value=downstream_response)
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
+            install_pdf_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
@@ -141,18 +172,24 @@ class PdfConversionApiTests(unittest.TestCase):
             stack.enter_context(patch.object(main.settings, "verify_models_on_startup", "off"))
 
             with TestClient(main.app) as client:
-                dispatcher = getattr(client.app.state, "operation_dispatcher", None)
-                self.assertIsInstance(dispatcher, OperationDispatcher)
-                self.assertIs(client.app.state.http_client, fake_http_client)
-                yield client, dispatcher, fake_http_client
+                services = client.app.state.services
+                self.assertIs(services.http_client, fake_http_client)
+                lease = client.portal.call(services.runtime_manager.acquire_current)
+                try:
+                    dispatcher = lease.snapshot.operation_dispatcher
+                    self.assertIsInstance(dispatcher, OperationDispatcher)
+                    yield client, dispatcher, fake_http_client
+                finally:
+                    client.portal.call(lease.release)
 
-    def test_pdf_convert_proxies_multipart_request_and_records_usage(self):
+    def test_pdf_convert_proxies_multipart_request_without_legacy_usage_write(self):
         downstream_payload = {
             "status": "completed",
             "artifacts": [{"format": "docx", "url": "/api/files/result.docx"}],
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             self.assertIsNotNone(dispatcher.lookup_route("pdf_conversions", "gateway/pdf-converter"))
 
             response = client.post(
@@ -180,17 +217,106 @@ class PdfConversionApiTests(unittest.TestCase):
                 "target_language": "English",
             },
         )
+        file_field, file_payload = fake_http_client.post.await_args.kwargs["files"][0]
+        self.assertEqual(file_field, "file")
+        self.assertEqual(file_payload[0], "source.pdf")
+        self.assertEqual(file_payload[2], "application/pdf")
+        self.assertEqual(fake_http_client.uploaded_file_bodies, [[PDF_BYTES]])
+        self.assertEqual(fake_http_client.uploaded_files_open, [True])
+        tokens_usage_db.insert_usage.assert_not_called()
+        tokens_usage_db.insert_usage_once.assert_not_called()
+
+    def test_pdf_convert_closes_parsed_upload_after_success(self):
+        captured_files = []
+        serialize_upload = pdf_api._serialize_upload
+
+        async def capture_upload_file(upload):
+            captured_files.append(upload.file)
+            return await serialize_upload(upload)
+
+        with patch.object(pdf_api, "_serialize_upload", new=capture_upload_file):
+            with self._client(_FakeDownstreamResponse({"status": "completed"})) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                response = client.post(
+                    "/v1/pdf/convert",
+                    data={"model": "gateway/pdf-converter"},
+                    files={"file": ("source.pdf", PDF_BYTES, "application/pdf")},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        fake_http_client.post.assert_awaited_once()
+        self.assertEqual(len(captured_files), 1)
+        self.assertIsInstance(captured_files[0], tempfile.SpooledTemporaryFile)
+        self.assertTrue(captured_files[0].closed)
+
+    def test_pdf_convert_rejects_file_over_configured_limit_before_downstream(self):
+        with patch.object(main.settings, "pdf_upload_max_bytes", len(PDF_BYTES) - 1):
+            with self._client(_FakeDownstreamResponse({"unused": True})) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                response = client.post(
+                    "/v1/pdf/convert",
+                    data={"model": "gateway/pdf-converter"},
+                    files={"file": ("source.pdf", PDF_BYTES, "application/pdf")},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 413)
+        fake_http_client.post.assert_not_awaited()
+
+    def test_pdf_convert_rejects_second_file_before_downstream(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (
+            client,
+            _dispatcher,
+            fake_http_client,
+        ):
+            response = client.post(
+                "/v1/pdf/convert",
+                data={"model": "gateway/pdf-converter"},
+                files=[
+                    ("file", ("source.pdf", PDF_BYTES, "application/pdf")),
+                    ("file", ("second.pdf", PDF_BYTES, "application/pdf")),
+                ],
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        fake_http_client.post.assert_not_awaited()
+
+    def test_pdf_capacity_timeout_is_local_and_skips_downstream(self):
+        with patch.object(main.settings, "upload_admission_timeout_seconds", 0.01):
+            with self._client(_FakeDownstreamResponse({"unused": True})) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                admission = client.app.state.services.upload_admission
+                active = client.portal.call(
+                    admission.acquire,
+                    admission.snapshot.max_bytes,
+                )
+                try:
+                    response = client.post(
+                        "/v1/pdf/convert",
+                        data={"model": "gateway/pdf-converter"},
+                        files={"file": ("source.pdf", PDF_BYTES, "application/pdf")},
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+                finally:
+                    client.portal.call(active.release)
+
+        self.assertEqual(response.status_code, 503)
         self.assertEqual(
-            fake_http_client.post.await_args.kwargs["files"][0],
-            ("file", ("source.pdf", PDF_BYTES, "application/pdf")),
+            response.json()["detail"],
+            "Upload processing capacity is unavailable.",
         )
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
-        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
-        self.assertEqual(call_args["operation"], "pdf_conversion")
-        self.assertEqual(call_args["gateway_model"], "gateway/pdf-converter")
-        self.assertEqual(call_args["provider"], "converter")
-        self.assertEqual(call_args["model"], "pdf-converter")
+        fake_http_client.post.assert_not_awaited()
 
     def test_pdf_job_status_requires_model_and_proxies_get(self):
         downstream_payload = {
@@ -200,6 +326,7 @@ class PdfConversionApiTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, _dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.get(
                 "/v1/pdf/jobs/job-1",
                 params={"model": "gateway/pdf-converter"},
@@ -210,7 +337,7 @@ class PdfConversionApiTests(unittest.TestCase):
         self.assertEqual(response.json(), downstream_payload)
         fake_http_client.get.assert_awaited_once()
         self.assertEqual(fake_http_client.get.await_args.args[0], "https://converter.example/pdf/api/jobs/job-1")
-        client.app.state.tokens_usage_db.insert_usage.assert_not_called()
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_pdf_create_job_without_usage_does_not_record_usage(self):
         downstream_payload = {
@@ -219,6 +346,7 @@ class PdfConversionApiTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, _dispatcher, fake_http_client):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.post(
                 "/v1/pdf/jobs",
                 files=[
@@ -231,10 +359,10 @@ class PdfConversionApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), downstream_payload)
         fake_http_client.post.assert_awaited_once()
-        client.app.state.tokens_usage_db.insert_usage.assert_not_called()
-        client.app.state.tokens_usage_db.insert_usage_once.assert_not_called()
+        tokens_usage_db.insert_usage.assert_not_called()
+        tokens_usage_db.insert_usage_once.assert_not_called()
 
-    def test_pdf_job_terminal_usage_is_recorded_once_per_job(self):
+    def test_pdf_job_terminal_success_is_proxied_without_legacy_usage_write(self):
         downstream_payload = {
             "id": "job-1",
             "status": "completed",
@@ -247,7 +375,7 @@ class PdfConversionApiTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, _dispatcher, fake_http_client):
-            client.app.state.tokens_usage_db.insert_usage_once.side_effect = [True, False]
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             first_response = client.get(
                 "/v1/pdf/jobs/job-1",
                 params={"model": "gateway/pdf-converter"},
@@ -262,22 +390,10 @@ class PdfConversionApiTests(unittest.TestCase):
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
         self.assertEqual(fake_http_client.get.await_count, 2)
-        client.app.state.tokens_usage_db.insert_usage.assert_not_called()
-        self.assertEqual(client.app.state.tokens_usage_db.insert_usage_once.call_count, 2)
-        idempotency_key, usage_row = client.app.state.tokens_usage_db.insert_usage_once.call_args_list[0].args
-        self.assertIn("pdf_job_usage|master|gateway/pdf-converter|converter|pdf-converter|job-1", idempotency_key)
-        call_args = dict(usage_row)
-        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
-        self.assertEqual(call_args["operation"], "pdf_conversion")
-        self.assertEqual(call_args["gateway_model"], "gateway/pdf-converter")
-        self.assertEqual(call_args["provider"], "converter")
-        self.assertEqual(call_args["model"], "pdf-converter")
-        self.assertEqual(call_args["prompt_tokens"], 10)
-        self.assertEqual(call_args["completion_tokens"], 5)
-        self.assertEqual(call_args["total_tokens"], 15)
-        self.assertEqual(call_args["cost"], 0.25)
+        tokens_usage_db.insert_usage.assert_not_called()
+        tokens_usage_db.insert_usage_once.assert_not_called()
 
-    def test_pdf_job_failed_terminal_usage_is_recorded_once(self):
+    def test_pdf_job_failed_terminal_usage_is_not_charged_by_legacy_path(self):
         downstream_payload = {
             "id": "job-2",
             "status": "failed",
@@ -290,7 +406,7 @@ class PdfConversionApiTests(unittest.TestCase):
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, _dispatcher, _fake_http_client):
-            client.app.state.tokens_usage_db.insert_usage_once.return_value = True
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             response = client.get(
                 "/v1/pdf/jobs/job-2",
                 params={"model": "gateway/pdf-converter"},
@@ -298,10 +414,8 @@ class PdfConversionApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        client.app.state.tokens_usage_db.insert_usage_once.assert_called_once()
-        usage_row = dict(client.app.state.tokens_usage_db.insert_usage_once.call_args.args[1])
-        self.assertEqual(usage_row["total_tokens"], 3)
-        self.assertEqual(usage_row["cost"], 0.05)
+        tokens_usage_db.insert_usage.assert_not_called()
+        tokens_usage_db.insert_usage_once.assert_not_called()
 
     def test_pdf_download_proxies_raw_artifact(self):
         with self._client(

@@ -2,13 +2,19 @@ import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1 import audio as audio_api
 from llm_gateway_core.config.loader import ConfigLoader
 from llm_gateway_core.services.request_handler import OperationDispatcher
+from tests.images_audio_accounting_test_support import (
+    install_images_audio_accounting_passthrough,
+)
+from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
 
 VALID_PROVIDERS_TEXT = """
@@ -137,10 +143,21 @@ class AudioSpeechApiTests(unittest.TestCase):
             or _FakeDownstreamResponse(json_data={"voices": []}, content_type="application/json")
         )
         fake_http_client.aclose = AsyncMock()
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
 
         with ExitStack() as stack:
+            install_images_audio_accounting_passthrough(stack)
             stack.enter_context(patch("main.ConfigLoader", return_value=self.config_loader))
-            stack.enter_context(patch("main.httpx.AsyncClient", return_value=fake_http_client))
+            stack.enter_context(
+                patch("main.create_shared_http_client", return_value=fake_http_client)
+            )
+            stack.enter_context(
+                patch(
+                    "main.ConfigUpdateCoordinator",
+                    return_value=config_update_coordinator,
+                )
+            )
             stack.enter_context(patch("main.TokensUsageDB"))
             stack.enter_context(patch("main.start_usage_stats_cleanup_task", return_value=_FakeCleanupTask()))
             stack.enter_context(patch.object(main.settings, "gateway_api_key", "test-gateway-key"))
@@ -148,10 +165,15 @@ class AudioSpeechApiTests(unittest.TestCase):
             stack.enter_context(patch.object(main.settings, "verify_models_on_startup", "off"))
 
             with TestClient(main.app) as client:
-                dispatcher = getattr(client.app.state, "operation_dispatcher", None)
-                self.assertIsInstance(dispatcher, OperationDispatcher)
-                self.assertIs(client.app.state.http_client, fake_http_client)
-                yield client, dispatcher, fake_http_client
+                services = client.app.state.services
+                self.assertIs(services.http_client, fake_http_client)
+                lease = client.portal.call(services.runtime_manager.acquire_current)
+                try:
+                    dispatcher = lease.snapshot.operation_dispatcher
+                    self.assertIsInstance(dispatcher, OperationDispatcher)
+                    yield client, dispatcher, fake_http_client
+                finally:
+                    client.portal.call(lease.release)
 
     def test_audio_speech_json_request_proxies_to_downstream_and_records_usage(self):
         with self._client(_FakeDownstreamResponse(b"audio-bytes", content_type="audio/wav")) as (
@@ -159,6 +181,7 @@ class AudioSpeechApiTests(unittest.TestCase):
             dispatcher,
             fake_http_client,
         ):
+            tokens_usage_db = client.app.state.services.tokens_usage_db
             self.assertIsNotNone(dispatcher.lookup_route("audio_speech", "gateway/audio-speech"))
 
             response = client.post(
@@ -186,13 +209,7 @@ class AudioSpeechApiTests(unittest.TestCase):
                 "response_format": "wav",
             },
         )
-        client.app.state.tokens_usage_db.insert_usage.assert_called_once()
-        call_args = dict(client.app.state.tokens_usage_db.insert_usage.call_args[0][0])
-        self.assertGreaterEqual(call_args.pop("duration_ms"), 0)
-        self.assertEqual(call_args["operation"], "audio_speech")
-        self.assertEqual(call_args["gateway_model"], "gateway/audio-speech")
-        self.assertEqual(call_args["provider"], "openai")
-        self.assertEqual(call_args["model"], "tts-1")
+        tokens_usage_db.insert_usage.assert_not_called()
 
     def test_audio_speech_rejects_missing_input(self):
         with self._client(_FakeDownstreamResponse(b"unused")) as (client, _dispatcher, fake_http_client):
@@ -344,6 +361,39 @@ class AudioSpeechApiTests(unittest.TestCase):
             [call.args[0] for call in fake_http_client.get.await_args_list],
             ["https://openai.example/v1/voices", "https://openai.example/v1/tts-alt/voices"],
         )
+
+    def test_audio_voice_models_use_snapshot_over_conflicting_legacy_operation_rules(self):
+        services = make_app_services()
+        snapshot = make_runtime_snapshot(
+            config_loader=self.config_loader,
+            http_client=services.http_client,
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    services=services,
+                    operation_rules={audio_api.AUDIO_SPEECH_SECTION: {"legacy/audio-speech": {}}},
+                )
+            ),
+            state=SimpleNamespace(runtime_snapshot=snapshot, api_key_record=None),
+        )
+
+        self.assertEqual(
+            audio_api._allowed_audio_speech_model_names(request),
+            ["gateway/audio-speech", "gateway/audio-speech-alt"],
+        )
+
+    def test_audio_runtime_fails_closed_without_snapshot(self):
+        services = make_app_services()
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(services=services)),
+            state=SimpleNamespace(),
+        )
+
+        with self.assertRaises(AttributeError):
+            audio_api._get_operation_runtime(request)
+        with self.assertRaises(AttributeError):
+            audio_api._allowed_audio_speech_model_names(request)
 
     def test_audio_voices_unknown_model(self):
         with self._client(_FakeDownstreamResponse(b"unused")) as (client, _dispatcher, fake_http_client):

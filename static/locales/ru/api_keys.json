@@ -1,0 +1,105 @@
+{
+  "page": {
+    "documentTitle": "LLM Gateway — API-ключи",
+    "heading": "LLM Gateway — API-ключи",
+    "description": "Управление виртуальными API-ключами. Для каждого ключа можно задать бюджет в долларах США, лимиты RPM/TPM и список разрешённых моделей шлюза."
+  },
+  "toolbar": {
+    "refresh": "Обновить",
+    "create": "+ Создать API-ключ"
+  },
+  "table": {
+    "loading": "Загрузка API-ключей…",
+    "empty": "API-ключей пока нет. Создайте первый ключ.",
+    "columns": {
+      "name": "Название",
+      "key": "Ключ",
+      "status": "Статус",
+      "spentBudget": "Потрачено / Бюджет",
+      "reset": "Сброс",
+      "rateLimits": "RPM / TPM",
+      "allowedModels": "Разрешённые модели",
+      "lastUsed": "Последнее использование"
+    },
+    "status": {
+      "active": "Активен",
+      "disabled": "Отключён"
+    },
+    "values": {
+      "unlimited": "Без ограничений",
+      "allModels": "Все",
+      "notAvailable": "—",
+      "keyId": "ID {id}",
+      "resetNone": "—",
+      "resetDaily": "Ежедневно",
+      "resetMonthly": "Ежемесячно",
+      "resetUnknown": "Неизвестно"
+    },
+    "actions": {
+      "edit": "Изменить",
+      "delete": "Удалить"
+    },
+    "fullKeyTitle": "Откройте редактирование, чтобы увидеть ключ полностью",
+    "scrollHint": "Прокрутите по горизонтали"
+  },
+  "modal": {
+    "createTitle": "Создать API-ключ",
+    "editTitle": "Изменить: {name}",
+    "keyNotice": {
+      "label": "Значение API-ключа",
+      "description": "— полное значение доступно главным администраторам в этом окне."
+    },
+    "fields": {
+      "name": "Название",
+      "budget": "Бюджет, USD",
+      "budgetPeriod": "Период сброса бюджета",
+      "rpm": "RPM",
+      "tpm": "TPM",
+      "allowedModels": "Разрешённые модели",
+      "metadata": "Метаданные",
+      "disabled": "Отключён",
+      "resetSpent": "Сбросить spent_usd до 0"
+    },
+    "hints": {
+      "budget": "(оставьте пустым, чтобы не ограничивать)",
+      "budgetPeriod": "(периодический сброс spent_usd по времени UTC)",
+      "allowedModels": "(если ничего не отмечено, разрешены все модели)",
+      "metadata": "(необязательный JSON-объект)"
+    },
+    "placeholders": {
+      "name": "например, team-backend",
+      "budget": "например, 10.00",
+      "rpm": "запросов/мин",
+      "tpm": "токенов/мин",
+      "metadata": "'{'\"owner\": \"team-a\"'}'"
+    },
+    "budgetPeriods": {
+      "none": "Без сброса (накопительно)",
+      "daily": "Ежедневно (в 00:00 UTC)",
+      "monthly": "Ежемесячно (1-го числа в 00:00 UTC)"
+    },
+    "actions": {
+      "close": "Закрыть",
+      "save": "Сохранить"
+    }
+  },
+  "confirm": {
+    "delete": "Удалить API-ключ «{name}»? Это действие нельзя отменить."
+  },
+  "validation": {
+    "nameRequired": "Укажите название.",
+    "invalidNumber": "Введите корректное число.",
+    "invalidInteger": "Введите корректное целое число.",
+    "metadataObject": "Метаданные должны быть JSON-объектом.",
+    "invalidMetadata": "Метаданные должны содержать корректный JSON."
+  },
+  "status": {
+    "created": "API-ключ «{name}» создан.",
+    "updated": "API-ключ «{name}» обновлён.",
+    "deleted": "API-ключ «{name}» удалён."
+  },
+  "modelCatalogLoading": "Загрузка моделей…",
+  "modelCatalogEmpty": "Модели не найдены. Добавьте модели в редакторе правил.",
+  "modelCatalogError": "Не удалось загрузить модели.",
+  "modelCatalogRetry": "Повторить"
+}

@@ -12,21 +12,32 @@ Test plan:
 """
 from __future__ import annotations
 
+import json
 import unittest
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.auth_ui import auth_router
-from llm_gateway_core.api.v1.admin_topology import router as topology_router
-from llm_gateway_core.middleware.auth import ROLE_USER, api_key_auth
-from llm_gateway_core.services.active_requests import (
-    ACTIVE_REQUESTS_STATE_KEY,
-    ActiveRequestsRegistry,
+from llm_gateway_core.api.v1.admin_topology import (
+    get_topology,
+    router as topology_router,
 )
+from llm_gateway_core.config.loader import ConfigLoader
+from llm_gateway_core.middleware.auth import ApiKeyAuthMiddleware, ROLE_MASTER, ROLE_USER
+from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
+from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
+from tests._async_compat import run_async
+from tests.runtime_test_support import (
+    installed_runtime,
+    make_app_services,
+    make_runtime_snapshot,
+)
 import llm_gateway_core.api.v1.admin_topology as topo_module
 
 MASTER_KEY = "test-topology-master"
@@ -36,6 +47,22 @@ def _make_provider_details(name: str):  # noqa: ARG001
     return SimpleNamespace(baseUrl="https://fake.example.com", apikey="sk-fake")
 
 
+def _make_config_loader(
+    provider_names: list[str] | None = None,
+    fallback_rules: dict | None = None,
+) -> ConfigLoader:
+    loader = ConfigLoader()
+    names = provider_names or ["openai", "anthropic"]
+    loader.providers_config = {n: _make_provider_details(n) for n in names}
+    loader.fallback_rules = fallback_rules or {}
+    loader.operation_rules = {}
+    loader.fusion_rules = {}
+    loader.model_rules = {}
+    loader.router_rules = {}
+    loader._fallback_rules_base = {}
+    return loader
+
+
 def _build_app(
     *,
     provider_names: list[str] | None = None,
@@ -43,24 +70,25 @@ def _build_app(
     upstream_state: UpstreamRoutingState | None = None,
     registry: ActiveRequestsRegistry | None = None,
 ) -> FastAPI:
-    app = FastAPI()
-    app.middleware("http")(api_key_auth)
+    config_loader = _make_config_loader(provider_names, fallback_rules)
+    routing_state = upstream_state or UpstreamRoutingState()
+    reg = registry or ActiveRequestsRegistry()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        async with installed_runtime(
+            app,
+            config_loader=config_loader,
+            active_requests_registry=reg,
+            upstream_routing_state=routing_state,
+        ):
+            yield
+
+    app = FastAPI(lifespan=lifespan)
     app.include_router(auth_router)
     app.include_router(topology_router, prefix="/v1")
-
-    config_loader = MagicMock()
-    names = provider_names or ["openai", "anthropic"]
-    config_loader.providers_config = {n: _make_provider_details(n) for n in names}
-    # Default to an empty real dict so the model tier is empty unless a test
-    # supplies rules (a bare MagicMock attribute would iterate as empty too, but
-    # an explicit dict keeps intent clear).
-    config_loader.fallback_rules = fallback_rules or {}
-    app.state.config_loader = config_loader
-
-    app.state.upstream_routing_state = upstream_state or UpstreamRoutingState()
-
-    reg = registry or ActiveRequestsRegistry()
-    setattr(app.state, ACTIVE_REQUESTS_STATE_KEY, reg)
+    app.add_middleware(RuntimeSnapshotMiddleware)
+    app.add_middleware(ApiKeyAuthMiddleware)
 
     return app
 
@@ -124,7 +152,6 @@ class TopologyEndpointTests(unittest.TestCase):
         )
         reg.update("req-other-1", provider="anthropic", model="claude-3")
 
-        # Build a fresh app with fake auth middleware to bypass real DB lookup.
         from fastapi import Request
 
         async def fake_auth(request: Request, call_next):
@@ -132,18 +159,23 @@ class TopologyEndpointTests(unittest.TestCase):
             request.state.api_key_id = user_key_id
             return await call_next(request)
 
-        # Replace the app middleware stack by building a fresh app that uses our fake auth.
-        app2 = FastAPI()
-        app2.middleware("http")(fake_auth)
+        config_loader = _make_config_loader(["openai", "anthropic"])
+        routing_state = UpstreamRoutingState()
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            async with installed_runtime(
+                app,
+                config_loader=config_loader,
+                active_requests_registry=reg,
+                upstream_routing_state=routing_state,
+            ):
+                yield
+
+        app2 = FastAPI(lifespan=lifespan)
         app2.include_router(topology_router, prefix="/v1")
-        config_loader = MagicMock()
-        config_loader.providers_config = {
-            "openai": _make_provider_details("openai"),
-            "anthropic": _make_provider_details("anthropic"),
-        }
-        app2.state.config_loader = config_loader
-        app2.state.upstream_routing_state = UpstreamRoutingState()
-        setattr(app2.state, ACTIVE_REQUESTS_STATE_KEY, reg)
+        app2.add_middleware(RuntimeSnapshotMiddleware)
+        app2.middleware("http")(fake_auth)
 
         with TestClient(app2) as client:
             resp = client.get("/v1/topology")
@@ -336,6 +368,81 @@ class TopologyEndpointTests(unittest.TestCase):
         self.assertEqual(r2.status_code, 200)
         # Producer should only have been called once (cache hit on second request).
         self.assertEqual(len(build_calls), 1)
+
+    def test_topology_cache_isolated_by_runtime_generation_and_typed_dependencies(self):
+        captured_state = UpstreamRoutingState()
+        captured_state.mark_health("captured-n", "model", "fp", "error", "HTTP 500")
+        services_n = make_app_services(upstream_routing_state=captured_state)
+        loader_n = _make_config_loader(["captured-n"])
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    services=services_n,
+                    config_loader=_make_config_loader(["legacy"]),
+                    upstream_routing_state=UpstreamRoutingState(),
+                    active_requests_registry=MagicMock(),
+                )
+            ),
+            state=SimpleNamespace(
+                api_key_role=ROLE_MASTER,
+                runtime_snapshot=make_runtime_snapshot(
+                    generation=1,
+                    config_loader=loader_n,
+                ),
+            ),
+        )
+
+        first = json.loads(run_async(get_topology(request)).body)
+
+        request.app.state.services = make_app_services()
+        request.state.runtime_snapshot = make_runtime_snapshot(
+            generation=2,
+            config_loader=_make_config_loader(["captured-n1"]),
+        )
+        second = json.loads(run_async(get_topology(request)).body)
+
+        first_providers = {node["id"] for node in first["nodes"] if node["type"] == "provider"}
+        second_providers = {
+            node["id"] for node in second["nodes"] if node["type"] == "provider"
+        }
+        self.assertEqual(first_providers, {"provider:captured-n"})
+        self.assertEqual(first["health_by_provider"], {"captured-n": "error"})
+        self.assertEqual(second_providers, {"provider:captured-n1"})
+        self.assertEqual(
+            set(topo_module._topology_cache._entries),
+            {
+                (1, ROLE_MASTER, None),
+                (2, ROLE_MASTER, None),
+            },
+        )
+        self.assertEqual(topo_module._topology_cache._max_entries, 128)
+
+    def test_topology_rejects_malformed_user_identity_before_dependencies(self):
+        registry = MagicMock(spec=ActiveRequestsRegistry)
+        services = make_app_services(active_requests_registry=registry)
+
+        async def fail_cache(*_args, **_kwargs):
+            raise AssertionError("cache must not be consulted")
+
+        with patch.object(topo_module._topology_cache, "get_or_compute", fail_cache):
+            for malformed in (None, 0, -1, True, 1.0, "1"):
+                with self.subTest(api_key_id=malformed):
+                    request = SimpleNamespace(
+                        app=SimpleNamespace(state=SimpleNamespace(services=services)),
+                        state=SimpleNamespace(
+                            api_key_role=ROLE_USER,
+                            api_key_id=malformed,
+                        ),
+                    )
+                    with self.assertRaises(HTTPException) as raised:
+                        run_async(get_topology(request))
+                    self.assertEqual(raised.exception.status_code, 401)
+                    self.assertEqual(
+                        raised.exception.detail,
+                        "Authentication required.",
+                    )
+
+        registry.list_records.assert_not_called()
 
     def test_topology_anonymous_401(self):
         """Unauthenticated request returns 401."""

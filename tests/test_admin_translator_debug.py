@@ -11,8 +11,9 @@ from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.v1.admin_translator_debug import translator_debug_router
 from llm_gateway_core.config.paths import STATIC_DIR
-from llm_gateway_core.middleware.auth import api_key_auth
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
+from llm_gateway_core.middleware.auth import api_key_auth
+from tests.runtime_test_support import bind_app_services
 
 
 MASTER_KEY = "test-master-key"
@@ -23,11 +24,14 @@ class FakeApiKeysDB:
         self.record = record
 
     def get_by_key(self, key: str) -> ApiKeyRecord | None:
-        return self.record
+        if self.record is not None and key == self.record.api_key:
+            return self.record
+        return None
 
 
-def _build_app() -> FastAPI:
+def _build_app(api_keys_db: FakeApiKeysDB) -> FastAPI:
     app = FastAPI()
+    bind_app_services(app, api_keys_db=api_keys_db)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.middleware("http")(api_key_auth)
     app.include_router(translator_debug_router, prefix="/v1")
@@ -49,17 +53,16 @@ def _make_user_record() -> ApiKeyRecord:
 
 class TranslatorDebugTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.gateway_key_patcher = patch(
-            "llm_gateway_core.middleware.auth.settings.gateway_api_key",
-            MASTER_KEY,
+        self.enterContext(
+            patch(
+                "llm_gateway_core.middleware.auth.settings.gateway_api_key",
+                MASTER_KEY,
+            )
         )
-        self.gateway_key_patcher.start()
-        self.app = _build_app()
-        self.client = TestClient(self.app, raise_server_exceptions=False)
-
-    def tearDown(self) -> None:
-        self.client.close()
-        self.gateway_key_patcher.stop()
+        self.app = _build_app(FakeApiKeysDB(_make_user_record()))
+        self.client = self.enterContext(
+            TestClient(self.app, raise_server_exceptions=False)
+        )
 
     def _master_headers(self) -> dict:
         return {"Authorization": f"Bearer {MASTER_KEY}"}
@@ -254,7 +257,7 @@ class TranslatorDebugTests(unittest.TestCase):
             },
             headers={"Authorization": "Bearer virtual-key"},
         )
-        self.assertIn(resp.status_code, (403, 401))
+        self.assertEqual(resp.status_code, 403)
 
     # ── 8. Master → 200 ──────────────────────────────────────────────────────
     def test_master_200(self):

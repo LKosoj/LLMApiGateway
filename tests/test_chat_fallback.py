@@ -1,6 +1,7 @@
 import json
 import copy
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -10,12 +11,37 @@ from fastapi.testclient import TestClient
 import main
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from llm_gateway_core.services.upstream_routing_state import fingerprint_api_key
+from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
 class ChatFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack,
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        patchers = (
+            patch.object(main.AtomicConfigFileTransaction, "recover_pending"),
+            patch(
+                "llm_gateway_core.services.runtime_candidate."
+                "build_operation_cost_calculator_registry",
+                return_value={},
+            ),
+            patch(
+                "main.ConfigUpdateCoordinator",
+                return_value=config_update_coordinator,
+            ),
+        )
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_unknown_model_uses_configured_fallback_provider(
         self,
@@ -38,6 +64,7 @@ class ChatFallbackTests(unittest.TestCase):
         fake_config_loader.fallback_rules = {}
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -69,7 +96,7 @@ class ChatFallbackTests(unittest.TestCase):
     @patch("llm_gateway_core.api.v1.chat.logging.warning")
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_failed_attempt_log_can_include_messages_when_debug_flag_enabled(
         self,
@@ -109,6 +136,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -155,7 +183,7 @@ class ChatFallbackTests(unittest.TestCase):
     @patch("llm_gateway_core.api.v1.chat.logging.warning")
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_failed_attempt_log_reports_missing_messages_key_when_debug_flag_enabled(
         self,
@@ -195,6 +223,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -229,7 +258,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_temporarily_unavailable_model_is_skipped_during_cooldown(
         self,
@@ -268,6 +297,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -314,7 +344,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_json_object_response_removes_markdown_wrapper(
         self,
@@ -344,6 +374,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -385,7 +416,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_streaming_json_object_response_removes_markdown_wrapper(
         self,
@@ -415,6 +446,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -471,7 +503,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_streaming_json_object_sanitizes_final_unterminated_event(
         self,
@@ -501,6 +533,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -510,6 +543,7 @@ class ChatFallbackTests(unittest.TestCase):
         async def stream_body():
             yield b'data: {"id":"stream-json-1","created":1735689600,"choices":[{"delta":{"content":"```json\\n{\\"ok\\":true}\\n"}}]}\n\n'
             yield b'data: {"id":"stream-json-1","created":1735689600,"choices":[{"delta":{"content":"```"}}]}'
+            yield b"\n\ndata: [DONE]\n\n"
 
         make_llm_request_mock.return_value = (
             StreamingResponse(stream_body(), media_type="text/event-stream"),
@@ -544,10 +578,11 @@ class ChatFallbackTests(unittest.TestCase):
                 if isinstance(content, str):
                     streamed_content.append(content)
         self.assertEqual("".join(streamed_content), '{"ok":true}')
+        self.assertIn("data: [DONE]", response_text)
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_non_json_response_preserves_think_tags_when_flag_disabled(
         self,
@@ -578,6 +613,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -618,7 +654,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_non_json_response_strips_think_tags_when_flag_enabled(
         self,
@@ -649,6 +685,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -686,7 +723,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_streaming_non_json_response_strips_think_tags_when_flag_enabled(
         self,
@@ -717,6 +754,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -790,11 +828,12 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         return fake_config_loader
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_anthropic_raw_response_preserves_think_tags_when_flag_disabled(
         self,
@@ -845,7 +884,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_anthropic_raw_response_strips_think_tags_when_flag_enabled(
         self,
@@ -893,7 +932,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_anthropic_raw_streaming_strips_think_tags_when_flag_enabled(
         self,
@@ -1004,7 +1043,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_anthropic_raw_streaming_drops_unclosed_think_block(
         self,
@@ -1079,7 +1118,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_anthropic_raw_streaming_strips_think_per_block_index(
         self,
@@ -1159,7 +1198,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_retry_preserves_payload_between_attempts(
         self,
@@ -1191,6 +1230,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1233,7 +1273,7 @@ class ChatFallbackTests(unittest.TestCase):
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.ModelRotationDB", return_value=Mock(get_next_model_index=AsyncMock(return_value=0)))
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_model_rotation_uses_normalized_api_key_for_valid_bearer_variants(
         self,
@@ -1270,6 +1310,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1304,7 +1345,7 @@ class ChatFallbackTests(unittest.TestCase):
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.ModelRotationDB", return_value=Mock(get_next_model_index=AsyncMock(return_value=0)))
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_model_rotation_uses_virtual_key_id_scope(
         self,
@@ -1317,6 +1358,10 @@ class ChatFallbackTests(unittest.TestCase):
         class FakeApiKeysDB:
             def __init__(self, record):
                 self.record = record
+
+            @property
+            def db_path(self):
+                return main.resolve_db_dir() / "tokens_usage.db"
 
             def get_by_key(self, api_key):
                 return self.record if api_key == self.record.api_key else None
@@ -1357,6 +1402,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1390,7 +1436,7 @@ class ChatFallbackTests(unittest.TestCase):
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.ModelRotationDB", return_value=Mock(get_next_model_index=AsyncMock(return_value=1)))
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_model_rotation_calls_async_db_method_directly(
         self,
@@ -1427,6 +1473,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1447,7 +1494,7 @@ class ChatFallbackTests(unittest.TestCase):
         self.assertEqual(make_llm_request_mock.await_args.args[3]["model"], "provider-model-2")
 
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_missing_provider_returns_controlled_5xx_error(
         self,
@@ -1471,6 +1518,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1491,10 +1539,10 @@ class ChatFallbackTests(unittest.TestCase):
         self.assertNotIn("Traceback", response.text)
         self.assertNotIn("AttributeError", response.text)
 
-    @patch("llm_gateway_core.api.v1.chat.asyncio.sleep", new_callable=AsyncMock)
+    @patch("llm_gateway_core.api.v1.chat.asyncio")
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_null_retry_delay_uses_safe_normalized_value(
         self,
@@ -1502,8 +1550,10 @@ class ChatFallbackTests(unittest.TestCase):
         async_client_ctor,
         _tokens_usage_db,
         make_llm_request_mock,
-        sleep_mock,
+        asyncio_mock,
     ):
+        sleep_mock = AsyncMock()
+        asyncio_mock.sleep = sleep_mock
         fake_config_loader = Mock()
         fake_config_loader.providers_config = {
             "test-provider": SimpleNamespace(
@@ -1527,6 +1577,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1551,10 +1602,10 @@ class ChatFallbackTests(unittest.TestCase):
         self.assertEqual(make_llm_request_mock.await_count, 2)
         sleep_mock.assert_not_awaited()
 
-    @patch("llm_gateway_core.api.v1.chat.asyncio.sleep", new_callable=AsyncMock)
+    @patch("llm_gateway_core.api.v1.chat.asyncio")
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_chain_attempt_budget_exhaustion_does_not_sleep_before_exit(
         self,
@@ -1562,8 +1613,10 @@ class ChatFallbackTests(unittest.TestCase):
         async_client_ctor,
         _tokens_usage_db,
         make_llm_request_mock,
-        sleep_mock,
+        asyncio_mock,
     ):
+        sleep_mock = AsyncMock()
+        asyncio_mock.sleep = sleep_mock
         fake_config_loader = Mock()
         fake_config_loader.providers_config = {
             "test-provider": SimpleNamespace(
@@ -1588,6 +1641,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1609,7 +1663,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_context_overflow_switches_to_dedicated_fallback_before_next_regular_model(
         self,
@@ -1651,6 +1705,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1683,7 +1738,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_context_overflow_fallback_applies_json_object_sanitization(
         self,
@@ -1718,6 +1773,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()
@@ -1765,7 +1821,7 @@ class ChatFallbackTests(unittest.TestCase):
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")
-    @patch("main.httpx.AsyncClient")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
     def test_generic_error_does_not_trigger_dedicated_context_fallback(
         self,
@@ -1805,6 +1861,7 @@ class ChatFallbackTests(unittest.TestCase):
         }
         fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
         fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
         config_loader_cls.return_value = fake_config_loader
 
         fake_http_client = Mock()

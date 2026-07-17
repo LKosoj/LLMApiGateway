@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from llm_gateway_core.config.paths import resolve_db_dir
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from tests._async_compat import run_async
 
@@ -16,8 +17,7 @@ def _unlink_sqlite_files(db_path: Path) -> None:
 
 class StatsDstSafeTests(unittest.TestCase):
     def test_hourly_buckets_remain_unique_across_dst_fold(self):
-        db_path = Path("db/test_stats_dst_safe.sqlite")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_db_dir() / "test_stats_dst_safe.sqlite"
 
         try:
             db = TokensUsageDB(db_filename=db_path.name)
