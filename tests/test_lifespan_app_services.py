@@ -352,6 +352,7 @@ def _lifespan_environment():
             patch("main.run_deep_research_images_cleanup_loop", _parked_loop)
         )
         stack.enter_context(patch("main.run_budget_reset_loop", _parked_loop))
+        stack.enter_context(patch("main.run_free_llm_catalog_loop", _parked_loop))
         yield SimpleNamespace(
             events=events,
             state_sets=state_sets,
@@ -592,6 +593,32 @@ class LifespanAppServicesTests(unittest.TestCase):
 
         run_async(scenario())
 
+    def test_free_llm_catalog_task_runs_refresh_through_service(self) -> None:
+        async def scenario() -> None:
+            service = Mock()
+            service.refresh_once = AsyncMock()
+            service.get_status = AsyncMock(return_value={"updatedAt": None})
+            fake_http_client = Mock()
+            supervisor = TaskSupervisor()
+            task = main.start_free_llm_catalog_task(
+                service,
+                http_client=fake_http_client,
+                supervisor=supervisor,
+            )
+            for _attempt in range(100):
+                if service.refresh_once.await_count:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(service.refresh_once.await_count, 1)
+            service.refresh_once.assert_awaited_once_with(fake_http_client)
+            await supervisor.close()
+            self.assertTrue(task.done())
+
+        # conftest.py defaults FREE_LLM_CATALOG_ENABLED to "false" for tests;
+        # this test exercises the enabled fetch path.
+        with patch.object(main.settings, "free_llm_catalog_enabled", True):
+            run_async(scenario())
+
     def test_resource_stack_drain_finishes_every_callback_before_cancellation(self) -> None:
         async def scenario() -> None:
             events: list[str] = []
@@ -743,7 +770,7 @@ class LifespanAppServicesTests(unittest.TestCase):
                     services.runtime_manager.pending_unpublished_generations,
                     (),
                 )
-                self.assertEqual(services.task_supervisor.task_count, 4)
+                self.assertEqual(services.task_supervisor.task_count, 5)
                 self.assertIs(
                     services.config_update_coordinator,
                     env.coordinators[0],
@@ -778,6 +805,7 @@ class LifespanAppServicesTests(unittest.TestCase):
                         "task:deep-research-images-cleanup",
                         "task:budget-reset",
                         "task:capability-autofill",
+                        "task:free-llm-catalog",
                         "deep-research:start",
                         "state:services",
                     ],

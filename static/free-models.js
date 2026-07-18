@@ -1,0 +1,344 @@
+document.addEventListener('DOMContentLoaded', () => {
+    'use strict';
+
+    const { apiFetch, bootstrapRoleUI } = window.gatewayAuth;
+    const i18n = window.gatewayI18n;
+
+    const freeModelsList = document.getElementById('free-models-list');
+    const sourceMetaEl = document.getElementById('free-models-source-meta');
+    const filterHintEl = document.getElementById('free-models-filter-hint');
+    const statusEl = document.getElementById('free-models-status');
+    const errorDetailEl = document.getElementById('free-models-error-detail');
+    const retryButton = document.getElementById('free-models-retry');
+
+    const LIMIT_KEYS = Object.freeze({
+        rpm: 'free_models:limits.rpm',
+        rpd: 'free_models:limits.rpd',
+        tpm: 'free_models:limits.tpm',
+        tpd: 'free_models:limits.tpd',
+    });
+
+    Theme.attachToggle('darkModeToggle');
+
+    const freeModelsStatus = window.gatewayUi.createStatus(statusEl, {
+        rawDetailElement: errorDetailEl,
+        renderMessage: (message) => i18n.t(message.key, message.values || {}),
+    });
+
+    const copyTimers = new Map();
+    let snapshot = null;
+    let pageState = 'loading';
+    let displayError = null;
+    let inFlight = false;
+    let stopped = false;
+    let unsubscribeLocale = null;
+
+    function createNode(tagName, className = '', text = null) {
+        const node = document.createElement(tagName);
+        if (className) node.className = className;
+        if (text !== null) node.textContent = String(text);
+        return node;
+    }
+
+    function markTechnical(node) {
+        node.lang = 'und';
+        node.dir = 'auto';
+        return node;
+    }
+
+    function formatCompactNumber(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return '';
+        const abs = Math.abs(number);
+        if (abs >= 1_000_000) return `${i18n.formatNumber(Math.round(number / 1_000_000))}M`;
+        if (abs >= 1_000) return `${i18n.formatNumber(Math.round(number / 1_000))}K`;
+        return i18n.formatNumber(number);
+    }
+
+    function formatUpdatedAt() {
+        if (!snapshot || snapshot.updatedAt === null) return '';
+        const date = new Date(snapshot.updatedAt);
+        if (Number.isNaN(date.getTime())) return String(snapshot.updatedAt);
+        return i18n.formatDate(date, {dateStyle: 'medium', timeStyle: 'medium'});
+    }
+
+    function clearCopyTimers() {
+        copyTimers.forEach((timer) => window.clearTimeout(timer));
+        copyTimers.clear();
+    }
+
+    async function copyModelId(button, modelId) {
+        try {
+            await navigator.clipboard.writeText(modelId);
+            if (stopped || !button.isConnected) return;
+            button.textContent = i18n.t('free_models:modelIdCopied');
+        } catch (error) {
+            if (stopped || !button.isConnected) return;
+            button.textContent = i18n.t('free_models:modelIdCopyFailed');
+        }
+        if (copyTimers.has(button)) window.clearTimeout(copyTimers.get(button));
+        copyTimers.set(button, window.setTimeout(() => {
+            copyTimers.delete(button);
+            if (!stopped && button.isConnected) button.textContent = i18n.t('free_models:modelIdCopy');
+        }, 1500));
+    }
+
+    function createCopyButton(modelId) {
+        const button = createNode('button', 'free-models-copy', i18n.t('free_models:modelIdCopy'));
+        button.type = 'button';
+        button.addEventListener('click', () => void copyModelId(button, modelId));
+        return button;
+    }
+
+    function renderLimits(limits) {
+        const wrap = createNode('div', 'free-models-limits');
+        Object.keys(LIMIT_KEYS).forEach((key) => {
+            const value = limits ? limits[key] : null;
+            if (value === null || value === undefined) return;
+            const badge = createNode('span', 'free-models-limit');
+            badge.textContent = `${i18n.t(LIMIT_KEYS[key])} ${i18n.formatNumber(Number(value))}`;
+            wrap.appendChild(badge);
+        });
+        return wrap;
+    }
+
+    function renderBadges(model) {
+        const badges = [];
+        if (model.supportsVision) badges.push(createNode('span', 'free-models-badge', i18n.t('free_models:vision')));
+        if (model.supportsTools) badges.push(createNode('span', 'free-models-badge', i18n.t('free_models:tools')));
+        if (badges.length === 0) return null;
+        const wrap = createNode('div', 'free-models-badges');
+        wrap.append(...badges);
+        return wrap;
+    }
+
+    function renderQuirks(quirks) {
+        const details = document.createElement('details');
+        details.className = 'free-models-quirks';
+        details.appendChild(createNode('summary', '', i18n.t('free_models:quirksSummary', {count: quirks.length})));
+        quirks.forEach((quirk) => {
+            const item = createNode('div', 'free-models-quirk');
+            item.appendChild(createNode('div', 'free-models-quirk-title', quirk.title));
+            if (quirk.body) item.appendChild(createNode('p', 'free-models-quirk-body', quirk.body));
+            details.appendChild(item);
+        });
+        return details;
+    }
+
+    function renderModelRow(model) {
+        const row = createNode('div', 'free-models-model');
+        row.dataset.freeModelsModelId = model.modelId;
+
+        const header = createNode('div', 'free-models-model-header');
+        header.appendChild(createNode('span', 'free-models-model-name', model.displayName));
+        header.appendChild(markTechnical(createNode('code', 'free-models-model-id', model.modelId)));
+        header.appendChild(createCopyButton(model.modelId));
+        row.appendChild(header);
+
+        row.appendChild(createNode(
+            'div',
+            'free-models-budget',
+            `${i18n.t('free_models:budgetLabel')} ${model.monthlyTokenBudget}`,
+        ));
+
+        const meta = createNode('div', 'free-models-meta-row');
+        if (model.contextWindow !== null && model.contextWindow !== undefined) {
+            meta.appendChild(createNode(
+                'span',
+                'free-models-context',
+                `${i18n.t('free_models:contextLabel')} ${formatCompactNumber(model.contextWindow)}`,
+            ));
+        }
+        const badges = renderBadges(model);
+        if (badges) meta.appendChild(badges);
+        if (meta.childNodes.length > 0) row.appendChild(meta);
+
+        row.appendChild(renderLimits(model.limits));
+
+        if (Array.isArray(model.quirks) && model.quirks.length > 0) {
+            row.appendChild(renderQuirks(model.quirks));
+        }
+
+        return row;
+    }
+
+    function renderProviderCard(provider) {
+        const card = createNode('div', 'free-models-provider');
+        card.dataset.freeModelsProviderId = provider.id;
+        const header = createNode('div', 'free-models-provider-header');
+        header.appendChild(createNode('span', 'free-models-provider-name', provider.name));
+        card.appendChild(header);
+        provider.models.forEach((model) => card.appendChild(renderModelRow(model)));
+        return card;
+    }
+
+    function renderStateMessage(text) {
+        const node = createNode('p', 'free-models-empty', text);
+        node.dataset.freeModelsField = 'state-message';
+        freeModelsList.replaceChildren(node);
+    }
+
+    function renderProviders(providers) {
+        clearCopyTimers();
+        freeModelsList.replaceChildren(...providers.map(renderProviderCard));
+    }
+
+    function renderListContent() {
+        if (pageState === 'loading') {
+            renderStateMessage(i18n.t('free_models:loading'));
+        } else if (pageState === 'unavailable') {
+            renderStateMessage(i18n.t('free_models:unavailable'));
+        } else if (pageState === 'empty') {
+            renderStateMessage(i18n.t('free_models:empty'));
+        } else {
+            renderProviders(snapshot.providers);
+        }
+    }
+
+    function updateSourceMeta() {
+        if (snapshot && snapshot.sourceVersion !== null && snapshot.sourceGeneratedAt !== null) {
+            const date = new Date(snapshot.sourceGeneratedAt);
+            const formatted = Number.isNaN(date.getTime())
+                ? snapshot.sourceGeneratedAt
+                : i18n.formatDate(date, {dateStyle: 'medium', timeStyle: 'short'});
+            sourceMetaEl.textContent = i18n.t('free_models:sourceMeta', {
+                version: snapshot.sourceVersion,
+                date: formatted,
+            });
+        } else {
+            sourceMetaEl.textContent = '';
+        }
+    }
+
+    function updateFilterHint() {
+        if (snapshot && Number.isFinite(Number(snapshot.minMonthlyTokens))) {
+            filterHintEl.textContent = i18n.t('free_models:filterHint', {
+                threshold: formatCompactNumber(snapshot.minMonthlyTokens),
+            });
+        } else {
+            filterHintEl.textContent = '';
+        }
+    }
+
+    function publishStatus() {
+        if (pageState === 'loading') {
+            freeModelsStatus.busy({key: 'free_models:loading'});
+        } else if (pageState === 'unavailable') {
+            freeModelsStatus.error({key: 'free_models:unavailable'}, {rawDetail: displayError});
+        } else if (pageState === 'stale') {
+            freeModelsStatus.error(
+                {key: 'free_models:stale', values: {time: formatUpdatedAt()}},
+                {rawDetail: displayError},
+            );
+        } else {
+            freeModelsStatus.polite({key: 'free_models:updated', values: {time: formatUpdatedAt()}});
+        }
+    }
+
+    function renderChrome() {
+        freeModelsList.dataset.freeModelsState = pageState;
+        retryButton.hidden = !(pageState === 'unavailable' || pageState === 'stale');
+        retryButton.textContent = i18n.t('free_models:retry');
+        updateSourceMeta();
+        updateFilterHint();
+        renderListContent();
+    }
+
+    function render() {
+        renderChrome();
+        publishStatus();
+    }
+
+    function captureViewState() {
+        return {
+            activeElement: document.activeElement,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY,
+        };
+    }
+
+    function restoreViewState(state) {
+        if (state.activeElement?.isConnected) {
+            state.activeElement.focus({preventScroll: true});
+        }
+        window.scrollTo(state.scrollX, state.scrollY);
+    }
+
+    function rerenderLocale() {
+        const viewState = captureViewState();
+        renderChrome();
+        freeModelsStatus.rerender();
+        restoreViewState(viewState);
+    }
+
+    function applySnapshotState(data) {
+        snapshot = data;
+        if (snapshot.updatedAt === null) {
+            pageState = 'unavailable';
+            displayError = snapshot.lastError;
+        } else if (snapshot.lastError !== null) {
+            pageState = 'stale';
+            displayError = snapshot.lastError;
+        } else if (snapshot.providers.length === 0) {
+            pageState = 'empty';
+            displayError = null;
+        } else {
+            pageState = 'ready';
+            displayError = null;
+        }
+        render();
+    }
+
+    function applyNetworkErrorState(message) {
+        pageState = snapshot !== null && snapshot.updatedAt !== null ? 'stale' : 'unavailable';
+        displayError = message;
+        render();
+    }
+
+    async function fetchFreeModels() {
+        if (inFlight || stopped) return;
+        inFlight = true;
+        retryButton.disabled = true;
+        try {
+            const response = await apiFetch('/v1/api/free-models');
+            if (stopped) return;
+            if (!response.ok) throw new Error(`Free models request failed with status ${response.status}`);
+            const data = await response.json();
+            if (stopped) return;
+            if (!data || typeof data !== 'object' || !Array.isArray(data.providers)) {
+                throw new Error('Free models response has an unexpected shape');
+            }
+            applySnapshotState(data);
+        } catch (error) {
+            if (stopped) return;
+            if (error.message === 'Authentication required') return;
+            applyNetworkErrorState(error.message);
+            console.warn('Free models data request failed');
+        } finally {
+            inFlight = false;
+            retryButton.disabled = false;
+        }
+    }
+
+    retryButton.addEventListener('click', () => {
+        if (inFlight) return;
+        if (snapshot === null) {
+            pageState = 'loading';
+            render();
+        }
+        void fetchFreeModels();
+    });
+
+    window.addEventListener('beforeunload', () => {
+        stopped = true;
+        clearCopyTimers();
+        unsubscribeLocale?.();
+    });
+
+    Promise.all([bootstrapRoleUI(), i18n.ready]).then(() => {
+        if (stopped) return;
+        unsubscribeLocale = i18n.subscribe(rerenderLocale);
+        render();
+        void fetchFreeModels();
+    }).catch(() => undefined);
+});

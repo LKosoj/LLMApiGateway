@@ -25,7 +25,8 @@
     "pricing",
     "quota",
     "rejections",
-    "translator"
+    "translator",
+    "free_models"
   ],
   "pageNamespaces": {
     "runtime": [
@@ -71,6 +72,10 @@
     "translator": [
       "common",
       "translator"
+    ],
+    "free-models": [
+      "common",
+      "free_models"
     ]
   }
 }

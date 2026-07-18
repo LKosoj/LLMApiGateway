@@ -12,6 +12,7 @@ BROWSER_TEST_MODULES = (
     "tests/test_admin_pricing_browser.py",
     "tests/test_audio_ui.py",
     "tests/test_embeddings_ui.py",
+    "tests/test_free_models_browser.py",
     "tests/test_images_ui.py",
     "tests/test_operation_cost_calculator_browser.py",
     "tests/test_quota_ui.py",
@@ -112,7 +113,7 @@ def test_browser_marker_is_registered_and_applied_to_every_browser_module():
         assert re.search(r"^pytestmark = pytest\.mark\.browser$", content, flags=re.MULTILINE), module
 
 
-def test_browser_marker_collects_exactly_117_tests_from_the_expected_modules():
+def test_browser_marker_collects_exactly_124_tests_from_the_expected_modules():
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only", "-q", "-m", "browser"],
         cwd=PROJECT_ROOT,
@@ -126,7 +127,7 @@ def test_browser_marker_collects_exactly_117_tests_from_the_expected_modules():
 
     assert result.returncode == 0, output
     assert "PytestUnknownMarkWarning" not in output
-    assert len(node_ids) == 117
+    assert len(node_ids) == 124
     assert collected_modules == set(BROWSER_TEST_MODULES)
 
 
@@ -189,11 +190,11 @@ def test_browser_job_proves_collection_and_cannot_silently_skip_tests():
     assert "python -m playwright install --with-deps chromium" in browser
     assert "python -m pytest --fixtures -q" in browser
     assert "python -m pytest --collect-only -q -m browser" in browser
-    assert 'test "$collected" -eq 117' in browser
+    assert 'test "$collected" -eq 124' in browser
     assert "python -m pytest -q -rs -m browser" in browser
     assert "browser-pytest.log" in browser
     assert "skipped" in browser
-    assert "117 passed" in browser
+    assert "124 passed" in browser
 
 
 def test_ui_runtime_job_uses_the_exact_lock_and_rejects_bundle_drift():

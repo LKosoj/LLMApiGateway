@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" data-i18n-page="free-models">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="free_models:pageTitle">LLM Gateway - Free LLM Catalog</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/theme.css">
+    <link rel="stylesheet" href="/static/free-models.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
+    <script src="/static/theme.js"></script>
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
+        </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
+    </div>
+
+    <div class="container">
+        <h1 data-i18n="free_models:heading">Free LLM Catalog</h1>
+        <p class="free-models-intro" data-i18n="free_models:intro">Free-tier LLM providers and models pulled from freellmapi.co.</p>
+
+        <p class="free-models-source">
+            <span data-i18n="free_models:sourceLabel">Data source:</span>
+            <a href="https://freellmapi.co/models" target="_blank" rel="noopener" data-i18n="free_models:sourceLinkText">freellmapi.co</a>
+            <span id="free-models-source-meta" class="free-models-source-meta"></span>
+        </p>
+
+        <p id="free-models-filter-hint" class="free-models-filter-hint"></p>
+
+        <div id="free-models-list" class="free-models-list" data-free-models-state="loading">
+            <p class="free-models-empty" data-free-models-field="state-message" data-i18n="free_models:loading">Loading the free-tier catalog…</p>
+        </div>
+
+        <div class="free-models-status-row">
+            <div id="free-models-status"></div>
+            <div id="free-models-error-detail" class="free-models-error-detail"></div>
+            <button id="free-models-retry" type="button" class="free-models-retry" data-i18n="free_models:retry" hidden>Retry</button>
+        </div>
+    </div>
+
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
+    <script src="/static/free-models.js"></script>
+</body>
+</html>

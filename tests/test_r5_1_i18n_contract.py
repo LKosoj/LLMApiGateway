@@ -49,6 +49,7 @@ def test_r5_1_registry_has_equal_ru_en_catalog_topology() -> None:
         "quota",
         "rejections",
         "translator",
+        "free_models",
     }
     for locale in registry["locales"]:
         for namespace in registry["namespaces"]:

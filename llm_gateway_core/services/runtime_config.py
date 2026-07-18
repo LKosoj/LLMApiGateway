@@ -29,6 +29,7 @@ from .capability_autofill import CapabilityAutofillService
 from .config_updates import ConfigUpdateCoordinator
 from .deep_research_process import DeepResearchProcessRunner
 from .fallback_model_evals import FallbackModelEvalService
+from .free_llm_catalog import FreeLlmCatalogService
 from .fusion_ensemble import FusionEnsembleService
 from .health import HealthService
 from .http_client_factory import close_http_clients
@@ -122,6 +123,7 @@ class AppServices:
     openrouter_free_models_service: OpenRouterFreeModelsService
     fallback_model_eval_service: FallbackModelEvalService
     capability_autofill_service: CapabilityAutofillService
+    free_llm_catalog_service: FreeLlmCatalogService
     deep_research_process_runner: DeepResearchProcessRunner
     upload_admission: UploadAdmission
     upload_admission_timeout_seconds: float

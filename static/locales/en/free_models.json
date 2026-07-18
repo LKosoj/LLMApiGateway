@@ -1,0 +1,29 @@
+{
+  "pageTitle": "LLM Gateway - Free LLM Catalog",
+  "heading": "Free LLM Catalog",
+  "intro": "Free-tier LLM providers and models pulled from freellmapi.co, limited to models with a reasonably large monthly token budget.",
+  "sourceLabel": "Data source:",
+  "sourceLinkText": "freellmapi.co",
+  "sourceMeta": "catalog version {version} · loaded {date}",
+  "filterHint": "Only models whose source-reported monthly token budget lower bound is at least {threshold} tokens/month are shown.",
+  "loading": "Loading the free-tier catalog…",
+  "unavailable": "Free-tier catalog data is unavailable.",
+  "empty": "No free-tier models currently clear the monthly token threshold.",
+  "updated": "Loaded: {time}",
+  "stale": "Catalog data may be outdated (as of {time}).",
+  "retry": "Retry",
+  "budgetLabel": "Monthly budget:",
+  "contextLabel": "Context:",
+  "limits": {
+    "rpm": "RPM",
+    "rpd": "RPD",
+    "tpm": "TPM",
+    "tpd": "TPD"
+  },
+  "vision": "Vision",
+  "tools": "Tools",
+  "modelIdCopy": "Copy",
+  "modelIdCopied": "Copied!",
+  "modelIdCopyFailed": "Copy failed",
+  "quirksSummary": "Connection quirks ({count})"
+}

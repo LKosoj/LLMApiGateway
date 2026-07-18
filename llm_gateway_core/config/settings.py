@@ -242,6 +242,13 @@ class Settings(BaseSettings):
     web_read_cloakbrowser_enabled: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_ENABLED", False)
     web_read_cloakbrowser_no_sandbox: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_NO_SANDBOX", False)
 
+    # Free-tier LLM catalog (freellmapi.co): minimum monthly token budget floor
+    # a model must clear to be shown on the /ui/free-models page, and a kill
+    # switch for the periodic fetch (test environments disable the real HTTP call).
+    free_llm_catalog_min_monthly_tokens: int = _get_positive_int_env(
+        "FREE_LLM_CATALOG_MIN_MONTHLY_TOKENS", 30_000_000
+    )
+    free_llm_catalog_enabled: bool = _get_bool_env("FREE_LLM_CATALOG_ENABLED", True)
 
     # Example of Pydantic's .env handling (alternative approach)
     # class Config:

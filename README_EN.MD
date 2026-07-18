@@ -419,6 +419,18 @@ The `subscription_quota` block is optional. Providers without it are completely 
 
 Data is cached for 60 seconds (errors for min(30, ttl/2)). In the Quota Dashboard, the upstream section is only shown to master users and is hidden on 403.
 
+### Free LLM Catalog
+The page at http://localhost:9000/v1/ui/free-models is available to both roles (master and virtual keys) and shows the catalog of free-tier LLM models from [freellmapi.co](https://freellmapi.co/models), filtered to a reasonable monthly token budget.
+
+- **URL**: `/v1/ui/free-models`
+- **Source**: `GET https://api.freellmapi.co/v1/latest` — an open JSON feed, no HTML scraping; the upstream catalog itself is regenerated roughly once a day.
+- **Filter criterion**: only models whose source-reported lower bound of the monthly token budget (e.g. `~50-100M` → 50M) is at least the configured threshold — 30,000,000 tokens/month by default, configurable via `FREE_LLM_CATALOG_MIN_MONTHLY_TOKENS` — are shown. Models with an unrecognisable budget (`free · 40 RPM`, `promo (trial)`, etc.) are excluded. A provider is shown as long as at least one of its models clears the filter.
+- **What it shows**: providers grouped and sorted by their highest-budget model; for each model — display name, `modelId` (monospace, with a copy button), the source's raw budget string, only the limits that are actually populated (RPM/RPD/TPM/TPD), the context window, vision/tools badges, and an expandable "connection quirks" section.
+- **Data refresh**: a background task fetches the catalog on startup and then every 24 hours; until the first successful fetch, it retries every 5 minutes. Data is kept in memory and the page itself does not poll — it issues a single request on load plus a manual retry action.
+- **States**: before any successful fetch, the page shows "data unavailable" together with the last error text; if a snapshot exists but the most recent refresh failed, the previously shown data stays on screen marked "as of \<date\>" alongside the error text.
+
+API endpoint: `GET /v1/api/free-models` — returns `{updatedAt, sourceVersion, sourceGeneratedAt, lastError, minMonthlyTokens, providers}`; available to both roles.
+
 ### Fallback Analytics
 The statistics page includes a **Fallback Analytics** tab that provides detailed information about provider transitions (fallback events). The tab contains two sub-tabs:
 
@@ -547,6 +559,8 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | `WEB_READ_CLOAKBROWSER_ENABLED` | Enables local CloakBrowser rendering in `/v1/web/read` after direct fetch fails. Disabled by default: the browser engine performs its own navigation and does not use the direct-fetch IP-pinning layer. | `false` |
 | `WEB_READ_CLOAKBROWSER_NO_SANDBOX` | Adds `--no-sandbox` to CloakBrowser launch arguments. Enable only when the runtime environment explicitly requires it. | `false` |
 | `CORS_ALLOW_ORIGINS` | Optional comma-separated list of allowed cross-origin origins. When unset, CORS stays disabled and same-origin UI still works. | disabled |
+| `FREE_LLM_CATALOG_ENABLED` | Enables the background task that fetches the free-tier LLM catalog from freellmapi.co for the `/v1/ui/free-models` page. When `false`, the background loop makes no network requests and the API returns an empty snapshot. | `true` |
+| `FREE_LLM_CATALOG_MIN_MONTHLY_TOKENS` | Filter threshold for the free-tier LLM catalog: the lower bound of a model's source-reported monthly token budget below which it is excluded from the page. | `30000000` |
 | `FALLBACK_PROVIDER` | Default provider name shared by `/v1/models` and `/v1/chat/completions` when no rule matches. Startup fails if this provider is missing from `providers.json`. | `openrouter` |
 | `VERIFY_MODELS_ON_STARTUP` | Startup model-availability check mode: `off` disables it, `warn` logs warnings for missing models, `strict` aborts startup. | `warn` |
 | `PROXY_URL` | Base URL of your own Proxy service used by the built-in `/v1/web/search` and `/v1/web/read` adapters (`{PROXY_URL}/zai/search` and `{PROXY_URL}/zai/read`). When unset, the Proxy adapter is skipped. | disabled |

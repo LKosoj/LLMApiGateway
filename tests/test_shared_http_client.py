@@ -222,6 +222,61 @@ class SharedHttpClientTests(unittest.TestCase):
             8 * 60 * 60,
         )
 
+    def test_select_free_llm_catalog_interval_short_polls_until_first_snapshot(self):
+        # No snapshot yet: poll frequently instead of waiting a full 24h for
+        # the first successful fetch.
+        self.assertEqual(
+            main._select_free_llm_catalog_interval(
+                snapshot_present=False,
+                default_interval_seconds=24 * 60 * 60,
+            ),
+            main.FREE_LLM_CATALOG_COLD_START_INTERVAL_SECONDS,
+        )
+
+    def test_select_free_llm_catalog_interval_uses_default_once_snapshot_exists(self):
+        self.assertEqual(
+            main._select_free_llm_catalog_interval(
+                snapshot_present=True,
+                default_interval_seconds=24 * 60 * 60,
+            ),
+            24 * 60 * 60,
+        )
+
+    def test_run_free_llm_catalog_loop_survives_a_failing_iteration(self):
+        # A raising refresh_once()/get_status() must be absorbed and retried
+        # on the default cadence instead of killing the supervised task for
+        # the rest of the process lifetime.
+        iteration_reached = asyncio.Event()
+
+        async def failing_refresh_once(_http_client):
+            iteration_reached.set()
+            raise RuntimeError("simulated iteration failure")
+
+        service = Mock()
+        service.refresh_once = failing_refresh_once
+        service.get_status = AsyncMock()
+
+        async def scenario():
+            loop_task = asyncio.create_task(
+                main.run_free_llm_catalog_loop(
+                    service,
+                    http_client=Mock(),
+                )
+            )
+            await asyncio.wait_for(iteration_reached.wait(), timeout=5)
+            for _ in range(10):
+                await asyncio.sleep(0)
+            self.assertFalse(loop_task.done())
+            service.get_status.assert_not_awaited()
+            loop_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await loop_task
+
+        # conftest.py defaults FREE_LLM_CATALOG_ENABLED to "false" for tests;
+        # this test exercises the enabled fetch path.
+        with patch.object(main.settings, "free_llm_catalog_enabled", True):
+            run_async(scenario())
+
     def test_create_shared_http_client_configures_finite_timeouts(self):
         http_client = main.create_shared_http_client()
         self.assertEqual(
@@ -271,7 +326,7 @@ class SharedHttpClientTests(unittest.TestCase):
             with TestClient(main.app) as client:
                 services = client.app.state.services
                 self.assertIs(services.http_client, env.shared_clients[0])
-                self.assertEqual(services.task_supervisor.task_count, 4)
+                self.assertEqual(services.task_supervisor.task_count, 5)
                 self.assertEqual(services.runtime_manager.current_generation, 1)
 
         self.assertTrue(services.task_supervisor.closed)

@@ -33,6 +33,7 @@ EXPECTED_NAMESPACES = {
     "quota",
     "rejections",
     "translator",
+    "free_models",
 }
 LOCALE_PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 MAX_LOCALE_PATH_BYTES = 255

@@ -82,6 +82,10 @@ from llm_gateway_core.services.openrouter_free_models import (
 )
 from llm_gateway_core.services.fallback_model_evals import FallbackModelEvalService
 from llm_gateway_core.services.capability_autofill import CapabilityAutofillService
+from llm_gateway_core.services.free_llm_catalog import (
+    REFRESH_INTERVAL_SECONDS as FREE_LLM_CATALOG_REFRESH_INTERVAL_SECONDS,
+    FreeLlmCatalogService,
+)
 from llm_gateway_core.services.health import HealthService
 from llm_gateway_core.services.model_availability import run_startup_model_verification
 from llm_gateway_core.services.access_control import UsdBudgetLedger
@@ -124,6 +128,10 @@ DEEP_RESEARCH_IMAGES_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 # the OpenRouter fallback source unavailable for up to 8h, so the loop polls
 # this much more often until the catalog gets populated.
 CAPABILITY_AUTOFILL_COLD_START_INTERVAL_SECONDS = 300.0
+# The free LLM catalog refresh is an independent 24h timer; on a cold start
+# there is usually no snapshot yet, so poll more often until one exists,
+# mirroring the capability-autofill cold-start pattern above.
+FREE_LLM_CATALOG_COLD_START_INTERVAL_SECONDS = 300.0
 _T = TypeVar("_T")
 
 
@@ -385,6 +393,70 @@ def start_capability_autofill_task(
             openrouter_free_models_service=openrouter_free_models_service,
         ),
         name="capability-autofill",
+    )
+
+
+def _select_free_llm_catalog_interval(
+    *,
+    snapshot_present: bool,
+    default_interval_seconds: float,
+) -> float:
+    """Pick the next free LLM catalog sleep interval.
+
+    Short-circuits to a brief cold-start poll until the first successful
+    snapshot exists, then settles into the (24h) default cadence.
+    """
+    if not snapshot_present:
+        return FREE_LLM_CATALOG_COLD_START_INTERVAL_SECONDS
+    return default_interval_seconds
+
+
+async def run_free_llm_catalog_loop(
+    service: FreeLlmCatalogService,
+    *,
+    http_client: httpx.AsyncClient,
+    interval_seconds: float = FREE_LLM_CATALOG_REFRESH_INTERVAL_SECONDS,
+) -> None:
+    logger.info(
+        "Free LLM catalog task started. Interval: %s seconds.",
+        interval_seconds,
+    )
+    try:
+        while True:
+            # A failed iteration must not kill the supervised 24h loop for the
+            # rest of the process lifetime -- log it and retry on the default
+            # cadence instead.
+            sleep_seconds = interval_seconds
+            try:
+                if settings.free_llm_catalog_enabled:
+                    await service.refresh_once(http_client)
+                status = await service.get_status()
+                sleep_seconds = _select_free_llm_catalog_interval(
+                    snapshot_present=status["updatedAt"] is not None,
+                    default_interval_seconds=interval_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Free LLM catalog iteration failed; retrying in %s seconds.",
+                    sleep_seconds,
+                )
+            await scheduler_sleep(sleep_seconds)
+    except asyncio.CancelledError:
+        logger.info("Free LLM catalog task stopped.")
+        raise
+
+
+def start_free_llm_catalog_task(
+    service: FreeLlmCatalogService,
+    *,
+    http_client: httpx.AsyncClient,
+    supervisor: TaskSupervisor,
+) -> asyncio.Task:
+    return supervisor.create_task(
+        run_free_llm_catalog_loop(service, http_client=http_client),
+        name="free-llm-catalog",
     )
 
 
@@ -759,6 +831,9 @@ async def lifespan(app: FastAPI):
         )
 
         capability_autofill_service = CapabilityAutofillService()
+        free_llm_catalog_service = FreeLlmCatalogService(
+            min_monthly_tokens=settings.free_llm_catalog_min_monthly_tokens
+        )
 
         task_supervisor = TaskSupervisor()
         stream_observation_capacity = StreamObservationCapacity(
@@ -868,6 +943,11 @@ async def lifespan(app: FastAPI):
             openrouter_free_models_service=openrouter_free_models_service,
             supervisor=task_supervisor,
         )
+        start_free_llm_catalog_task(
+            free_llm_catalog_service,
+            http_client=http_client,
+            supervisor=task_supervisor,
+        )
 
         deep_research_process_runner = DeepResearchProcessRunner(
             capacity=settings.deep_research_process_capacity,
@@ -902,6 +982,7 @@ async def lifespan(app: FastAPI):
                 openrouter_free_models_service=openrouter_free_models_service,
                 fallback_model_eval_service=fallback_model_eval_service,
                 capability_autofill_service=capability_autofill_service,
+                free_llm_catalog_service=free_llm_catalog_service,
                 deep_research_process_runner=deep_research_process_runner,
                 upload_admission=upload_admission,
                 upload_admission_timeout_seconds=(

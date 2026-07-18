@@ -46,6 +46,11 @@ const ICONS = Object.freeze({
     ["line", { x1: "12", x2: "12", y1: "1", y2: "23" }],
     ["path", { d: "M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" }],
   ]),
+  "free-models": Object.freeze([
+    ["polyline", { points: "3 7 12 3 21 7 12 11 3 7" }],
+    ["polyline", { points: "3 12 12 16 21 12" }],
+    ["polyline", { points: "3 17 12 21 21 17" }],
+  ]),
 });
 
 function navigationItem(id, href, labelKey, roles) {
@@ -68,6 +73,7 @@ export const NAV_ITEMS = Object.freeze([
   navigationItem("rejections", "/v1/ui/rejections", "common:navigation.rejections", ["master"]),
   navigationItem("translator", "/v1/ui/translator-debug", "common:navigation.translator", ["master"]),
   navigationItem("pricing", "/v1/ui/pricing", "common:navigation.pricing", ["master"]),
+  navigationItem("free-models", "/v1/ui/free-models", "common:navigation.freeModels", ["master", "user"]),
 ]);
 
 export function normalizePathname(value) {

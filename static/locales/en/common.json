@@ -32,6 +32,7 @@
     "apiKeys": "API Keys",
     "rejections": "Rejections",
     "translator": "Translator Debug",
-    "pricing": "Pricing"
+    "pricing": "Pricing",
+    "freeModels": "Free LLM Catalog"
   }
 }

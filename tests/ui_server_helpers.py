@@ -80,6 +80,9 @@ def isolated_gateway_process(
     launch_env["GATEWAY_DB_DIR"] = str(db_path)
     (outputs_path / "images").mkdir(parents=True)
     launch_env["GATEWAY_OUTPUTS_DIR"] = str(outputs_path)
+    # Browser tests must never trigger a real HTTP fetch to api.freellmapi.co;
+    # a test that wants the real fetch can still override it via `env`.
+    launch_env.setdefault("FREE_LLM_CATALOG_ENABLED", "false")
     proc = subprocess.Popen(
         ["./.venv/bin/python", "main.py"],
         env=launch_env,

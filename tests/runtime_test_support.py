@@ -32,6 +32,7 @@ from llm_gateway_core.services.capability_autofill import CapabilityAutofillServ
 from llm_gateway_core.services.config_updates import ConfigUpdateCoordinator
 from llm_gateway_core.services.deep_research_process import DeepResearchProcessRunner
 from llm_gateway_core.services.fallback_model_evals import FallbackModelEvalService
+from llm_gateway_core.services.free_llm_catalog import FreeLlmCatalogService
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
 from llm_gateway_core.services.health import HealthService
 from llm_gateway_core.services.image_retention import (
@@ -168,6 +169,7 @@ def make_app_services(**overrides: object) -> AppServices:
         "openrouter_free_models_service": OpenRouterFreeModelsService,
         "fallback_model_eval_service": FallbackModelEvalService,
         "capability_autofill_service": CapabilityAutofillService,
+        "free_llm_catalog_service": FreeLlmCatalogService,
         "deep_research_process_runner": DeepResearchProcessRunner,
         "upload_admission": lambda: UploadAdmission(max_bytes=256 * 1024 * 1024),
         "stream_observation_capacity": StreamObservationCapacity,

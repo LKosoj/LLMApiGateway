@@ -32,6 +32,7 @@
     "apiKeys": "API-ключи",
     "rejections": "Отклонения",
     "translator": "Отладка переводчика",
-    "pricing": "Тарифы"
+    "pricing": "Тарифы",
+    "freeModels": "Бесплатные модели"
   }
 }

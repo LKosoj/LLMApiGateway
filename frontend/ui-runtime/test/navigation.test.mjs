@@ -129,6 +129,7 @@ const LABELS = Object.freeze({
   "common:navigation.rejections": "Rejections",
   "common:navigation.translator": "Translator Debug",
   "common:navigation.pricing": "Pricing",
+  "common:navigation.freeModels": "Free LLM Catalog",
 });
 
 function translate(key) {
@@ -136,7 +137,7 @@ function translate(key) {
   return LABELS[key];
 }
 
-test("NAV_ITEMS is an immutable nine-route role contract", () => {
+test("NAV_ITEMS is an immutable ten-route role contract", () => {
   assert.deepEqual(
     NAV_ITEMS.map(({ id, href, labelKey, roles }) => ({ id, href, labelKey, roles })),
     [
@@ -149,6 +150,7 @@ test("NAV_ITEMS is an immutable nine-route role contract", () => {
       { id: "rejections", href: "/v1/ui/rejections", labelKey: "common:navigation.rejections", roles: ["master"] },
       { id: "translator", href: "/v1/ui/translator-debug", labelKey: "common:navigation.translator", roles: ["master"] },
       { id: "pricing", href: "/v1/ui/pricing", labelKey: "common:navigation.pricing", roles: ["master"] },
+      { id: "free-models", href: "/v1/ui/free-models", labelKey: "common:navigation.freeModels", roles: ["master", "user"] },
     ],
   );
   assert(Object.isFrozen(NAV_ITEMS));
@@ -166,10 +168,10 @@ test("path normalization ignores query and trailing slashes", () => {
 });
 
 test("navigation role filtering is fail-closed", () => {
-  assert.equal(visibleNavigationItems("master").length, 9);
+  assert.equal(visibleNavigationItems("master").length, 10);
   assert.deepEqual(
     visibleNavigationItems("user").map((item) => item.id),
-    ["docs", "usage", "quota"],
+    ["docs", "usage", "quota", "free-models"],
   );
   assert.deepEqual(visibleNavigationItems("pending"), []);
   assert.deepEqual(visibleNavigationItems("unknown"), []);
@@ -186,7 +188,7 @@ test("navigation renders safe SVG nodes and exactly one normalized current route
   const links = renderedLinks(root);
 
   assert.equal(root.hidden, false);
-  assert.equal(links.length, 9);
+  assert.equal(links.length, 10);
   assert.equal(links.filter((link) => link.getAttribute("aria-current") === "page").length, 1);
   assert.equal(links[5].getAttribute("aria-current"), "page");
   assert.equal(links[5].classList.contains("active"), true);
@@ -219,7 +221,7 @@ test("navigation remains hidden until a recognized role is supplied", () => {
 
   controller.update({ role: "user" });
   assert.equal(root.hidden, false);
-  assert.equal(renderedLinks(root).length, 3);
+  assert.equal(renderedLinks(root).length, 4);
 
   controller.update({ role: "unknown" });
   assert.equal(root.hidden, true);
@@ -264,7 +266,7 @@ test("scroll refresh exposes geometry-based overflow cues", () => {
   const links = renderedLinks(root);
   scroller.rect = { left: 10, right: 110 };
   links[0].rect = { left: 0, right: 40 };
-  links[2].rect = { left: 90, right: 130 };
+  links[3].rect = { left: 90, right: 130 };
 
   controller.refreshOverflow();
   assert.equal(root.attributes.has("data-overflow-start"), true);

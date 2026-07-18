@@ -10,14 +10,30 @@
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
-        }
+        },
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "nvidia",
         "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -27,12 +43,21 @@
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/light_model",
@@ -42,14 +67,30 @@
         "model": "gemini-3.5-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "cerebras",
         "model": "gpt-oss-120b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 131072,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "openrouter",
@@ -59,35 +100,75 @@
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
-        }
+        },
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 256000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "openrouter",
         "model": "google/gemma-4-31b-it:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "groq",
         "model": "openai/gpt-oss-120b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 131072,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "freemodel",
         "model": "gpt-5.4-mini",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 400000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "aitunnel",
         "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -97,12 +178,21 @@
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/qwen",
@@ -114,14 +204,30 @@
         "retry_delay": 1,
         "retry_count": 1,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "nvidia",
         "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -131,12 +237,21 @@
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/qwen3.5",
@@ -149,7 +264,15 @@
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
-        }
+        },
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "kimicode",
@@ -158,14 +281,26 @@
         "custom_body_params": {
           "temperature": 1
         },
-        "custom_headers": {}
+        "custom_headers": {},
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
       },
       {
         "provider": "minimax",
         "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "gem",
@@ -182,12 +317,21 @@
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/big_context",
@@ -197,21 +341,45 @@
         "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "minimax",
         "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "aitunnel",
         "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -219,12 +387,21 @@
       "model": "glm-5.2",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/high",
@@ -238,7 +415,11 @@
         "custom_body_params": {
           "temperature": 1
         },
-        "custom_headers": {}
+        "custom_headers": {},
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
       },
       {
         "provider": "z.ai",
@@ -250,21 +431,45 @@
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
-        }
+        },
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "minimax",
         "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "alibaba",
         "model": "qwen3.7-max",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1000000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "freemodel",
@@ -273,7 +478,15 @@
         "custom_body_params": {
           "reasoning_effort": "high"
         },
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1050000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -281,12 +494,21 @@
       "model": "glm-5.2",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/fast",
@@ -303,14 +525,30 @@
         "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 202752,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "openrouter",
         "model": "google/gemma-4-31b-it:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -318,12 +556,21 @@
       "model": "glm-5.2",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/text",
@@ -335,14 +582,26 @@
         "retry_delay": 1,
         "retry_count": 1,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
       },
       {
         "provider": "openai_codex",
         "model": "gpt-5.5",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1050000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "z.ai",
@@ -352,21 +611,41 @@
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
-        }
+        },
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "kimicode",
         "model": "kimi-for-coding",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
       },
       {
         "provider": "nvidia",
         "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -374,12 +653,21 @@
       "model": "gpt-5.5",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": true,
+      "supports_tools": true,
+      "context_window": 1050000,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/ocr",
@@ -389,7 +677,11 @@
         "model": "deepseek-ai/DeepSeek-OCR-2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "context_window": 8192,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
       },
       {
         "provider": "llm_ai",
@@ -402,7 +694,8 @@
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": false
+    "compress_tool_results": false,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/free",
@@ -415,14 +708,26 @@
         "custom_headers": {
           "User-Agent": "Kimi Claw Plugin",
           "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
-        }
+        },
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
       },
       {
         "provider": "z.ai",
         "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "openrouter",
@@ -431,21 +736,45 @@
         "retry_delay": 1,
         "retry_count": 1,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "nvidia",
         "model": "nvidia/nemotron-3-ultra-550b-a55b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1000000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "aitunnel",
         "model": "deepseek-v4-pro",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -453,12 +782,21 @@
       "model": "glm-5.2",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/free_gd",
@@ -468,14 +806,26 @@
         "model": "z-ai/glm-5.2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "kimicode",
         "model": "kimi-for-coding",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
       },
       {
         "provider": "openrouter",
@@ -484,7 +834,15 @@
         "retry_delay": 1,
         "retry_count": 1,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -492,12 +850,21 @@
       "model": "glm-5.2",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
-      "custom_headers": {}
+      "custom_headers": {},
+      "supports_vision": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
     },
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": true,
-    "compress_tool_results": true
+    "compress_tool_results": true,
+    "tool_call_rescue": false
   },
   {
     "gateway_model_name": "llmgateway/small",
@@ -507,33 +874,66 @@
         "model": "gpt-oss-120b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 131072,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "openrouter",
         "model": "google/gemma-4-26b-a4b-it:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "openrouter",
         "model": "nvidia/nemotron-3-super-120b-a12b:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 1000000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "openrouter",
         "model": "openai/gpt-oss-20b:free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 131072,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "rotate_models": false,
     "dynamic_penalty": false,
     "strip_think_tags": false,
-    "compress_tool_results": false
+    "compress_tool_results": false,
+    "tool_call_rescue": false
   }
 ]

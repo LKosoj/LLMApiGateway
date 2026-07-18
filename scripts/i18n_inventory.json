@@ -101,6 +101,15 @@
       "scripts": [
         "static/translator-debug.js"
       ]
+    },
+    "free-models": {
+      "status": "complete",
+      "html": [
+        "static/free-models.html"
+      ],
+      "scripts": [
+        "static/free-models.js"
+      ]
     }
   },
   "exemptions": [
