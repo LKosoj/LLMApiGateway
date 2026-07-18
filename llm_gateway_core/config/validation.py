@@ -414,6 +414,7 @@ class _ConfigValidationMixin:
                 "dynamic_penalty": rule.dynamic_penalty,
                 "strip_think_tags": rule.strip_think_tags,
                 "compress_tool_results": rule.compress_tool_results,
+                "tool_call_rescue": rule.tool_call_rescue,
             }
             if rule.max_total_attempts is not None:
                 rule_config["max_total_attempts"] = rule.max_total_attempts
@@ -453,6 +454,7 @@ class _ConfigValidationMixin:
                 "dynamic_penalty": bool(pool_config.get("dynamic_penalty", False)),
                 "strip_think_tags": bool(pool_config.get("strip_think_tags", False)),
                 "compress_tool_results": bool(pool_config.get("compress_tool_results", False)),
+                "tool_call_rescue": bool(pool_config.get("tool_call_rescue", False)),
             }
             if pool_config.get("max_total_attempts") is not None:
                 pool_rule["max_total_attempts"] = pool_config["max_total_attempts"]
@@ -679,7 +681,15 @@ class _ConfigValidationMixin:
                     f"the maximum is {FUSION_PANEL_MAX}."
                 )
 
+            reserve = config.get("reserve") or []
+            if len(reserve) > FUSION_PANEL_MAX:
+                raise ValueError(
+                    f"Fusion model '{gateway_model_name}' has {len(reserve)} reserve models; "
+                    f"the maximum is {FUSION_PANEL_MAX}."
+                )
+
             members: List[tuple[str, Dict[str, Any]]] = [("panel member", member) for member in panel]
+            members.extend(("reserve model", member) for member in reserve)
             members.append(("main_model", config.get("main_model") or {}))
             judge_model = config.get("judge_model")
             if judge_model:

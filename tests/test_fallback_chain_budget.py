@@ -178,7 +178,15 @@ class FallbackChainBudgetTests(unittest.TestCase):
         make_llm_request_mock.side_effect = [
             (None, "fail-1"),
             (None, "fail-2"),
-            ({"id": "ok"}, None),
+            (
+                {
+                    "id": "ok",
+                    "choices": [
+                        {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                    ],
+                },
+                None,
+            ),
         ]
 
         with patch.object(main.settings, "gateway_api_key", "k"):
@@ -190,7 +198,15 @@ class FallbackChainBudgetTests(unittest.TestCase):
                 )
 
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {"id": "ok"})
+        self.assertEqual(
+            resp.json(),
+            {
+                "id": "ok",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                ],
+            },
+        )
         self.assertEqual(make_llm_request_mock.await_count, 3)
 
 

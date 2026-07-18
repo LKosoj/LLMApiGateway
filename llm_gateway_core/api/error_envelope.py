@@ -1,9 +1,29 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
-from fastapi import Request, status
+from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+
+
+class StructuredHTTPException(HTTPException):
+    """``HTTPException`` that carries extra top-level error-envelope fields.
+
+    ``extra_payload`` is merged into the JSON body by
+    :func:`build_error_payload`/:func:`error_response` without overwriting
+    the reserved ``detail``/``error``/``request_id`` keys.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: Any = None,
+        *,
+        extra_payload: Mapping[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
+        self.extra_payload = extra_payload
 
 
 def get_request_id(request: Request) -> str | None:
@@ -32,6 +52,14 @@ def error_type_for_status(status_code: int) -> str:
     return "http_error"
 
 
+def code_from_detail(detail: Any) -> str | None:
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        if isinstance(code, str):
+            return code
+    return None
+
+
 def message_from_detail(detail: Any) -> str:
     if isinstance(detail, str):
         return detail
@@ -49,6 +77,7 @@ def build_error_payload(
     detail: Any,
     error_type: str | None = None,
     code: str | None = None,
+    extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "detail": detail,
@@ -64,6 +93,12 @@ def build_error_payload(
         payload["request_id"] = request_id
         payload["error"]["request_id"] = request_id
 
+    if extra:
+        extra_fields = dict(extra)
+        for reserved_key in ("detail", "error", "request_id"):
+            extra_fields.pop(reserved_key, None)
+        payload.update(extra_fields)
+
     return payload
 
 
@@ -75,6 +110,7 @@ def error_response(
     error_type: str | None = None,
     code: str | None = None,
     headers: dict[str, str] | None = None,
+    extra: Mapping[str, Any] | None = None,
 ) -> JSONResponse:
     response = JSONResponse(
         status_code=status_code,
@@ -84,6 +120,7 @@ def error_response(
             detail=detail,
             error_type=error_type,
             code=code,
+            extra=extra,
         ),
         headers=headers,
     )

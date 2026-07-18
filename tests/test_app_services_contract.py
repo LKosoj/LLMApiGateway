@@ -19,6 +19,7 @@ from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.accounting import OperationCostCalculator
 from llm_gateway_core.services.accounting_service import AccountingService
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
+from llm_gateway_core.services.capability_autofill import CapabilityAutofillService
 from llm_gateway_core.services.config_updates import ConfigUpdateCoordinator
 from llm_gateway_core.services.deep_research_process import DeepResearchProcessRunner
 from llm_gateway_core.services.fallback_model_evals import FallbackModelEvalService
@@ -69,6 +70,7 @@ APP_SERVICE_FIELDS = (
     "upstream_subscription_quota_service",
     "openrouter_free_models_service",
     "fallback_model_eval_service",
+    "capability_autofill_service",
     "deep_research_process_runner",
     "upload_admission",
     "upload_admission_timeout_seconds",
@@ -149,6 +151,7 @@ class AppServicesContractTests(unittest.TestCase):
                 "upstream_subscription_quota_service": UpstreamSubscriptionQuotaService,
                 "openrouter_free_models_service": OpenRouterFreeModelsService,
                 "fallback_model_eval_service": FallbackModelEvalService,
+                "capability_autofill_service": CapabilityAutofillService,
                 "deep_research_process_runner": DeepResearchProcessRunner,
                 "upload_admission": UploadAdmission,
                 "upload_admission_timeout_seconds": float,

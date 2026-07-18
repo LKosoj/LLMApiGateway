@@ -54,11 +54,13 @@
     "removeTarget": "Remove Target",
     "removeProvider": "Remove Provider",
     "removePanelModel": "Remove Panel Model",
+    "removeReserveModel": "Remove Reserve Model",
     "addFallbackModel": "Add Fallback Model",
     "addFallbackRoute": "Add Fallback Route",
     "addRoute": "Add Route",
     "addTarget": "Add Target",
     "addPanelModel": "Add Panel Model",
+    "addReserveModel": "Add Reserve Model",
     "addModel": "Add Model",
     "remove": "Remove",
     "show": "Show",
@@ -92,7 +94,9 @@
       "mainHeading": "Main model (writes the final answer)",
       "judgeHeading": "Judge model (analyses panel answers)",
       "panelHeading": "Panel models",
-      "webHeading": "Panel web tools"
+      "webHeading": "Panel web tools",
+      "reserveHeading": "Reserve models (fill a failed panel slot)",
+      "reserveHint": "Used only when a panel model errors or times out; each reserve model is tried at most once, in listed order."
     },
     "router": {
       "title": "Router Models",
@@ -225,7 +229,10 @@
     "imageGenerationModel": "Image Generation Model",
     "imageGenerationSize": "Image Generation Size",
     "field": "Field",
-    "upstreamLimits": "Upstream Limits per Model"
+    "upstreamLimits": "Upstream Limits per Model",
+    "supportsVision": "Vision support",
+    "supportsTools": "Tools support",
+    "contextWindow": "Context window (tokens)"
   },
   "toggles": {
     "providerOrder": "Use provider order as fallback",
@@ -233,6 +240,7 @@
     "dynamicPenalty": "Use dynamic penalty ordering",
     "stripThink": "Strip think tags from replies",
     "compressTools": "Compress tool result outputs (RTK)",
+    "toolCallRescue": "Rescue inline tool-call text into structured calls",
     "contextOverflow": "Context Overflow Fallback",
     "contextOverflowEnable": "Enable dedicated fallback for context overflow errors",
     "fusionWeb": "Give panel models web_search / web_fetch tools",
@@ -295,7 +303,8 @@
     "retryDelay": "Retry delay (seconds)",
     "retryCount": "Retry count",
     "unlimited": "No limit",
-    "chooseApiType": "Choose API type"
+    "chooseApiType": "Choose API type",
+    "contextWindow": "e.g. 128000"
   },
   "messages": {
     "loading": "Loading {name}…",
@@ -330,6 +339,7 @@
     "providerNotReady": "Provider configuration has not loaded successfully.",
     "noActiveEditor": "No active editor is selected.",
     "panelLimit": "A Fusion panel can have at most {count} models.",
+    "reserveLimit": "A Fusion reserve can have at most {count} models.",
     "unsavedConfirm": "You have unsaved changes. Switch tabs and discard them?",
     "catalogSummary": "Could not load models for {provider}.",
     "fieldJson": "{field} must be a valid JSON object.",
@@ -344,6 +354,17 @@
     "title": "This configuration changed elsewhere",
     "message": "Your edits are still here. Reload the latest version before trying again.",
     "reload": "Reload and discard my edits"
+  },
+  "capability": {
+    "unknown": "Unknown",
+    "supported": "Yes",
+    "unsupported": "No",
+    "autofilled": "Auto-filled",
+    "override": "Edit",
+    "source": {
+      "provider": "from provider catalog",
+      "openrouter": "from OpenRouter catalog"
+    }
   },
   "catalog": {
     "idle": "Model catalog loads on demand.",

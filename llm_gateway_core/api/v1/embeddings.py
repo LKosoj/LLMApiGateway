@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+RETRYABLE_ROUTE_STATUS_CODES = frozenset({502, 503})
 RERANK_ALLOWED_CUSTOM_PARAMS = frozenset({"top_n", "return_documents", "max_chunks_per_doc"})
 FORBIDDEN_OPERATION_CUSTOM_PARAMS = frozenset({"stream", "messages", "tool_choice", "tools", "model"})
 QUERY_PASSAGES_ALLOWED_CUSTOM_PARAMS = frozenset({"max_chunks_per_doc"})
@@ -312,8 +313,13 @@ def _get_operation_runtime(
     )
 
 
-def _should_try_next_route(exc: HTTPException, route_index: int, routes: list[OperationRoute]) -> bool:
-    return exc.status_code == 503 and route_index < len(routes) - 1
+def _should_try_next_route(
+    exc: HTTPException | AccountingError,
+    route_index: int,
+    routes: list[OperationRoute],
+) -> bool:
+    retryable = isinstance(exc, AccountingError) or exc.status_code in RETRYABLE_ROUTE_STATUS_CODES
+    return retryable and route_index < len(routes) - 1
 
 
 def _log_route_fallback(
@@ -322,8 +328,9 @@ def _log_route_fallback(
     route: OperationRoute,
     route_index: int,
     routes: list[OperationRoute],
-    exc: HTTPException,
+    exc: HTTPException | AccountingError,
 ) -> None:
+    detail = exc.code.value if isinstance(exc, AccountingError) else exc.detail
     logger.warning(
         "%s route failed for gateway model '%s'; falling back to next route. "
         "route=%s/%s provider=%s model=%s detail=%s",
@@ -333,7 +340,7 @@ def _log_route_fallback(
         len(routes),
         route.provider,
         route.model,
-        exc.detail,
+        detail,
     )
 
 
@@ -512,16 +519,16 @@ async def create_embeddings(request: Request):
                     route=route,
                     duration_ms=request_duration_ms(request_started_at),
                 )
-                return await finalize_buffered_operation(
-                    owner,
-                    response,
-                    observation,
-                )
-            except HTTPException as exc:
+            except (HTTPException, AccountingError) as exc:
                 if _should_try_next_route(exc, route_index, routes):
                     _log_route_fallback("Embeddings", requested_model, route, route_index, routes, exc)
                     continue
                 raise
+            return await finalize_buffered_operation(
+                owner,
+                response,
+                observation,
+            )
 
         raise HTTPException(status_code=503, detail="Embeddings request failed after exhausting fallback routes.")
     except AccountingError as exc:
@@ -654,16 +661,16 @@ async def create_rerank(request: Request):
                     route=route,
                     duration_ms=request_duration_ms(request_started_at),
                 )
-                return await finalize_buffered_operation(
-                    owner,
-                    response,
-                    observation,
-                )
-            except HTTPException as exc:
+            except (HTTPException, AccountingError) as exc:
                 if _should_try_next_route(exc, route_index, routes):
                     _log_route_fallback("Rerank", requested_model, route, route_index, routes, exc)
                     continue
                 raise
+            return await finalize_buffered_operation(
+                owner,
+                response,
+                observation,
+            )
 
         raise HTTPException(status_code=503, detail="Rerank request failed after exhausting fallback routes.")
     except AccountingError as exc:

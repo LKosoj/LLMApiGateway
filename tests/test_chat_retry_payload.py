@@ -10,6 +10,21 @@ import main
 from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
+def _valid_completion_response(response_id: str, content: str = "ok") -> dict:
+    # A bare {"id": ...} response has no "choices" and would itself be flagged
+    # as an empty_completion by the degenerate-response detector (Package D),
+    # so "success" mocks in this file must be choices-shaped.
+    return {
+        "id": response_id,
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": content},
+            }
+        ],
+    }
+
+
 class ChatRetryPayloadTests(unittest.TestCase):
     def setUp(self):
         self._accounting_stack = ExitStack()
@@ -78,11 +93,13 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
         seen_payloads = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(
+            _client, _target_url, _headers, payload, _is_streaming, **_kwargs
+        ):
             seen_payloads.append(copy.deepcopy(payload))
             if len(seen_payloads) == 1:
                 return None, "temporary failure"
-            return {"id": "retry-success"}, None
+            return _valid_completion_response("retry-success"), None
 
         make_llm_request_mock.side_effect = fake_make_llm_request
 
@@ -102,7 +119,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "retry-success"})
+        self.assertEqual(response.json(), _valid_completion_response("retry-success"))
         self.assertEqual(request_payload, original_payload)
         self.assertEqual(len(seen_payloads), 2)
         self.assertEqual(seen_payloads[0], seen_payloads[1])
@@ -153,9 +170,11 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
         seen_payloads = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(
+            _client, _target_url, _headers, payload, _is_streaming, **_kwargs
+        ):
             seen_payloads.append(copy.deepcopy(payload))
-            return {"id": "success"}, None
+            return _valid_completion_response("success"), None
 
         make_llm_request_mock.side_effect = fake_make_llm_request
 
@@ -176,7 +195,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "success"})
+        self.assertEqual(response.json(), _valid_completion_response("success"))
         self.assertEqual(request_payload, original_payload)
         self.assertEqual(len(seen_payloads), 1)
         self.assertNotIn("response_format", seen_payloads[0])
@@ -224,9 +243,11 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
         seen_payloads = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(
+            _client, _target_url, _headers, payload, _is_streaming, **_kwargs
+        ):
             seen_payloads.append(copy.deepcopy(payload))
-            return {"id": "success"}, None
+            return _valid_completion_response("success"), None
 
         make_llm_request_mock.side_effect = fake_make_llm_request
 
@@ -255,7 +276,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "success"})
+        self.assertEqual(response.json(), _valid_completion_response("success"))
         self.assertEqual(request_payload, original_payload)
         self.assertEqual(len(seen_payloads), 1)
         tool_payload = seen_payloads[0]["tools"][0]["function"]
@@ -306,9 +327,11 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
         seen_payloads = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(
+            _client, _target_url, _headers, payload, _is_streaming, **_kwargs
+        ):
             seen_payloads.append(copy.deepcopy(payload))
-            return {"id": "success"}, None
+            return _valid_completion_response("success"), None
 
         make_llm_request_mock.side_effect = fake_make_llm_request
 
@@ -331,7 +354,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "success"})
+        self.assertEqual(response.json(), _valid_completion_response("success"))
         self.assertEqual(request_payload, original_payload)
         self.assertEqual(len(seen_payloads), 1)
         self.assertEqual(
@@ -383,9 +406,11 @@ class ChatRetryPayloadTests(unittest.TestCase):
 
         seen_payloads = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(
+            _client, _target_url, _headers, payload, _is_streaming, **_kwargs
+        ):
             seen_payloads.append(copy.deepcopy(payload))
-            return {"id": "success"}, None
+            return _valid_completion_response("success"), None
 
         make_llm_request_mock.side_effect = fake_make_llm_request
 
@@ -408,7 +433,7 @@ class ChatRetryPayloadTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "success"})
+        self.assertEqual(response.json(), _valid_completion_response("success"))
         self.assertEqual(request_payload, original_payload)
         self.assertEqual(len(seen_payloads), 1)
         self.assertEqual(seen_payloads[0]["messages"], original_payload["messages"])

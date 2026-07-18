@@ -31,6 +31,7 @@ class ChatTerminalObservation:
     top_provider: str
     top_model: str
     components: tuple[BillingComponent, ...]
+    ttft_ms: int | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -48,6 +49,9 @@ class ChatTerminalObservation:
             or self.top_model != final_component.model
         ):
             raise AccountingValidationError from None
+        if self.ttft_ms is not None:
+            if isinstance(self.ttft_ms, bool) or not isinstance(self.ttft_ms, int) or self.ttft_ms < 0:
+                raise AccountingValidationError from None
         object.__setattr__(self, "top_provider", final_component.provider)
         object.__setattr__(self, "top_model", final_component.model)
         object.__setattr__(self, "components", components)
@@ -85,6 +89,7 @@ def build_direct_chat_terminal_observation(
     model: str,
     cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
     duration_ms: int | None = None,
+    ttft_ms: int | None = None,
 ) -> ChatTerminalObservation:
     """Build one strict terminal observation from an upstream chat response."""
     component = build_token_model_component(
@@ -98,6 +103,7 @@ def build_direct_chat_terminal_observation(
         top_provider=component.provider,
         top_model=component.model,
         components=(component,),
+        ttft_ms=ttft_ms,
     )
 
 
@@ -120,6 +126,7 @@ def build_chat_accounting_event(
     usage = build_component_sum_usage(
         observation.components,
         duration_ms=duration_ms,
+        ttft_ms=observation.ttft_ms,
     )
     return AccountingEvent(
         version=ACCOUNTING_EVENT_VERSION,

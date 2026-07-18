@@ -159,6 +159,16 @@ def test_direct_token_observation_requires_actual_usage() -> None:
             },
             (3, 2, 5, 1),
         ),
+        (
+            {
+                "prompt_tokens": 3,
+                "completion_tokens": 0,
+                "total_tokens": 3,
+                "prompt_tokens_details": None,
+                "completion_tokens_details": None,
+            },
+            (3, 0, 3, 0),
+        ),
     ],
 )
 def test_token_aliases_and_missing_total_are_strictly_normalized(
@@ -233,7 +243,7 @@ def test_explicit_cost_does_not_permit_missing_token_usage_for_tpm() -> None:
 
 @pytest.mark.parametrize(
     "invalid_cost",
-    [None, True, "0", -1, float("nan"), float("inf")],
+    [True, "0", -1, float("nan"), float("inf")],
 )
 def test_present_invalid_token_cost_is_not_replaced_by_registry(
     invalid_cost: object,
@@ -252,10 +262,22 @@ def test_present_invalid_token_cost_is_not_replaced_by_registry(
     assert exc_info.value.code is AccountingErrorCode.INVALID_UPSTREAM_COST
 
 
-def test_missing_token_rate_marks_component_cost_unavailable() -> None:
-    """A missing/unconfigured registry price must not turn an already-successful
-    upstream call into an error: the component is built with a zero cost and
-    ``cost_unavailable=True`` instead of raising."""
+def test_null_token_cost_uses_registry_price() -> None:
+    observation = _parse_token(
+        {
+            "usage": {
+                "prompt_tokens": 2,
+                "completion_tokens": 1,
+                "cost": None,
+            }
+        }
+    )
+
+    assert observation.usage.cost == pytest.approx((2 * 2.0 + 1 * 4.0) / 1_000_000)
+    assert observation.cost_source is CostSource.TOKEN_REGISTRY
+
+
+def test_missing_token_rate_uses_default_cost() -> None:
     component = build_token_model_component(
         {"usage": {"prompt_tokens": 2, "completion_tokens": 1}},
         provider="trusted-provider",
@@ -263,9 +285,9 @@ def test_missing_token_rate_marks_component_cost_unavailable() -> None:
         cost_rate_registry=MappingProxyType({}),
     )
 
-    assert component.usage.cost == 0.0
-    assert component.usage.cost_unavailable is True
-    assert component.cost_source is CostSource.TOKEN_REGISTRY
+    assert component.usage.cost == DEFAULT_OPERATION_COST_USD
+    assert component.usage.cost_unavailable is False
+    assert component.cost_source is CostSource.OPERATION_DEFAULT
 
 
 def test_generic_token_builder_rejects_total_only_usage() -> None:
@@ -356,6 +378,46 @@ def test_flat_cost_precedence_is_upstream_then_configured_then_default() -> None
     assert upstream.model is None
 
 
+def test_null_flat_cost_uses_configured_then_default_cost() -> None:
+    calculators = MappingProxyType(
+        {
+            ("images_generation", "image-model"): OperationCostCalculator(
+                unit="operation",
+                rate_usd=0.35,
+            )
+        }
+    )
+    configured = _parse_flat({"usage": {"cost": None}}, calculators=calculators)
+    defaulted = _parse_flat({"usage": {"cost": None}})
+
+    assert configured.usage.cost == 0.35
+    assert configured.cost_source is CostSource.OPERATION_CONFIGURED
+    assert defaulted.usage.cost == DEFAULT_OPERATION_COST_USD
+    assert defaulted.cost_source is CostSource.OPERATION_DEFAULT
+
+
+def test_null_optional_usage_fields_are_treated_as_absent() -> None:
+    observation = _parse_token(
+        {
+            "usage": {
+                "prompt_tokens": 2,
+                "completion_tokens": 0,
+                "cost": 0,
+                "cost_saved": None,
+                "duration_ms": None,
+                "is_estimated": None,
+            }
+        }
+    )
+    flat_observation = _parse_flat({"usage": None})
+
+    assert observation.usage.cost_saved == 0.0
+    assert observation.usage.duration_ms is None
+    assert observation.usage.is_estimated is False
+    assert flat_observation.usage.cost == DEFAULT_OPERATION_COST_USD
+    assert flat_observation.cost_source is CostSource.OPERATION_DEFAULT
+
+
 def test_flat_observation_preserves_strict_usage_diagnostics() -> None:
     observation = _parse_flat(
         {
@@ -375,7 +437,7 @@ def test_flat_observation_preserves_strict_usage_diagnostics() -> None:
 
 @pytest.mark.parametrize(
     "invalid_cost",
-    [None, True, "0", -1, float("nan"), float("inf")],
+    [True, "0", -1, float("nan"), float("inf")],
 )
 def test_present_invalid_flat_cost_is_not_replaced_by_calculator(
     invalid_cost: object,

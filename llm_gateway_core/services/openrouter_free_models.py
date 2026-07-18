@@ -183,6 +183,21 @@ class ScoredOpenRouterModel:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CapabilityMetadata:
+    """Capability facts parsed from one OpenRouter-compatible catalog entry.
+
+    Used by the F-auto capability-autofill resolver to fill unset
+    ``supports_vision``/``supports_tools``/``context_window`` fields on
+    fallback-chain candidates. ``None`` means "the catalog entry did not say"
+    and must never be materialized as a value.
+    """
+
+    supports_vision: bool | None
+    supports_tools: bool | None
+    context_window: int | None
+
+
 @dataclass
 class OpenRouterFreeModelsSnapshot:
     updated_at: str
@@ -226,6 +241,7 @@ class OpenRouterFreeModelsService:
         self._lock = asyncio.Lock()
         self._refresh_lock = asyncio.Lock()
         self._snapshot: OpenRouterFreeModelsSnapshot | None = None
+        self._capability_index: dict[str, CapabilityMetadata] = {}
         self._configured = False
         self._running = False
         self._last_error: str | None = None
@@ -673,6 +689,17 @@ class OpenRouterFreeModelsService:
                 "snapshot": snapshot,
             }
 
+    async def get_capability_index(self) -> dict[str, CapabilityMetadata]:
+        """Full-catalog capability index (paid + free), keyed by metadata key.
+
+        Used by the F-auto capability-autofill resolver as the OpenRouter
+        fallback source when a candidate's own provider catalog has no entry
+        for the model. Returns a defensive copy; ``{}`` before the first
+        successful refresh.
+        """
+        async with self._lock:
+            return dict(self._capability_index)
+
     def _acquire_runtime_run(
         self,
         *,
@@ -930,6 +957,7 @@ class OpenRouterFreeModelsService:
             context.provider_config,
             self._select_openrouter_api_key(context.provider_api_key),
         )
+        capability_index = _build_capability_index(catalog)
         eligible_entries = [entry for entry in catalog if _is_eligible_free_text_model(entry, self._time_func())]
         fingerprint = _catalog_fingerprint(eligible_entries)
 
@@ -953,6 +981,7 @@ class OpenRouterFreeModelsService:
 
         async with self._lock:
             self._snapshot = snapshot
+            self._capability_index = capability_index
             self._last_checked_at = snapshot.updated_at
             self._last_error = None
 
@@ -1430,13 +1459,17 @@ class OpenRouterFreeModelsService:
         return parsed.scheme == "https" and parsed.hostname == OPENROUTER_HOST
 
 
-def _score_metadata(entry: dict[str, Any], now: float) -> ScoredOpenRouterModel:
-    model_id = str(entry.get("id", ""))
-    supported_parameters = [
+def _parse_supported_parameters(entry: dict[str, Any]) -> list[str]:
+    return [
         str(value)
         for value in entry.get("supported_parameters", [])
         if isinstance(value, str)
     ]
+
+
+def _score_metadata(entry: dict[str, Any], now: float) -> ScoredOpenRouterModel:
+    model_id = str(entry.get("id", ""))
+    supported_parameters = _parse_supported_parameters(entry)
     supported = set(supported_parameters)
     context_length = _int_value(entry.get("context_length")) or _int_value((entry.get("top_provider") or {}).get("context_length")) or 0
     max_completion_tokens = _int_value((entry.get("top_provider") or {}).get("max_completion_tokens"))
@@ -1479,6 +1512,63 @@ def _score_metadata(entry: dict[str, Any], now: float) -> ScoredOpenRouterModel:
     model.reason = _build_reason(model)
     model.recalculate_score()
     return model
+
+
+def parse_capability_metadata(entry: dict[str, Any]) -> CapabilityMetadata:
+    """Parse F-auto capability facts from one OpenRouter-compatible entry.
+
+    Pure and independent of ``_score_metadata``/``ScoredOpenRouterModel``: it
+    is used against the *full* catalog (paid + free), not just the free
+    eligible pool that scoring restricts itself to.
+    """
+    architecture = entry.get("architecture")
+    supports_vision: bool | None = None
+    if isinstance(architecture, dict):
+        input_modalities = architecture.get("input_modalities")
+        if isinstance(input_modalities, list):
+            supports_vision = "image" in input_modalities
+
+    supports_tools: bool | None = None
+    if isinstance(entry.get("supported_parameters"), list):
+        supports_tools = "tools" in _parse_supported_parameters(entry)
+
+    context_window = _int_value(entry.get("context_length")) or _int_value(
+        (entry.get("top_provider") or {}).get("context_length")
+    )
+
+    return CapabilityMetadata(
+        supports_vision=supports_vision,
+        supports_tools=supports_tools,
+        context_window=context_window,
+    )
+
+
+def _openrouter_metadata_key(model_id: str) -> str:
+    basename = str(model_id or "").strip().rsplit("/", 1)[-1].strip()
+    return basename.split(":", 1)[0].lower()
+
+
+def _build_capability_index(catalog: list[dict[str, Any]]) -> dict[str, CapabilityMetadata]:
+    """Full-catalog capability index, keyed by ``_openrouter_metadata_key``.
+
+    Key collisions (two catalog entries whose basename/lowercase key match)
+    keep the entry with the larger ``context_window`` — a deterministic,
+    arbitrary tie-break; there is no signal in the catalog to prefer one
+    provider-qualified id over another.
+    """
+    index: dict[str, CapabilityMetadata] = {}
+    for entry in catalog:
+        model_id = entry.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        key = _openrouter_metadata_key(model_id)
+        if not key:
+            continue
+        metadata = parse_capability_metadata(entry)
+        existing = index.get(key)
+        if existing is None or (metadata.context_window or -1) > (existing.context_window or -1):
+            index[key] = metadata
+    return index
 
 
 def _is_eligible_free_text_model(entry: dict[str, Any], now: float) -> bool:

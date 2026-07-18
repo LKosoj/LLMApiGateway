@@ -112,6 +112,64 @@ class ProviderModelsServiceTests(unittest.TestCase):
         self.assertEqual(models, ["model-a"])
         self.assertEqual(http_client.get.await_count, 1)
 
+    def test_get_model_entries_returns_raw_entries_by_exact_id(self):
+        http_client = Mock()
+        http_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "model-a", "context_length": 128000},
+                        {"id": "model-b", "context_length": 64000},
+                    ]
+                },
+                request=httpx.Request("GET", "https://provider.example/models"),
+            )
+        )
+        service = ProviderModelsService(ttl_seconds=900, time_func=lambda: 0.0)
+        provider_config = ProviderDetails(baseUrl="https://provider.example", apikey="DIRECT-KEY")
+
+        entries = run_async(service.get_model_entries("provider-a", provider_config, http_client))
+
+        self.assertEqual(set(entries.keys()), {"model-a", "model-b"})
+        self.assertEqual(entries["model-a"]["context_length"], 128000)
+        self.assertEqual(entries["model-b"]["context_length"], 64000)
+
+    def test_get_models_and_get_model_entries_share_one_http_call_within_ttl(self):
+        http_client = Mock()
+        http_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"id": "model-a"}]},
+                request=httpx.Request("GET", "https://provider.example/models"),
+            )
+        )
+        service = ProviderModelsService(ttl_seconds=900, time_func=lambda: 0.0)
+        provider_config = ProviderDetails(baseUrl="https://provider.example", apikey="DIRECT-KEY")
+
+        models = run_async(service.get_models("provider-a", provider_config, http_client))
+        entries = run_async(service.get_model_entries("provider-a", provider_config, http_client))
+
+        self.assertEqual(models, ["model-a"])
+        self.assertEqual(list(entries.keys()), ["model-a"])
+        self.assertEqual(http_client.get.await_count, 1)
+
+    def test_get_model_entries_returns_empty_for_explicit_available_models(self):
+        http_client = Mock()
+        http_client.get = AsyncMock()
+        service = ProviderModelsService(ttl_seconds=900, time_func=lambda: 0.0)
+        provider_config = ProviderDetails(
+            baseUrl="https://provider.example",
+            apikey="DIRECT-KEY",
+            available_models=["model-a", "model-b"],
+        )
+
+        entries = run_async(service.get_model_entries("provider-a", provider_config, http_client))
+
+        self.assertEqual(entries, {})
+        self.assertEqual(http_client.get.await_count, 0)
+
+
 class ProviderExplicitModelsTests(unittest.TestCase):
     def _config(self, available_models):
         return ProviderDetails(

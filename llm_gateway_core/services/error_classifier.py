@@ -41,11 +41,30 @@ HTTP_STATUS_ERROR_PATTERN = re.compile(
 HTTP_SERVER_ERROR_MESSAGE_PATTERN = re.compile(r"\b(5[0-9]{2})\s+internal\s+server\s+error\b")
 DOWNSTREAM_ERROR_PATTERN = re.compile(r"\bdownstream\s+error\s+(429|400|401|403|404|5[0-9]{2})\b")
 
+DAILY_QUOTA_DAY_MARKERS = ("daily", "per-day", "today", "24h")
+DAILY_QUOTA_QUOTA_MARKERS = ("allocation", "quota", "limit", "exhausted", "used up")
+
+LEARNED_LIMIT_VALUE_PATTERN = re.compile(r"\blimit[:\s]+([\d,]+)", re.IGNORECASE)
+# Checked in this order so a message naming multiple periods/units resolves to
+# the most specific axis: "day" before "minute", "tokens" before "requests".
+LEARNED_LIMIT_AXIS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("tpd", re.compile(r"tokens per day|\btpd\b", re.IGNORECASE)),
+    ("tpm", re.compile(r"tokens per minute|\btpm\b", re.IGNORECASE)),
+    ("rpd", re.compile(r"requests per day|\brpd\b", re.IGNORECASE)),
+    ("rpm", re.compile(r"requests per minute|\brpm\b", re.IGNORECASE)),
+)
+
 
 def classify_error(error_detail: object | None) -> str | None:
     """Classify an error detail into a standardized error_type."""
     if not error_detail:
         return None
+    # Package D: a ModelBehaviorFailureDetail already carries its own
+    # registered failure class (empty_completion/format_ignored/...); use it
+    # verbatim so it flows into fallback events and the attempt trail as-is.
+    behavior_class = getattr(error_detail, "behavior_class", None)
+    if behavior_class:
+        return behavior_class
     if _is_context_overflow_error(error_detail):
         return "context_overflow"
 
@@ -76,6 +95,38 @@ def classify_error(error_detail: object | None) -> str | None:
     if downstream_error_match:
         return f"http_{downstream_error_match.group(1)}"
     return "unknown"
+
+
+def is_daily_quota_exhausted_error(error_detail: object) -> bool:
+    """True when one error signal names both a daily period and a quota exhaustion.
+
+    Requires both markers in the *same* signal (e.g. "daily quota exhausted",
+    "used up your per-day allocation") so an error that only mentions "today"
+    or only mentions "limit" is not mistaken for a daily-quota reset.
+    """
+    for signal in _extract_error_signal_candidates(error_detail):
+        has_day_marker = any(marker in signal for marker in DAILY_QUOTA_DAY_MARKERS)
+        has_quota_marker = any(marker in signal for marker in DAILY_QUOTA_QUOTA_MARKERS)
+        if has_day_marker and has_quota_marker:
+            return True
+    return False
+
+
+def parse_learned_limit_from_error(error_detail: object) -> tuple[str, int] | None:
+    """Parse a ``limit: <value>`` hint and its axis from an upstream error body.
+
+    Returns ``(axis, value)`` for the first signal that carries both a numeric
+    limit and an unambiguous axis marker (``rpm``/``rpd``/``tpm``/``tpd``), or
+    ``None`` when no signal has a determinable axis.
+    """
+    for signal in _extract_error_signal_candidates(error_detail):
+        value_match = LEARNED_LIMIT_VALUE_PATTERN.search(signal)
+        if not value_match:
+            continue
+        for axis, axis_pattern in LEARNED_LIMIT_AXIS_PATTERNS:
+            if axis_pattern.search(signal):
+                return axis, int(value_match.group(1).replace(",", ""))
+    return None
 
 
 def _format_fallback_error_summary_value(value: object) -> str:

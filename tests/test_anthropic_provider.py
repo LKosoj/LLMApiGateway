@@ -952,10 +952,10 @@ class ProviderModelsServiceAnthropicTests(unittest.TestCase):
         fake_client = Mock()
         fake_client.get = AsyncMock(return_value=fake_response)
 
-        models = run_async(
-            service._fetch_models("anthropic-upstream", provider_config, fake_client)
+        entries = run_async(
+            service._fetch_model_entries("anthropic-upstream", provider_config, fake_client)
         )
-        self.assertEqual(models, ["claude-sonnet-4-6", "claude-haiku-4-5"])
+        self.assertEqual(list(entries.keys()), ["claude-sonnet-4-6", "claude-haiku-4-5"])
 
         call = fake_client.get.await_args
         self.assertEqual(call.args[0], "https://api.anthropic.example/v1/models")
@@ -977,10 +977,10 @@ class ProviderModelsServiceAnthropicTests(unittest.TestCase):
         fake_client = Mock()
         fake_client.get = AsyncMock(return_value=fake_response)
 
-        models = run_async(
-            service._fetch_models("openai-upstream", provider_config, fake_client)
+        entries = run_async(
+            service._fetch_model_entries("openai-upstream", provider_config, fake_client)
         )
-        self.assertEqual(models, ["gpt-4o"])
+        self.assertEqual(list(entries.keys()), ["gpt-4o"])
 
         call = fake_client.get.await_args
         self.assertEqual(call.args[0], "https://api.openai.example/models")

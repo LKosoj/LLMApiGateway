@@ -118,6 +118,7 @@ class RulesEditorStructuredTests(unittest.TestCase):
         self.assertEqual(payload["providers"], ["openrouter", "devbox"])
         self.assertEqual(payload["rules"][0]["gateway_model_name"], "gateway-model")
         self.assertFalse(payload["rules"][0]["strip_think_tags"])
+        self.assertFalse(payload["rules"][0]["tool_call_rescue"])
         self.assertEqual(payload["rules"][0]["fallback_models"][0]["provider"], "devbox")
         self.assertEqual(payload["rules"][0]["fallback_models"][0]["model"], "provider-model")
 
@@ -541,6 +542,46 @@ class RulesEditorStructuredTests(unittest.TestCase):
             ]["strip_think_tags"]
         )
         self.assertIn('"strip_think_tags": true', self.rules_path.read_text(encoding="utf-8"))
+
+    def test_structured_save_persists_tool_call_rescue(self):
+        fake_http_client = Mock()
+        fake_http_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"id": "provider-model"}]},
+                request=httpx.Request("GET", "https://devbox.example/models"),
+            )
+        )
+
+        with self._client(fake_http_client) as (client, _):
+            response = client.post(
+                "/v1/config/models-rules/structured",
+                json={
+                    "rules": [
+                        {
+                            "gateway_model_name": "gateway-model",
+                            "fallback_models": [
+                                {
+                                    "provider": "devbox",
+                                    "model": "provider-model",
+                                }
+                            ],
+                            "rotate_models": False,
+                            "tool_call_rescue": True,
+                        }
+                    ]
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["rules"][0]["tool_call_rescue"])
+        self.assertTrue(
+            self.published_snapshot.config_loader.fallback_rules[
+                "gateway-model"
+            ]["tool_call_rescue"]
+        )
+        self.assertIn('"tool_call_rescue": true', self.rules_path.read_text(encoding="utf-8"))
 
     def test_structured_save_persists_compress_tool_results(self):
         fake_http_client = Mock()

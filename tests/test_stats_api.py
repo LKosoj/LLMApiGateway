@@ -73,6 +73,12 @@ class _FakeTokensUsageDB:
                 "estimated_count": 1,
                 "avg_duration_ms": 150,
                 "max_duration_ms": 250,
+                "duration_p50_ms": 140,
+                "duration_p95_ms": 240,
+                "ttft_avg_ms": 80,
+                "ttft_max_ms": 120,
+                "ttft_p50_ms": 75,
+                "ttft_p95_ms": 115,
             },
             "series": [{"time_period": "2026-05-31", "requests": 2, "total_tokens": 30, "cost": 0.06}],
             "breakdowns": {
@@ -625,6 +631,27 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertTrue(usage_call["is_estimated"])
         self.assertIsNone(fake_fallback_events_db.dashboard_calls[0]["api_key_id"])
         self.assertEqual(fake_rejections_db.dashboard_calls, [])
+
+    def test_analytics_dashboard_totals_include_ttft_and_percentile_fields(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+
+        with self._client(
+            fake_tokens_usage_db,
+            _FakeApiKeysDB(valid_key_id=7),
+        ) as client:
+            response = client.get(
+                "/v1/api/analytics-dashboard?range=7d&bucket=day",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        totals = response.json()["totals"]
+        self.assertEqual(totals["duration_p50_ms"], 140)
+        self.assertEqual(totals["duration_p95_ms"], 240)
+        self.assertEqual(totals["ttft_avg_ms"], 80)
+        self.assertEqual(totals["ttft_max_ms"], 120)
+        self.assertEqual(totals["ttft_p50_ms"], 75)
+        self.assertEqual(totals["ttft_p95_ms"], 115)
 
     def test_virtual_key_usage_dashboard_forces_own_scope(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()

@@ -241,6 +241,41 @@ class TokensUsageDBSchemaTests(unittest.TestCase):
         finally:
             db_path.unlink(missing_ok=True)
 
+    def test_init_db_adds_ttft_ms_column_for_existing_database(self):
+        db_path = resolve_db_dir() / "test_ttft_ms_migration.sqlite"
+
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tokens_usage (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp DATETIME NOT NULL,
+                        prompt_tokens INTEGER DEFAULT 0,
+                        completion_tokens INTEGER DEFAULT 0,
+                        total_tokens INTEGER DEFAULT 0,
+                        reasoning_tokens INTEGER DEFAULT 0,
+                        cached_tokens INTEGER DEFAULT 0,
+                        cost REAL DEFAULT 0.0,
+                        model TEXT,
+                        provider TEXT
+                    )
+                    """
+                )
+                conn.commit()
+
+            TokensUsageDB(db_filename=db_path.name)
+
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(tokens_usage)")
+                column_names = {row[1] for row in cursor.fetchall()}
+
+            self.assertIn("ttft_ms", column_names)
+        finally:
+            db_path.unlink(missing_ok=True)
+
     def test_insert_usage_persists_is_estimated_flag(self):
         db_path = resolve_db_dir() / "test_is_estimated_roundtrip.sqlite"
 

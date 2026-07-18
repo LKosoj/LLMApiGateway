@@ -142,6 +142,51 @@ class MakeJsonRequestRetryAfterTests(unittest.TestCase):
         self.assertEqual(error_detail.status_code, 500)
 
 
+class MakeJsonRequestResponseHeadersSinkTests(unittest.TestCase):
+    def test_json_request_populates_response_headers_sink_on_success(self):
+        response = httpx.Response(
+            status_code=200,
+            json={"ok": True},
+            headers={"X-RateLimit-Remaining": "42"},
+        )
+        fake_client = SimpleNamespace(post=AsyncMock(return_value=response))
+        sink: dict[str, str] = {}
+
+        response_data, error_detail = run_async(
+            _make_json_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                response_headers_sink=sink,
+            )
+        )
+
+        self.assertIsNone(error_detail)
+        self.assertEqual(response_data, {"ok": True})
+        self.assertEqual(sink.get("x-ratelimit-remaining"), "42")
+
+    def test_json_request_response_headers_sink_untouched_when_not_provided(self):
+        response = httpx.Response(
+            status_code=200,
+            json={"ok": True},
+            headers={"X-RateLimit-Remaining": "42"},
+        )
+        fake_client = SimpleNamespace(post=AsyncMock(return_value=response))
+
+        response_data, error_detail = run_async(
+            _make_json_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+            )
+        )
+
+        self.assertIsNone(error_detail)
+        self.assertEqual(response_data, {"ok": True})
+
+
 class _FakeStreamingResponse:
     def __init__(self, chunks, *, status_code=200, headers=None):
         self._chunks = chunks
@@ -745,6 +790,57 @@ class MakeStreamingRequestTests(unittest.TestCase):
         self.assertEqual(capacity.snapshot.active_items, 0)
         self.assertEqual(capacity.snapshot.active_bytes, 0)
 
+    def test_streaming_request_sets_ttft_ms_from_first_content_chunk(self):
+        chunks = [
+            b": keepalive\n\n",
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+        ]
+        fake_client = _FakeStreamingClient(chunks)
+        capacity = StreamObservationCapacity(max_items=4, max_bytes=4096)
+
+        async def scenario():
+            response_data, error_detail = await _make_streaming_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=1024,
+            )
+
+            self.assertIsNone(error_detail)
+            self.assertIsNotNone(response_data)
+            ttft_ms = response_data.llmgateway_ttft_ms
+            self.assertIsInstance(ttft_ms, int)
+            self.assertGreaterEqual(ttft_ms, 0)
+
+            async for _ in response_data.body_iterator:
+                pass
+
+        run_async(scenario())
+        self.assertTrue(fake_client.context.closed)
+
+    def test_streaming_request_has_no_ttft_ms_when_stream_ends_without_content(self):
+        fake_client = _FakeStreamingClient([])
+        capacity = StreamObservationCapacity(max_items=4, max_bytes=4096)
+
+        response_data, error_detail = run_async(
+            _make_streaming_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=1024,
+            )
+        )
+
+        self.assertIsNone(response_data)
+        self.assertEqual(
+            error_detail,
+            "Stream ended before any content chunks were received.",
+        )
+
     def test_raw_gzip_decode_is_bounded_for_success_error_and_cancel(self):
         event = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
 
@@ -1249,6 +1345,54 @@ class MakeStreamingRequestTests(unittest.TestCase):
         self.assertEqual(capacity.snapshot.active_bytes, 0)
 
 
+class MakeStreamingRequestResponseHeadersSinkTests(unittest.TestCase):
+    def test_streaming_request_captures_headers_before_status_branch_check(self):
+        async def scenario():
+            capacity = StreamObservationCapacity(max_items=2, max_bytes=1024)
+
+            success_client = _FakeStreamingClient(
+                [b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'],
+                status_code=200,
+                headers={"x-ratelimit-remaining-requests": "5"},
+            )
+            success_sink: dict[str, str] = {}
+            response, error_detail = await _make_streaming_request(
+                success_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=256,
+                response_headers_sink=success_sink,
+            )
+            self.assertIsNone(error_detail)
+            self.assertEqual(success_sink.get("x-ratelimit-remaining-requests"), "5")
+            # Drain the body so the stream's capacity lease is released before
+            # the next request reuses the same capacity instance.
+            b"".join([part async for part in response.body_iterator])
+
+            error_client = _FakeStreamingClient(
+                [b"error body"],
+                status_code=429,
+                headers={"x-ratelimit-remaining-requests": "0", "retry-after": "7"},
+            )
+            error_sink: dict[str, str] = {}
+            response_data, error_detail = await _make_streaming_request(
+                error_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=64,
+                response_headers_sink=error_sink,
+            )
+            self.assertIsNone(response_data)
+            self.assertEqual(error_detail.status_code, 429)
+            self.assertEqual(error_sink.get("x-ratelimit-remaining-requests"), "0")
+
+        run_async(scenario())
+
+
 class ComputeRetrySleepTests(unittest.TestCase):
     def test_retry_after_takes_precedence_over_retry_delay(self):
         detail = RequestErrorDetail("slow", retry_after=10.0, status_code=429)
@@ -1360,7 +1504,15 @@ class RetryLoopHonorsRetryAfterTests(unittest.TestCase):
         # First attempt fails with Retry-After=8; second succeeds.
         make_llm_request_mock.side_effect = [
             (None, RequestErrorDetail("too many", retry_after=8.0, status_code=429)),
-            ({"id": "after-retry"}, None),
+            (
+                {
+                    "id": "after-retry",
+                    "choices": [
+                        {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                    ],
+                },
+                None,
+            ),
         ]
 
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):

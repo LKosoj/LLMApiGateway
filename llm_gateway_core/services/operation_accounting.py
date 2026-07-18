@@ -12,6 +12,7 @@ from ..middleware.accounting_admission import AccountingRequestContext
 from ..utils.usage_tracking import ModelCostRates, calculate_model_cost_usd
 from .accounting import (
     ACCOUNTING_EVENT_VERSION,
+    DEFAULT_OPERATION_COST_USD,
     AccountingCostError,
     AccountingErrorCode,
     AccountingEvent,
@@ -90,7 +91,11 @@ class OperationTerminalObservation:
                 usage=self.usage,
                 cost_source=self.cost_source,
             )
-            if self.cost_source not in {CostSource.UPSTREAM, CostSource.TOKEN_REGISTRY}:
+            if self.cost_source not in {
+                CostSource.UPSTREAM,
+                CostSource.TOKEN_REGISTRY,
+                CostSource.OPERATION_DEFAULT,
+            }:
                 raise AccountingValidationError
             return
 
@@ -181,7 +186,7 @@ def _details(
     key: str,
 ) -> Mapping[str, object]:
     value = usage.get(key)
-    if value is None and key not in usage:
+    if value is None:
         return {}
     if not isinstance(value, Mapping):
         raise AccountingValidationError
@@ -191,6 +196,8 @@ def _details(
 def _usage_mapping(payload: Mapping[str, object]) -> Mapping[str, object] | None:
     if "usage" in payload:
         usage = payload["usage"]
+        if usage is None:
+            return None
         if not isinstance(usage, Mapping):
             raise AccountingValidationError
         return usage
@@ -203,6 +210,8 @@ def _usage_mapping(payload: Mapping[str, object]) -> Mapping[str, object] | None
         if "usage" not in container:
             continue
         usage = container["usage"]
+        if usage is None:
+            return None
         if not isinstance(usage, Mapping):
             raise AccountingValidationError
         return usage
@@ -323,8 +332,9 @@ def _strict_diagnostics(
 ) -> tuple[float, int | None, bool]:
     usage = usage or {}
     cost_saved = 0.0
-    if "cost_saved" in usage:
-        value = usage["cost_saved"]
+    cost_saved_value = usage.get("cost_saved")
+    if cost_saved_value is not None:
+        value = cost_saved_value
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise AccountingValidationError
         cost_saved = float(value)
@@ -334,8 +344,9 @@ def _strict_diagnostics(
             cost_saved = 0.0
 
     payload_duration: int | None = None
-    if "duration_ms" in usage:
-        payload_duration = _strict_token(usage["duration_ms"])
+    duration_value = usage.get("duration_ms")
+    if duration_value is not None:
+        payload_duration = _strict_token(duration_value)
     if duration_ms is not None:
         normalized_duration = _strict_token(duration_ms)
         if payload_duration is not None and payload_duration != normalized_duration:
@@ -343,33 +354,29 @@ def _strict_diagnostics(
         payload_duration = normalized_duration
 
     is_estimated = usage.get("is_estimated", False)
+    if is_estimated is None:
+        is_estimated = False
     if not isinstance(is_estimated, bool):
         raise AccountingValidationError
     return cost_saved, payload_duration, is_estimated
 
 
-def _registry_cost(
+def _resolve_token_cost(
     *,
     prompt_tokens: int,
     completion_tokens: int,
     provider: str,
     model: str,
     cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
-) -> float | None:
-    """Return the registry-derived cost, or ``None`` if no price is configured.
-
-    A missing/invalid price must not turn an already-successful upstream call
-    into a 5xx: the caller degrades this to a ``cost_unavailable`` usage row
-    instead of raising.
-    """
+) -> tuple[float, CostSource]:
     rates = cost_rate_registry.get((provider, model))
     if not isinstance(rates, ModelCostRates):
         logger.warning(
-            "No cost rate configured for provider=%s model=%s; recording cost_unavailable usage.",
+            "No cost rate configured for provider=%s model=%s; using default cost.",
             provider,
             model,
         )
-        return None
+        return DEFAULT_OPERATION_COST_USD, CostSource.OPERATION_DEFAULT
     for rate in (rates.input_rate, rates.output_rate):
         if (
             isinstance(rate, bool)
@@ -378,11 +385,11 @@ def _registry_cost(
             or rate < 0
         ):
             logger.warning(
-                "Invalid cost rate configured for provider=%s model=%s; recording cost_unavailable usage.",
+                "Invalid cost rate configured for provider=%s model=%s; using default cost.",
                 provider,
                 model,
             )
-            return None
+            return DEFAULT_OPERATION_COST_USD, CostSource.OPERATION_DEFAULT
     cost = calculate_model_cost_usd(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
@@ -390,12 +397,12 @@ def _registry_cost(
     )
     if cost is None or not math.isfinite(cost) or cost < 0:
         logger.warning(
-            "Cost calculation failed for provider=%s model=%s; recording cost_unavailable usage.",
+            "Cost calculation failed for provider=%s model=%s; using default cost.",
             provider,
             model,
         )
-        return None
-    return cost
+        return DEFAULT_OPERATION_COST_USD, CostSource.OPERATION_DEFAULT
+    return cost, CostSource.TOKEN_REGISTRY
 
 
 def _build_token_model_component(
@@ -415,7 +422,7 @@ def _build_token_model_component(
         if not (
             accept_upstream_cost
             and candidate_usage is not None
-            and "cost" in candidate_usage
+            and candidate_usage.get("cost") is not None
         ):
             raise AccountingCostError(AccountingErrorCode.COST_UNAVAILABLE)
     usage_payload, prompt, completion, total, reasoning, cached = _strict_token_usage(
@@ -423,24 +430,20 @@ def _build_token_model_component(
         input_only=input_only,
     )
     if total == 0:
-        if accept_upstream_cost and "cost" in usage_payload:
+        if accept_upstream_cost and usage_payload.get("cost") is not None:
             raise AccountingValidationError
         raise AccountingCostError(AccountingErrorCode.COST_UNAVAILABLE)
-    cost_unavailable = False
-    if accept_upstream_cost and "cost" in usage_payload:
+    if accept_upstream_cost and usage_payload.get("cost") is not None:
         cost = _strict_upstream_cost(usage_payload["cost"])
         cost_source = CostSource.UPSTREAM
     else:
-        registry_cost = _registry_cost(
+        cost, cost_source = _resolve_token_cost(
             prompt_tokens=prompt,
             completion_tokens=completion,
             provider=provider,
             model=model,
             cost_rate_registry=cost_rate_registry,
         )
-        cost_unavailable = registry_cost is None
-        cost = 0.0 if registry_cost is None else registry_cost
-        cost_source = CostSource.TOKEN_REGISTRY
     cost_saved, normalized_duration_ms, is_estimated = _strict_diagnostics(
         usage_payload,
         duration_ms=duration_ms,
@@ -455,7 +458,6 @@ def _build_token_model_component(
             reasoning_tokens=reasoning,
             cached_tokens=cached,
             cost=cost,
-            cost_unavailable=cost_unavailable,
             cost_saved=cost_saved,
             duration_ms=normalized_duration_ms,
             is_estimated=is_estimated,
@@ -534,7 +536,9 @@ def _parse_operation_observation(
 
     usage = _usage_mapping(payload)
     upstream_cost_present = bool(
-        accept_upstream_cost and usage is not None and "cost" in usage
+        accept_upstream_cost
+        and usage is not None
+        and usage.get("cost") is not None
     )
     upstream_cost = usage["cost"] if upstream_cost_present and usage is not None else None
     resolved = resolve_operation_cost(

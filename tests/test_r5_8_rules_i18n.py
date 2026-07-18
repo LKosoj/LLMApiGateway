@@ -67,6 +67,7 @@ def test_rules_editor_catalogs_are_strictly_paired_and_cover_dynamic_copy() -> N
     assert catalogs["en"].keys() == catalogs["ru"].keys()
     assert {
         "actions",
+        "capability",
         "catalog",
         "errors",
         "eval",
@@ -82,6 +83,8 @@ def test_rules_editor_catalogs_are_strictly_paired_and_cover_dynamic_copy() -> N
     assert catalogs["en"]["errors"].keys() == catalogs["ru"]["errors"].keys()
     assert catalogs["en"]["eval"].keys() == catalogs["ru"]["eval"].keys()
     assert catalogs["en"]["tooltips"].keys() == catalogs["ru"]["tooltips"].keys()
+    assert catalogs["en"]["capability"].keys() == catalogs["ru"]["capability"].keys()
+    assert catalogs["en"]["capability"]["source"].keys() == catalogs["ru"]["capability"]["source"].keys()
 
     source = _editor_source()
     for key in (
@@ -98,8 +101,13 @@ def test_rules_editor_catalogs_are_strictly_paired_and_cover_dynamic_copy() -> N
         "editor:eval.refreshFullEval",
         "editor:eval.refreshLatencyOnly",
         "editor:eval.refreshManualEval",
+        "editor:capability.autofilled",
+        "editor:capability.override",
     ):
         assert key in source
+    # Built as a template literal (`editor:capability.source.${source}`), not
+    # a literal string, so it's checked separately.
+    assert "editor:capability.source." in source
 
     assert "bindLocalizedText(heading, titleKey)" in source
     assert "buildFusionSectionHeading('editor:sections.fusion.mainHeading')" in source

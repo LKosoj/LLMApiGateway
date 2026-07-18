@@ -173,7 +173,15 @@ class DispatchCompressIntegrationTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
-        make_llm_request_mock.return_value = ({"id": "ok", "choices": []}, None)
+        make_llm_request_mock.return_value = (
+            {
+                "id": "ok",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                ],
+            },
+            None,
+        )
 
         tool_content = _make_long_text(700)
         payload = {
@@ -219,7 +227,15 @@ class DispatchCompressIntegrationTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
-        make_llm_request_mock.return_value = ({"id": "ok", "choices": []}, None)
+        make_llm_request_mock.return_value = (
+            {
+                "id": "ok",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                ],
+            },
+            None,
+        )
 
         payload = {
             "model": "compress-model",

@@ -25,6 +25,7 @@ from ...services.deep_research_process import (
 from ...services.deep_research_protocol import (
     DeepResearchJob,
 )
+from ...utils.provider_error_redaction import redact_provider_error_text
 from .deep_research_accounting import (
     DeepResearchTerminalOwner,
     take_deep_research_terminal_owner,
@@ -772,7 +773,10 @@ async def web_research(request: Request):
     if not search_candidates and first_search_error is not None:
         if isinstance(first_search_error, HTTPException):
             raise first_search_error
-        raise HTTPException(status_code=503, detail=f"Web research search failed: {first_search_error}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Web research search failed: {redact_provider_error_text(first_search_error)}",
+        )
 
     async def _read_search_result(result: dict[str, Any]) -> dict[str, str] | None:
         try:
@@ -885,7 +889,10 @@ async def web_research(request: Request):
                 logger.warning("Web research rerank failed: %s", result)
                 if isinstance(result, HTTPException):
                     raise result
-                raise HTTPException(status_code=503, detail=f"Web research rerank failed: {result}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Web research rerank failed: {redact_provider_error_text(result)}",
+                )
             articles.extend(result)
         search_results = [_article_source_payload(article) for article in articles]
         if evidence_matrix is not None:

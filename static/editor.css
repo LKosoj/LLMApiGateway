@@ -902,6 +902,26 @@ div[style*="position:relative"] {
     font-size: 0.82rem;
 }
 
+.capability-badge {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.capability-badge-value {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.capability-badge-edit {
+    width: auto;
+    padding: 2px 8px;
+    font-size: 0.8rem;
+}
+
 .advanced-options {
     border-top: 1px solid var(--border);
     padding-top: 12px;

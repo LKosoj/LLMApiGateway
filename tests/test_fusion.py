@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import time
 import unittest
@@ -18,6 +19,7 @@ from llm_gateway_core.services.accounting import (
     AccountingReservation,
     AccountingCostError,
     AccountingUsage,
+    AccountingValidationError,
     BillingComponent,
     BillingComponentKind,
     CostSource,
@@ -124,6 +126,82 @@ class FusionConfigValidationTests(unittest.TestCase):
         rules = loader.parse_and_validate_fusion_rules_payload(payload, providers_config=providers)
         self.assertIn("llmgateway/fusion", rules)
         self.assertNotIn("gateway_model_name", rules["llmgateway/fusion"])
+
+    def test_reserve_defaults_to_empty_list(self):
+        config = FusionModelConfig(
+            gateway_model_name="llmgateway/fusion",
+            panel=[{"provider": "p", "model": "m"}],
+            main_model={"provider": "p", "model": "main"},
+        )
+        self.assertEqual(config.reserve, [])
+
+    def test_reserve_at_most_eight_models(self):
+        reserve = [{"provider": "p", "model": f"r{i}"} for i in range(9)]
+        with self.assertRaises(pydantic.ValidationError):
+            FusionModelConfig(
+                gateway_model_name="llmgateway/fusion",
+                panel=[{"provider": "p", "model": "m"}],
+                main_model={"provider": "p", "model": "main"},
+                reserve=reserve,
+            )
+
+    def test_mapping_rejects_unknown_reserve_provider(self):
+        loader = ConfigLoader()
+        providers = {"known": ProviderDetails(baseUrl="https://x", apikey="k")}
+        payload = json.dumps(
+            [
+                {
+                    "gateway_model_name": "llmgateway/fusion",
+                    "panel": [{"provider": "known", "model": "m1"}],
+                    "main_model": {"provider": "known", "model": "main"},
+                    "reserve": [{"provider": "ghost", "model": "r1"}],
+                }
+            ]
+        )
+        with self.assertRaises(ValueError):
+            loader.parse_and_validate_fusion_rules_payload(payload, providers_config=providers)
+
+
+class FusionAssignReserveCandidatesTests(unittest.TestCase):
+    """``_assign_reserve_candidates`` is a pure function — no mocks needed."""
+
+    def test_assign_reserve_candidates_skips_successful_slots_and_stops_when_exhausted(self):
+        reserve = [{"provider": "p1", "model": "r1"}]
+        panel_raw = [
+            ("ok text", {"prompt_tokens": 1}),
+            RuntimeError("boom"),
+            RuntimeError("boom2"),
+        ]
+
+        slots, candidates = fusion_ensemble._assign_reserve_candidates(panel_raw, reserve)
+
+        self.assertEqual(slots, [1])
+        self.assertEqual(candidates, [{"provider": "p1", "model": "r1"}])
+
+    def test_assign_reserve_candidates_never_refills_accounting_errors(self):
+        reserve = [{"provider": "p1", "model": "r1"}]
+        panel_raw = [AccountingValidationError(), RuntimeError("boom")]
+
+        slots, candidates = fusion_ensemble._assign_reserve_candidates(panel_raw, reserve)
+
+        self.assertEqual(slots, [1])
+        self.assertEqual(candidates, reserve)
+
+    def test_assign_reserve_candidates_empty_reserve_assigns_nothing(self):
+        slots, candidates = fusion_ensemble._assign_reserve_candidates([RuntimeError("boom")], [])
+
+        self.assertEqual(slots, [])
+        self.assertEqual(candidates, [])
+
+    def test_assign_reserve_candidates_ignores_successful_outcomes(self):
+        panel_raw = [("ok", {}), ("ok2", {})]
+
+        slots, candidates = fusion_ensemble._assign_reserve_candidates(
+            panel_raw, [{"provider": "p1", "model": "r1"}]
+        )
+
+        self.assertEqual(slots, [])
+        self.assertEqual(candidates, [])
 
 
 class FusionServiceTests(unittest.TestCase):
@@ -375,6 +453,365 @@ class FusionServiceTests(unittest.TestCase):
         errored = [entry for entry in panel if "error" in entry]
         self.assertEqual(len(errored), 1)
         self.assertEqual(errored[0]["model"], "m2")
+
+    def test_reserve_refills_failed_panel_slot(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def fail_m2(client, url, headers, payload, is_streaming):
+            if payload["model"] == "m2":
+                return (None, "m2 down")
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_m2,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(reserve=[{"provider": "p1", "model": "r1"}]),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        panel = result["fusion"]["panel"]
+        self.assertEqual(len(panel), 2)
+        refilled = [entry for entry in panel if entry.get("filled_from_reserve")]
+        self.assertEqual(len(refilled), 1)
+        self.assertEqual(refilled[0]["model"], "r1")
+        self.assertNotIn("error", refilled[0])
+        self.assertEqual(refilled[0]["content"], "answer for r1")
+        self.assertFalse(any("error" in entry for entry in panel))
+
+    def test_reserve_not_consumed_when_panel_fully_succeeds(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        reserve_calls = []
+
+        async def track_reserve_calls(client, url, headers, payload, is_streaming):
+            if payload["model"] == "r1":
+                reserve_calls.append(payload)
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=track_reserve_calls,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(reserve=[{"provider": "p1", "model": "r1"}]),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(reserve_calls, [])
+        self.assertFalse(any(entry.get("filled_from_reserve") for entry in result["fusion"]["panel"]))
+
+    def test_reserve_candidate_used_at_most_once_across_two_failures(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        call_counts: dict[str, int] = {}
+
+        async def fail_both_panel_members(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            call_counts[model] = call_counts.get(model, 0) + 1
+            if model in ("m1", "m2"):
+                return (None, f"{model} down")
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_both_panel_members,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(
+                        reserve=[
+                            {"provider": "p1", "model": "r1"},
+                            {"provider": "p1", "model": "r2"},
+                        ]
+                    ),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(call_counts.get("r1"), 1)
+        self.assertEqual(call_counts.get("r2"), 1)
+        panel = result["fusion"]["panel"]
+        self.assertEqual({entry["model"] for entry in panel}, {"r1", "r2"})
+        self.assertTrue(all(entry.get("filled_from_reserve") for entry in panel))
+
+    def test_reserve_exhausted_leaves_remaining_slot_errored(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def fail_both_panel_members(client, url, headers, payload, is_streaming):
+            if payload["model"] in ("m1", "m2"):
+                return (None, f"{payload['model']} down")
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_both_panel_members,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(reserve=[{"provider": "p1", "model": "r1"}]),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        panel = result["fusion"]["panel"]
+        refilled = [entry for entry in panel if entry.get("filled_from_reserve")]
+        errored = [entry for entry in panel if "error" in entry]
+        self.assertEqual(len(refilled), 1)
+        self.assertEqual(len(errored), 1)
+        self.assertNotEqual(refilled[0]["model"], errored[0]["model"])
+
+    def test_shared_fusion_config_panel_and_reserve_are_not_mutated_across_runs(self):
+        # ``fusion_config`` is ``config_loader.fusion_rules``'s own dict,
+        # shared across concurrent/successive requests. A refill must never
+        # mutate its "panel"/"reserve" lists or member dicts in place.
+        service = self._service()
+        shared_config = self._fusion_config(reserve=[{"provider": "p1", "model": "r1"}])
+        snapshot = copy.deepcopy(shared_config)
+        panel_identities = [id(member) for member in shared_config["panel"]]
+        reserve_identities = [id(member) for member in shared_config["reserve"]]
+
+        async def fail_m2(client, url, headers, payload, is_streaming):
+            if payload["model"] == "m2":
+                return (None, "m2 down")
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_m2,
+        ):
+            # First call: a panel slot fails and is refilled from reserve.
+            run_async(
+                service.run(
+                    request=SimpleNamespace(state=SimpleNamespace()),
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=shared_config,
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=_fake_make_llm_request,
+        ):
+            # Second call: the whole panel succeeds, reserve stays unused.
+            run_async(
+                service.run(
+                    request=SimpleNamespace(state=SimpleNamespace()),
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=shared_config,
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(shared_config, snapshot)
+        self.assertEqual([id(member) for member in shared_config["panel"]], panel_identities)
+        self.assertEqual([id(member) for member in shared_config["reserve"]], reserve_identities)
+
+    def test_all_panel_and_reserve_failing_still_raises_502(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def fail_panel_and_reserve(client, url, headers, payload, is_streaming):
+            if payload["model"] in ("m1", "m2", "r1"):
+                return (None, f"{payload['model']} down")
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_panel_and_reserve,
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                run_async(
+                    service.run(
+                        request=request,
+                        gateway_model_name="llmgateway/fusion-test",
+                        fusion_config=self._fusion_config(reserve=[{"provider": "p1", "model": "r1"}]),
+                        request_body={"messages": [{"role": "user", "content": "hi"}]},
+                        http_client=None,
+                        proxy_http_clients={},
+                    )
+                )
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIn("All Fusion panel members failed", str(ctx.exception.detail))
+
+    def test_reserve_refill_failure_still_reports_error_alongside_filled_from_reserve(self):
+        # ``filled_from_reserve`` means a refill was attempted for the slot,
+        # not that it succeeded: a slot whose reserve candidate also failed
+        # must keep its "error" entry while still being marked as refilled.
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def fail_m2_and_reserve(client, url, headers, payload, is_streaming):
+            if payload["model"] in ("m2", "r1"):
+                return (None, f"{payload['model']} down")
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_m2_and_reserve,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(reserve=[{"provider": "p1", "model": "r1"}]),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        panel = result["fusion"]["panel"]
+        self.assertEqual(len(panel), 2)
+        refilled_and_errored = [
+            entry for entry in panel if entry.get("filled_from_reserve") and "error" in entry
+        ]
+        self.assertEqual(len(refilled_and_errored), 1)
+        self.assertEqual(refilled_and_errored[0]["model"], "r1")
+        self.assertIn("r1 down", refilled_and_errored[0]["error"])
+        self.assertNotIn("content", refilled_and_errored[0])
+
+    def test_empty_reserve_matches_legacy_partial_failure_behavior(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def fail_m2(client, url, headers, payload, is_streaming):
+            if payload["model"] == "m2":
+                return (None, "m2 down")
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_m2,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        panel = result["fusion"]["panel"]
+        errored = [entry for entry in panel if "error" in entry]
+        self.assertEqual(len(errored), 1)
+        self.assertEqual(errored[0]["model"], "m2")
+        self.assertFalse(any("filled_from_reserve" in entry for entry in panel))
+
+    def test_client_tools_are_not_forwarded_to_panel_members(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        seen_payloads = []
+
+        async def record_payload(client, url, headers, payload, is_streaming):
+            seen_payloads.append(payload)
+            return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+
+        client_tools = [
+            {"type": "function", "function": {"name": "client_tool", "parameters": {"type": "object"}}}
+        ]
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=record_payload,
+        ):
+            run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(),
+                    request_body={
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "tools": client_tools,
+                    },
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertTrue(seen_payloads)
+        for payload in seen_payloads:
+            self.assertNotIn("tools", payload)
+
+    def test_unsolicited_tool_calls_in_panel_response_are_dropped_silently(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        async def panel_returns_tool_calls(client, url, headers, payload, is_streaming):
+            system_prompt = payload["messages"][0].get("content", "")
+            if "judge of a panel" in system_prompt or "lead model of a Fusion" in system_prompt:
+                return await _fake_make_llm_request(client, url, headers, payload, is_streaming)
+            return (
+                {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": f"answer for {payload['model']}",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "unsolicited_tool", "arguments": "{}"},
+                                }
+                            ],
+                        }
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "cost": 0.0},
+                },
+                None,
+            )
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=panel_returns_tool_calls,
+        ):
+            result = run_async(
+                service.run(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=self._fusion_config(),
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(result["choices"][0]["finish_reason"], "stop")
+        panel = result["fusion"]["panel"]
+        self.assertFalse(any("error" in entry for entry in panel))
+        self.assertTrue(all(entry["content"].startswith("answer for") for entry in panel))
+        self.assertNotIn("tool_calls", json.dumps(result))
 
 
 class FusionObservedAccountingTests(unittest.TestCase):
@@ -782,6 +1219,89 @@ class FusionObservedAccountingTests(unittest.TestCase):
 
         self.assertCountEqual(seen_models, ["m1", "m2"])
         observation_type.assert_not_called()
+
+    def test_reserve_refill_propagates_accounting_error_without_swallowing(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        config = self._config()
+        config["reserve"] = [{"provider": "p1", "model": "r1"}]
+        reserve_calls = []
+
+        async def invalid_panel_cost(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            if model == "r1":
+                reserve_calls.append(payload)
+            response, error = self._priced_response(f"answer from {model}", cost=0.0)
+            if model == "m1":
+                response["usage"]["cost"] = "invalid"
+            return response, error
+
+        with (
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+                side_effect=invalid_panel_cost,
+            ),
+            patch(
+                "llm_gateway_core.services.fusion_ensemble.ChatTerminalObservation"
+            ) as observation_type,
+        ):
+            with self.assertRaises(AccountingCostError):
+                run_async(
+                    service.run_observed(
+                        request=request,
+                        gateway_model_name="llmgateway/fusion-test",
+                        fusion_config=config,
+                        request_body={"messages": [{"role": "user", "content": "hi"}]},
+                        http_client=None,
+                        proxy_http_clients={},
+                    )
+                )
+
+        self.assertEqual(reserve_calls, [])
+        observation_type.assert_not_called()
+
+    def test_observed_reserve_refill_bills_as_ordinary_panel_component(self):
+        service = self._service()
+        request = SimpleNamespace(state=SimpleNamespace())
+        config = self._config()
+        config["reserve"] = [{"provider": "p1", "model": "r1"}]
+
+        async def fail_m2_then_reserve(client, url, headers, payload, is_streaming):
+            model = payload["model"]
+            if model == "m2":
+                return None, "m2 down"
+            if model == "m1":
+                return self._priced_response("m1 answer", cost=0.01)
+            if model == "r1":
+                return self._priced_response("reserve answer", cost=0.05)
+            if model == "judge":
+                return self._priced_response(json.dumps({"agreements": [], "disputes": []}), cost=0.03)
+            return self._priced_response("FINAL", cost=0.04)
+
+        with patch(
+            "llm_gateway_core.services.fusion_ensemble.make_llm_request",
+            side_effect=fail_m2_then_reserve,
+        ):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="llmgateway/fusion-test",
+                    fusion_config=config,
+                    request_body={"messages": [{"role": "user", "content": "hi"}]},
+                    http_client=None,
+                    proxy_http_clients={},
+                )
+            )
+
+        self.assertEqual(
+            [(component.provider, component.model) for component in observed.observation.components],
+            [("p1", "m1"), ("p1", "r1"), ("p1", "judge"), ("p1", "main")],
+        )
+        self.assertAlmostEqual(observed.observation.usage.cost, 0.01 + 0.05 + 0.03 + 0.04)
+        panel_entries = observed.response["fusion"]["panel"]
+        refilled = [entry for entry in panel_entries if entry.get("filled_from_reserve")]
+        self.assertEqual(len(refilled), 1)
+        self.assertEqual(refilled[0]["model"], "r1")
 
 
 class FusionBaseContextTests(unittest.TestCase):

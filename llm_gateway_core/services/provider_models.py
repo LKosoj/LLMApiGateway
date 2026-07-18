@@ -20,6 +20,7 @@ PROVIDER_MODELS_CACHE_TTL_SECONDS = 15 * 60
 @dataclass
 class ProviderModelsCacheEntry:
     models: list[str]
+    entries: dict[str, dict]
     fetched_at: float
 
 
@@ -79,36 +80,67 @@ class ProviderModelsService:
             )
             return explicit_models
 
+        entry = await self._get_cached_entry(provider_name, provider_config, http_client, auth_headers)
+        return entry.models
+
+    async def get_model_entries(
+        self,
+        provider_name: str,
+        provider_config: ProviderDetails,
+        http_client: httpx.AsyncClient,
+        auth_headers: dict[str, str] | None = None,
+    ) -> dict[str, dict]:
+        """Raw /models catalog entries keyed by exact model id (own-provider match only).
+
+        Returns ``{}`` for a provider pinned to explicit ``available_models``:
+        there is no upstream catalog to consult, which is not an error — the
+        F-auto capability resolver simply falls through to its next source.
+        """
+        explicit_models = provider_explicit_models(provider_config)
+        if explicit_models is not None:
+            return {}
+
+        entry = await self._get_cached_entry(provider_name, provider_config, http_client, auth_headers)
+        return dict(entry.entries)
+
+    async def _get_cached_entry(
+        self,
+        provider_name: str,
+        provider_config: ProviderDetails,
+        http_client: httpx.AsyncClient,
+        auth_headers: dict[str, str] | None,
+    ) -> ProviderModelsCacheEntry:
         now = self._time_func()
         cached_entry = self._cache.get(provider_name)
         if cached_entry and now - cached_entry.fetched_at < self.ttl_seconds:
-            return cached_entry.models
+            return cached_entry
 
         provider_lock = self._locks.setdefault(provider_name, asyncio.Lock())
         async with provider_lock:
             now = self._time_func()
             cached_entry = self._cache.get(provider_name)
             if cached_entry and now - cached_entry.fetched_at < self.ttl_seconds:
-                return cached_entry.models
+                return cached_entry
 
-            models = await self._fetch_models(provider_name, provider_config, http_client, auth_headers)
-            if models:
-                self._cache[provider_name] = ProviderModelsCacheEntry(models=models, fetched_at=now)
+            entries = await self._fetch_model_entries(provider_name, provider_config, http_client, auth_headers)
+            fresh_entry = ProviderModelsCacheEntry(models=list(entries.keys()), entries=entries, fetched_at=now)
+            if entries:
+                self._cache[provider_name] = fresh_entry
             else:
                 self._cache.pop(provider_name, None)
                 logger.warning(
                     "Provider '%s' returned an empty /models list; not caching empty result.",
                     provider_name,
                 )
-            return models
+            return fresh_entry
 
-    async def _fetch_models(
+    async def _fetch_model_entries(
         self,
         provider_name: str,
         provider_config: ProviderDetails,
         http_client: httpx.AsyncClient,
         auth_headers: dict[str, str] | None = None,
-    ) -> list[str]:
+    ) -> dict[str, dict]:
         provider_base_url = provider_config.baseUrl.rstrip("/")
         provider_api_key = None if auth_headers is not None else resolve_provider_config_api_key(provider_config)
         if getattr(provider_config, "type", "openai") == "anthropic":
@@ -156,21 +188,19 @@ class ProviderModelsService:
                 "provider /models response must contain a 'data' or 'models' list."
             )
 
-        model_ids: list[str] = []
-        seen_model_ids: set[str] = set()
+        entries_by_id: dict[str, dict] = {}
         for model_entry in raw_models:
             if not isinstance(model_entry, dict):
                 continue
             model_id = model_entry.get("id")
-            if not isinstance(model_id, str) or not model_id or model_id in seen_model_ids:
+            if not isinstance(model_id, str) or not model_id or model_id in entries_by_id:
                 continue
-            seen_model_ids.add(model_id)
-            model_ids.append(model_id)
+            entries_by_id[model_id] = model_entry
 
         logger.info(
             "Loaded %d models for provider '%s' from %s",
-            len(model_ids),
+            len(entries_by_id),
             provider_name,
             target_url,
         )
-        return model_ids
+        return entries_by_id

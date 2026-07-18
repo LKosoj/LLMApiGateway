@@ -148,6 +148,80 @@ class SharedHttpClientTests(unittest.TestCase):
 
         run_async(scenario())
 
+    def test_select_capability_autofill_interval_short_polls_on_cold_start(self):
+        # Official OpenRouter provider configured, but its capability index has not
+        # been populated yet by the (independent) OpenRouter refresh loop: the next
+        # materialize() run must not wait a full 8h for the OpenRouter fallback
+        # source to become usable.
+        self.assertEqual(
+            main._select_capability_autofill_interval(
+                openrouter_configured=True,
+                capability_index_empty=True,
+                default_interval_seconds=8 * 60 * 60,
+            ),
+            main.CAPABILITY_AUTOFILL_COLD_START_INTERVAL_SECONDS,
+        )
+
+    def test_run_capability_autofill_loop_survives_a_failing_iteration(self):
+        # A raising get_status()/get_capability_index() (or any other iteration
+        # failure) must be absorbed and retried on the default cadence instead
+        # of killing the supervised task for the rest of the process lifetime
+        # (a dead supervised task turns /health into a 503).
+        iteration_reached = asyncio.Event()
+
+        async def failing_get_status():
+            iteration_reached.set()
+            raise RuntimeError("simulated iteration failure")
+
+        openrouter_service = Mock()
+        openrouter_service.get_status = failing_get_status
+        capability_autofill_service = Mock()
+        capability_autofill_service.materialize = AsyncMock()
+
+        async def scenario():
+            loop_task = asyncio.create_task(
+                main.run_capability_autofill_loop(
+                    capability_autofill_service,
+                    runtime_manager=Mock(),
+                    config_update_coordinator=Mock(),
+                    shared_http_client=Mock(),
+                    openrouter_free_models_service=openrouter_service,
+                )
+            )
+            await asyncio.wait_for(iteration_reached.wait(), timeout=5)
+            for _ in range(10):
+                await asyncio.sleep(0)
+            self.assertFalse(loop_task.done())
+            capability_autofill_service.materialize.assert_not_awaited()
+            loop_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await loop_task
+
+        run_async(scenario())
+
+    def test_select_capability_autofill_interval_uses_default_once_catalog_is_populated(self):
+        self.assertEqual(
+            main._select_capability_autofill_interval(
+                openrouter_configured=True,
+                capability_index_empty=False,
+                default_interval_seconds=8 * 60 * 60,
+            ),
+            8 * 60 * 60,
+        )
+
+    def test_select_capability_autofill_interval_uses_default_when_openrouter_not_configured(self):
+        # An empty index is expected (and permanent) when there is no official
+        # OpenRouter provider/key to refresh it from -- short-polling would just
+        # spin forever for no benefit.
+        self.assertEqual(
+            main._select_capability_autofill_interval(
+                openrouter_configured=False,
+                capability_index_empty=True,
+                default_interval_seconds=8 * 60 * 60,
+            ),
+            8 * 60 * 60,
+        )
+
     def test_create_shared_http_client_configures_finite_timeouts(self):
         http_client = main.create_shared_http_client()
         self.assertEqual(
@@ -197,7 +271,7 @@ class SharedHttpClientTests(unittest.TestCase):
             with TestClient(main.app) as client:
                 services = client.app.state.services
                 self.assertIs(services.http_client, env.shared_clients[0])
-                self.assertEqual(services.task_supervisor.task_count, 3)
+                self.assertEqual(services.task_supervisor.task_count, 4)
                 self.assertEqual(services.runtime_manager.current_generation, 1)
 
         self.assertTrue(services.task_supervisor.closed)

@@ -28,6 +28,14 @@ from .chat_dialects import (
     _map_finish_reason_to_anthropic,
 )
 from .chat_sanitizers import strip_think_blocks as _strip_think_blocks
+from ...services.tool_call_rescue import (
+    DIALECT_TAG_MARKERS,
+    RescuedToolCall,
+    RescueResult,
+    could_become_dialect_marker,
+    repair_tool_arguments,
+    rescue_inline_tool_calls,
+)
 
 JSON_STREAM_OPENING_PREFIXES = (
     "```json\r\n",
@@ -317,6 +325,275 @@ def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_mo
     )
 
 
+TOOL_CALL_RESCUE_HOLD_MAX_CHARS = 256
+
+
+def _new_tool_call_rescue_state() -> dict:
+    return {
+        "mode": "holding",  # "holding" -> "dialect" | "transparent"
+        "raw_buffer": "",
+        "detect_buffer": "",
+        "detect_think_state": _new_stream_think_state(),
+        "role_emitted": False,
+    }
+
+
+def _tool_call_rescue_wrap_chunk(template_chunk: dict, choice_index: int, delta: dict) -> dict:
+    synthetic_chunk: dict = {
+        "choices": [{"index": choice_index, "delta": delta}],
+    }
+    synthetic_chunk.update(_extract_stream_template(template_chunk))
+    return synthetic_chunk
+
+
+def _tool_call_rescue_flush_transparent(state: dict, template_chunk: dict, choice_index: int) -> list[dict]:
+    raw = state["raw_buffer"]
+    state["raw_buffer"] = ""
+    state["mode"] = "transparent"
+    if not raw:
+        return []
+    delta: dict = {}
+    if not state["role_emitted"]:
+        delta["role"] = "assistant"
+        state["role_emitted"] = True
+    delta["content"] = raw
+    return [_tool_call_rescue_wrap_chunk(template_chunk, choice_index, delta)]
+
+
+def _tool_call_rescue_synthesize_success(
+    state: dict,
+    template_chunk: dict,
+    choice_index: int,
+    rescue_result: RescueResult,
+) -> list[dict]:
+    chunks: list[dict] = []
+    role_delta: dict = {}
+    if not state["role_emitted"]:
+        role_delta["role"] = "assistant"
+        state["role_emitted"] = True
+    if rescue_result.cleaned_text:
+        content_delta = dict(role_delta)
+        content_delta["content"] = rescue_result.cleaned_text
+        chunks.append(_tool_call_rescue_wrap_chunk(template_chunk, choice_index, content_delta))
+        role_delta = {}
+    tool_call_deltas = []
+    for tool_call_index, call in enumerate(rescue_result.tool_calls):
+        tool_call_deltas.append(
+            {
+                "index": tool_call_index,
+                "id": f"call_rescued_{tool_call_index}",
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": call.arguments,
+                },
+            }
+        )
+    tool_calls_delta = dict(role_delta)
+    tool_calls_delta["tool_calls"] = tool_call_deltas
+    chunks.append(_tool_call_rescue_wrap_chunk(template_chunk, choice_index, tool_calls_delta))
+    state["mode"] = "transparent"
+    state["raw_buffer"] = ""
+    return chunks
+
+
+def _sanitize_openai_stream_tool_call_rescue(
+    response: StreamingResponse,
+    requested_model: str,
+    tool_schema_map: Mapping[str, object],
+) -> StreamingResponse:
+    """Rescue inline text tool-call dialects in a streaming OpenAI-shaped response.
+
+    Buffers each choice's content behind a bounded hold-window (see module
+    docs / AGENTS-facing design notes): while the accumulated, think-stripped
+    text is still a possible prefix of a known dialect marker and under
+    ``TOOL_CALL_RESCUE_HOLD_MAX_CHARS``, nothing is forwarded to the client.
+    Once one of the tag-delimited dialects' markers (Kimi / ``<function=>`` /
+    ``<tool_call>``) is fully seen, the choice switches to unbounded
+    accumulation until its content naturally ends (finish_reason/[DONE]),
+    then the whole buffered text is parsed and either synthesized into
+    ``delta.tool_calls`` chunks (success) or flushed as plain text
+    (parse failure or, for the bare-JSON dialect, "not actually a match").
+
+    Streaming responses commit their HTTP headers to the client before this
+    generator's body starts running (Starlette sends ``http.response.start``
+    before ever awaiting the wrapped body iterator), so once a dialect marker
+    has been found there is no way back to a genuine provider failover if the
+    accumulated text turns out to be unparsable — the raw text is delivered
+    to the client as-is instead of aborting the connection.
+    """
+    source_iterator = response.body_iterator
+
+    async def sanitized_stream_generator():
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        buffer = ""
+        choice_states: dict[int, dict] = {}
+        last_template_chunk: dict | None = None
+
+        def get_state(choice_index: int) -> dict:
+            state = choice_states.get(choice_index)
+            if state is None:
+                state = _new_tool_call_rescue_state()
+                choice_states[choice_index] = state
+            return state
+
+        def serialize_event(payload: dict) -> bytes:
+            return f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n".encode("utf-8")
+
+        def finalize_choice(choice_index: int, state: dict, template: dict) -> tuple[list[bytes], bool]:
+            if state["mode"] == "dialect":
+                rescue_result = rescue_inline_tool_calls(state["raw_buffer"], tool_schema_map)
+                if rescue_result.tool_calls and not rescue_result.failed:
+                    repaired_calls = [
+                        RescuedToolCall(
+                            name=call.name,
+                            arguments=repair_tool_arguments(call.arguments, tool_schema_map.get(call.name, {})),
+                        )
+                        for call in rescue_result.tool_calls
+                    ]
+                    rescue_result = RescueResult(
+                        tool_calls=repaired_calls,
+                        cleaned_text=rescue_result.cleaned_text,
+                        dialect=rescue_result.dialect,
+                        failed=rescue_result.failed,
+                    )
+                    chunks = _tool_call_rescue_synthesize_success(state, template, choice_index, rescue_result)
+                    return [serialize_event(c) for c in chunks], True
+                # A dialect marker was found but the payload could not be
+                # parsed (or, degenerate case, ultimately did not match any
+                # dialect). Headers are already committed to the client at
+                # this point (see docstring): deliver the raw text as-is
+                # rather than aborting the connection.
+                chunks = _tool_call_rescue_flush_transparent(state, template, choice_index)
+                return [serialize_event(c) for c in chunks], False
+            chunks = _tool_call_rescue_flush_transparent(state, template, choice_index)
+            return [serialize_event(c) for c in chunks], False
+
+        async for chunk in source_iterator:
+            text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
+            buffer += text_chunk
+            events = buffer.split("\n\n")
+            buffer = events.pop() if not buffer.endswith("\n\n") else ""
+
+            for event in events:
+                stripped_event = event.strip()
+                if not stripped_event:
+                    continue
+
+                if stripped_event == "data: [DONE]":
+                    for choice_index, state in choice_states.items():
+                        if state["mode"] == "transparent" and not state["raw_buffer"]:
+                            continue
+                        finalize_events, _synthesized = finalize_choice(
+                            choice_index, state, last_template_chunk or {}
+                        )
+                        for out in finalize_events:
+                            yield out
+                    yield b"data: [DONE]\n\n"
+                    continue
+
+                if not stripped_event.startswith("data: "):
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                data = stripped_event[len("data: "):]
+                try:
+                    chunk_json = sanitize_payload(json.loads(data))
+                except Exception:
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                if not isinstance(chunk_json, dict):
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                last_template_chunk = _extract_stream_template(chunk_json)
+                choices = chunk_json.get("choices")
+                if not isinstance(choices, list):
+                    yield serialize_event(chunk_json)
+                    continue
+
+                sanitized_choices: list[dict] = []
+                extra_events: list[bytes] = []
+                for choice_index, choice in enumerate(choices):
+                    if not isinstance(choice, dict):
+                        sanitized_choices.append(choice)
+                        continue
+
+                    state = get_state(choice_index)
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason is not None:
+                        finalize_events, synthesized = finalize_choice(choice_index, state, chunk_json)
+                        extra_events.extend(finalize_events)
+                        if synthesized:
+                            choice = dict(choice)
+                            choice["finish_reason"] = "tool_calls"
+                        sanitized_choices.append(choice)
+                        continue
+
+                    delta = choice.get("delta")
+                    if not isinstance(delta, dict):
+                        sanitized_choices.append(choice)
+                        continue
+
+                    content = delta.get("content")
+                    if not isinstance(content, str):
+                        # Non-text delta (role-only, native tool_calls, ...):
+                        # not our dialect. Flush anything held and let
+                        # everything from now on pass through untouched.
+                        if state["mode"] != "transparent":
+                            finalize_events, _synthesized = finalize_choice(choice_index, state, chunk_json)
+                            extra_events.extend(finalize_events)
+                        sanitized_choices.append(choice)
+                        continue
+
+                    if state["mode"] == "transparent":
+                        sanitized_choices.append(choice)
+                        continue
+
+                    state["raw_buffer"] += content
+
+                    if state["mode"] == "dialect":
+                        # Already committed to full accumulation; nothing to
+                        # emit until this choice's content ends.
+                        continue
+
+                    # mode == "holding": evaluate whether we now know more.
+                    detect_delta = _strip_stream_think_blocks(content, state["detect_think_state"])
+                    state["detect_buffer"] += detect_delta
+                    if any(marker in state["detect_buffer"] for marker in DIALECT_TAG_MARKERS):
+                        state["mode"] = "dialect"
+                        continue
+                    if (
+                        len(state["detect_buffer"]) >= TOOL_CALL_RESCUE_HOLD_MAX_CHARS
+                        or not could_become_dialect_marker(state["detect_buffer"])
+                    ):
+                        finalize_events = _tool_call_rescue_flush_transparent(state, chunk_json, choice_index)
+                        extra_events.extend(serialize_event(c) for c in finalize_events)
+
+                for out in extra_events:
+                    yield out
+                if not sanitized_choices and not chunk_json.get("usage"):
+                    continue
+                chunk_json["choices"] = sanitized_choices
+                yield serialize_event(chunk_json)
+
+        for choice_index, state in choice_states.items():
+            if state["mode"] == "transparent" and not state["raw_buffer"]:
+                continue
+            finalize_events, _synthesized = finalize_choice(choice_index, state, last_template_chunk or {})
+            for out in finalize_events:
+                yield out
+        if buffer.strip():
+            yield buffer.encode("utf-8")
+
+    logging.info("Enabled streaming tool-call rescue for model '%s'.", requested_model)
+    return replace_streaming_response_body(
+        response,
+        sanitized_stream_generator(),
+    )
+
+
 def _sanitize_anthropic_response_content_think_tags(response_data: dict, requested_model: str) -> None:
     """Strip literal ``<think>...</think>`` blocks from a native Anthropic reply.
 
@@ -368,6 +645,7 @@ class _DirectChatStreamObservationBuilder:
         "_model",
         "_openai_usage_payload",
         "_provider",
+        "_ttft_ms",
     )
 
     def __init__(
@@ -378,6 +656,7 @@ class _DirectChatStreamObservationBuilder:
         model: str,
         cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
         estimated_prompt_tokens: int = 0,
+        ttft_ms: int | None = None,
     ) -> None:
         self._dialect = dialect
         self._provider = provider
@@ -387,6 +666,7 @@ class _DirectChatStreamObservationBuilder:
         self._anthropic_usage: dict[str, object] = {}
         self._estimated_prompt_tokens = estimated_prompt_tokens
         self._completion_text_parts: list[str] = []
+        self._ttft_ms = ttft_ms
 
     def _build(self, payload: Mapping[str, object]) -> ChatTerminalObservation:
         return build_direct_chat_terminal_observation(
@@ -394,6 +674,7 @@ class _DirectChatStreamObservationBuilder:
             provider=self._provider,
             model=self._model,
             cost_rate_registry=self._cost_rate_registry,
+            ttft_ms=self._ttft_ms,
         )
 
     def _collect_openai_delta_text(self, payload: Mapping[str, object]) -> None:

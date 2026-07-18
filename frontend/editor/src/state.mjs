@@ -74,6 +74,7 @@ export function createEditorState() {
         providerCatalogGeneration: 0,
         rulesTabsController: null,
         activeRulesTabContext: null,
+        capabilityAutofillStatus: null,
         currentMessage: null,
         localizedBindings: new Set(),
     };

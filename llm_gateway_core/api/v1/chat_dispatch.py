@@ -1,11 +1,12 @@
 import copy
 import json
 import logging
+import math
 import random
 import re
 import time
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
@@ -18,9 +19,14 @@ from ...config.loader import (
 )
 from ...config.settings import settings
 from ...db.fallback_events_db import FallbackEventsDB
+from ..error_envelope import StructuredHTTPException
 from ...services.access_control import enforce_virtual_key_access
 from ...services.accounting import AccountingValidationError
 from ...services.active_requests import update_active_request
+from ...services.capability_guard import (
+    NO_CAPABLE_MODEL_ERROR_CODE,
+    filter_capable_candidates,
+)
 from ...services.error_classifier import (
     _build_fallback_error_message,
     _is_context_overflow_error,
@@ -33,6 +39,7 @@ from ...services.chat_accounting import (
 )
 from ...services.model_policy import resolve_model_name
 from ...services.payload_transform import apply_payload_transforms
+from ...services.ratelimit_headers import parse_ratelimit_headers
 from ...services.request_handler import (
     LocalStreamObservationError,
     MAX_RETRY_AFTER_SECONDS,
@@ -41,6 +48,7 @@ from ...services.request_handler import (
 )
 from ...services.stream_observation import StreamObservationCapacity
 from ...services.upstream_routing_state import (
+    SelectedUpstreamKey,
     UpstreamKeyCandidate,
     UpstreamRoutingState,
     fingerprint_api_key,
@@ -48,6 +56,7 @@ from ...services.upstream_routing_state import (
 )
 from ...utils.api_keys import split_api_keys
 from ...utils.log_redaction import redact_payload_for_log
+from ...utils.provider_error_redaction import redact_provider_error_text
 from ...utils.usage_tracking import ModelCostRates, estimate_prompt_tokens, extract_request_x_title
 from .chat_accounting import ChatStreamDialect, ChatTerminalHandoff
 from .chat_dialects import (
@@ -55,8 +64,10 @@ from .chat_dialects import (
     _anthropic_response_to_openai,
     _openai_request_to_anthropic_payload,
 )
+from .chat_model_behavior import ModelBehaviorFailureDetail, detect_degenerate_non_stream_response
 from .chat_sanitizers import (
     expects_json_object_response as _expects_json_object_response,
+    response_format_type as _response_format_type,
     sanitize_json_object_response_content as _sanitize_json_object_response_content,
     sanitize_openai_response_content_think_tags as _sanitize_openai_response_content_think_tags,
 )
@@ -67,6 +78,12 @@ from .chat_streaming import (
     _sanitize_anthropic_stream_think_tags,
     _sanitize_openai_json_object_stream,
     _sanitize_openai_stream_think_tags,
+    _sanitize_openai_stream_tool_call_rescue,
+)
+from ...services.tool_call_rescue import (
+    build_tool_schema_map,
+    repair_tool_arguments,
+    rescue_inline_tool_calls,
 )
 
 if TYPE_CHECKING:
@@ -211,6 +228,12 @@ def _is_temporary_model_failure(error_detail: object) -> bool:
     if not error_detail:
         return False
 
+    # skipBench: a degenerate model *behavior* (empty completion, ignored
+    # JSON format, ...) is not an upstream/key problem, so it must never
+    # schedule a cooldown or apply_penalty via record_failure(temporary=...).
+    if getattr(error_detail, "behavior_class", None):
+        return False
+
     status_code = getattr(error_detail, "status_code", None)
     try:
         status_code_int = int(status_code)
@@ -234,17 +257,97 @@ def _is_temporary_model_failure(error_detail: object) -> bool:
     return any(marker in lower_error_text for marker in TEMPORARY_MODEL_FAILURE_MARKERS)
 
 
+def _request_has_tools(request_body_json: dict) -> bool:
+    tools = request_body_json.get("tools")
+    return isinstance(tools, list) and bool(tools)
+
+
+def _apply_tool_call_rescue(response_data: dict, request_body_json: dict) -> ModelBehaviorFailureDetail | None:
+    """Rescue/repair tool calls in a non-streaming OpenAI-shaped ``response_data``.
+
+    If the message already carries structural ``tool_calls``, only
+    ``repair_tool_arguments`` is applied to each of them (content is left
+    untouched). Otherwise, ``rescue_inline_tool_calls`` is attempted against
+    the plain-text content; on success the message is rewritten in place
+    (``tool_calls``/``content``/``finish_reason``); on a detected-but-unparsable
+    dialect, a ``ModelBehaviorFailureDetail`` is returned so the caller can
+    treat this attempt as a model-behavior failure (same as ``empty_completion``).
+    """
+    choices = response_data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return None
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        return None
+
+    tool_schema_map = build_tool_schema_map(request_body_json.get("tools"))
+
+    existing_tool_calls = message.get("tool_calls")
+    if isinstance(existing_tool_calls, list) and existing_tool_calls:
+        for tool_call in existing_tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                continue
+            arguments = function.get("arguments")
+            if not isinstance(arguments, str):
+                continue
+            schema = tool_schema_map.get(function.get("name"), {})
+            function["arguments"] = repair_tool_arguments(arguments, schema)
+        return None
+
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    rescue_result = rescue_inline_tool_calls(content, tool_schema_map)
+    if rescue_result.failed:
+        return ModelBehaviorFailureDetail(
+            "Model emitted an unparsed tool-call dialect that could not be repaired.",
+            behavior_class="unparsed_tool_call_dialect",
+        )
+    if not rescue_result.tool_calls:
+        return None
+
+    synthesized_tool_calls = []
+    for index, call in enumerate(rescue_result.tool_calls):
+        schema = tool_schema_map.get(call.name, {})
+        synthesized_tool_calls.append(
+            {
+                "id": f"call_rescued_{index}",
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": repair_tool_arguments(call.arguments, schema),
+                },
+            }
+        )
+
+    message["tool_calls"] = synthesized_tool_calls
+    message["content"] = rescue_result.cleaned_text
+    first_choice["finish_reason"] = "tool_calls"
+    return None
+
+
 def _finalize_chat_success_response(
     response_data: object,
     requested_model: str,
     request_body_json: dict,
     *,
     strip_think_tags: bool = False,
+    tool_call_rescue: bool = False,
     is_anthropic_raw: bool = False,
+    is_anthropic_provider: bool = False,
 ) -> object:
     # Native Anthropic replies bypass the OpenAI round-trip and therefore the
     # OpenAI-shaped sanitizers below. Handle the flag in their own shape; the
     # JSON-object sanitization stays OpenAI-only and is intentionally untouched.
+    # Tool-call rescue is also OpenAI-shape-only (see attempt_model_fallback_rule)
+    # and never applies here.
     if is_anthropic_raw:
         if strip_think_tags:
             if isinstance(response_data, dict):
@@ -257,6 +360,16 @@ def _finalize_chat_success_response(
 
     if isinstance(response_data, dict):
         if expects_json_object_response:
+            # json_schema requests reached the strip_think_tags elif below
+            # before Package D widened JSON_OBJECT_RESPONSE_FORMAT_TYPES to
+            # cover them, so think tags were always stripped for that
+            # combination. Keep that guarantee for content the JSON sanitizer
+            # leaves untouched (extraction failure); json_object keeps its
+            # historical semantics (no think-strip) unchanged. The streaming
+            # branch needs no such gate: _sanitize_openai_json_object_stream
+            # already strips think blocks unconditionally at the delta level.
+            if strip_think_tags and _response_format_type(request_body_json) == "json_schema":
+                _sanitize_openai_response_content_think_tags(response_data, requested_model)
             _sanitize_json_object_response_content(response_data, requested_model)
         elif strip_think_tags:
             _sanitize_openai_response_content_think_tags(response_data, requested_model)
@@ -266,7 +379,19 @@ def _finalize_chat_success_response(
         if expects_json_object_response:
             return _sanitize_openai_json_object_stream(response_data, requested_model)
         if strip_think_tags:
-            return _sanitize_openai_stream_think_tags(response_data, requested_model)
+            response_data = _sanitize_openai_stream_think_tags(response_data, requested_model)
+        # Mirror the non-stream gate (attempt_model_fallback_rule's
+        # tool_call_rescue_enabled = ... and not is_anthropic_provider): a
+        # native Anthropic provider must never have rescue applied, streaming
+        # or not, regardless of whether the client asked for the OpenAI shape
+        # (in which case _anthropic_stream_to_openai already reshaped the SSE
+        # stream to look OpenAI-compatible by this point).
+        if tool_call_rescue and not is_anthropic_provider and _request_has_tools(request_body_json):
+            response_data = _sanitize_openai_stream_tool_call_rescue(
+                response_data,
+                requested_model,
+                build_tool_schema_map(request_body_json.get("tools")),
+            )
         return response_data
 
     return response_data
@@ -400,17 +525,21 @@ async def attempt_model_fallback_rule(
     affinity_ttl_seconds = _provider_key_routing_affinity_ttl(provider_config, key_pool_config)
     session_id = request.headers.get(affinity_header) if affinity_enabled else None
     affinity_scope = _affinity_scope_for_request(request) if affinity_enabled else None
-    selected_key = upstream_routing_state.select_key_from_candidates(
-        provider_name or "unknown",
-        provider_model or "unknown",
-        key_candidates,
-        limits=upstream_limits_for_model(provider_config, provider_model or ""),
-        strategy=strategy,
-        session_id=session_id,
-        affinity_scope=affinity_scope,
-        session_affinity_ttl_seconds=affinity_ttl_seconds,
-        pool_name=key_pool_name,
-    )
+
+    def _select_upstream_key() -> SelectedUpstreamKey:
+        return upstream_routing_state.select_key_from_candidates(
+            provider_name or "unknown",
+            provider_model or "unknown",
+            key_candidates,
+            limits=upstream_limits_for_model(provider_config, provider_model or ""),
+            strategy=strategy,
+            session_id=session_id,
+            affinity_scope=affinity_scope,
+            session_affinity_ttl_seconds=affinity_ttl_seconds,
+            pool_name=key_pool_name,
+        )
+
+    selected_key = _select_upstream_key()
     if not selected_key.available:
         error_detail = (
             f"No upstream key is currently available for provider '{provider_name}' "
@@ -439,6 +568,13 @@ async def attempt_model_fallback_rule(
         dict,
     )
     anthropic_tool_name_reverse_map: dict[str, str] = {}
+    tool_call_rescue_enabled = bool(model_fallback_rule.get("tool_call_rescue")) and not is_anthropic_provider
+    request_has_tools_for_rescue = _request_has_tools(request_body_json)
+
+    def _apply_non_stream_tool_call_rescue() -> ModelBehaviorFailureDetail | None:
+        if not tool_call_rescue_enabled or not request_has_tools_for_rescue:
+            return None
+        return _apply_tool_call_rescue(response_data, request_body_json)
 
     def _observe_success(response_data: object) -> object:
         if chat_accounting_handoff is None:
@@ -450,6 +586,9 @@ async def attempt_model_fallback_rule(
         ):
             raise AccountingValidationError
         if is_streaming:
+            ttft_ms = getattr(response_data, "llmgateway_ttft_ms", None)
+            if isinstance(ttft_ms, bool) or not isinstance(ttft_ms, int):
+                ttft_ms = None
             builder = _DirectChatStreamObservationBuilder(
                 dialect=(
                     ChatStreamDialect.RESPONSES
@@ -467,6 +606,7 @@ async def attempt_model_fallback_rule(
                     json.dumps(request_body_json),
                     provider_model,
                 ),
+                ttft_ms=ttft_ms,
             )
             chat_accounting_handoff.publish_stream_observer(
                 builder.observe,
@@ -578,6 +718,29 @@ async def attempt_model_fallback_rule(
                 continue
             headers[key] = value
 
+    async def _apply_selected_key(selected: SelectedUpstreamKey) -> None:
+        """Re-resolve auth for a mid-attempt upstream key switch.
+
+        Updates the enclosing ``provider_api_key`` / ``upstream_key_fingerprint``
+        / ``auth_material`` so subsequent attempt bookkeeping (tracking,
+        cooldown, accounting) sees the new key, then merges the refreshed
+        auth headers into the already-built ``headers`` dict. The
+        auth-header *name* (``Authorization`` / ``x-api-key``) does not
+        depend on the key value, so overwriting via ``update`` is safe.
+        """
+        nonlocal provider_api_key, upstream_key_fingerprint, auth_material
+        provider_api_key = selected.api_key
+        upstream_key_fingerprint = selected.fingerprint
+        auth_material = await resolve_provider_auth_material(
+            request,
+            provider_name=provider_name or "unknown",
+            provider_config=provider_config,
+            api_key=provider_api_key,
+        )
+        if auth_material.upstream_key_fingerprint:
+            upstream_key_fingerprint = auth_material.upstream_key_fingerprint
+        headers.update(auth_material.headers)
+
     if not is_anthropic_provider:
         _normalize_provider_attempt_payload(provider_payload_template, provider_model=provider_model)
 
@@ -595,35 +758,43 @@ async def attempt_model_fallback_rule(
     def _budget_exhausted() -> bool:
         return total_attempts_budget is not None and attempt_number > total_attempts_budget
 
-    def _track_attempt_start() -> None:
+    def _track_attempt_start() -> dict[str, Any]:
         request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
         attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
         if not isinstance(attempts, list):
             attempts = []
             request.state.llmgateway_fallback_attempts = attempts
-        attempts.append(
-            {
-                "provider": provider_name,
-                "model": provider_model,
-                "upstream_key_fingerprint": upstream_key_fingerprint,
-            }
-        )
+        attempt_entry: dict[str, Any] = {
+            "provider": provider_name,
+            "model": provider_model,
+            "upstream_key_fingerprint": upstream_key_fingerprint,
+            "error_class": None,
+            "http_status": None,
+        }
+        attempts.append(attempt_entry)
         upstream_routing_state.record_attempt_start(
             provider_name or "unknown",
             provider_model or "unknown",
             upstream_key_fingerprint,
         )
+        return attempt_entry
 
-    def _track_attempt_result(success: bool, error_detail_val: object | None) -> None:
+    def _track_attempt_result(
+        attempt_entry: dict[str, Any], success: bool, error_detail_val: object | None
+    ) -> bool:
+        """Record the attempt outcome; return whether it is a rate-limit/quota
+        block on this upstream key that should trigger an immediate key
+        switch (``False`` on success).
+        """
         if success:
             upstream_routing_state.record_success(
                 provider_name or "unknown",
                 provider_model or "unknown",
                 upstream_key_fingerprint,
             )
-            return
+            return False
         temporary = _is_temporary_model_failure(error_detail_val)
-        upstream_routing_state.record_failure(
+        rate_limited = upstream_routing_state.record_failure(
             provider_name or "unknown",
             provider_model or "unknown",
             upstream_key_fingerprint,
@@ -631,7 +802,39 @@ async def attempt_model_fallback_rule(
             temporary=temporary,
             apply_penalty=bool(model_fallback_rule.get("dynamic_penalty_enabled")),
             retry_after=_extract_retry_after(error_detail_val),
+            retry_after_floor_seconds=_extract_retry_after_for_cooldown(error_detail_val),
         )
+        attempt_entry["error_class"] = classify_error(error_detail_val) or "unknown"
+        attempt_entry["http_status"] = getattr(error_detail_val, "status_code", None)
+        return rate_limited
+
+    def _record_rate_limit_observations(
+        target_url_value: str, response_headers: dict[str, str]
+    ) -> None:
+        if not response_headers:
+            return
+        for observation in parse_ratelimit_headers(
+            target_url_value,
+            response_headers,
+            now_monotonic=time.monotonic(),
+            now_wall=time.time(),
+        ):
+            upstream_routing_state.record_observed_limit(
+                provider_name or "unknown",
+                provider_model or "unknown",
+                upstream_key_fingerprint,
+                axis=observation.axis,
+                limit=observation.limit,
+                remaining=observation.remaining,
+                reset_at_monotonic=observation.reset_at_monotonic,
+                source="header",
+            )
+
+    # An immediate key switch (see the failure-handling blocks below) does
+    # not consume a retry: it is capped independently, by the number of
+    # available key candidates, so a chain cannot loop key-to-key forever.
+    key_switch_budget = len(key_candidates)
+    key_switches_used = 0
 
     remaining_attempts = retry_count
     while remaining_attempts >= 0:
@@ -674,17 +877,50 @@ async def attempt_model_fallback_rule(
                 model=provider_model,
                 upstream_key_fingerprint=upstream_key_fingerprint,
             )
-            _track_attempt_start()
+            attempt_entry = _track_attempt_start()
             t0 = time.monotonic()
+            response_headers: dict[str, str] = {}
             response_data, error_detail = await make_llm_request(
                 http_client,
                 target_url,
                 headers,
                 attempt_payload,
                 is_streaming,
+                response_headers_sink=response_headers,
                 **stream_request_kwargs,
             )
             duration_ms = int((time.monotonic() - t0) * 1000)
+            _record_rate_limit_observations(target_url, response_headers)
+
+            if response_data and error_detail is None and not is_streaming:
+                # Detection must run before _observe_success(): the accounting
+                # handoff is one-shot, and publishing on a degenerate attempt
+                # would burn it before the eventual successful attempt.
+                behavior_detail = detect_degenerate_non_stream_response(
+                    response_data,
+                    request_body_json,
+                    is_anthropic_provider=is_anthropic_provider,
+                )
+                if behavior_detail is not None:
+                    logging.warning(
+                        "Detected degenerate response (%s) from model '%s' via provider '%s'.",
+                        behavior_detail.behavior_class,
+                        provider_model,
+                        provider_name,
+                    )
+                    error_detail = behavior_detail
+                    response_data = None
+                else:
+                    rescue_failure = _apply_non_stream_tool_call_rescue()
+                    if rescue_failure is not None:
+                        logging.warning(
+                            "Tool-call rescue failed (%s) for model '%s' via provider '%s'.",
+                            rescue_failure.behavior_class,
+                            provider_model,
+                            provider_name,
+                        )
+                        error_detail = rescue_failure
+                        response_data = None
 
             if response_data and error_detail is None:
                 response_data = _observe_success(response_data)
@@ -709,8 +945,9 @@ async def attempt_model_fallback_rule(
                         )
                 request.state.llmgateway_provider = provider_name
                 request.state.llmgateway_provider_model = provider_model
+                request.state.llmgateway_response_is_anthropic_provider = is_anthropic_provider
                 request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
-                _track_attempt_result(True, None)
+                _track_attempt_result(attempt_entry, True, None)
                 _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
                 logging.info(
                     "Connection success to model '%s' in provider '%s'. %s response...",
@@ -721,7 +958,10 @@ async def attempt_model_fallback_rule(
                 return response_data, None, attempt_number
 
             _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
-            _track_attempt_result(False, error_detail)
+            key_blocking_failure = _track_attempt_result(attempt_entry, False, error_detail)
+            key_blocking_failure = key_blocking_failure or upstream_routing_state.has_zero_remaining_quota_block(
+                provider_name or "unknown", provider_model or "unknown", upstream_key_fingerprint
+            )
             _log_failed_attempt_warning(
                 provider_model,
                 provider_name,
@@ -730,7 +970,38 @@ async def attempt_model_fallback_rule(
                 attempt_payload,
             )
             last_error_detail = f"Model {provider_model} failed with provider '{provider_name}': {error_detail}"
-            if stop_after_context_overflow and _is_context_overflow_error(error_detail):
+            is_behavior_class_failure = bool(getattr(error_detail, "behavior_class", None))
+            is_stop_worthy_context_overflow = (
+                stop_after_context_overflow and _is_context_overflow_error(error_detail)
+            )
+            if (
+                key_blocking_failure
+                and not is_behavior_class_failure
+                and not is_stop_worthy_context_overflow
+                and key_switches_used < key_switch_budget
+            ):
+                next_selected = _select_upstream_key()
+                if next_selected.available and next_selected.fingerprint != upstream_key_fingerprint:
+                    key_switches_used += 1
+                    await _apply_selected_key(next_selected)
+                    logging.info(
+                        "Switching upstream key for model '%s' in provider '%s' after a "
+                        "rate-limit/quota block (switch %s/%s); retrying the same rule "
+                        "without consuming a retry.",
+                        provider_model,
+                        provider_name,
+                        key_switches_used,
+                        key_switch_budget,
+                    )
+                    continue
+            if is_behavior_class_failure:
+                logging.warning(
+                    "Model behavior failure (%s) detected on model '%s'; skipping local retry.",
+                    error_detail.behavior_class,
+                    provider_model,
+                )
+                return None, last_error_detail, attempt_number
+            if is_stop_worthy_context_overflow:
                 logging.warning(
                     "Context overflow detected on model '%s' before retry; returning to dispatcher.",
                     provider_model,
@@ -759,73 +1030,160 @@ async def attempt_model_fallback_rule(
                     )
                     break
 
-                logging.info(
-                    "Attempting model '%s' on sub-provider '%s' in provider '%s'",
-                    provider_model,
-                    sub_provider,
-                    provider_name,
-                )
-                attempt_payload = copy.deepcopy(provider_payload_template)
-                attempt_payload["provider"] = {"order": [sub_provider]}
-                attempt_payload["allow_fallbacks"] = False
-
-                update_active_request(
-                    request,
-                    gateway_model=requested_model,
-                    operation=getattr(request.state, "llmgateway_operation", "chat"),
-                    provider=provider_name,
-                    model=provider_model,
-                    upstream_key_fingerprint=upstream_key_fingerprint,
-                )
-                _track_attempt_start()
-                t0 = time.monotonic()
-                response_data, error_detail = await make_llm_request(
-                    http_client,
-                    target_url,
-                    headers,
-                    attempt_payload,
-                    is_streaming,
-                    **stream_request_kwargs,
-                )
-                duration_ms = int((time.monotonic() - t0) * 1000)
-
-                if response_data and error_detail is None:
-                    response_data = _observe_success(response_data)
-                    request.state.llmgateway_provider = provider_name
-                    request.state.llmgateway_provider_model = provider_model
-                    request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
-                    _track_attempt_result(True, None)
-                    _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
+                while True:
                     logging.info(
-                        "Connection success with model '%s' in provider '%s' via '%s'. %s response...",
+                        "Attempting model '%s' on sub-provider '%s' in provider '%s'",
+                        provider_model,
+                        sub_provider,
+                        provider_name,
+                    )
+                    attempt_payload = copy.deepcopy(provider_payload_template)
+                    attempt_payload["provider"] = {"order": [sub_provider]}
+                    attempt_payload["allow_fallbacks"] = False
+
+                    update_active_request(
+                        request,
+                        gateway_model=requested_model,
+                        operation=getattr(request.state, "llmgateway_operation", "chat"),
+                        provider=provider_name,
+                        model=provider_model,
+                        upstream_key_fingerprint=upstream_key_fingerprint,
+                    )
+                    attempt_entry = _track_attempt_start()
+                    t0 = time.monotonic()
+                    response_headers = {}
+                    response_data, error_detail = await make_llm_request(
+                        http_client,
+                        target_url,
+                        headers,
+                        attempt_payload,
+                        is_streaming,
+                        response_headers_sink=response_headers,
+                        **stream_request_kwargs,
+                    )
+                    duration_ms = int((time.monotonic() - t0) * 1000)
+                    _record_rate_limit_observations(target_url, response_headers)
+
+                    if response_data and error_detail is None and not is_streaming:
+                        # Detection must run before _observe_success(): the
+                        # accounting handoff is one-shot, and publishing on a
+                        # degenerate attempt would burn it before the eventual
+                        # successful attempt.
+                        behavior_detail = detect_degenerate_non_stream_response(
+                            response_data,
+                            request_body_json,
+                            is_anthropic_provider=is_anthropic_provider,
+                        )
+                        if behavior_detail is not None:
+                            logging.warning(
+                                "Detected degenerate response (%s) from model '%s' via provider '%s' sub-provider '%s'.",
+                                behavior_detail.behavior_class,
+                                provider_model,
+                                provider_name,
+                                sub_provider,
+                            )
+                            error_detail = behavior_detail
+                            response_data = None
+                        else:
+                            rescue_failure = _apply_non_stream_tool_call_rescue()
+                            if rescue_failure is not None:
+                                logging.warning(
+                                    "Tool-call rescue failed (%s) for model '%s' via provider '%s' sub-provider '%s'.",
+                                    rescue_failure.behavior_class,
+                                    provider_model,
+                                    provider_name,
+                                    sub_provider,
+                                )
+                                error_detail = rescue_failure
+                                response_data = None
+
+                    if response_data and error_detail is None:
+                        response_data = _observe_success(response_data)
+                        request.state.llmgateway_provider = provider_name
+                        request.state.llmgateway_provider_model = provider_model
+                        # This branch (sub-provider ordering loop) is structurally
+                        # reachable only when is_anthropic_provider is False (see
+                        # the "or is_anthropic_provider" guard above that forces
+                        # native Anthropic providers into the plain path instead),
+                        # so this is always False here -- set explicitly from the
+                        # local variable, mirroring the plain-path success branch,
+                        # instead of leaving it to the caller's getattr(..., False)
+                        # default.
+                        request.state.llmgateway_response_is_anthropic_provider = is_anthropic_provider
+                        request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
+                        _track_attempt_result(attempt_entry, True, None)
+                        _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
+                        logging.info(
+                            "Connection success with model '%s' in provider '%s' via '%s'. %s response...",
+                            provider_model,
+                            provider_name,
+                            sub_provider,
+                            "Starting streaming" if is_streaming else "Received",
+                        )
+                        return response_data, None, attempt_number
+
+                    _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
+                    key_blocking_failure = _track_attempt_result(attempt_entry, False, error_detail)
+                    key_blocking_failure = (
+                        key_blocking_failure
+                        or upstream_routing_state.has_zero_remaining_quota_block(
+                            provider_name or "unknown", provider_model or "unknown", upstream_key_fingerprint
+                        )
+                    )
+                    _log_failed_attempt_warning(
                         provider_model,
                         provider_name,
-                        sub_provider,
-                        "Starting streaming" if is_streaming else "Received",
+                        error_detail,
+                        target_url,
+                        attempt_payload,
+                        sub_provider=sub_provider,
                     )
-                    return response_data, None, attempt_number
-
-                _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
-                _track_attempt_result(False, error_detail)
-                _log_failed_attempt_warning(
-                    provider_model,
-                    provider_name,
-                    error_detail,
-                    target_url,
-                    attempt_payload,
-                    sub_provider=sub_provider,
-                )
-                last_error_detail = (
-                    f"Model '{provider_model}' failed from provider '{provider_name}' "
-                    f"and sub-provider {sub_provider} : {error_detail}"
-                )
-                if stop_after_context_overflow and _is_context_overflow_error(error_detail):
-                    logging.warning(
-                        "Context overflow detected on model '%s' sub-provider '%s' before retry; returning to dispatcher.",
-                        provider_model,
-                        sub_provider,
+                    last_error_detail = (
+                        f"Model '{provider_model}' failed from provider '{provider_name}' "
+                        f"and sub-provider {sub_provider} : {error_detail}"
                     )
-                    return None, last_error_detail, attempt_number
+                    is_behavior_class_failure = bool(getattr(error_detail, "behavior_class", None))
+                    is_stop_worthy_context_overflow = (
+                        stop_after_context_overflow and _is_context_overflow_error(error_detail)
+                    )
+                    if (
+                        key_blocking_failure
+                        and not is_behavior_class_failure
+                        and not is_stop_worthy_context_overflow
+                        and key_switches_used < key_switch_budget
+                        and not _budget_exhausted()
+                    ):
+                        next_selected = _select_upstream_key()
+                        if next_selected.available and next_selected.fingerprint != upstream_key_fingerprint:
+                            key_switches_used += 1
+                            await _apply_selected_key(next_selected)
+                            logging.info(
+                                "Switching upstream key for model '%s' on sub-provider '%s' in "
+                                "provider '%s' after a rate-limit/quota block (switch %s/%s); "
+                                "retrying the same sub-provider without consuming a retry.",
+                                provider_model,
+                                sub_provider,
+                                provider_name,
+                                key_switches_used,
+                                key_switch_budget,
+                            )
+                            continue
+                    if is_behavior_class_failure:
+                        logging.warning(
+                            "Model behavior failure (%s) detected on model '%s' sub-provider '%s'; skipping local retry.",
+                            error_detail.behavior_class,
+                            provider_model,
+                            sub_provider,
+                        )
+                        return None, last_error_detail, attempt_number
+                    if is_stop_worthy_context_overflow:
+                        logging.warning(
+                            "Context overflow detected on model '%s' sub-provider '%s' before retry; returning to dispatcher.",
+                            provider_model,
+                            sub_provider,
+                        )
+                        return None, last_error_detail, attempt_number
+                    break
 
             logging.warning("All sub-providers for '%s' failed.", provider_name)
 
@@ -859,6 +1217,26 @@ def _extract_retry_after(error_detail: object) -> float | None:
     return retry_after_seconds
 
 
+def _extract_retry_after_for_cooldown(error_detail: object) -> float | None:
+    """Return the raw (pre-clamp) upstream Retry-After hint for cooldown scheduling.
+
+    Unlike :func:`_extract_retry_after` (used for the retry sleep, and clamped
+    to :data:`MAX_RETRY_AFTER_SECONDS`), cooldown scheduling needs the
+    provider's actual hint uncapped, since a rolling-quota reset can be far
+    longer than the retry-sleep ceiling.
+    """
+    retry_after_uncapped = getattr(error_detail, "retry_after_uncapped", None)
+    if retry_after_uncapped is None:
+        return None
+    try:
+        retry_after_seconds = float(retry_after_uncapped)
+    except (TypeError, ValueError):
+        return None
+    if retry_after_seconds < 0:
+        return None
+    return retry_after_seconds
+
+
 def _compute_retry_sleep_seconds(retry_delay: float, error_detail: object) -> float:
     """Resolve the effective sleep time before the next retry attempt.
 
@@ -878,6 +1256,66 @@ def _compute_retry_sleep_seconds(retry_delay: float, error_detail: object) -> fl
         return max(0.0, min(jittered, MAX_RETRY_AFTER_SECONDS))
 
     return 0.0
+
+
+def _build_attempt_trail(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build a client-safe attempt trail, anonymizing upstream key fingerprints.
+
+    The first fingerprint seen (across the whole request, in attempt order)
+    becomes ``"key1"``, the next distinct fingerprint becomes ``"key2"``, and
+    so on; repeats of an already-seen fingerprint reuse its label. The raw
+    ``upstream_key_fingerprint`` never appears in the returned trail.
+    """
+    key_labels: dict[object, str] = {}
+    trail: list[dict[str, Any]] = []
+    for attempt in attempts:
+        fingerprint = attempt.get("upstream_key_fingerprint")
+        label = key_labels.get(fingerprint)
+        if label is None:
+            label = f"key{len(key_labels) + 1}"
+            key_labels[fingerprint] = label
+        trail.append(
+            {
+                "provider": attempt.get("provider"),
+                "model": attempt.get("model"),
+                "key": label,
+                "error_class": attempt.get("error_class"),
+                "http_status": attempt.get("http_status"),
+            }
+        )
+    return trail
+
+
+def _min_retry_after_seconds(
+    attempts: list[dict[str, Any]],
+    upstream_routing_state: UpstreamRoutingState,
+) -> int | None:
+    """Return the minimum active cooldown remaining across attempted upstreams.
+
+    Queries :meth:`UpstreamRoutingState.cooldown_remaining_seconds` for every
+    unique ``(provider, model, upstream_key_fingerprint)`` combination that
+    was actually attempted, and returns the smallest remaining cooldown
+    rounded up to whole seconds (minimum 1, ceiling 86400s), matching the
+    escalation-ladder cooldowns that can run up to 24h. Returns ``None`` when
+    none of the attempted upstreams currently has an active cooldown, so
+    callers must not clamp this to the retry-sleep ceiling
+    (``MAX_RETRY_AFTER_SECONDS``): a truncated ETA would understate an
+    escalated cooldown and mislead the client.
+    """
+    unique_refs = {
+        (attempt.get("provider"), attempt.get("model"), attempt.get("upstream_key_fingerprint"))
+        for attempt in attempts
+        if attempt.get("provider") and attempt.get("model") and attempt.get("upstream_key_fingerprint")
+    }
+    remaining_candidates = [
+        remaining
+        for provider, model, fingerprint in unique_refs
+        if (remaining := upstream_routing_state.cooldown_remaining_seconds(provider, model, fingerprint))
+        is not None
+    ]
+    if not remaining_candidates:
+        return None
+    return min(86400, max(1, math.ceil(min(remaining_candidates))))
 
 
 def _local_stream_observation_http_error(
@@ -1023,6 +1461,7 @@ async def dispatch_chat_request(
     model_config = fallback_rules.get(routing_model)
     context_overflow_fallback = None
     strip_think_tags = False
+    tool_call_rescue = False
     max_total_attempts: int | None = None
     dynamic_penalty_enabled = False
     if not model_config:
@@ -1044,6 +1483,7 @@ async def dispatch_chat_request(
         rotate_models = model_config["rotate_models"]
         context_overflow_fallback = model_config.get("context_overflow_fallback")
         strip_think_tags = bool(model_config.get("strip_think_tags", False))
+        tool_call_rescue = bool(model_config.get("tool_call_rescue", False))
         max_total_attempts = model_config.get("max_total_attempts")
         dynamic_penalty_enabled = bool(model_config.get("dynamic_penalty", False))
         logging.info(f"Found routing rule for model '{requested_model}'. Provider sequence length: {len(model_fallbacks_sequence)}")
@@ -1052,6 +1492,8 @@ async def dispatch_chat_request(
             logging.info("Special context overflow fallback is configured for model '%s'.", requested_model)
         if strip_think_tags:
             logging.info("Literal <think> tag stripping is enabled for gateway model '%s'.", requested_model)
+        if tool_call_rescue:
+            logging.info("Tool-call rescue is enabled for gateway model '%s'.", requested_model)
         if dynamic_penalty_enabled:
             logging.info("Dynamic upstream penalty ordering is enabled for gateway model '%s'.", requested_model)
 
@@ -1088,13 +1530,18 @@ async def dispatch_chat_request(
         )
 
     model_fallbacks_sequence = [
-        {**model_fallback_rule, "dynamic_penalty_enabled": dynamic_penalty_enabled}
+        {
+            **model_fallback_rule,
+            "dynamic_penalty_enabled": dynamic_penalty_enabled,
+            "tool_call_rescue": tool_call_rescue,
+        }
         for model_fallback_rule in model_fallbacks_sequence
     ]
     if context_overflow_fallback:
         context_overflow_fallback = {
             **context_overflow_fallback,
             "dynamic_penalty_enabled": dynamic_penalty_enabled,
+            "tool_call_rescue": tool_call_rescue,
         }
 
     rotation_scope = _rotation_scope_for_request(request)
@@ -1128,6 +1575,33 @@ async def dispatch_chat_request(
         start_index = normalized_start_index
         reordered_sequence = model_fallbacks_sequence[start_index:] + model_fallbacks_sequence[:start_index]
         model_fallbacks_sequence = reordered_sequence
+
+    if model_fallbacks_sequence:
+        model_fallbacks_sequence, capability_rejections = filter_capable_candidates(
+            model_fallbacks_sequence,
+            request_body_json,
+            gateway_model=requested_model,
+        )
+        if not model_fallbacks_sequence:
+            raise HTTPException(
+                422,
+                detail={
+                    "message": (
+                        f"No fallback candidate for gateway model '{requested_model}' "
+                        "supports this request (vision/tools/context window)."
+                    ),
+                    "code": NO_CAPABLE_MODEL_ERROR_CODE,
+                    "gateway_model": requested_model,
+                    "candidates": [
+                        {
+                            "provider": rejection.provider,
+                            "model": rejection.model,
+                            "reason": rejection.reason,
+                        }
+                        for rejection in capability_rejections
+                    ],
+                },
+            )
 
     last_error_detail = "No providers were attempted."
     context_overflow_fallback_attempted = False
@@ -1174,8 +1648,12 @@ async def dispatch_chat_request(
                 requested_model,
                 request_body_json,
                 strip_think_tags=strip_think_tags,
+                tool_call_rescue=tool_call_rescue,
                 is_anthropic_raw=bool(
                     getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
+                ),
+                is_anthropic_provider=bool(
+                    getattr(request.state, "llmgateway_response_is_anthropic_provider", False)
                 ),
             )
 
@@ -1220,8 +1698,12 @@ async def dispatch_chat_request(
                     requested_model,
                     request_body_json,
                     strip_think_tags=strip_think_tags,
+                    tool_call_rescue=tool_call_rescue,
                     is_anthropic_raw=bool(
                         getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
+                    ),
+                    is_anthropic_provider=bool(
+                        getattr(request.state, "llmgateway_response_is_anthropic_provider", False)
                     ),
                 )
 
@@ -1229,4 +1711,19 @@ async def dispatch_chat_request(
                 last_error_detail = context_error_detail
 
     logging.error(f"All providers failed for model '{requested_model}'. Last error: {last_error_detail}")
-    raise HTTPException(status_code=503, detail=f"All configured providers failed for model '{requested_model}'. Last error: {last_error_detail}")
+    attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
+    if not isinstance(attempts, list):
+        attempts = []
+    extra_payload: dict[str, Any] = {"attempts": _build_attempt_trail(attempts)}
+    retry_after_seconds = _min_retry_after_seconds(attempts, services.upstream_routing_state)
+    exhaustion_headers: dict[str, str] | None = None
+    if retry_after_seconds is not None:
+        extra_payload["retry_after_seconds"] = retry_after_seconds
+        exhaustion_headers = {"Retry-After": str(retry_after_seconds)}
+    raise StructuredHTTPException(
+        503,
+        f"All configured providers failed for model '{requested_model}'. "
+        f"Last error: {redact_provider_error_text(last_error_detail)}",
+        extra_payload=extra_payload,
+        headers=exhaustion_headers,
+    )

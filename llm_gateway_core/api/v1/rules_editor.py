@@ -345,6 +345,7 @@ def _build_structured_rules_response(config_loader) -> dict:
             "dynamic_penalty": config.get("dynamic_penalty", False),
             "strip_think_tags": config.get("strip_think_tags", False),
             "compress_tool_results": config.get("compress_tool_results", False),
+            "tool_call_rescue": config.get("tool_call_rescue", False),
         }
         max_total_attempts = config.get("max_total_attempts")
         if max_total_attempts is not None:
@@ -604,6 +605,23 @@ def _capture_config_update_base(
     return services, snapshot, coordinator
 
 
+def _trigger_capability_autofill(services: AppServices) -> None:
+    """Fire-and-forget F-auto materialize after a fallback-rules save.
+
+    The save response does not wait for this; failures are logged and
+    absorbed inside ``materialize()`` itself.
+    """
+    services.task_supervisor.create_task(
+        services.capability_autofill_service.materialize(
+            runtime_manager=services.runtime_manager,
+            config_update_coordinator=services.config_update_coordinator,
+            shared_http_client=services.http_client,
+            openrouter_free_models_service=services.openrouter_free_models_service,
+        ),
+        name="capability-autofill-editor-save",
+    )
+
+
 def _safe_validation_errors(
     exc: ValidationError,
 ) -> tuple[dict[str, object], ...]:
@@ -849,6 +867,7 @@ async def save_models_rules(request: Request):
             expected_revision=expected_revision,
             comments_backup=False,
         )
+        _trigger_capability_autofill(_services)
         filename = _config_filename(
             result.snapshot,
             ConfigFile.FALLBACK_RULES,
@@ -966,6 +985,7 @@ async def save_models_rules_structured(request: Request):
             comments_backup=True,
             preflight=preflight,
         )
+        _trigger_capability_autofill(services)
         filename = _config_filename(
             result.snapshot,
             ConfigFile.FALLBACK_RULES,
@@ -1351,6 +1371,12 @@ async def get_provider_models(request: Request, provider_name: str):
 async def get_openrouter_free_models_status(request: Request):
     services, _runtime_snapshot = _capture_control_runtime(request)
     return await services.openrouter_free_models_service.get_status()
+
+
+@editor_router.get("/capability-autofill", tags=["Config Editor API"])
+async def get_capability_autofill_status(request: Request):
+    services, _runtime_snapshot = _capture_control_runtime(request)
+    return await services.capability_autofill_service.get_status()
 
 
 @editor_router.post("/openrouter/free-models/run", tags=["Config Editor API"])

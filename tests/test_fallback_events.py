@@ -682,7 +682,15 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
         async_client_ctor.return_value = fake_http_client
 
         # First call fails, model succeeds on next call
-        make_llm_request_mock.return_value = ({"id": "success"}, None)
+        make_llm_request_mock.return_value = (
+            {
+                "id": "success",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                ],
+            },
+            None,
+        )
 
         fake_fallback_db = Mock()
         fake_fallback_db.insert_event = Mock()
@@ -750,7 +758,18 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
 
         make_llm_request_mock.side_effect = [
             (None, "Request failed with status code 400"),
-            ({"id": "success"}, None),
+            (
+                {
+                    "id": "success",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": '{"ok": true}'},
+                        }
+                    ],
+                },
+                None,
+            ),
         ]
 
         fake_fallback_db = Mock()
@@ -837,7 +856,18 @@ class FallbackEventsIntegrationTests(unittest.TestCase):
 
         make_llm_request_mock.side_effect = [
             (None, "ReadTimeout connecting to https://provider.example/chat/completions"),
-            ({"id": "success"}, None),
+            (
+                {
+                    "id": "success",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": '{"ok": true}'},
+                        }
+                    ],
+                },
+                None,
+            ),
         ]
 
         fake_fallback_db = Mock()

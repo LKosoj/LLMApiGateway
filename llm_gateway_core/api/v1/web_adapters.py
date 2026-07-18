@@ -29,6 +29,7 @@ from ...services.operation_accounting import (
 )
 from ...services.request_handler import OperationDispatcher
 from ...utils.api_keys import has_api_key, select_next_api_key
+from ...utils.provider_error_redaction import redact_provider_error_text
 from ...utils.usage_tracking import extract_tokens_usage, initialize_tokens_usage
 from ...utils.zai_mcp import detect_zai_search_location, zai_mcp_tool_call
 from .chat import _attempt_model_fallback_rule
@@ -356,7 +357,10 @@ async def _call_internal_text_model(
             continue
         last_error = error_detail or last_error
 
-    raise HTTPException(status_code=503, detail=f"Internal gateway model '{model}' failed: {last_error}")
+    raise HTTPException(
+        status_code=503,
+        detail=f"Internal gateway model '{model}' failed: {redact_provider_error_text(last_error)}",
+    )
 
 
 async def _generate_queries(

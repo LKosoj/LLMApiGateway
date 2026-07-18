@@ -4,9 +4,10 @@ import copy
 import hashlib
 import httpx
 import logging
+import time
 import zlib
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, MutableMapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Dict, Any, Optional
@@ -687,10 +688,13 @@ class RequestErrorDetail(str):
     error classification) keep working without changes. The ``retry_after``
     attribute holds the upstream ``Retry-After`` hint (already clamped and
     converted to seconds) when available, and ``status_code`` is the HTTP
-    status that produced the failure (if applicable).
+    status that produced the failure (if applicable). ``retry_after_uncapped``
+    holds the same hint before :data:`MAX_RETRY_AFTER_SECONDS` clamping, for
+    callers (e.g. cooldown scheduling) that need the raw upstream value.
     """
 
     retry_after: float | None
+    retry_after_uncapped: float | None
     status_code: int | None
 
     def __new__(
@@ -698,10 +702,12 @@ class RequestErrorDetail(str):
         message: str,
         *,
         retry_after: float | None = None,
+        retry_after_uncapped: float | None = None,
         status_code: int | None = None,
     ) -> "RequestErrorDetail":
         instance = super().__new__(cls, message)
         instance.retry_after = retry_after
+        instance.retry_after_uncapped = retry_after_uncapped
         instance.status_code = status_code
         return instance
 
@@ -1178,6 +1184,7 @@ async def _make_streaming_request(
     stream_observation_capacity: StreamObservationCapacity,
     stream_event_max_bytes: int,
     stream_request_id: str | None = None,
+    response_headers_sink: MutableMapping[str, str] | None = None,
 ):
     """Prime, inspect, and stream one bounded upstream SSE response."""
     if (
@@ -1205,7 +1212,7 @@ async def _make_streaming_request(
 
     def inspect_events(events: tuple[SSEEvent, ...]) -> bool:
         nonlocal error_detail, error_in_stream, saw_real_data_chunk
-        nonlocal tokens_usage, upstream_done
+        nonlocal tokens_usage, upstream_done, first_content_at
 
         for event in events:
             try:
@@ -1249,6 +1256,8 @@ async def _make_streaming_request(
                 tokens_usage = chunk_json.get("usage")
             if _stream_chunk_has_response_content(chunk_json):
                 saw_real_data_chunk = True
+                if first_content_at is None:
+                    first_content_at = time.monotonic()
 
         return error_in_stream or upstream_done
 
@@ -1258,6 +1267,7 @@ async def _make_streaming_request(
         if key.lower() != "accept-encoding"
     }
     stream_headers["Accept-Encoding"] = STREAM_ACCEPT_ENCODING
+    stream_started_at = time.monotonic()
     stream_context = client.stream(
         "POST",
         target_url,
@@ -1265,6 +1275,10 @@ async def _make_streaming_request(
         json=request_payload,
     )
     response = await stream_context.__aenter__()
+    if response_headers_sink is not None:
+        response_headers_sink.update(
+            {key.lower(): value for key, value in response.headers.items()}
+        )
     try:
         reader: _DecodedResponseReader | None = None
         prefetched_chunks: deque[_LeasedDecodedChunk] = deque()
@@ -1314,6 +1328,7 @@ async def _make_streaming_request(
         )
         prefetched_bytes = 0
         saw_real_data_chunk = False
+        first_content_at: float | None = None
 
         if response.status_code >= 400:
             error_body_length = 0
@@ -1357,9 +1372,10 @@ async def _make_streaming_request(
                 request_id=stream_request_id,
             )
             headers = getattr(response, "headers", None) or {}
-            retry_after = _clamped_retry_after(
-                parse_retry_after_header(headers.get("retry-after") if hasattr(headers, "get") else None)
+            retry_after_uncapped = parse_retry_after_header(
+                headers.get("retry-after") if hasattr(headers, "get") else None
             )
+            retry_after = _clamped_retry_after(retry_after_uncapped)
             client_error = f"Upstream request failed with HTTP status {response.status_code}."
             if context_overflow_detector.finish():
                 client_error = (
@@ -1369,6 +1385,7 @@ async def _make_streaming_request(
             return None, RequestErrorDetail(
                 client_error,
                 retry_after=retry_after,
+                retry_after_uncapped=retry_after_uncapped,
                 status_code=response.status_code,
             )
 
@@ -1519,6 +1536,12 @@ async def _make_streaming_request(
             media_type="text/event-stream",
             headers={"Transfer-Encoding": "chunked", "X-Accel-Buffering": "no"},
         )
+        # TTFT is per-attempt: elapsed time from this attempt's POST to its
+        # first real content chunk. Unlike duration_ms (admission through
+        # every fallback attempt), it is not expected to be <= duration_ms.
+        streaming_response.llmgateway_ttft_ms = max(
+            0, int((first_content_at - stream_started_at) * 1000)
+        )
         result = _build_streaming_response_result(streaming_response, error_detail)
         stream_handed_off = True
         return result
@@ -1543,6 +1566,8 @@ async def _make_json_request(
     target_url: str,
     headers: dict,
     request_payload: dict,
+    *,
+    response_headers_sink: MutableMapping[str, str] | None = None,
 ):
     """Non-stream branch of make_llm_request.
 
@@ -1551,18 +1576,24 @@ async def _make_json_request(
     no behavior change.
     """
     response = await client.post(target_url, headers=headers, json=request_payload)
+    if response_headers_sink is not None:
+        response_headers_sink.update(
+            {key.lower(): value for key, value in response.headers.items()}
+        )
     logging.debug(f"Response received from {target_url}")
 
     if response.status_code >= 400:
         error_text = response.text
         logging.warning(f"Downstream error {response.status_code} from {target_url}: {error_text}")
         headers = getattr(response, "headers", None) or {}
-        retry_after = _clamped_retry_after(
-            parse_retry_after_header(headers.get("retry-after") if hasattr(headers, "get") else None)
+        retry_after_uncapped = parse_retry_after_header(
+            headers.get("retry-after") if hasattr(headers, "get") else None
         )
+        retry_after = _clamped_retry_after(retry_after_uncapped)
         return None, RequestErrorDetail(
             error_text,
             retry_after=retry_after,
+            retry_after_uncapped=retry_after_uncapped,
             status_code=response.status_code,
         )
 
@@ -1608,6 +1639,7 @@ async def make_llm_request(
     stream_observation_capacity: StreamObservationCapacity | None = None,
     stream_event_max_bytes: int | None = None,
     stream_request_id: str | None = None,
+    response_headers_sink: MutableMapping[str, str] | None = None,
 ):
     """Makes the downstream request and handles streaming/non-streaming responses."""
     request_payload = sanitize_payload(payload)
@@ -1633,8 +1665,15 @@ async def make_llm_request(
                 stream_observation_capacity=stream_observation_capacity,
                 stream_event_max_bytes=stream_event_max_bytes,
                 stream_request_id=stream_request_id,
+                response_headers_sink=response_headers_sink,
             )
-        return await _make_json_request(client, target_url, headers, request_payload)
+        return await _make_json_request(
+            client,
+            target_url,
+            headers,
+            request_payload,
+            response_headers_sink=response_headers_sink,
+        )
     except MemoryError:
         raise
     except LocalStreamObservationError:

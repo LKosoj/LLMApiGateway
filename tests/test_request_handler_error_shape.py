@@ -1,9 +1,10 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 from llm_gateway_core.api.v1.chat import _attempt_model_fallback_rule
 from llm_gateway_core.services.request_handler import (
+    MAX_RETRY_AFTER_SECONDS,
     LocalStreamObservationError,
     RequestErrorDetail,
     _extract_stream_error_detail,
@@ -20,6 +21,7 @@ class _JsonResponse:
         self._payload = payload
         self.status_code = status_code
         self.text = str(payload)
+        self.headers: dict = {}
 
     def json(self):
         return self._payload
@@ -312,11 +314,110 @@ class RequestHandlerErrorShapeTests(unittest.TestCase):
             fake_client.post.await_args.kwargs["headers"]["Authorization"],
             "Bearer DIRECT-KEY",
         )
-        classify_error_mock.assert_called_once_with("rate limit exceeded")
+        # classify_error is invoked once per failed attempt from two call
+        # sites (fallback-event recording and attempt-trail tracking); both
+        # must still receive the string error detail unchanged.
+        self.assertEqual(
+            classify_error_mock.call_args_list,
+            [call("rate limit exceeded"), call("rate limit exceeded")],
+        )
         event_kwargs = fallback_events_db.insert_event.call_args.kwargs
         self.assertFalse(event_kwargs["success"])
         self.assertEqual(event_kwargs["error_type"], "unknown")
         self.assertEqual(event_kwargs["error_message"], "rate limit exceeded")
+
+    def test_request_error_detail_exposes_uncapped_retry_after_alongside_capped_value(self):
+        raw_retry_after = MAX_RETRY_AFTER_SECONDS + 400.0
+        fake_client = SimpleNamespace(
+            post=AsyncMock(
+                return_value=_JsonResponse(
+                    {"error": "slow down"},
+                    status_code=429,
+                )
+            )
+        )
+        fake_client.post.return_value.headers = {"retry-after": str(raw_retry_after)}
+
+        _response_data, error_detail = run_async(
+            _make_json_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+            )
+        )
+
+        self.assertIsInstance(error_detail, RequestErrorDetail)
+        self.assertEqual(error_detail.retry_after, MAX_RETRY_AFTER_SECONDS)
+        self.assertEqual(error_detail.retry_after_uncapped, raw_retry_after)
+        self.assertEqual(error_detail.status_code, 429)
+
+    def test_stream_rate_limit_floors_ladder_cooldown_with_uncapped_retry_after(self):
+        fake_request = SimpleNamespace(state=SimpleNamespace(), headers={})
+        capacity = StreamObservationCapacity(max_items=2, max_bytes=1024)
+        raw_retry_after = 500.0
+        error_detail = RequestErrorDetail(
+            "Upstream stream reported HTTP status 429.",
+            retry_after=MAX_RETRY_AFTER_SECONDS,
+            retry_after_uncapped=raw_retry_after,
+            status_code=429,
+        )
+        make_request = AsyncMock(return_value=(None, error_detail))
+        fallback_events_db = Mock()
+        routing_state = UpstreamRoutingState()
+
+        with (
+            patch(
+                "llm_gateway_core.api.v1.chat.make_llm_request",
+                new=make_request,
+            ),
+            patch.object(
+                routing_state,
+                "record_failure",
+                wraps=routing_state.record_failure,
+            ) as record_failure,
+        ):
+            run_async(
+                _attempt_model_fallback_rule(
+                    fake_request,
+                    Mock(),
+                    {
+                        "test-provider": SimpleNamespace(
+                            baseUrl="https://upstream.example",
+                            apikey="DIRECT-KEY",
+                        )
+                    },
+                    "gateway-model",
+                    {
+                        "model": "gateway-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    },
+                    {
+                        "provider": "test-provider",
+                        "model": "provider-model",
+                        "use_provider_order_as_fallback": False,
+                    },
+                    True,
+                    fallback_events_db=fallback_events_db,
+                    request_id="request-id",
+                    proxy_http_clients={},
+                    upstream_routing_state=routing_state,
+                    stream_observation_capacity=capacity,
+                    stream_event_max_bytes=512,
+                )
+            )
+
+        record_failure.assert_called_once()
+        self.assertEqual(
+            record_failure.call_args.kwargs["retry_after_floor_seconds"],
+            raw_retry_after,
+        )
+        self.assertAlmostEqual(
+            routing_state.get_status_rows()[0]["cooldown_remaining_seconds"],
+            raw_retry_after,
+            delta=1.0,
+        )
 
 
 if __name__ == "__main__":

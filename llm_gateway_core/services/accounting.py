@@ -442,6 +442,7 @@ class AccountingUsage:
     cost: float = 0.0
     cost_saved: float = 0.0
     duration_ms: int | None = None
+    ttft_ms: int | None = None
     is_estimated: bool = False
     cost_unavailable: bool = False
 
@@ -472,6 +473,8 @@ class AccountingUsage:
         )
         if self.duration_ms is not None:
             object.__setattr__(self, "duration_ms", _normalize_int(self.duration_ms))
+        if self.ttft_ms is not None:
+            object.__setattr__(self, "ttft_ms", _normalize_int(self.ttft_ms))
         if not isinstance(self.is_estimated, bool):
             _invalid_contract()
         if not isinstance(self.cost_unavailable, bool):
@@ -587,6 +590,7 @@ def build_component_sum_usage(
     components: Iterable[BillingComponent],
     *,
     duration_ms: int | None = None,
+    ttft_ms: int | None = None,
 ) -> AccountingUsage:
     """Build the canonical aggregate usage for an ordered component collection."""
     try:
@@ -613,6 +617,7 @@ def build_component_sum_usage(
         cost=cost,
         cost_saved=cost_saved,
         duration_ms=duration_ms,
+        ttft_ms=ttft_ms,
         is_estimated=any(component.usage.is_estimated for component in normalized_components),
         cost_unavailable=any(component.usage.cost_unavailable for component in normalized_components),
     )
@@ -751,6 +756,7 @@ class AccountingEvent:
         canonical_usage = build_component_sum_usage(
             self.components,
             duration_ms=self.usage.duration_ms,
+            ttft_ms=self.usage.ttft_ms,
         )
         if canonical_usage._billing_payload() != self.usage._billing_payload():
             _invalid_contract()

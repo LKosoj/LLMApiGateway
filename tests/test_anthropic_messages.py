@@ -828,10 +828,13 @@ class AnthropicMessagesTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
+        # output_config converts to response_format={"type": "json_object"}, so the
+        # mocked completion content must itself be valid JSON: otherwise the new
+        # degenerate-response detector (Package D) would flag "ok" as format_ignored.
         make_llm_request_mock.return_value = (
             {
                 "id": "resp-1",
-                "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+                "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": '{"ok": true}'}}],
                 "usage": {"prompt_tokens": 7, "completion_tokens": 2},
             },
             None,

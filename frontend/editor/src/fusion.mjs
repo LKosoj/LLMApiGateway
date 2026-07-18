@@ -68,7 +68,7 @@ export function registerFusion(ctx) {
             const removeButton = document.createElement('button');
             removeButton.type = 'button';
             removeButton.className = 'icon-button danger-button';
-            ctx.bindKnownActionText(removeButton, 'Remove Panel Model');
+            ctx.bindKnownActionText(removeButton, options.removeLabel || 'Remove Panel Model');
             removeButton.addEventListener('click', () => {
                 row.remove();
             });
@@ -232,6 +232,27 @@ export function registerFusion(ctx) {
             panelListEl.appendChild(memberRow);
         }
 
+        const reserveListEl = document.createElement('div');
+        reserveListEl.className = 'fallback-list fusion-reserve-list';
+
+        const addReserveButton = document.createElement('button');
+        addReserveButton.type = 'button';
+        addReserveButton.className = 'secondary-button add-fallback-button';
+        ctx.bindKnownActionText(addReserveButton, 'Add Reserve Model');
+        addReserveButton.addEventListener('click', () => {
+            if (reserveListEl.children.length >= FUSION_PANEL_MAX) {
+                ctx.showLocalizedMessage('error', `A Fusion reserve can have at most ${FUSION_PANEL_MAX} models.`);
+                return;
+            }
+            reserveListEl.appendChild(buildFusionMemberRow({}, { removable: true, removeLabel: 'Remove Reserve Model' }));
+        });
+
+        const reserveMembers = Array.isArray(data.reserve) ? data.reserve : [];
+        reserveMembers.forEach(member => {
+            const memberRow = buildFusionMemberRow(member, { removable: true, removeLabel: 'Remove Reserve Model' });
+            reserveListEl.appendChild(memberRow);
+        });
+
         const includeDetailsLabel = document.createElement('label');
         includeDetailsLabel.className = 'field-group fusion-include-details';
         const includeDetailsCheckbox = document.createElement('input');
@@ -251,6 +272,11 @@ export function registerFusion(ctx) {
         cardBody.appendChild(buildFusionSectionHeading('editor:sections.fusion.panelHeading'));
         cardBody.appendChild(panelListEl);
         cardBody.appendChild(addPanelButton);
+        const reserveHeading = buildFusionSectionHeading('editor:sections.fusion.reserveHeading');
+        ctx.appendFieldHint(reserveHeading, 'editor:sections.fusion.reserveHint');
+        cardBody.appendChild(reserveHeading);
+        cardBody.appendChild(reserveListEl);
+        cardBody.appendChild(addReserveButton);
         cardBody.appendChild(includeDetailsLabel);
         cardBody.appendChild(buildFusionSectionHeading('editor:sections.fusion.webHeading'));
         cardBody.appendChild(buildFusionWebToolsSection(data.web_tools));
@@ -344,6 +370,17 @@ export function registerFusion(ctx) {
             throw new Error(`Fusion model '${gatewayModelName}' can have at most ${FUSION_PANEL_MAX} panel models.`);
         }
 
+        const reserveRows = Array.from(card.querySelectorAll('.fusion-reserve-list > .fusion-member-row'));
+        const reserve = reserveRows
+            .map(rowEl => normalizeFusionMemberRow(rowEl, {
+                required: false,
+                roleLabel: `Fusion '${gatewayModelName}' reserve model`,
+            }))
+            .filter(Boolean);
+        if (reserve.length > FUSION_PANEL_MAX) {
+            throw new Error(`A Fusion reserve can have at most ${FUSION_PANEL_MAX} models.`);
+        }
+
         const includeDetailsCheckbox = card.querySelector('.fusion-include-details-input');
         const rule = {
             gateway_model_name: gatewayModelName,
@@ -354,6 +391,10 @@ export function registerFusion(ctx) {
         if (judge_model) {
             rule.judge_model = judge_model;
         }
+        // Always send reserve, even [], so a save that clears every reserve
+        // row is not silently dropped and the saved payload always matches
+        // what the server persists (see the server round-trip below).
+        rule.reserve = reserve;
 
         const webToolsEnabled = card.querySelector('.fusion-web-tools-enabled');
         if (webToolsEnabled && webToolsEnabled.checked) {

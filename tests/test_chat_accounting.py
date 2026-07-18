@@ -1,9 +1,12 @@
+import json
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from types import MappingProxyType
 
 import pytest
 
+from llm_gateway_core.api.v1.chat_accounting import ChatStreamDialect
+from llm_gateway_core.api.v1.chat_streaming import _DirectChatStreamObservationBuilder
 from llm_gateway_core.middleware.accounting_admission import AccountingRequestContext
 from llm_gateway_core.services.accounting import (
     AccountingCostError,
@@ -22,6 +25,7 @@ from llm_gateway_core.services.chat_accounting import (
     build_chat_accounting_event,
     build_direct_chat_terminal_observation,
 )
+from llm_gateway_core.services.stream_observation import SSEEvent
 from llm_gateway_core.utils.usage_tracking import ModelCostRates
 
 
@@ -382,3 +386,93 @@ def test_chat_event_rejects_non_chat_context():
             gateway_model="gateway-model",
             occurred_at=NOW,
         )
+
+
+@pytest.mark.parametrize("invalid_ttft_ms", [-1, True])
+def test_chat_terminal_observation_rejects_invalid_ttft_ms(invalid_ttft_ms: object):
+    with pytest.raises(AccountingValidationError):
+        ChatTerminalObservation(
+            top_provider="provider",
+            top_model="model",
+            components=(
+                _component(
+                    "provider",
+                    "model",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    cost=0.0,
+                ),
+            ),
+            ttft_ms=invalid_ttft_ms,  # type: ignore[arg-type]
+        )
+
+
+def test_build_direct_chat_terminal_observation_defaults_ttft_ms_to_none():
+    registry = MappingProxyType(
+        {("provider", "model"): ModelCostRates(input_rate=1.0, output_rate=2.0)}
+    )
+
+    observation = build_direct_chat_terminal_observation(
+        {
+            "usage": {
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "total_tokens": 5,
+                "cost": 0.0,
+            }
+        },
+        provider="provider",
+        model="model",
+        cost_rate_registry=registry,
+    )
+
+    assert observation.ttft_ms is None
+
+    event = build_chat_accounting_event(
+        _context(),
+        observation,
+        gateway_model="gateway-model",
+        occurred_at=NOW,
+    )
+    assert event.usage.ttft_ms is None
+
+
+def test_direct_chat_stream_observation_builder_propagates_ttft_ms_to_usage():
+    registry = MappingProxyType(
+        {("provider", "model"): ModelCostRates(input_rate=1.0, output_rate=2.0)}
+    )
+    builder = _DirectChatStreamObservationBuilder(
+        dialect=ChatStreamDialect.OPENAI,
+        provider="provider",
+        model="model",
+        cost_rate_registry=registry,
+        ttft_ms=123,
+    )
+
+    usage_event = SSEEvent(
+        data=json.dumps(
+            {
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 5,
+                    "cost": 0.0,
+                }
+            }
+        )
+    )
+    done_event = SSEEvent(data="[DONE]", done=True)
+
+    assert builder.observe(usage_event) is None
+    observation = builder.observe(done_event)
+
+    assert observation is not None
+    assert observation.ttft_ms == 123
+
+    event = build_chat_accounting_event(
+        _context(),
+        observation,
+        gateway_model="gateway-model",
+        occurred_at=NOW,
+    )
+    assert event.usage.ttft_ms == 123

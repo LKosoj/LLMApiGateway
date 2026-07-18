@@ -44,6 +44,7 @@ from .openrouter_free_models import (
     _lite_eval_skip_reason,
     _normalize_simple_answer,
     _not_evaluated_summary,
+    _openrouter_metadata_key,
     _python_code_safety_error,
     _rank_sort_key,
     _run_sum_even_squares_tests,
@@ -1025,11 +1026,6 @@ def _median_score(scores: list[int]) -> int | None:
 def _is_official_openrouter_url(base_url: str) -> bool:
     parsed = urlparse(base_url)
     return parsed.scheme == "https" and parsed.hostname == OPENROUTER_HOST
-
-
-def _openrouter_metadata_key(model_id: str) -> str:
-    basename = str(model_id or "").strip().rsplit("/", 1)[-1].strip()
-    return basename.split(":", 1)[0].lower()
 
 
 def _openrouter_metadata_rank(openrouter_model: Any) -> tuple[int, int, str]:

@@ -243,7 +243,15 @@ class OperationRulesIntegrationTests(unittest.TestCase):
 
     def test_chat_endpoints_continue_to_use_same_fallback_rules(self):
         with self._client() as (client, _fake_http_client, chat_make_request_mock):
-            chat_make_request_mock.return_value = ({"id": "chat-success"}, None)
+            chat_make_request_mock.return_value = (
+                {
+                    "id": "chat-success",
+                    "choices": [
+                        {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                    ],
+                },
+                None,
+            )
 
             response = client.post(
                 "/v1/chat/completions",
@@ -255,7 +263,15 @@ class OperationRulesIntegrationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "chat-success"})
+        self.assertEqual(
+            response.json(),
+            {
+                "id": "chat-success",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                ],
+            },
+        )
         self.assertEqual(
             chat_make_request_mock.await_args.args[1],
             "https://openai.example/v1/chat/completions",

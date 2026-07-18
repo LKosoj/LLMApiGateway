@@ -1,5 +1,6 @@
 import unittest
 from contextlib import ExitStack
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -8,6 +9,10 @@ from fastapi.testclient import TestClient
 import main
 
 from llm_gateway_core.services.upstream_routing_state import (
+    DAILY_QUOTA_MIN_COOLDOWN_SECONDS,
+    DEFAULT_COOLDOWN_SECONDS,
+    RATE_LIMIT_ESCALATION_LADDER_SECONDS,
+    RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS,
     UpstreamKeyCandidate,
     UpstreamQuotaLimits,
     UpstreamRoutingState,
@@ -32,6 +37,30 @@ class _UpstreamError:
 
     def __str__(self) -> str:
         return "rate limit exceeded"
+
+
+class _RateLimitErrorWithMessage(str):
+    """A 429-classified upstream error carrying an arbitrary body message.
+
+    Modeled as a ``str`` subclass (mirroring production's ``RequestErrorDetail``
+    in request_handler.py) because error-signal extraction in error_classifier.py
+    only walks str/dict/list payloads; a plain object with a custom ``__str__``
+    is invisible to it.
+    """
+
+    status_code = 429
+
+    def __new__(cls, message: str) -> "_RateLimitErrorWithMessage":
+        return super().__new__(cls, message)
+
+
+class _ServerError(str):
+    """A non-429 temporary upstream error (legacy cooldown branch)."""
+
+    status_code = 503
+
+    def __new__(cls) -> "_ServerError":
+        return super().__new__(cls, "internal server error, please retry")
 
 
 class _OrderingProbeState(UpstreamRoutingState):
@@ -313,6 +342,13 @@ class UpstreamRoutingStateTests(unittest.TestCase):
         self.assertEqual(second_row["tokens_last_minute"], 100)
 
     def test_retry_after_cooldown_uses_upstream_seconds_instead_of_default_floor(self):
+        # NOTE: _UpstreamError always carries status_code=429, so record_failure now
+        # routes it through the 429 escalation-ladder branch (Package B) instead of
+        # the legacy default-cooldown branch. The legacy `retry_after` kwarg only
+        # affects the *old* branch (non-429 temporary errors, see
+        # test_non_rate_limit_temporary_failure_keeps_default_cooldown_and_retry_after_override);
+        # for a 429 it is no longer applied at all, and a first hit uses the fixed
+        # transient cooldown regardless of the upstream-reported retry_after value.
         clock = _Clock()
         state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
         key = "sk-retry-after-secret"
@@ -330,11 +366,575 @@ class UpstreamRoutingStateTests(unittest.TestCase):
 
         blocked = state.select_key("openrouter", "provider-model", [key])
         self.assertFalse(blocked.available)
-        self.assertIn("cooldown 1s", blocked.blocked_reason)
+        self.assertIn(f"cooldown {int(RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS)}s", blocked.blocked_reason)
 
-        clock.value += 1.1
+        clock.value += RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS + 0.1
         selected = state.select_key("openrouter", "provider-model", [key])
         self.assertTrue(selected.available)
+
+    def test_non_rate_limit_temporary_failure_keeps_default_cooldown_and_retry_after_override(self):
+        # Regression guard: a non-429 temporary error (5xx/timeout-style) must keep
+        # using the pre-existing default-cooldown / legacy retry_after-override
+        # behavior untouched by the new 429 ladder and daily-quota branches.
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-server-error-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _ServerError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+        self.assertAlmostEqual(
+            state.get_status_rows()[0]["cooldown_remaining_seconds"],
+            DEFAULT_COOLDOWN_SECONDS,
+            delta=0.01,
+        )
+
+        clock.value += 1
+        state.record_failure(
+            "openrouter",
+            "second-provider-model",
+            fingerprint,
+            _ServerError(),
+            temporary=True,
+            apply_penalty=False,
+            retry_after=45,
+        )
+        row = next(
+            row for row in state.get_status_rows() if row["model"] == "second-provider-model"
+        )
+        self.assertAlmostEqual(row["cooldown_remaining_seconds"], 45.0, delta=0.01)
+
+    def test_rate_limit_first_hit_uses_transient_ninety_second_cooldown(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-first-hit-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        row = state.get_status_rows()[0]
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS, delta=0.01
+        )
+        self.assertEqual(row["cooldown_escalation_level"], 0)
+
+    def test_second_rate_limit_hit_within_hour_becomes_exhaustion_and_starts_ladder(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-second-hit-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+        clock.value += 1
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        row = state.get_status_rows()[0]
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], RATE_LIMIT_ESCALATION_LADDER_SECONDS[0], delta=0.01
+        )
+        self.assertEqual(row["cooldown_escalation_level"], 1)
+
+    def test_repeated_exhaustion_events_escalate_through_ladder_within_24h(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-escalation-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        expected_cooldowns = [
+            RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS,
+            RATE_LIMIT_ESCALATION_LADDER_SECONDS[0],
+            RATE_LIMIT_ESCALATION_LADDER_SECONDS[1],
+            RATE_LIMIT_ESCALATION_LADDER_SECONDS[2],
+            RATE_LIMIT_ESCALATION_LADDER_SECONDS[3],
+            RATE_LIMIT_ESCALATION_LADDER_SECONDS[3],
+        ]
+
+        for index, expected_cooldown in enumerate(expected_cooldowns):
+            state.record_failure(
+                "openrouter",
+                "provider-model",
+                fingerprint,
+                _UpstreamError(),
+                temporary=True,
+                apply_penalty=False,
+            )
+            row = state.get_status_rows()[0]
+            with self.subTest(hit=index):
+                self.assertAlmostEqual(
+                    row["cooldown_remaining_seconds"], expected_cooldown, delta=0.01
+                )
+            clock.value += 1
+
+    def test_exhaustion_event_ages_out_of_24h_window_and_resets_ladder(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-aging-out-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        for _ in range(3):
+            state.record_failure(
+                "openrouter",
+                "provider-model",
+                fingerprint,
+                _UpstreamError(),
+                temporary=True,
+                apply_penalty=False,
+            )
+            clock.value += 1
+
+        row = state.get_status_rows()[0]
+        self.assertEqual(row["cooldown_escalation_level"], 2)
+
+        clock.value += 86_400.0 + 100.0
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        row = state.get_status_rows()[0]
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS, delta=0.01
+        )
+        self.assertEqual(row["cooldown_escalation_level"], 0)
+
+    def test_rate_limit_retry_after_floor_extends_but_never_shortens_ladder_cooldown(self):
+        state = UpstreamRoutingState()
+
+        state.record_failure(
+            "openrouter",
+            "floor-low-provider-model",
+            fingerprint_api_key("sk-floor-low-secret"),
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+            retry_after_floor_seconds=10.0,
+        )
+        low_row = next(
+            row
+            for row in state.get_status_rows()
+            if row["model"] == "floor-low-provider-model"
+        )
+        self.assertAlmostEqual(
+            low_row["cooldown_remaining_seconds"], RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS, delta=0.01
+        )
+
+        state.record_failure(
+            "openrouter",
+            "floor-high-provider-model",
+            fingerprint_api_key("sk-floor-high-secret"),
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+            retry_after_floor_seconds=200.0,
+        )
+        high_row = next(
+            row
+            for row in state.get_status_rows()
+            if row["model"] == "floor-high-provider-model"
+        )
+        self.assertAlmostEqual(high_row["cooldown_remaining_seconds"], 200.0, delta=0.01)
+
+    def test_daily_quota_cooldown_targets_next_utc_midnight_with_sixty_second_floor(self):
+        near_midnight_epoch = datetime(2024, 3, 1, 23, 59, 30, tzinfo=timezone.utc).timestamp()
+        clock = _Clock()
+        clock.value = near_midnight_epoch
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-daily-quota-near-midnight-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("Daily quota exhausted. Try again after reset."),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        row = state.get_status_rows()[0]
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], DAILY_QUOTA_MIN_COOLDOWN_SECONDS, delta=0.5
+        )
+
+        mid_afternoon_epoch = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+        afternoon_clock = _Clock()
+        afternoon_clock.value = mid_afternoon_epoch
+        afternoon_state = UpstreamRoutingState(
+            time_func=afternoon_clock.time, monotonic_func=afternoon_clock.monotonic
+        )
+        afternoon_state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("Daily quota exhausted. Try again after reset."),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        afternoon_row = afternoon_state.get_status_rows()[0]
+        self.assertAlmostEqual(
+            afternoon_row["cooldown_remaining_seconds"], 14 * 3600.0, delta=0.5
+        )
+
+    def test_daily_quota_retry_after_overrides_midnight_calculation(self):
+        mid_afternoon_epoch = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+        clock = _Clock()
+        clock.value = mid_afternoon_epoch
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-daily-quota-override-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("Daily quota exhausted. Try again after reset."),
+            temporary=True,
+            apply_penalty=False,
+            retry_after_floor_seconds=45.0,
+        )
+
+        row = state.get_status_rows()[0]
+        self.assertAlmostEqual(row["cooldown_remaining_seconds"], 45.0, delta=0.01)
+
+    def test_record_failure_returns_true_for_rate_limit_429(self):
+        state = UpstreamRoutingState()
+        key = "sk-record-failure-429-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        result = state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        self.assertTrue(result)
+
+    def test_record_failure_returns_true_for_daily_quota_exhaustion(self):
+        state = UpstreamRoutingState()
+        key = "sk-record-failure-daily-quota-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        result = state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("Daily quota exhausted. Try again after reset."),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        self.assertTrue(result)
+
+    def test_record_failure_returns_false_for_non_429_temporary_failure_but_still_sets_cooldown(self):
+        # A plain 5xx/timeout-style failure still schedules a cooldown for future
+        # requests (unchanged), but is not a rate-limit block: the caller must
+        # not treat it as a trigger for an immediate key switch on the current
+        # request even though a cooldown is now active for the next one.
+        state = UpstreamRoutingState()
+        key = "sk-record-failure-non-429-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        result = state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _ServerError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        self.assertFalse(result)
+        remaining = state.cooldown_remaining_seconds("openrouter", "provider-model", fingerprint)
+        self.assertIsNotNone(remaining)
+        self.assertGreater(remaining, 0)
+
+    def test_record_failure_returns_false_when_not_temporary(self):
+        state = UpstreamRoutingState()
+        key = "sk-record-failure-permanent-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        result = state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=False,
+            apply_penalty=False,
+        )
+
+        self.assertFalse(result)
+
+    def test_learn_limit_from_error_body_parses_axis_and_value(self):
+        state = UpstreamRoutingState()
+        key = "sk-learn-limit-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("requests per day limit: 250 exceeded"),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        row = state.get_status_rows()[0]
+        observed_rpd = row["observed_limits"]["rpd"]
+        self.assertEqual(observed_rpd["limit"], 250)
+        self.assertEqual(observed_rpd["source"], "error_body")
+        self.assertIsNone(observed_rpd["remaining"])
+        self.assertIsNone(observed_rpd["reset_in_seconds"])
+
+    def test_learn_limit_only_written_when_absent_or_more_conservative(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-conservative-limit-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("rpm limit: 100 reached"),
+            temporary=True,
+            apply_penalty=False,
+        )
+        self.assertEqual(state.get_status_rows()[0]["observed_limits"]["rpm"]["limit"], 100)
+
+        clock.value += 1
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("rpm limit: 150 reached"),
+            temporary=True,
+            apply_penalty=False,
+        )
+        self.assertEqual(
+            state.get_status_rows()[0]["observed_limits"]["rpm"]["limit"],
+            100,
+            "a higher (less conservative) error-body limit must not overwrite the stored value",
+        )
+
+        clock.value += 1
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage("rpm limit: 50 reached"),
+            temporary=True,
+            apply_penalty=False,
+        )
+        self.assertEqual(
+            state.get_status_rows()[0]["observed_limits"]["rpm"]["limit"],
+            50,
+            "a strictly lower (more conservative) error-body limit must overwrite the stored value",
+        )
+
+    def test_observed_limit_header_source_wins_over_error_body(self):
+        state = UpstreamRoutingState()
+        provider, model, fingerprint = "openrouter", "provider-model", "fp-header-wins"
+
+        state.record_observed_limit(
+            provider,
+            model,
+            fingerprint,
+            "rpm",
+            limit=100,
+            remaining=40,
+            reset_at_monotonic=None,
+            source="header",
+        )
+        state.record_failure(
+            provider,
+            model,
+            fingerprint,
+            _RateLimitErrorWithMessage("rpm limit: 10 reached"),
+            temporary=True,
+            apply_penalty=False,
+        )
+        header_entry = state.get_status_rows()[0]["observed_limits"]["rpm"]
+        self.assertEqual(header_entry["limit"], 100)
+        self.assertEqual(header_entry["source"], "header")
+
+        # A fresh header reading is always applied, even to raise the previous limit.
+        state.record_observed_limit(
+            provider,
+            model,
+            fingerprint,
+            "rpm",
+            limit=200,
+            remaining=190,
+            reset_at_monotonic=None,
+            source="header",
+        )
+        updated_entry = state.get_status_rows()[0]["observed_limits"]["rpm"]
+        self.assertEqual(updated_entry["limit"], 200)
+        self.assertEqual(updated_entry["remaining"], 190)
+
+    def test_quota_block_reason_uses_min_of_configured_and_observed_limits(self):
+        state = UpstreamRoutingState()
+        provider, model = "openrouter", "provider-model"
+        key = "sk-effective-limit-secret"
+        fingerprint = fingerprint_api_key(key)
+        configured = UpstreamQuotaLimits(rpm=1000)
+
+        baseline = state.select_key(provider, model, [key], limits=configured)
+        self.assertTrue(baseline.available)
+        state.record_attempt_start(provider, model, fingerprint)
+
+        still_available = state.select_key(provider, model, [key], limits=configured)
+        self.assertTrue(still_available.available)
+
+        state.record_observed_limit(
+            provider,
+            model,
+            fingerprint,
+            "rpm",
+            limit=1,
+            remaining=0,
+            reset_at_monotonic=None,
+            source="header",
+        )
+
+        blocked = state.select_key(provider, model, [key], limits=configured)
+        self.assertFalse(blocked.available)
+        self.assertIn("rpm quota exhausted", blocked.blocked_reason)
+
+    def test_observed_zero_remaining_with_future_reset_blocks_key_until_reset(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        provider, model = "groq", "provider-model"
+        key = "sk-zero-remaining-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_observed_limit(
+            provider,
+            model,
+            fingerprint,
+            "rpm",
+            limit=100,
+            remaining=0,
+            reset_at_monotonic=clock.value + 30.0,
+            source="header",
+        )
+
+        blocked = state.select_key(provider, model, [key])
+        self.assertFalse(blocked.available)
+        self.assertIn("rpm", blocked.blocked_reason)
+        self.assertIn("exhausted", blocked.blocked_reason)
+
+        clock.value += 31.0
+        available = state.select_key(provider, model, [key])
+        self.assertTrue(available.available)
+
+    def test_observed_zero_remaining_with_past_reset_does_not_block(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        provider, model = "groq", "provider-model"
+        key = "sk-past-reset-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_observed_limit(
+            provider,
+            model,
+            fingerprint,
+            "rpm",
+            limit=100,
+            remaining=0,
+            reset_at_monotonic=clock.value - 5.0,
+            source="header",
+        )
+
+        available = state.select_key(provider, model, [key])
+        self.assertTrue(available.available)
+
+    def test_observed_positive_remaining_does_not_block(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        provider, model = "groq", "provider-model"
+        key = "sk-positive-remaining-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_observed_limit(
+            provider,
+            model,
+            fingerprint,
+            "rpm",
+            limit=100,
+            remaining=5,
+            reset_at_monotonic=clock.value + 30.0,
+            source="header",
+        )
+
+        available = state.select_key(provider, model, [key])
+        self.assertTrue(available.available)
+
+    def test_get_status_rows_exposes_cooldown_escalation_level_and_observed_limits(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        provider, model = "openrouter", "provider-model"
+        key = "sk-status-rows-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            provider,
+            model,
+            fingerprint,
+            _RateLimitErrorWithMessage("rate limit exceeded"),
+            temporary=True,
+            apply_penalty=False,
+        )
+        clock.value += 1
+        state.record_failure(
+            provider,
+            model,
+            fingerprint,
+            _RateLimitErrorWithMessage("tpd limit: 5,000 reached"),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        row = state.get_status_rows()[0]
+        self.assertEqual(row["cooldown_escalation_level"], 1)
+        self.assertEqual(row["observed_limits"]["tpd"]["limit"], 5000)
+        self.assertEqual(row["observed_limits"]["tpd"]["source"], "error_body")
+        self.assertIn("observed_at", row["observed_limits"]["tpd"])
 
     def test_order_rules_by_penalty_reorders_rules_by_recorded_penalty(self):
         clock = _Clock()
@@ -667,6 +1267,73 @@ class UpstreamRoutingStateTests(unittest.TestCase):
         self.assertEqual(downstream_payload["top_p"], 0.9)
         self.assertFalse(downstream_payload["parallel_tool_calls"])
         self.assertNotIn("seed", downstream_payload)
+
+    def test_cooldown_remaining_seconds_returns_none_for_unknown_ref(self):
+        state = UpstreamRoutingState()
+
+        self.assertIsNone(
+            state.cooldown_remaining_seconds("openrouter", "unknown-model", "unknown-fp")
+        )
+
+    def test_cooldown_remaining_seconds_reflects_recorded_failure_and_does_not_create_state(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-cooldown-lookup-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        # Read-only lookups for refs that never recorded anything must not
+        # create a _RuntimeState entry (no inflating internal state via
+        # speculative probing, e.g. while building an exhaustion trail).
+        self.assertIsNone(state.cooldown_remaining_seconds("openrouter", "provider-model", fingerprint))
+        self.assertEqual(state.get_status_rows(), [])
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _UpstreamError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        remaining = state.cooldown_remaining_seconds("openrouter", "provider-model", fingerprint)
+        self.assertIsNotNone(remaining)
+        self.assertAlmostEqual(remaining, RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS, delta=0.01)
+
+        clock.value += RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS + 0.1
+        self.assertIsNone(state.cooldown_remaining_seconds("openrouter", "provider-model", fingerprint))
+
+    def test_has_zero_remaining_quota_block_reflects_observed_limit_lifecycle(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        provider, model = "groq", "provider-model"
+        key = "sk-zero-remaining-lifecycle-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        self.assertFalse(state.has_zero_remaining_quota_block(provider, model, fingerprint))
+
+        state.record_observed_limit(
+            provider,
+            model,
+            fingerprint,
+            "rpm",
+            limit=100,
+            remaining=0,
+            reset_at_monotonic=clock.value + 30.0,
+            source="header",
+        )
+        self.assertTrue(state.has_zero_remaining_quota_block(provider, model, fingerprint))
+
+        clock.value += 31.0
+        self.assertFalse(state.has_zero_remaining_quota_block(provider, model, fingerprint))
+
+    def test_has_zero_remaining_quota_block_returns_false_for_unknown_ref_without_creating_state(self):
+        state = UpstreamRoutingState()
+
+        self.assertFalse(
+            state.has_zero_remaining_quota_block("openrouter", "unknown-model", "unknown-fp")
+        )
+        self.assertEqual(state.get_status_rows(), [])
 
     def test_chat_model_alias_routes_to_effective_gateway_rule(self):
         loader = _build_chat_config_loader(dynamic_penalty=False)

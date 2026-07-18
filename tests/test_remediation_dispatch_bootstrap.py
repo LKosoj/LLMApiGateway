@@ -35,7 +35,19 @@ async def _attempt_with_rule(
         headers={"Authorization": "Bearer upstream-secret"},
         upstream_key_fingerprint=None,
     )
-    make_llm_request_mock = AsyncMock(return_value=({"ok": True}, None))
+    # A bare {"ok": True} response has no "choices" and would be flagged as an
+    # empty_completion by the degenerate-response detector (Package D) on the
+    # non-streaming path, so the "success" mock must be choices-shaped.
+    upstream_response = {
+        "ok": True,
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "ok"},
+            }
+        ],
+    }
+    make_llm_request_mock = AsyncMock(return_value=(upstream_response, None))
     with (
         patch.object(
             chat_api,
@@ -61,7 +73,7 @@ async def _attempt_with_rule(
         )
 
     assert error is None
-    assert result == {"ok": True}
+    assert result == upstream_response
     make_llm_request_mock.assert_awaited_once()
     return make_llm_request_mock.await_args.args[3]
 

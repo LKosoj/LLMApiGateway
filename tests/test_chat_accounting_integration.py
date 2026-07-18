@@ -331,9 +331,23 @@ def _observe_handoff_stream(handoff: ChatTerminalHandoff, payload: bytes) -> Non
 
 def test_direct_json_publishes_strict_observation_before_client_conversion() -> None:
     async def scenario() -> None:
+        # The former edge-case fixture used `"choices": []` to stand in for a
+        # "successful" non-stream response. On the non-stream path that shape
+        # is now itself a degenerate response (see
+        # chat_dispatch.py::detect_degenerate_non_stream_response) and fails
+        # over instead of reaching accounting, so this test's own invariant —
+        # strict observation is published before the response is converted
+        # for the client — needs a real choices-shaped payload to exercise.
+        # Degenerate-response detection itself is covered by
+        # tests/test_chat_model_behavior.py and tests/test_chat_fallback.py.
         payload = {
             "id": "chatcmpl-direct",
-            "choices": [],
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "ok"},
+                }
+            ],
             "usage": {
                 "prompt_tokens": 2,
                 "completion_tokens": 3,

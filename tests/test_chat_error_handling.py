@@ -99,6 +99,8 @@ class ChatErrorHandlingTests(unittest.TestCase):
         self.assertTrue(body["request_id"])
         self.assertNotIn("Traceback", response.text)
         self.assertNotIn("AttributeError", response.text)
+        self.assertEqual(body["attempts"], [])
+        self.assertNotIn("retry_after_seconds", body)
 
     def test_make_llm_request_invalid_json_response_returns_controlled_error(self):
         fake_client = Mock()

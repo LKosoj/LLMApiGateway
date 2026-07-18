@@ -189,6 +189,8 @@ def _lifespan_environment():
         service = Mock(name=f"openrouter-{len(openrouter_services) + 1}")
         service.start_runtime = AsyncMock()
         service.stop = AsyncMock(side_effect=lambda: events.append("openrouter"))
+        service.get_status = AsyncMock(return_value={"configured": False})
+        service.get_capability_index = AsyncMock(return_value={})
         openrouter_services.append(service)
         return service
 
@@ -741,7 +743,7 @@ class LifespanAppServicesTests(unittest.TestCase):
                     services.runtime_manager.pending_unpublished_generations,
                     (),
                 )
-                self.assertEqual(services.task_supervisor.task_count, 3)
+                self.assertEqual(services.task_supervisor.task_count, 4)
                 self.assertIs(
                     services.config_update_coordinator,
                     env.coordinators[0],
@@ -775,6 +777,7 @@ class LifespanAppServicesTests(unittest.TestCase):
                         "task:usage-stats-cleanup",
                         "task:deep-research-images-cleanup",
                         "task:budget-reset",
+                        "task:capability-autofill",
                         "deep-research:start",
                         "state:services",
                     ],

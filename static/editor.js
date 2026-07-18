@@ -176,6 +176,9 @@
       const customBodyParamsInput = fallbackRow.querySelector(".custom-body-params-input");
       const customHeadersInput = fallbackRow.querySelector(".custom-headers-input");
       const payloadTransformsInput = fallbackRow.querySelector(".payload-transforms-input");
+      const supportsVisionSelect = fallbackRow.querySelector(".supports-vision-select");
+      const supportsToolsSelect = fallbackRow.querySelector(".supports-tools-select");
+      const contextWindowInput = fallbackRow.querySelector(".context-window-input");
       const provider = providerSelect.value.trim();
       const model = modelSelect.value.trim();
       const unavailableFallbackModel = getUnavailableFallbackModelDetails(fallbackRow);
@@ -213,6 +216,7 @@
         fallbackModel.upstream_key_pool = upstreamKeyPool;
       }
       ctx.applyRetrySettingsToPayload(fallbackModel, retryDelayInput, retryCountInput);
+      ctx.applyCapabilityFieldsToPayload(fallbackModel, supportsVisionSelect, supportsToolsSelect, contextWindowInput);
       return fallbackModel;
     }
     function normalizeRuleCardForSave(ruleCard) {
@@ -221,6 +225,7 @@
       const dynamicPenaltyCheckbox = ruleCard.querySelector(".dynamic-penalty-checkbox");
       const stripThinkTagsCheckbox = ruleCard.querySelector(".strip-think-tags-checkbox");
       const compressToolResultsCheckbox = ruleCard.querySelector(".compress-tool-results-checkbox");
+      const toolCallRescueCheckbox = ruleCard.querySelector(".tool-call-rescue-checkbox");
       const maxTotalAttemptsInput = ruleCard.querySelector(".max-total-attempts-input");
       const contextOverflowEnabledCheckbox = ruleCard.querySelector(".context-overflow-enabled-checkbox");
       const contextOverflowRuleSlot = ruleCard.querySelector(".context-overflow-rule-slot");
@@ -241,6 +246,7 @@
         dynamic_penalty: Boolean(dynamicPenaltyCheckbox?.checked),
         strip_think_tags: Boolean(stripThinkTagsCheckbox?.checked),
         compress_tool_results: Boolean(compressToolResultsCheckbox?.checked),
+        tool_call_rescue: Boolean(toolCallRescueCheckbox?.checked),
         fallback_models: fallbackRows.map(normalizeFallbackModelForSave)
       };
       if (maxTotalAttemptsInput && maxTotalAttemptsInput.value.trim() !== "") {
@@ -277,6 +283,9 @@
       const customBodyParamsInput = fallbackRow.querySelector(".custom-body-params-input");
       const customHeadersInput = fallbackRow.querySelector(".custom-headers-input");
       const payloadTransformsInput = fallbackRow.querySelector(".payload-transforms-input");
+      const supportsVisionSelect = fallbackRow.querySelector(".supports-vision-select");
+      const supportsToolsSelect = fallbackRow.querySelector(".supports-tools-select");
+      const contextWindowInput = fallbackRow.querySelector(".context-window-input");
       const unavailableFallbackModel = getUnavailableFallbackModelDetails(fallbackRow);
       const fallbackModel = {
         provider: providerSelect.value.trim(),
@@ -298,6 +307,7 @@
         fallbackModel.upstream_key_pool = upstreamKeyPool;
       }
       ctx.applyRetrySettingsToPayload(fallbackModel, retryDelayInput, retryCountInput);
+      ctx.applyCapabilityFieldsToPayload(fallbackModel, supportsVisionSelect, supportsToolsSelect, contextWindowInput);
       return fallbackModel;
     }
     function getRulesSnapshotPayload() {
@@ -307,6 +317,7 @@
         const dynamicPenaltyCheckbox = ruleCard.querySelector(".dynamic-penalty-checkbox");
         const stripThinkTagsCheckbox = ruleCard.querySelector(".strip-think-tags-checkbox");
         const compressToolResultsCheckbox = ruleCard.querySelector(".compress-tool-results-checkbox");
+        const toolCallRescueCheckbox = ruleCard.querySelector(".tool-call-rescue-checkbox");
         const maxTotalAttemptsInput = ruleCard.querySelector(".max-total-attempts-input");
         const contextOverflowEnabledCheckbox = ruleCard.querySelector(".context-overflow-enabled-checkbox");
         const contextOverflowRuleSlot = ruleCard.querySelector(".context-overflow-rule-slot");
@@ -317,6 +328,7 @@
           dynamic_penalty: Boolean(dynamicPenaltyCheckbox?.checked),
           strip_think_tags: Boolean(stripThinkTagsCheckbox?.checked),
           compress_tool_results: Boolean(compressToolResultsCheckbox?.checked),
+          tool_call_rescue: Boolean(toolCallRescueCheckbox?.checked),
           fallback_models: fallbackRows.map(snapshotFallbackModelState)
         };
         if (maxTotalAttemptsInput && maxTotalAttemptsInput.value.trim() !== "") {
@@ -384,6 +396,37 @@
       customHeadersInput.value = ctx.normalizeObjectTextarea(initialData.custom_headers);
       const payloadTransformsInput = ctx.createTextarea("payload-transforms-input", '{"defaults": {"top_p": 0.9}, "overrides": {}, "filters": ["seed"]}');
       payloadTransformsInput.value = ctx.normalizeObjectTextarea(initialData.payload_transforms);
+      const autofilledCapabilityFields = new Set(
+        Array.isArray(initialData.capabilities_autofilled) ? initialData.capabilities_autofilled : []
+      );
+      const resolveAutofillSource = typeof options.autofillSource === "function" ? options.autofillSource : () => null;
+      const supportsVisionSelect = ctx.createTriStateSelect("supports-vision-select");
+      supportsVisionSelect.value = initialData.supports_vision === true ? "true" : initialData.supports_vision === false ? "false" : "";
+      const supportsVisionField = ctx.wrapCapabilityField({
+        fieldName: "supports_vision",
+        control: supportsVisionSelect,
+        kind: "boolean",
+        locked: autofilledCapabilityFields.has("supports_vision"),
+        source: resolveAutofillSource("supports_vision")
+      });
+      const supportsToolsSelect = ctx.createTriStateSelect("supports-tools-select");
+      supportsToolsSelect.value = initialData.supports_tools === true ? "true" : initialData.supports_tools === false ? "false" : "";
+      const supportsToolsField = ctx.wrapCapabilityField({
+        fieldName: "supports_tools",
+        control: supportsToolsSelect,
+        kind: "boolean",
+        locked: autofilledCapabilityFields.has("supports_tools"),
+        source: resolveAutofillSource("supports_tools")
+      });
+      const contextWindowInput = ctx.createNumberInput("context-window-input", "e.g. 128000");
+      contextWindowInput.value = initialData.context_window ?? "";
+      const contextWindowField = ctx.wrapCapabilityField({
+        fieldName: "context_window",
+        control: contextWindowInput,
+        kind: "number",
+        locked: autofilledCapabilityFields.has("context_window"),
+        source: resolveAutofillSource("context_window")
+      });
       fieldsGrid.appendChild(ctx.createFieldGroup("Provider", providerSelect, "provider-field"));
       fieldsGrid.appendChild(ctx.createFieldGroup("Model", modelSelect, "model-field"));
       fieldsGrid.appendChild(ctx.createFieldGroup("Provider Order", providersOrderInput));
@@ -401,6 +444,9 @@
       const advancedGrid = document.createElement("div");
       advancedGrid.className = "advanced-grid";
       advancedGrid.appendChild(ctx.createFieldGroup("", rotateToggle, "toggle-group"));
+      advancedGrid.appendChild(ctx.createFieldGroup("Vision Support", supportsVisionField));
+      advancedGrid.appendChild(ctx.createFieldGroup("Tools Support", supportsToolsField));
+      advancedGrid.appendChild(ctx.createFieldGroup("Context Window (tokens)", contextWindowField));
       advancedGrid.appendChild(ctx.createFieldGroup("Custom Body Params", customBodyParamsInput, "textarea-group"));
       advancedGrid.appendChild(ctx.createFieldGroup("Custom Headers", customHeadersInput, "textarea-group"));
       advancedGrid.appendChild(ctx.createFieldGroup("Payload Transforms", payloadTransformsInput, "textarea-group"));
@@ -453,6 +499,13 @@
     function buildRuleCard(initialData) {
       const ruleCard = document.createElement("section");
       ruleCard.className = "rule-card";
+      const gatewayModelName = initialData.gateway_model_name || "";
+      const autofillSourceForIndex = (index) => (fieldName) => ctx.capabilityAutofillSourceFor(
+        ctx.state.capabilityAutofillStatus,
+        gatewayModelName,
+        index,
+        fieldName
+      );
       const cardHeader = document.createElement("div");
       cardHeader.className = "rule-card-header";
       const titleWrap = document.createElement("div");
@@ -504,6 +557,17 @@
       ctx.bindLocalizedText(compressToolResultsLabel, "editor:toggles.compressTools");
       compressToolResultsToggle.appendChild(compressToolResultsLabel);
       titleWrap.appendChild(compressToolResultsToggle);
+      const toolCallRescueCheckbox = document.createElement("input");
+      toolCallRescueCheckbox.type = "checkbox";
+      toolCallRescueCheckbox.className = "tool-call-rescue-checkbox";
+      toolCallRescueCheckbox.checked = Boolean(initialData.tool_call_rescue);
+      const toolCallRescueToggle = document.createElement("label");
+      toolCallRescueToggle.className = "toggle-field";
+      toolCallRescueToggle.appendChild(toolCallRescueCheckbox);
+      const toolCallRescueLabel = document.createElement("span");
+      ctx.bindLocalizedText(toolCallRescueLabel, "editor:toggles.toolCallRescue");
+      toolCallRescueToggle.appendChild(toolCallRescueLabel);
+      titleWrap.appendChild(toolCallRescueToggle);
       const maxTotalAttemptsInput = document.createElement("input");
       maxTotalAttemptsInput.type = "number";
       maxTotalAttemptsInput.className = "max-total-attempts-input";
@@ -571,7 +635,8 @@
             contextOverflowRow = null;
             contextOverflowEnabledCheckbox.checked = false;
             contextOverflowRuleSlot.hidden = true;
-          }
+          },
+          autofillSource: autofillSourceForIndex("context_overflow_fallback")
         });
         contextOverflowRuleSlot.appendChild(contextOverflowRow);
         return contextOverflowRow;
@@ -621,8 +686,10 @@
       ruleCard.appendChild(cardHeader);
       ruleCard.appendChild(cardBody);
       const fallbackModels = Array.isArray(initialData.fallback_models) ? initialData.fallback_models : [];
-      fallbackModels.forEach((fallbackModel) => {
-        const fallbackRow = buildFallbackRow(fallbackModel);
+      fallbackModels.forEach((fallbackModel, index) => {
+        const fallbackRow = buildFallbackRow(fallbackModel, {
+          autofillSource: autofillSourceForIndex(index)
+        });
         fallbackList.appendChild(fallbackRow);
       });
       contextOverflowSection.appendChild(contextOverflowHeader);
@@ -657,8 +724,22 @@
       });
       ctx.refreshRulesEmptyState();
     }
+    async function loadCapabilityAutofillStatus() {
+      try {
+        const response = await ctx.apiFetch("/v1/capability-autofill");
+        if (!response.ok) {
+          return;
+        }
+        const payload = await response.json().catch(() => null);
+        if (payload && typeof payload === "object") {
+          ctx.state.capabilityAutofillStatus = payload;
+        }
+      } catch (error) {
+      }
+    }
     async function loadRulesEditor() {
       ctx.showLocalizedMessage("info", "Loading Fallback Rules...");
+      await loadCapabilityAutofillStatus();
       try {
         const loaded = await ctx.loadConfigDocument(
           "fallback",
@@ -1231,6 +1312,7 @@
       buildFallbackRow,
       buildRuleCard,
       renderRules,
+      loadCapabilityAutofillStatus,
       loadRulesEditor,
       ensureAvailableProvidersLoaded,
       formatEvalValue,
@@ -1310,7 +1392,7 @@
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.className = "icon-button danger-button";
-        ctx.bindKnownActionText(removeButton, "Remove Panel Model");
+        ctx.bindKnownActionText(removeButton, options.removeLabel || "Remove Panel Model");
         removeButton.addEventListener("click", () => {
           row.remove();
         });
@@ -1452,6 +1534,24 @@
         const memberRow = buildFusionMemberRow({}, { removable: true });
         panelListEl.appendChild(memberRow);
       }
+      const reserveListEl = document.createElement("div");
+      reserveListEl.className = "fallback-list fusion-reserve-list";
+      const addReserveButton = document.createElement("button");
+      addReserveButton.type = "button";
+      addReserveButton.className = "secondary-button add-fallback-button";
+      ctx.bindKnownActionText(addReserveButton, "Add Reserve Model");
+      addReserveButton.addEventListener("click", () => {
+        if (reserveListEl.children.length >= FUSION_PANEL_MAX) {
+          ctx.showLocalizedMessage("error", `A Fusion reserve can have at most ${FUSION_PANEL_MAX} models.`);
+          return;
+        }
+        reserveListEl.appendChild(buildFusionMemberRow({}, { removable: true, removeLabel: "Remove Reserve Model" }));
+      });
+      const reserveMembers = Array.isArray(data.reserve) ? data.reserve : [];
+      reserveMembers.forEach((member) => {
+        const memberRow = buildFusionMemberRow(member, { removable: true, removeLabel: "Remove Reserve Model" });
+        reserveListEl.appendChild(memberRow);
+      });
       const includeDetailsLabel = document.createElement("label");
       includeDetailsLabel.className = "field-group fusion-include-details";
       const includeDetailsCheckbox = document.createElement("input");
@@ -1470,6 +1570,11 @@
       cardBody.appendChild(buildFusionSectionHeading("editor:sections.fusion.panelHeading"));
       cardBody.appendChild(panelListEl);
       cardBody.appendChild(addPanelButton);
+      const reserveHeading = buildFusionSectionHeading("editor:sections.fusion.reserveHeading");
+      ctx.appendFieldHint(reserveHeading, "editor:sections.fusion.reserveHint");
+      cardBody.appendChild(reserveHeading);
+      cardBody.appendChild(reserveListEl);
+      cardBody.appendChild(addReserveButton);
       cardBody.appendChild(includeDetailsLabel);
       cardBody.appendChild(buildFusionSectionHeading("editor:sections.fusion.webHeading"));
       cardBody.appendChild(buildFusionWebToolsSection(data.web_tools));
@@ -1550,6 +1655,14 @@
       if (panel.length > FUSION_PANEL_MAX) {
         throw new Error(`Fusion model '${gatewayModelName}' can have at most ${FUSION_PANEL_MAX} panel models.`);
       }
+      const reserveRows = Array.from(card.querySelectorAll(".fusion-reserve-list > .fusion-member-row"));
+      const reserve = reserveRows.map((rowEl) => normalizeFusionMemberRow(rowEl, {
+        required: false,
+        roleLabel: `Fusion '${gatewayModelName}' reserve model`
+      })).filter(Boolean);
+      if (reserve.length > FUSION_PANEL_MAX) {
+        throw new Error(`A Fusion reserve can have at most ${FUSION_PANEL_MAX} models.`);
+      }
       const includeDetailsCheckbox = card.querySelector(".fusion-include-details-input");
       const rule = {
         gateway_model_name: gatewayModelName,
@@ -1560,6 +1673,7 @@
       if (judge_model) {
         rule.judge_model = judge_model;
       }
+      rule.reserve = reserve;
       const webToolsEnabled = card.querySelector(".fusion-web-tools-enabled");
       if (webToolsEnabled && webToolsEnabled.checked) {
         const searchModel = card.querySelector(".fusion-web-search-model").value.trim();
@@ -1996,6 +2110,14 @@
         return {
           key: "editor:errors.panelLimit",
           values: { count: Number(panelLimit[1]) },
+          rawDetail: ""
+        };
+      }
+      const reserveLimit = typeof message === "string" ? message.match(/^A Fusion reserve can have at most (\d+) models\.$/) : null;
+      if (reserveLimit) {
+        return {
+          key: "editor:errors.reserveLimit",
+          values: { count: Number(reserveLimit[1]) },
           rawDetail: ""
         };
       }
@@ -2547,7 +2669,10 @@
       ["Custom headers", "editor:fields.customHeaders"],
       ["Payload transforms", "editor:fields.payloadTransforms"],
       ["Request mapping", "editor:fields.requestMapping"],
-      ["Response mapping", "editor:fields.responseMapping"]
+      ["Response mapping", "editor:fields.responseMapping"],
+      ["Vision Support", "editor:fields.supportsVision"],
+      ["Tools Support", "editor:fields.supportsTools"],
+      ["Context Window (tokens)", "editor:fields.contextWindow"]
     ]);
     const PLACEHOLDER_KEYS = /* @__PURE__ */ new Map([
       ["Choose or enter model", "editor:placeholders.chooseOrEnterModel"],
@@ -2563,7 +2688,8 @@
       ["No models available", "editor:placeholders.noModels"],
       ["Loading models...", "editor:placeholders.loadingModels"],
       ["Loading models…", "editor:placeholders.loadingModels"],
-      ["Select fallback entry", "editor:placeholders.selectFallbackEntry"]
+      ["Select fallback entry", "editor:placeholders.selectFallbackEntry"],
+      ["e.g. 128000", "editor:placeholders.contextWindow"]
     ]);
     const ACTION_TEXT_KEYS = /* @__PURE__ */ new Map([
       ["Remove Fallback", "editor:actions.removeFallback"],
@@ -2576,11 +2702,13 @@
       ["Remove Target", "editor:actions.removeTarget"],
       ["Remove Provider", "editor:actions.removeProvider"],
       ["Remove Panel Model", "editor:actions.removePanelModel"],
+      ["Remove Reserve Model", "editor:actions.removeReserveModel"],
       ["Add Fallback Model", "editor:actions.addFallbackModel"],
       ["Add Fallback Route", "editor:actions.addFallbackRoute"],
       ["Add Route", "editor:actions.addRoute"],
       ["Add Target", "editor:actions.addTarget"],
       ["Add Panel Model", "editor:actions.addPanelModel"],
+      ["Add Reserve Model", "editor:actions.addReserveModel"],
       ["Add Model", "editor:actions.addModel"],
       ["Remove", "editor:actions.remove"]
     ]);
@@ -2684,6 +2812,78 @@
       const select = document.createElement("select");
       select.className = className;
       return select;
+    }
+    function createTriStateSelect(className) {
+      const select = createSelect(className);
+      const unknownOption = document.createElement("option");
+      unknownOption.value = "";
+      bindLocalizedText(unknownOption, "editor:capability.unknown");
+      select.appendChild(unknownOption);
+      const supportedOption = document.createElement("option");
+      supportedOption.value = "true";
+      bindLocalizedText(supportedOption, "editor:capability.supported");
+      select.appendChild(supportedOption);
+      const unsupportedOption = document.createElement("option");
+      unsupportedOption.value = "false";
+      bindLocalizedText(unsupportedOption, "editor:capability.unsupported");
+      select.appendChild(unsupportedOption);
+      return select;
+    }
+    function capabilityAutofillSourceFor(status, gatewayModelName, index, fieldName) {
+      const resolutions = status && typeof status === "object" ? status.resolutions : null;
+      const entries = resolutions ? resolutions[gatewayModelName] : null;
+      if (!Array.isArray(entries)) {
+        return null;
+      }
+      const entry = entries.find((candidate) => candidate && candidate.index === index);
+      const source = entry && entry.fields ? entry.fields[fieldName]?.source : null;
+      return source === "provider" || source === "openrouter" ? source : null;
+    }
+    function wrapCapabilityField({ fieldName, control, kind, locked, source }) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "capability-field-slot";
+      control.dataset.capabilityLocked = locked ? "true" : "false";
+      wrapper.appendChild(control);
+      if (!locked) {
+        return wrapper;
+      }
+      control.hidden = true;
+      const badge = document.createElement("span");
+      badge.className = "capability-badge";
+      badge.dataset.capabilityField = fieldName;
+      const valueText = document.createElement("span");
+      valueText.className = "capability-badge-value";
+      if (kind === "boolean") {
+        bindLocalizedText(
+          valueText,
+          control.value === "true" ? "editor:capability.supported" : "editor:capability.unsupported"
+        );
+      } else {
+        valueText.textContent = control.value;
+      }
+      badge.appendChild(valueText);
+      const autoLabel = document.createElement("span");
+      autoLabel.className = "capability-badge-auto";
+      bindLocalizedText(autoLabel, "editor:capability.autofilled");
+      badge.appendChild(autoLabel);
+      if (source === "provider" || source === "openrouter") {
+        const sourceLabel = document.createElement("span");
+        sourceLabel.className = "capability-badge-source";
+        bindLocalizedText(sourceLabel, `editor:capability.source.${source}`);
+        badge.appendChild(sourceLabel);
+      }
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.className = "capability-badge-edit secondary-button";
+      bindLocalizedText(editButton, "editor:capability.override");
+      editButton.addEventListener("click", () => {
+        control.dataset.capabilityLocked = "false";
+        control.hidden = false;
+        badge.remove();
+      });
+      badge.appendChild(editButton);
+      wrapper.appendChild(badge);
+      return wrapper;
     }
     function sortProviderModelIds(modelIds) {
       return [...modelIds].sort((left, right) => {
@@ -2807,6 +3007,30 @@
       }
       if (retryCountInput.value !== "") {
         payload.retry_count = Number.parseInt(retryCountInput.value, 10);
+      }
+    }
+    function applyCapabilityFieldsToPayload(payload, visionSelect, toolsSelect, contextWindowInput) {
+      const autofilledFields = [];
+      if (visionSelect.value !== "") {
+        payload.supports_vision = visionSelect.value === "true";
+        if (visionSelect.dataset?.capabilityLocked === "true") {
+          autofilledFields.push("supports_vision");
+        }
+      }
+      if (toolsSelect.value !== "") {
+        payload.supports_tools = toolsSelect.value === "true";
+        if (toolsSelect.dataset?.capabilityLocked === "true") {
+          autofilledFields.push("supports_tools");
+        }
+      }
+      if (contextWindowInput.value.trim() !== "") {
+        payload.context_window = Number.parseInt(contextWindowInput.value, 10);
+        if (contextWindowInput.dataset?.capabilityLocked === "true") {
+          autofilledFields.push("context_window");
+        }
+      }
+      if (autofilledFields.length > 0) {
+        payload.capabilities_autofilled = autofilledFields;
       }
     }
     function setupRowReordering(row) {
@@ -3464,6 +3688,9 @@
       applyOperationCostCalculator,
       createTextarea,
       createSelect,
+      createTriStateSelect,
+      capabilityAutofillSourceFor,
+      wrapCapabilityField,
       sortProviderModelIds,
       setSelectOptions,
       setModelSelectOptions,
@@ -3472,6 +3699,7 @@
       parseProvidersOrder,
       createRetrySettingsInputs,
       applyRetrySettingsToPayload,
+      applyCapabilityFieldsToPayload,
       setupRowReordering,
       createMoveButtons,
       isCurrentEditorDirty,
@@ -6504,6 +6732,7 @@
       providerCatalogGeneration: 0,
       rulesTabsController: null,
       activeRulesTabContext: null,
+      capabilityAutofillStatus: null,
       currentMessage: null,
       localizedBindings: /* @__PURE__ */ new Set()
     };

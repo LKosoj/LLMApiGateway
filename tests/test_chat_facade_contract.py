@@ -162,7 +162,11 @@ def test_chat_owner_modules_form_a_one_way_dependency_graph() -> None:
     for module_name, allowed_dependencies in owner_modules.items():
         source = (api_dir / f"{module_name}.py").read_text(encoding="utf-8")
         imported_modules = _relative_chat_imports(source)
-        assert imported_modules <= allowed_dependencies | {"chat_accounting", "chat_sanitizers"}
+        assert imported_modules <= allowed_dependencies | {
+            "chat_accounting",
+            "chat_model_behavior",
+            "chat_sanitizers",
+        }
         assert "chat" not in imported_modules
 
 

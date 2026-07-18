@@ -4,12 +4,17 @@ import hashlib
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Iterable, Literal, Mapping
 
 from llm_gateway_core.config.loader import (
     resolve_provider_api_key_value,
+)
+from llm_gateway_core.services.error_classifier import (
+    classify_error,
+    is_daily_quota_exhausted_error,
+    parse_learned_limit_from_error,
 )
 from llm_gateway_core.utils.api_keys import split_api_keys
 
@@ -18,6 +23,36 @@ DEFAULT_COOLDOWN_SECONDS = 600.0
 PENALTY_DECAY_SECONDS = 300.0
 DEFAULT_SESSION_AFFINITY_TTL_SECONDS = 3600.0
 KeySelectionStrategy = Literal["round-robin", "fill-first", "priority"]
+
+# Single 429 hits get a short transient cooldown. A second (or later) 429 hit
+# for the same (provider, model, key) within RATE_LIMIT_HIT_WINDOW_SECONDS is
+# an "exhaustion event"; exhaustion events are tracked over the trailing
+# RATE_LIMIT_EXHAUSTION_WINDOW_SECONDS and drive the escalation ladder below.
+RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS = 90.0
+RATE_LIMIT_ESCALATION_LADDER_SECONDS: tuple[float, float, float, float] = (
+    120.0,
+    600.0,
+    3600.0,
+    86400.0,
+)
+RATE_LIMIT_HIT_WINDOW_SECONDS = 3600.0
+RATE_LIMIT_EXHAUSTION_WINDOW_SECONDS = 86400.0
+DAILY_QUOTA_MIN_COOLDOWN_SECONDS = 60.0
+COOLDOWN_CEILING_SECONDS = 86400.0
+
+ObservedLimitAxis = Literal["rpm", "rpd", "tpm", "tpd"]
+ObservedLimitSource = Literal["header", "error_body"]
+
+
+@dataclass(frozen=True)
+class ObservedLimitEntry:
+    """One upstream-reported quota reading for a single (provider, model, key) axis."""
+
+    limit: int | None
+    remaining: int | None
+    reset_at_monotonic: float | None
+    source: ObservedLimitSource
+    observed_at: str
 
 
 def fingerprint_api_key(api_key: str | None) -> str:
@@ -96,6 +131,12 @@ class _AffinityBinding:
 
 
 class UpstreamRoutingState:
+    """In-memory upstream health/cooldown/quota tracker.
+
+    All state lives in process memory (dicts/deques guarded by one lock) and
+    is lost on restart; there is no persistence layer behind it.
+    """
+
     def __init__(self, *, time_func: Any = time.time, monotonic_func: Any = time.monotonic) -> None:
         self._time_func = time_func
         self._monotonic_func = monotonic_func
@@ -105,6 +146,12 @@ class UpstreamRoutingState:
         self._token_windows: dict[tuple[str, str, str], deque[tuple[float, int]]] = defaultdict(deque)
         self._round_robin_indexes: dict[tuple[str, str, tuple[str, ...]], int] = {}
         self._session_affinity: dict[tuple[str, str, str, str], _AffinityBinding] = {}
+        # All 429 hits in the trailing hour, used to detect exhaustion events.
+        self._rate_limit_hit_windows: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
+        # Exhaustion events (>=2nd 429 hit within an hour) in the trailing 24h,
+        # used to pick the escalation-ladder rung.
+        self._exhaustion_windows: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
+        self._observed_limits: dict[tuple[str, str, str], dict[ObservedLimitAxis, ObservedLimitEntry]] = {}
 
     def select_key(
         self,
@@ -199,6 +246,39 @@ class UpstreamRoutingState:
                 )
             return result
 
+    def cooldown_remaining_seconds(
+        self, provider: str, model: str, key_fingerprint: str
+    ) -> float | None:
+        """Return the remaining cooldown for ``(provider, model, key_fingerprint)``.
+
+        Read-only: unlike most lookups here, this never creates a
+        ``_RuntimeState`` entry for a ref that hasn't recorded anything yet,
+        so probing candidates for a status report cannot inflate ``_states``.
+        Returns ``None`` when there is no recorded state or no active cooldown.
+        """
+        ref = (provider, model, key_fingerprint)
+        now = self._monotonic_func()
+        with self._lock:
+            state = self._states.get(ref)
+            if state is None:
+                return None
+            return self._cooldown_remaining(state, now)
+
+    def has_zero_remaining_quota_block(
+        self, provider: str, model: str, key_fingerprint: str
+    ) -> bool:
+        """Return whether ``(provider, model, key_fingerprint)`` is currently
+        blocked by an observed ``remaining == 0`` quota reading.
+
+        Read-only, like :meth:`cooldown_remaining_seconds`: never creates
+        state for a ref that hasn't recorded an observed limit yet.
+        """
+        now = self._monotonic_func()
+        with self._lock:
+            return self._observed_zero_remaining_block_reason(
+                (provider, model, key_fingerprint), now
+            ) is not None
+
     def record_attempt_start(self, provider: str, model: str, key_fingerprint: str) -> None:
         ref = (provider, model, key_fingerprint)
         now = self._monotonic_func()
@@ -230,10 +310,31 @@ class UpstreamRoutingState:
         temporary: bool,
         apply_penalty: bool,
         retry_after: float | None = None,
-    ) -> None:
+        retry_after_floor_seconds: float | None = None,
+    ) -> bool:
+        """Record an upstream failure and, if temporary, set a cooldown.
+
+        ``retry_after`` is the legacy override: for temporary failures that
+        are neither a 429 nor a daily-quota exhaustion it still replaces the
+        default cooldown outright, unchanged from prior behavior.
+
+        ``retry_after_floor_seconds`` only applies to the new 429/daily-quota
+        branches below: it is a *floor* on the escalation-ladder cooldown
+        (never shortens it) and an *override* of the daily-quota
+        until-next-UTC-midnight calculation.
+
+        A plain (non-429) temporary failure -- 5xx, timeout, connection error
+        -- still sets a cooldown here so *future* requests skip this key, but
+        it is not a rate-limit block: this method returns ``True`` only for a
+        429/rate-limit failure (daily-quota exhaustion is a subset of that),
+        signaling that the caller should switch upstream keys immediately for
+        the *current* request. It returns ``False`` for any other outcome,
+        including ``temporary=False``.
+        """
         now = self._monotonic_func()
         status_code = getattr(error_detail, "status_code", None)
         health_status = "invalid" if status_code in {401, 403} else "error"
+        rate_limited = False
         with self._lock:
             ref = (provider, model, key_fingerprint)
             state = self._state_for(ref)
@@ -241,18 +342,151 @@ class UpstreamRoutingState:
             state.last_checked_at = self._utc_now_iso()
             state.last_error = str(error_detail)[:500] if error_detail else None
             if temporary:
-                cooldown_seconds = DEFAULT_COOLDOWN_SECONDS
-                if retry_after is not None:
-                    try:
-                        retry_after_seconds = float(retry_after)
-                    except (TypeError, ValueError):
-                        retry_after_seconds = 0.0
-                    if retry_after_seconds > 0:
-                        cooldown_seconds = retry_after_seconds
+                error_type = classify_error(error_detail)
+                rate_limited = error_type == "http_429"
+                daily_quota = rate_limited and is_daily_quota_exhausted_error(error_detail)
+                if daily_quota:
+                    cooldown_seconds = min(
+                        self._daily_quota_cooldown_seconds(retry_after_floor_seconds),
+                        COOLDOWN_CEILING_SECONDS,
+                    )
+                elif rate_limited:
+                    cooldown_seconds = min(
+                        self._rate_limit_ladder_cooldown_seconds(ref, now, retry_after_floor_seconds),
+                        COOLDOWN_CEILING_SECONDS,
+                    )
+                else:
+                    cooldown_seconds = DEFAULT_COOLDOWN_SECONDS
+                    if retry_after is not None:
+                        try:
+                            retry_after_seconds = float(retry_after)
+                        except (TypeError, ValueError):
+                            retry_after_seconds = 0.0
+                        if retry_after_seconds > 0:
+                            cooldown_seconds = retry_after_seconds
                 state.cooldown_until = now + cooldown_seconds
+                if rate_limited:
+                    self._maybe_learn_limit_from_error(ref, error_detail)
             if apply_penalty and temporary:
                 state.penalty_score = min(100.0, self._decayed_penalty(state, now) + 25.0)
                 state.penalty_updated_at = now
+        return rate_limited
+
+    def _rate_limit_ladder_cooldown_seconds(
+        self,
+        ref: tuple[str, str, str],
+        now: float,
+        retry_after_floor_seconds: float | None,
+    ) -> float:
+        """Single 429 hit -> transient cooldown; repeat hits climb the ladder.
+
+        A hit is an "exhaustion event" once it is the 2nd-or-later 429 for
+        this (provider, model, key) within the trailing hour. Exhaustion
+        events are tracked over a trailing 24h window and pick the ladder
+        rung by their count. ``retry_after_floor_seconds`` is a floor, not an
+        override, on whichever cooldown results.
+        """
+        hits = self._rate_limit_hit_windows[ref]
+        hits.append(now)
+        self._trim_numeric_window(hits, now, RATE_LIMIT_HIT_WINDOW_SECONDS)
+
+        if len(hits) >= 2:
+            exhaustion_events = self._exhaustion_windows[ref]
+            exhaustion_events.append(now)
+            self._trim_numeric_window(exhaustion_events, now, RATE_LIMIT_EXHAUSTION_WINDOW_SECONDS)
+            ladder_index = min(
+                len(exhaustion_events) - 1,
+                len(RATE_LIMIT_ESCALATION_LADDER_SECONDS) - 1,
+            )
+            base_cooldown = RATE_LIMIT_ESCALATION_LADDER_SECONDS[ladder_index]
+        else:
+            base_cooldown = RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS
+
+        floor = retry_after_floor_seconds if retry_after_floor_seconds and retry_after_floor_seconds > 0 else 0.0
+        return max(base_cooldown, floor)
+
+    def _daily_quota_cooldown_seconds(self, retry_after_floor_seconds: float | None) -> float:
+        if retry_after_floor_seconds is not None and retry_after_floor_seconds > 0:
+            return retry_after_floor_seconds
+        return self._seconds_until_next_utc_midnight()
+
+    def _seconds_until_next_utc_midnight(self) -> float:
+        now_wall = datetime.fromtimestamp(self._time_func(), tz=timezone.utc)
+        next_midnight = (now_wall + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        seconds = (next_midnight - now_wall).total_seconds()
+        return max(DAILY_QUOTA_MIN_COOLDOWN_SECONDS, seconds)
+
+    def _maybe_learn_limit_from_error(self, ref: tuple[str, str, str], error_detail: object) -> None:
+        learned = parse_learned_limit_from_error(error_detail)
+        if learned is None:
+            return
+        axis, limit_value = learned
+        self._record_observed_limit_locked(
+            ref,
+            axis,
+            limit=limit_value,
+            remaining=None,
+            reset_at_monotonic=None,
+            source="error_body",
+        )
+
+    def record_observed_limit(
+        self,
+        provider: str,
+        model: str,
+        key_fingerprint: str,
+        axis: ObservedLimitAxis,
+        *,
+        limit: int | None,
+        remaining: int | None,
+        reset_at_monotonic: float | None,
+        source: ObservedLimitSource,
+    ) -> None:
+        """Record an upstream-observed quota reading for one axis.
+
+        ``header`` readings are precise and always replace whatever was
+        stored for that axis (including a prior header reading, which may
+        raise the limit). ``error_body`` readings never replace a ``header``
+        reading, and only replace a prior ``error_body`` reading when no
+        limit was stored yet or the new limit is strictly lower (more
+        conservative).
+        """
+        with self._lock:
+            self._record_observed_limit_locked(
+                (provider, model, key_fingerprint),
+                axis,
+                limit=limit,
+                remaining=remaining,
+                reset_at_monotonic=reset_at_monotonic,
+                source=source,
+            )
+
+    def _record_observed_limit_locked(
+        self,
+        ref: tuple[str, str, str],
+        axis: ObservedLimitAxis,
+        *,
+        limit: int | None,
+        remaining: int | None,
+        reset_at_monotonic: float | None,
+        source: ObservedLimitSource,
+    ) -> None:
+        axis_map = self._observed_limits.setdefault(ref, {})
+        existing = axis_map.get(axis)
+        if source == "error_body" and existing is not None:
+            if existing.source == "header":
+                return
+            if existing.limit is not None and (limit is None or limit >= existing.limit):
+                return
+        axis_map[axis] = ObservedLimitEntry(
+            limit=limit,
+            remaining=remaining,
+            reset_at_monotonic=reset_at_monotonic,
+            source=source,
+            observed_at=self._utc_now_iso(),
+        )
 
     def mark_health(
         self,
@@ -300,10 +534,20 @@ class UpstreamRoutingState:
         now = self._monotonic_func()
         with self._lock:
             rows = []
-            refs = set(self._states) | set(self._request_windows) | set(self._token_windows)
+            refs = (
+                set(self._states)
+                | set(self._request_windows)
+                | set(self._token_windows)
+                | set(self._rate_limit_hit_windows)
+                | set(self._exhaustion_windows)
+                | set(self._observed_limits)
+            )
             for provider, model, key_fingerprint in sorted(refs):
                 ref = (provider, model, key_fingerprint)
                 state = self._state_for(ref)
+                exhaustion_events = self._exhaustion_windows.get(ref)
+                if exhaustion_events:
+                    self._trim_numeric_window(exhaustion_events, now, RATE_LIMIT_EXHAUSTION_WINDOW_SECONDS)
                 rows.append(
                     {
                         "provider": provider,
@@ -318,9 +562,29 @@ class UpstreamRoutingState:
                         "requests_last_day": self._count_since(self._request_windows[ref], now, 86400.0),
                         "tokens_last_minute": self._tokens_since(self._token_windows[ref], now, 60.0),
                         "tokens_last_day": self._tokens_since(self._token_windows[ref], now, 86400.0),
+                        "cooldown_escalation_level": len(exhaustion_events) if exhaustion_events else 0,
+                        "observed_limits": self._observed_limits_snapshot(ref, now),
                     }
                 )
             return rows
+
+    def _observed_limits_snapshot(self, ref: tuple[str, str, str], now: float) -> dict[str, dict[str, Any]]:
+        axis_map = self._observed_limits.get(ref)
+        if not axis_map:
+            return {}
+        snapshot: dict[str, dict[str, Any]] = {}
+        for axis, entry in axis_map.items():
+            reset_in_seconds = None
+            if entry.reset_at_monotonic is not None:
+                reset_in_seconds = entry.reset_at_monotonic - now
+            snapshot[axis] = {
+                "limit": entry.limit,
+                "remaining": entry.remaining,
+                "reset_in_seconds": reset_in_seconds,
+                "source": entry.source,
+                "observed_at": entry.observed_at,
+            }
+        return snapshot
 
     def _fingerprints_for_rule(self, provider_config: Any, rule: Mapping[str, Any]) -> list[str]:
         if provider_config is None:
@@ -433,25 +697,74 @@ class UpstreamRoutingState:
             self._states[ref] = state
         return state
 
+    def _effective_limit(
+        self,
+        ref: tuple[str, str, str],
+        axis: ObservedLimitAxis,
+        configured: int | None,
+    ) -> int | None:
+        """Tighter of the configured limit and this key's observed limit for ``axis``."""
+        observed_entry = self._observed_limits.get(ref, {}).get(axis)
+        observed_limit = observed_entry.limit if observed_entry is not None else None
+        if configured is None:
+            return observed_limit
+        if observed_limit is None:
+            return configured
+        return min(configured, observed_limit)
+
+    def _observed_zero_remaining_block_reason(
+        self, ref: tuple[str, str, str], now: float
+    ) -> str | None:
+        """Block a key whose latest observed reading has zero remaining quota.
+
+        Only blocks while the reported reset time is known and still in the
+        future; an unknown or already-past reset does not block, since the
+        provider may have already replenished the quota.
+        """
+        axis_map = self._observed_limits.get(ref)
+        if not axis_map:
+            return None
+        for axis, entry in axis_map.items():
+            if entry.remaining != 0:
+                continue
+            if entry.reset_at_monotonic is None or entry.reset_at_monotonic <= now:
+                continue
+            return f"quota {axis} exhausted ({entry.source})"
+        return None
+
     def _quota_block_reason(
         self,
         ref: tuple[str, str, str],
         limits: UpstreamQuotaLimits | None,
         now: float,
     ) -> str | None:
-        if limits is None:
+        zero_remaining_reason = self._observed_zero_remaining_block_reason(ref, now)
+        if zero_remaining_reason is not None:
+            return zero_remaining_reason
+
+        effective_rpm = self._effective_limit(ref, "rpm", limits.rpm if limits else None)
+        effective_rpd = self._effective_limit(ref, "rpd", limits.rpd if limits else None)
+        effective_tpm = self._effective_limit(ref, "tpm", limits.tpm if limits else None)
+        effective_tpd = self._effective_limit(ref, "tpd", limits.tpd if limits else None)
+        if (
+            effective_rpm is None
+            and effective_rpd is None
+            and effective_tpm is None
+            and effective_tpd is None
+        ):
             return None
+
         requests = self._request_windows[ref]
         tokens = self._token_windows[ref]
         self._trim_numeric_window(requests, now, 86400.0)
         self._trim_token_window(tokens, now, 86400.0)
-        if limits.rpm is not None and self._count_since(requests, now, 60.0) >= limits.rpm:
+        if effective_rpm is not None and self._count_since(requests, now, 60.0) >= effective_rpm:
             return "rpm quota exhausted"
-        if limits.rpd is not None and self._count_since(requests, now, 86400.0) >= limits.rpd:
+        if effective_rpd is not None and self._count_since(requests, now, 86400.0) >= effective_rpd:
             return "rpd quota exhausted"
-        if limits.tpm is not None and self._tokens_since(tokens, now, 60.0) >= limits.tpm:
+        if effective_tpm is not None and self._tokens_since(tokens, now, 60.0) >= effective_tpm:
             return "tpm quota exhausted"
-        if limits.tpd is not None and self._tokens_since(tokens, now, 86400.0) >= limits.tpd:
+        if effective_tpd is not None and self._tokens_since(tokens, now, 86400.0) >= effective_tpd:
             return "tpd quota exhausted"
         return None
 

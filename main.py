@@ -63,7 +63,7 @@ from llm_gateway_core.middleware.runtime_snapshot import (
 from llm_gateway_core.middleware.response_observation import (
     ResponseObservationMiddleware,
 )
-from llm_gateway_core.api.error_envelope import error_response
+from llm_gateway_core.api.error_envelope import StructuredHTTPException, code_from_detail, error_response
 from llm_gateway_core.api.auth_ui import auth_router
 from llm_gateway_core.api.health import health_router
 from llm_gateway_core.api.v1 import router as api_v1_router
@@ -76,8 +76,12 @@ from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
 from llm_gateway_core.services import session_secret
-from llm_gateway_core.services.openrouter_free_models import OpenRouterFreeModelsService
+from llm_gateway_core.services.openrouter_free_models import (
+    REFRESH_INTERVAL_SECONDS as CAPABILITY_AUTOFILL_REFRESH_INTERVAL_SECONDS,
+    OpenRouterFreeModelsService,
+)
 from llm_gateway_core.services.fallback_model_evals import FallbackModelEvalService
+from llm_gateway_core.services.capability_autofill import CapabilityAutofillService
 from llm_gateway_core.services.health import HealthService
 from llm_gateway_core.services.model_availability import run_startup_model_verification
 from llm_gateway_core.services.access_control import UsdBudgetLedger
@@ -114,6 +118,12 @@ USAGE_STATS_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 BUDGET_RESET_CHECK_INTERVAL_SECONDS = 60
 DEEP_RESEARCH_IMAGES_RETENTION_DAYS = 10
 DEEP_RESEARCH_IMAGES_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+# Capability autofill and the OpenRouter catalog refresh are independent 8h
+# timers; on a cold start the catalog is usually still empty when the first
+# materialize() runs. Sleeping the full 8h interval in that case would leave
+# the OpenRouter fallback source unavailable for up to 8h, so the loop polls
+# this much more often until the catalog gets populated.
+CAPABILITY_AUTOFILL_COLD_START_INTERVAL_SECONDS = 300.0
 _T = TypeVar("_T")
 
 
@@ -288,6 +298,93 @@ def start_budget_reset_task(
     return supervisor.create_task(
         run_budget_reset_loop(accounting_service),
         name="budget-reset",
+    )
+
+
+def _select_capability_autofill_interval(
+    *,
+    openrouter_configured: bool,
+    capability_index_empty: bool,
+    default_interval_seconds: float,
+) -> float:
+    """Pick the next capability-autofill sleep interval.
+
+    Short-circuits to a brief cold-start poll only while the official
+    OpenRouter provider is configured but its capability index has not been
+    populated yet by the (independent) OpenRouter refresh loop -- otherwise
+    the OpenRouter fallback source would stay unavailable for up to a full
+    default interval after every cold start.
+    """
+    if openrouter_configured and capability_index_empty:
+        return CAPABILITY_AUTOFILL_COLD_START_INTERVAL_SECONDS
+    return default_interval_seconds
+
+
+async def run_capability_autofill_loop(
+    capability_autofill_service: CapabilityAutofillService,
+    *,
+    runtime_manager: RuntimeGenerationManager,
+    config_update_coordinator: ConfigUpdateCoordinator,
+    shared_http_client: httpx.AsyncClient,
+    openrouter_free_models_service: OpenRouterFreeModelsService,
+    interval_seconds: float = CAPABILITY_AUTOFILL_REFRESH_INTERVAL_SECONDS,
+) -> None:
+    logger.info(
+        "Capability autofill task started. Interval: %s seconds.",
+        interval_seconds,
+    )
+    try:
+        while True:
+            # A failed iteration must not kill the supervised 8h loop for the
+            # rest of the process lifetime -- log it and retry on the default
+            # cadence instead.
+            sleep_seconds = interval_seconds
+            try:
+                openrouter_status = await openrouter_free_models_service.get_status()
+                capability_index_empty = not await openrouter_free_models_service.get_capability_index()
+                # materialize() never raises: failures are logged and absorbed internally.
+                await capability_autofill_service.materialize(
+                    runtime_manager=runtime_manager,
+                    config_update_coordinator=config_update_coordinator,
+                    shared_http_client=shared_http_client,
+                    openrouter_free_models_service=openrouter_free_models_service,
+                )
+                sleep_seconds = _select_capability_autofill_interval(
+                    openrouter_configured=bool(openrouter_status.get("configured")),
+                    capability_index_empty=capability_index_empty,
+                    default_interval_seconds=interval_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Capability autofill iteration failed; retrying in %s seconds.",
+                    sleep_seconds,
+                )
+            await scheduler_sleep(sleep_seconds)
+    except asyncio.CancelledError:
+        logger.info("Capability autofill task stopped.")
+        raise
+
+
+def start_capability_autofill_task(
+    capability_autofill_service: CapabilityAutofillService,
+    *,
+    runtime_manager: RuntimeGenerationManager,
+    config_update_coordinator: ConfigUpdateCoordinator,
+    shared_http_client: httpx.AsyncClient,
+    openrouter_free_models_service: OpenRouterFreeModelsService,
+    supervisor: TaskSupervisor,
+) -> asyncio.Task:
+    return supervisor.create_task(
+        run_capability_autofill_loop(
+            capability_autofill_service,
+            runtime_manager=runtime_manager,
+            config_update_coordinator=config_update_coordinator,
+            shared_http_client=shared_http_client,
+            openrouter_free_models_service=openrouter_free_models_service,
+        ),
+        name="capability-autofill",
     )
 
 
@@ -661,6 +758,8 @@ async def lifespan(app: FastAPI):
             fallback_model_eval_service.stop,
         )
 
+        capability_autofill_service = CapabilityAutofillService()
+
         task_supervisor = TaskSupervisor()
         stream_observation_capacity = StreamObservationCapacity(
             max_items=settings.stream_chunk_queue_maxsize,
@@ -761,6 +860,14 @@ async def lifespan(app: FastAPI):
             accounting_service,
             supervisor=task_supervisor,
         )
+        start_capability_autofill_task(
+            capability_autofill_service,
+            runtime_manager=runtime_manager,
+            config_update_coordinator=config_update_coordinator,
+            shared_http_client=http_client,
+            openrouter_free_models_service=openrouter_free_models_service,
+            supervisor=task_supervisor,
+        )
 
         deep_research_process_runner = DeepResearchProcessRunner(
             capacity=settings.deep_research_process_capacity,
@@ -794,6 +901,7 @@ async def lifespan(app: FastAPI):
                 upstream_subscription_quota_service=upstream_subscription_quota_service,
                 openrouter_free_models_service=openrouter_free_models_service,
                 fallback_model_eval_service=fallback_model_eval_service,
+                capability_autofill_service=capability_autofill_service,
                 deep_research_process_runner=deep_research_process_runner,
                 upload_admission=upload_admission,
                 upload_admission_timeout_seconds=(
@@ -959,11 +1067,14 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    extra = exc.extra_payload if isinstance(exc, StructuredHTTPException) else None
     return error_response(
         request,
         status_code=exc.status_code,
         detail=exc.detail,
+        code=code_from_detail(exc.detail),
         headers=exc.headers,
+        extra=extra,
     )
 
 configure_gateway_middleware(

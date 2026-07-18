@@ -5,7 +5,15 @@ import logging
 import re
 
 
-JSON_OBJECT_RESPONSE_FORMAT_TYPES = frozenset({"json_object"})
+# Package D deliberately widens this from {"json_object"} to also cover
+# "json_schema": both response_format types promise the client a parseable
+# JSON payload, and Package D's degenerate-response detector (format_ignored)
+# needs to recognize a json_schema request whose model ignored the format just
+# as much as a json_object one. This is a conscious blast-radius expansion of
+# the existing cosmetic sanitizer in expects_json_object_response() (it now
+# also runs non-stream/stream JSON-object sanitization for json_schema
+# requests), not just the new detector.
+JSON_OBJECT_RESPONSE_FORMAT_TYPES = frozenset({"json_object", "json_schema"})
 JSON_MARKDOWN_CODE_BLOCK_RE = re.compile(
     r"^\s*```(?:json)?\s*(?P<payload>.*?)\s*```\s*$",
     re.IGNORECASE | re.DOTALL,
@@ -13,13 +21,17 @@ JSON_MARKDOWN_CODE_BLOCK_RE = re.compile(
 JSON_THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
 
 
-def expects_json_object_response(request_body_json: dict) -> bool:
+def response_format_type(request_body_json: dict) -> str | None:
     response_format = request_body_json.get("response_format")
     if not isinstance(response_format, dict):
-        return False
+        return None
 
     response_type = response_format.get("type")
-    return isinstance(response_type, str) and response_type in JSON_OBJECT_RESPONSE_FORMAT_TYPES
+    return response_type if isinstance(response_type, str) else None
+
+
+def expects_json_object_response(request_body_json: dict) -> bool:
+    return response_format_type(request_body_json) in JSON_OBJECT_RESPONSE_FORMAT_TYPES
 
 
 def is_json_object_payload(text: str) -> bool:
@@ -57,6 +69,30 @@ def unwrap_json_object_markdown_wrapper(text: str) -> str | None:
     return None
 
 
+def _bracketed_json_slices(text: str) -> list[str]:
+    """Port of ``candidateJsonSlices`` (freellmapi): brace/bracket-bounded slices.
+
+    Returns the substring from the first ``{`` to the last ``}`` and the
+    substring from the first ``[`` to the last ``]`` (whichever are present),
+    longest first, so a caller trying each in turn favors the more complete
+    candidate before a shorter one.
+    """
+    slices: list[str] = []
+
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and first_brace < last_brace:
+        slices.append(text[first_brace : last_brace + 1])
+
+    first_bracket = text.find("[")
+    last_bracket = text.rfind("]")
+    if first_bracket != -1 and last_bracket != -1 and first_bracket < last_bracket:
+        slices.append(text[first_bracket : last_bracket + 1])
+
+    slices.sort(key=len, reverse=True)
+    return slices
+
+
 def extract_sanitized_json_object_content(text: str) -> str | None:
     stripped_text = text.strip()
     candidates = [stripped_text]
@@ -72,6 +108,13 @@ def extract_sanitized_json_object_content(text: str) -> str | None:
         unwrapped_candidate = unwrap_json_object_markdown_wrapper(candidate)
         if unwrapped_candidate is not None:
             return unwrapped_candidate
+
+    # Last-resort candidate: a prose-wrapped JSON object recovered by slicing
+    # from the first "{" to the last "}" (or "[" .. "]"), longest match first.
+    for candidate in candidates:
+        for bracket_slice in _bracketed_json_slices(candidate):
+            if is_json_object_payload(bracket_slice):
+                return bracket_slice
 
     return None
 

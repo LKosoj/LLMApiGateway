@@ -28,6 +28,7 @@ from llm_gateway_core.services.accounting import (
     SourceStatus,
     build_component_sum_usage,
 )
+from tests._async_compat import run_async
 
 
 @pytest.fixture
@@ -42,6 +43,7 @@ def _usage(
     completion_tokens: int = 2,
     cost: float = 0.25,
     duration_ms: int | None = 125,
+    ttft_ms: int | None = None,
     cost_saved: float = 0.05,
     is_estimated: bool = False,
 ) -> AccountingUsage:
@@ -54,6 +56,7 @@ def _usage(
         cost=cost,
         cost_saved=cost_saved,
         duration_ms=duration_ms,
+        ttft_ms=ttft_ms,
         is_estimated=is_estimated,
     )
 
@@ -1486,3 +1489,43 @@ def test_source_audit_page_rejects_outgoing_links_from_charge(
         source_db.list_accounting_source_audit_rows(limit=10)
 
     assert exc_info.value.code is AccountingErrorCode.FINGERPRINT_CONFLICT
+
+
+def test_get_dashboard_usage_computes_nearest_rank_percentiles(
+    source_db: TokensUsageDB,
+) -> None:
+    base = datetime(2026, 7, 14, 9, 0, tzinfo=timezone.utc)
+    for offset, value in enumerate((100, 200, 300, 400, 500)):
+        source_db.accept_accounting_event(
+            _charge(
+                f"event-ttft-{value}",
+                usage=_usage(duration_ms=value, ttft_ms=value),
+                occurred_at=base + timedelta(minutes=offset),
+            )
+        )
+    source_db.accept_accounting_event(
+        _charge(
+            "event-ttft-null",
+            usage=_usage(duration_ms=600, ttft_ms=None),
+            occurred_at=base + timedelta(minutes=5),
+        )
+    )
+
+    result = run_async(
+        source_db.get_dashboard_usage(
+            "day",
+            base - timedelta(days=1),
+            base + timedelta(days=1),
+        )
+    )
+    summary = result["summary"]
+
+    assert summary["requests"] == 6
+    assert summary["avg_duration_ms"] == 350
+    assert summary["max_duration_ms"] == 600
+    assert summary["duration_p50_ms"] == 300
+    assert summary["duration_p95_ms"] == 600
+    assert summary["ttft_avg_ms"] == 300
+    assert summary["ttft_max_ms"] == 500
+    assert summary["ttft_p50_ms"] == 300
+    assert summary["ttft_p95_ms"] == 500

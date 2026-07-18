@@ -40,6 +40,7 @@ from llm_gateway_core.middleware.response_observation import (
 )
 from llm_gateway_core.services.accounting import (
     ACCOUNTING_EVENT_VERSION,
+    DEFAULT_OPERATION_COST_USD,
     AccountingError,
     AccountingErrorCode,
     AccountingEvent,
@@ -190,19 +191,19 @@ def test_client_disconnect_mid_stream_commits_estimated_partial_instead_of_relea
     run_async(scenario())
 
 
-# --- Task 3a: a missing/unconfigured cost rate must degrade to -------------
-#              cost_unavailable usage, not fail an already-successful call.
+# --- Task 3a: a missing/unconfigured cost rate uses the default cost. -------
 
 
-def test_missing_token_rate_now_marks_cost_unavailable_instead_of_raising() -> None:
+def test_missing_token_rate_uses_default_cost() -> None:
     component = build_token_model_component(
         {"usage": {"prompt_tokens": 2, "completion_tokens": 1}},
         provider="trusted-provider",
         model="missing-model",
         cost_rate_registry={},
     )
-    assert component.usage.cost_unavailable is True
-    assert component.usage.cost == 0.0
+    assert component.usage.cost_unavailable is False
+    assert component.usage.cost == DEFAULT_OPERATION_COST_USD
+    assert component.cost_source is CostSource.OPERATION_DEFAULT
 
 
 # --- Task 3b: a total_tokens mismatch must be tolerated (logged) and the ---

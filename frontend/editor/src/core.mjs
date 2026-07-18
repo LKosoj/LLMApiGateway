@@ -319,6 +319,16 @@ export function registerCore(ctx) {
                 rawDetail: '',
             };
         }
+        const reserveLimit = typeof message === 'string'
+            ? message.match(/^A Fusion reserve can have at most (\d+) models\.$/)
+            : null;
+        if (reserveLimit) {
+            return {
+                key: 'editor:errors.reserveLimit',
+                values: {count: Number(reserveLimit[1])},
+                rawDetail: '',
+            };
+        }
         return {
             key: typeForUnknownMessage(message),
             values: {},
@@ -980,6 +990,9 @@ export function registerCore(ctx) {
         ['Payload transforms', 'editor:fields.payloadTransforms'],
         ['Request mapping', 'editor:fields.requestMapping'],
         ['Response mapping', 'editor:fields.responseMapping'],
+        ['Vision Support', 'editor:fields.supportsVision'],
+        ['Tools Support', 'editor:fields.supportsTools'],
+        ['Context Window (tokens)', 'editor:fields.contextWindow'],
     ]);
 
     const PLACEHOLDER_KEYS = new Map([
@@ -997,6 +1010,7 @@ export function registerCore(ctx) {
         ['Loading models...', 'editor:placeholders.loadingModels'],
         ['Loading models…', 'editor:placeholders.loadingModels'],
         ['Select fallback entry', 'editor:placeholders.selectFallbackEntry'],
+        ['e.g. 128000', 'editor:placeholders.contextWindow'],
     ]);
 
     const ACTION_TEXT_KEYS = new Map([
@@ -1010,11 +1024,13 @@ export function registerCore(ctx) {
         ['Remove Target', 'editor:actions.removeTarget'],
         ['Remove Provider', 'editor:actions.removeProvider'],
         ['Remove Panel Model', 'editor:actions.removePanelModel'],
+        ['Remove Reserve Model', 'editor:actions.removeReserveModel'],
         ['Add Fallback Model', 'editor:actions.addFallbackModel'],
         ['Add Fallback Route', 'editor:actions.addFallbackRoute'],
         ['Add Route', 'editor:actions.addRoute'],
         ['Add Target', 'editor:actions.addTarget'],
         ['Add Panel Model', 'editor:actions.addPanelModel'],
+        ['Add Reserve Model', 'editor:actions.addReserveModel'],
         ['Add Model', 'editor:actions.addModel'],
         ['Remove', 'editor:actions.remove'],
     ]);
@@ -1128,6 +1144,98 @@ export function registerCore(ctx) {
         const select = document.createElement('select');
         select.className = className;
         return select;
+    }
+
+    function createTriStateSelect(className) {
+        const select = createSelect(className);
+        const unknownOption = document.createElement('option');
+        unknownOption.value = '';
+        bindLocalizedText(unknownOption, 'editor:capability.unknown');
+        select.appendChild(unknownOption);
+
+        const supportedOption = document.createElement('option');
+        supportedOption.value = 'true';
+        bindLocalizedText(supportedOption, 'editor:capability.supported');
+        select.appendChild(supportedOption);
+
+        const unsupportedOption = document.createElement('option');
+        unsupportedOption.value = 'false';
+        bindLocalizedText(unsupportedOption, 'editor:capability.unsupported');
+        select.appendChild(unsupportedOption);
+
+        return select;
+    }
+
+    function capabilityAutofillSourceFor(status, gatewayModelName, index, fieldName) {
+        const resolutions = status && typeof status === 'object' ? status.resolutions : null;
+        const entries = resolutions ? resolutions[gatewayModelName] : null;
+        if (!Array.isArray(entries)) {
+            return null;
+        }
+        const entry = entries.find(candidate => candidate && candidate.index === index);
+        const source = entry && entry.fields ? entry.fields[fieldName]?.source : null;
+        return source === 'provider' || source === 'openrouter' ? source : null;
+    }
+
+    // Wraps a capability control (tri-state select or number input) that may be
+    // owned by F-auto (capabilities_autofilled). When locked, the control is
+    // hidden (its value stays authoritative and round-trips unchanged) and a
+    // read-only badge is shown instead; the badge's "Edit" button unlocks the
+    // control in place, which is how a manual edit permanently disowns the
+    // field (see applyCapabilityFieldsToPayload).
+    function wrapCapabilityField({ fieldName, control, kind, locked, source }) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'capability-field-slot';
+        control.dataset.capabilityLocked = locked ? 'true' : 'false';
+        wrapper.appendChild(control);
+
+        if (!locked) {
+            return wrapper;
+        }
+
+        control.hidden = true;
+
+        const badge = document.createElement('span');
+        badge.className = 'capability-badge';
+        badge.dataset.capabilityField = fieldName;
+
+        const valueText = document.createElement('span');
+        valueText.className = 'capability-badge-value';
+        if (kind === 'boolean') {
+            bindLocalizedText(
+                valueText,
+                control.value === 'true' ? 'editor:capability.supported' : 'editor:capability.unsupported',
+            );
+        } else {
+            valueText.textContent = control.value;
+        }
+        badge.appendChild(valueText);
+
+        const autoLabel = document.createElement('span');
+        autoLabel.className = 'capability-badge-auto';
+        bindLocalizedText(autoLabel, 'editor:capability.autofilled');
+        badge.appendChild(autoLabel);
+
+        if (source === 'provider' || source === 'openrouter') {
+            const sourceLabel = document.createElement('span');
+            sourceLabel.className = 'capability-badge-source';
+            bindLocalizedText(sourceLabel, `editor:capability.source.${source}`);
+            badge.appendChild(sourceLabel);
+        }
+
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'capability-badge-edit secondary-button';
+        bindLocalizedText(editButton, 'editor:capability.override');
+        editButton.addEventListener('click', () => {
+            control.dataset.capabilityLocked = 'false';
+            control.hidden = false;
+            badge.remove();
+        });
+        badge.appendChild(editButton);
+
+        wrapper.appendChild(badge);
+        return wrapper;
     }
 
     function sortProviderModelIds(modelIds) {
@@ -1277,6 +1385,38 @@ export function registerCore(ctx) {
 
         if (retryCountInput.value !== '') {
             payload.retry_count = Number.parseInt(retryCountInput.value, 10);
+        }
+    }
+
+    function applyCapabilityFieldsToPayload(payload, visionSelect, toolsSelect, contextWindowInput) {
+        const autofilledFields = [];
+
+        if (visionSelect.value !== '') {
+            payload.supports_vision = visionSelect.value === 'true';
+            if (visionSelect.dataset?.capabilityLocked === 'true') {
+                autofilledFields.push('supports_vision');
+            }
+        }
+
+        if (toolsSelect.value !== '') {
+            payload.supports_tools = toolsSelect.value === 'true';
+            if (toolsSelect.dataset?.capabilityLocked === 'true') {
+                autofilledFields.push('supports_tools');
+            }
+        }
+
+        if (contextWindowInput.value.trim() !== '') {
+            payload.context_window = Number.parseInt(contextWindowInput.value, 10);
+            if (contextWindowInput.dataset?.capabilityLocked === 'true') {
+                autofilledFields.push('context_window');
+            }
+        }
+
+        // A field stays in the list only while its control is still locked
+        // (untouched autofill); clicking the badge's "Edit" button clears the
+        // dataset flag, which permanently drops the field here on save.
+        if (autofilledFields.length > 0) {
+            payload.capabilities_autofilled = autofilledFields;
         }
     }
 
@@ -1973,6 +2113,9 @@ export function registerCore(ctx) {
         applyOperationCostCalculator,
         createTextarea,
         createSelect,
+        createTriStateSelect,
+        capabilityAutofillSourceFor,
+        wrapCapabilityField,
         sortProviderModelIds,
         setSelectOptions,
         setModelSelectOptions,
@@ -1981,6 +2124,7 @@ export function registerCore(ctx) {
         parseProvidersOrder,
         createRetrySettingsInputs,
         applyRetrySettingsToPayload,
+        applyCapabilityFieldsToPayload,
         setupRowReordering,
         createMoveButtons,
         isCurrentEditorDirty,

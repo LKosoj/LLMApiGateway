@@ -31,7 +31,15 @@ def server():
         operation_rules_path = temp_path / "models_operation_rules.json"
         fusion_rules_path = temp_path / "models_fusion_rules.json"
 
-        providers_path.write_text('[{"openai": {"baseUrl": "http://api.openai.com", "apikey": "key"}}]', encoding="utf-8")
+        providers_path.write_text(
+            (
+                '[{"openai": {"baseUrl": "http://api.openai.com", "apikey": "key", '
+                # Pin the model list explicitly so saving Fallback Rules never needs
+                # a live network call to the (fake) provider's /models endpoint.
+                '"available_models": ["gpt-4o-mini"]}}]'
+            ),
+            encoding="utf-8",
+        )
         fallback_rules_path.write_text(
             (
                 '[{"gateway_model_name": "llmgateway/light_model", '
@@ -611,6 +619,59 @@ def test_create_and_save_web_services(page: Page, server):
     expect(page.locator("#webDeepResearchList .image-generation-size-input")).to_have_value("1024x1024")
 
 
+def test_create_and_save_fusion_reserve_models(page: Page, server):
+    add_session(page, server)
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+    page.click("#tabFusion")
+    expect(page.locator("#messageArea")).to_contain_text("Fusion Models loaded successfully")
+
+    page.click("#addFusionButton")
+    card = page.locator("#fusionList .fusion-card").first
+
+    card.locator(".gateway-model-input").fill("llmgateway/fusion-reserve-test")
+    card.locator(".fusion-main-list .provider-select").select_option("openai")
+    card.locator(".fusion-main-list .model-input").fill("gpt-4o-mini")
+    card.locator(".fusion-panel-list .provider-select").select_option("openai")
+    card.locator(".fusion-panel-list .model-input").fill("gpt-4o-mini")
+
+    # A freshly built card has no reserve rows — unlike the panel, the reserve
+    # list must not auto-add a starter empty row.
+    expect(card.locator(".fusion-reserve-list .fusion-member-row")).to_have_count(0)
+
+    card.get_by_role("button", name="Add Reserve Model").click()
+    expect(card.locator(".fusion-reserve-list .fusion-member-row")).to_have_count(1)
+    card.locator(".fusion-reserve-list .provider-select").select_option("openai")
+    card.locator(".fusion-reserve-list .model-input").fill("gpt-4o")
+
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+    page.reload()
+    page.click("#tabFusion")
+    expect(page.locator("#messageArea")).to_contain_text("Fusion Models loaded successfully")
+
+    expand_first_card(page, "#fusionList")
+    card = page.locator("#fusionList .fusion-card").first
+    expect(card.locator(".gateway-model-input")).to_have_value("llmgateway/fusion-reserve-test")
+    expect(card.locator(".fusion-reserve-list .fusion-member-row")).to_have_count(1)
+    expect(card.locator(".fusion-reserve-list .provider-select")).to_have_value("openai")
+    expect(card.locator(".fusion-reserve-list .model-input")).to_have_value("gpt-4o")
+
+    # Clearing the reserve list and saving again must persist an empty
+    # reserve (not silently keep the previously saved reserve model).
+    card.get_by_role("button", name="Remove Reserve Model").click()
+    expect(card.locator(".fusion-reserve-list .fusion-member-row")).to_have_count(0)
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+    page.reload()
+    page.click("#tabFusion")
+    expand_first_card(page, "#fusionList")
+    card = page.locator("#fusionList .fusion-card").first
+    expect(card.locator(".fusion-reserve-list .fusion-member-row")).to_have_count(0)
+
+
 def test_playground_page_renders_sections_and_populates_model_selects(page: Page, server):
     add_session(page, server)
 
@@ -1007,3 +1068,59 @@ def test_playground_renders_download_links_for_media_results(page: Page, server,
     expect(page.locator('[data-result-for="image-edit"] img')).to_have_count(1)
     expect(page.locator('[data-result-for="image-edit"] a[download="edited-image-1.png"]')).to_have_count(1)
     expect(page.locator('[data-result-for="image-edit"]')).not_to_contain_text("No image payloads in response.")
+
+
+def test_fallback_row_capability_fields_save_and_reload(page: Page, server):
+    add_session(page, server)
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+    page.click("#tabRules")
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+
+    expand_first_card(page, "#rulesList")
+    row = page.locator("#rulesList .fallback-row").first
+    row.locator(".advanced-options summary").click()
+
+    row.locator(".supports-vision-select").select_option("true")
+    row.locator(".supports-tools-select").select_option("false")
+    row.locator(".context-window-input").fill("128000")
+
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+    page.reload()
+    page.click("#tabRules")
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+
+    expand_first_card(page, "#rulesList")
+    row = page.locator("#rulesList .fallback-row").first
+    row.locator(".advanced-options summary").click()
+
+    expect(row.locator(".supports-vision-select")).to_have_value("true")
+    expect(row.locator(".supports-tools-select")).to_have_value("false")
+    expect(row.locator(".context-window-input")).to_have_value("128000")
+
+
+def test_tool_call_rescue_checkbox_saves_and_reloads(page: Page, server):
+    add_session(page, server)
+
+    page.goto(f"{server}/v1/ui/rules-editor")
+    page.click("#tabRules")
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+
+    expand_first_card(page, "#rulesList")
+    card = page.locator("#rulesList .rule-card").first
+    checkbox = card.locator(".tool-call-rescue-checkbox")
+    expect(checkbox).not_to_be_checked()
+    checkbox.check()
+
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+    page.reload()
+    page.click("#tabRules")
+    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+
+    expand_first_card(page, "#rulesList")
+    card = page.locator("#rulesList .rule-card").first
+    expect(card.locator(".tool-call-rescue-checkbox")).to_be_checked()

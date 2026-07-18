@@ -135,6 +135,35 @@ def test_rules_editor_html_contains_openrouter_free_tab():
     assert "health status" in content
 
 
+def test_editor_js_renders_capability_autofill_badges_and_round_trips_ownership():
+    content = _editor_source()
+
+    # core.mjs: badge builder + status matcher.
+    assert "function wrapCapabilityField" in content
+    assert "function capabilityAutofillSourceFor" in content
+    assert "capability-badge" in content
+    assert "capability-badge-edit" in content
+    assert "editor:capability.autofilled" in content
+    assert "editor:capability.override" in content
+    assert "editor:capability.source." in content
+
+    # Save/snapshot round-trip: a locked control's field name stays in
+    # capabilities_autofilled; the badge's Edit button flips the lock off.
+    assert "control.dataset.capabilityLocked = 'false'" in content
+    assert "dataset?.capabilityLocked === 'true'" in content
+    assert "payload.capabilities_autofilled = autofilledFields" in content
+
+    # fallback.mjs: status fetched once alongside the structured rules load,
+    # matched per candidate by gateway model name + fallback_models index
+    # (or the context_overflow_fallback singleton).
+    assert "/v1/capability-autofill" in content
+    assert "async function loadCapabilityAutofillStatus" in content
+    assert "capabilityAutofillStatus" in content
+    assert "capabilities_autofilled" in content
+    assert "autofillSourceForIndex" in content
+    assert "'context_overflow_fallback'" in content
+
+
 def test_rules_editor_html_contains_fallback_eval_tab():
     content = Path("static/rules-editor.html").read_text(encoding="utf-8")
 

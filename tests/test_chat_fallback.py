@@ -9,8 +9,13 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1.chat import _attempt_model_fallback_rule
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
-from llm_gateway_core.services.upstream_routing_state import fingerprint_api_key
+from llm_gateway_core.services.upstream_routing_state import (
+    UpstreamRoutingState,
+    fingerprint_api_key,
+)
+from tests._async_compat import run_async
 from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
 
@@ -71,7 +76,7 @@ class ChatFallbackTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
-        make_llm_request_mock.return_value = ({"id": "fallback-success"}, None)
+        make_llm_request_mock.return_value = (_valid_completion_response("fallback-success"), None)
 
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
             with patch.object(main.settings, "fallback_provider", "openrouter"):
@@ -83,7 +88,7 @@ class ChatFallbackTests(unittest.TestCase):
                     )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "fallback-success"})
+        self.assertEqual(response.json(), _valid_completion_response("fallback-success"))
         self.assertEqual(
             make_llm_request_mock.await_args.args[1],
             "https://openrouter.example/chat/completions",
@@ -145,7 +150,7 @@ class ChatFallbackTests(unittest.TestCase):
 
         make_llm_request_mock.side_effect = [
             (None, "invalid params, invalid chat setting (2013)"),
-            ({"id": "fallback-success"}, None),
+            (_valid_completion_response("fallback-success"), None),
         ]
 
         request_payload = {
@@ -232,7 +237,7 @@ class ChatFallbackTests(unittest.TestCase):
 
         make_llm_request_mock.side_effect = [
             (None, "invalid params, invalid chat setting (2013)"),
-            ({"id": "fallback-success"}, None),
+            (_valid_completion_response("fallback-success"), None),
         ]
 
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
@@ -306,8 +311,8 @@ class ChatFallbackTests(unittest.TestCase):
 
         make_llm_request_mock.side_effect = [
             (None, "The engine is currently overloaded, please try again later"),
-            ({"id": "first-request-ok"}, None),
-            ({"id": "second-request-ok"}, None),
+            (_valid_completion_response("first-request-ok"), None),
+            (_valid_completion_response("second-request-ok"), None),
         ]
 
         request_payload = {
@@ -329,9 +334,9 @@ class ChatFallbackTests(unittest.TestCase):
                 )
 
         self.assertEqual(first_response.status_code, 200)
-        self.assertEqual(first_response.json(), {"id": "first-request-ok"})
+        self.assertEqual(first_response.json(), _valid_completion_response("first-request-ok"))
         self.assertEqual(second_response.status_code, 200)
-        self.assertEqual(second_response.json(), {"id": "second-request-ok"})
+        self.assertEqual(second_response.json(), _valid_completion_response("second-request-ok"))
         self.assertEqual(make_llm_request_mock.await_count, 3)
         attempted_models = [
             call.args[3]["model"]
@@ -1239,11 +1244,11 @@ class ChatFallbackTests(unittest.TestCase):
 
         seen_payloads = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming, **_kwargs):
             seen_payloads.append(copy.deepcopy(payload))
             if len(seen_payloads) == 1:
                 return None, "temporary failure"
-            return {"id": "retry-success"}, None
+            return _valid_completion_response("retry-success"), None
 
         make_llm_request_mock.side_effect = fake_make_llm_request
 
@@ -1263,7 +1268,7 @@ class ChatFallbackTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "retry-success"})
+        self.assertEqual(response.json(), _valid_completion_response("retry-success"))
         self.assertEqual(request_payload, original_payload)
         self.assertEqual(len(seen_payloads), 2)
         self.assertEqual(seen_payloads[0], seen_payloads[1])
@@ -1317,7 +1322,7 @@ class ChatFallbackTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
-        make_llm_request_mock.return_value = ({"id": "rotation-success"}, None)
+        make_llm_request_mock.return_value = (_valid_completion_response("rotation-success"), None)
 
         valid_headers = [
             {"Authorization": "bearer test-gateway-key"},
@@ -1336,7 +1341,7 @@ class ChatFallbackTests(unittest.TestCase):
                         )
 
                         self.assertEqual(response.status_code, 200)
-                        self.assertEqual(response.json(), {"id": "rotation-success"})
+                        self.assertEqual(response.json(), _valid_completion_response("rotation-success"))
                         self.assertEqual(
                             get_next_model_index_mock.call_args.kwargs["api_key"],
                             f"master:{fingerprint_api_key('test-gateway-key')}",
@@ -1409,7 +1414,7 @@ class ChatFallbackTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
-        make_llm_request_mock.return_value = ({"id": "rotation-success"}, None)
+        make_llm_request_mock.return_value = (_valid_completion_response("rotation-success"), None)
         record = ApiKeyRecord(
             id=123,
             name="virtual-key",
@@ -1430,7 +1435,7 @@ class ChatFallbackTests(unittest.TestCase):
                     )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "rotation-success"})
+        self.assertEqual(response.json(), _valid_completion_response("rotation-success"))
         self.assertEqual(get_next_model_index_mock.call_args.kwargs["api_key"], "user:123")
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
@@ -1479,7 +1484,7 @@ class ChatFallbackTests(unittest.TestCase):
         fake_http_client = Mock()
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
-        make_llm_request_mock.return_value = ({"id": "rotation-success"}, None)
+        make_llm_request_mock.return_value = (_valid_completion_response("rotation-success"), None)
 
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
             with TestClient(main.app) as client:
@@ -1586,7 +1591,7 @@ class ChatFallbackTests(unittest.TestCase):
 
         make_llm_request_mock.side_effect = [
             (None, "temporary failure"),
-            ({"id": "retry-success"}, None),
+            (_valid_completion_response("retry-success"), None),
         ]
 
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
@@ -1598,7 +1603,7 @@ class ChatFallbackTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "retry-success"})
+        self.assertEqual(response.json(), _valid_completion_response("retry-success"))
         self.assertEqual(make_llm_request_mock.await_count, 2)
         sleep_mock.assert_not_awaited()
 
@@ -1714,12 +1719,12 @@ class ChatFallbackTests(unittest.TestCase):
 
         seen_models: list[str] = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming, **_kwargs):
             seen_models.append(payload["model"])
             if payload["model"] == "small-model":
                 return None, "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"This model's maximum context length is 8192 tokens.\"}}"
             if payload["model"] == "large-context-model":
-                return {"id": "context-fallback-success"}, None
+                return _valid_completion_response("context-fallback-success"), None
             return None, "unexpected fallback path"
 
         make_llm_request_mock.side_effect = fake_make_llm_request
@@ -1733,7 +1738,7 @@ class ChatFallbackTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "context-fallback-success"})
+        self.assertEqual(response.json(), _valid_completion_response("context-fallback-success"))
         self.assertEqual(seen_models, ["small-model", "large-context-model"])
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
@@ -1780,7 +1785,7 @@ class ChatFallbackTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming, **_kwargs):
             if payload["model"] == "small-model":
                 return None, "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"maximum context length exceeded\"}}"
             return (
@@ -1870,12 +1875,12 @@ class ChatFallbackTests(unittest.TestCase):
 
         seen_models: list[str] = []
 
-        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming):
+        async def fake_make_llm_request(_client, _target_url, _headers, payload, _is_streaming, **_kwargs):
             seen_models.append(payload["model"])
             if payload["model"] == "primary-model":
                 return None, '{"error":{"code":"rate_limit_exceeded","message":"Too many requests"}}'
             if payload["model"] == "regular-backup-model":
-                return {"id": "regular-fallback-success"}, None
+                return _valid_completion_response("regular-fallback-success"), None
             return None, "unexpected context fallback path"
 
         make_llm_request_mock.side_effect = fake_make_llm_request
@@ -1889,8 +1894,427 @@ class ChatFallbackTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "regular-fallback-success"})
+        self.assertEqual(response.json(), _valid_completion_response("regular-fallback-success"))
         self.assertEqual(seen_models, ["primary-model", "regular-backup-model"])
+
+
+def _degenerate_empty_completion_response(response_id: str) -> dict:
+    return {
+        "id": response_id,
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": ""},
+            }
+        ],
+    }
+
+
+def _valid_completion_response(response_id: str, content: str = "ok") -> dict:
+    # A bare {"id": ...} response has no "choices" and would itself be
+    # flagged as an empty_completion by the new degenerate-response
+    # detector, so "success" mocks anywhere in this module must be
+    # choices-shaped.
+    return {
+        "id": response_id,
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": content},
+            }
+        ],
+    }
+
+
+class ModelBehaviorFailoverTests(unittest.TestCase):
+    """Package D: degenerate HTTP-200 completions fail over without penalizing the key."""
+
+    def setUp(self):
+        self._accounting_stack = ExitStack()
+        self.addCleanup(self._accounting_stack.close)
+        self.accounting_service = install_main_chat_accounting_double(
+            self._accounting_stack,
+        )
+        config_update_coordinator = Mock()
+        config_update_coordinator.close = AsyncMock()
+        patchers = (
+            patch.object(main.AtomicConfigFileTransaction, "recover_pending"),
+            patch(
+                "llm_gateway_core.services.runtime_candidate."
+                "build_operation_cost_calculator_registry",
+                return_value={},
+            ),
+            patch(
+                "main.ConfigUpdateCoordinator",
+                return_value=config_update_coordinator,
+            ),
+        )
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _two_model_config_loader(self) -> Mock:
+        fake_config_loader = Mock()
+        fake_config_loader.providers_config = {
+            "first-provider": SimpleNamespace(
+                baseUrl="https://first.example",
+                apikey="DIRECT-KEY",
+            ),
+            "second-provider": SimpleNamespace(
+                baseUrl="https://second.example",
+                apikey="DIRECT-KEY",
+            ),
+        }
+        fake_config_loader.fallback_rules = {
+            "gateway-model": {
+                "fallback_models": [
+                    {
+                        "provider": "first-provider",
+                        "model": "first-model",
+                        "use_provider_order_as_fallback": False,
+                    },
+                    {
+                        "provider": "second-provider",
+                        "model": "second-model",
+                        "use_provider_order_as_fallback": False,
+                    },
+                ],
+                "rotate_models": False,
+            }
+        }
+        fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
+        fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
+        return fake_config_loader
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_empty_completion_fails_over_without_cooldown_next_request_retries_same_model_first(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = self._two_model_config_loader()
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.side_effect = [
+            (_degenerate_empty_completion_response("degenerate-1"), None),
+            (_valid_completion_response("second-provider-ok"), None),
+            (_valid_completion_response("first-provider-ok-second-request"), None),
+        ]
+
+        request_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                first_response = client.post(
+                    "/v1/chat/completions",
+                    json=request_payload,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+                second_response = client.post(
+                    "/v1/chat/completions",
+                    json=request_payload,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(first_response.json()["id"], "second-provider-ok")
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.json()["id"], "first-provider-ok-second-request")
+        self.assertEqual(make_llm_request_mock.await_count, 3)
+        attempted_models = [
+            call.args[3]["model"] for call in make_llm_request_mock.await_args_list
+        ]
+        # "first-model" is attempted again first on the second request: the
+        # degenerate response never scheduled a cooldown (skipBench).
+        self.assertEqual(
+            attempted_models,
+            ["first-model", "second-model", "first-model"],
+        )
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_format_ignored_without_recoverable_json_fails_over_to_next_model(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = self._two_model_config_loader()
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.side_effect = [
+            (
+                {
+                    "id": "prose-only",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": "I'm not going to provide that, sorry.",
+                            },
+                        }
+                    ],
+                },
+                None,
+            ),
+            (
+                {
+                    "id": "json-ok",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": '{"ok": true}'},
+                        }
+                    ],
+                },
+                None,
+            ),
+        ]
+
+        request_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "response_format": {"type": "json_object"},
+        }
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/chat/completions",
+                    json=request_payload,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["choices"][0]["message"]["content"], '{"ok": true}'
+        )
+        self.assertEqual(make_llm_request_mock.await_count, 2)
+        attempted_models = [
+            call.args[3]["model"] for call in make_llm_request_mock.await_args_list
+        ]
+        self.assertEqual(attempted_models, ["first-model", "second-model"])
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_degenerate_response_skips_local_retry_count(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = Mock()
+        fake_config_loader.providers_config = {
+            "test-provider": SimpleNamespace(
+                baseUrl="https://provider.example",
+                apikey="DIRECT-KEY",
+            )
+        }
+        fake_config_loader.fallback_rules = {
+            "gateway-model": {
+                "fallback_models": [
+                    {
+                        "provider": "test-provider",
+                        "model": "provider-model",
+                        "retry_count": 2,
+                        "retry_delay": 0,
+                        "use_provider_order_as_fallback": False,
+                    }
+                ],
+                "rotate_models": False,
+            }
+        }
+        fake_config_loader.load_providers.return_value = fake_config_loader.providers_config
+        fake_config_loader.load_fallback_rules.return_value = fake_config_loader.fallback_rules
+        fake_config_loader.load_complete.return_value = fake_config_loader
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.return_value = (
+            _degenerate_empty_completion_response("always-degenerate"),
+            None,
+        )
+
+        request_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/chat/completions",
+                    json=request_payload,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 503)
+        # retry_count=2 would normally mean up to 3 calls for this model;
+        # a degenerate response must skip local retries entirely.
+        self.assertEqual(make_llm_request_mock.await_count, 1)
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_all_candidates_degenerate_returns_503_with_behavior_class_in_attempts(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = self._two_model_config_loader()
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.side_effect = [
+            (_degenerate_empty_completion_response("degenerate-1"), None),
+            (_degenerate_empty_completion_response("degenerate-2"), None),
+        ]
+
+        request_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/chat/completions",
+                    json=request_payload,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(len(body["attempts"]), 2)
+        for entry in body["attempts"]:
+            self.assertEqual(entry["error_class"], "empty_completion")
+
+    def test_streaming_request_bypasses_degenerate_detection(self):
+        fake_request = SimpleNamespace(state=SimpleNamespace(), headers={})
+        # Shaped exactly like a definite empty_completion candidate; if
+        # detection ran on it, this attempt would be (incorrectly) treated
+        # as degenerate and fail over instead of streaming through.
+        degenerate_shaped_response = _degenerate_empty_completion_response("stream-shaped")
+        make_request = AsyncMock(return_value=(degenerate_shaped_response, None))
+
+        with (
+            patch("llm_gateway_core.api.v1.chat.make_llm_request", new=make_request),
+            patch(
+                "llm_gateway_core.api.v1.chat_dispatch.detect_degenerate_non_stream_response"
+            ) as detect_mock,
+        ):
+            response_data, error_detail, _attempt_number = run_async(
+                _attempt_model_fallback_rule(
+                    fake_request,
+                    Mock(),
+                    {
+                        "test-provider": SimpleNamespace(
+                            baseUrl="https://upstream.example",
+                            apikey="DIRECT-KEY",
+                        )
+                    },
+                    "gateway-model",
+                    {
+                        "model": "gateway-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    },
+                    {
+                        "provider": "test-provider",
+                        "model": "provider-model",
+                        "use_provider_order_as_fallback": False,
+                    },
+                    True,
+                    proxy_http_clients={},
+                    upstream_routing_state=UpstreamRoutingState(),
+                )
+            )
+
+        detect_mock.assert_not_called()
+        self.assertEqual(response_data, degenerate_shaped_response)
+        self.assertIsNone(error_detail)
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_fallback_event_error_type_is_empty_completion(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = self._two_model_config_loader()
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.side_effect = [
+            (_degenerate_empty_completion_response("degenerate-1"), None),
+            (_valid_completion_response("second-provider-ok"), None),
+        ]
+
+        fake_fallback_db = Mock()
+        fake_fallback_db.insert_event = Mock()
+        fake_fallback_db.cleanup_old_records = Mock()
+
+        request_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        with patch("main.FallbackEventsDB", return_value=fake_fallback_db):
+            with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/v1/chat/completions",
+                        json=request_payload,
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(fake_fallback_db.insert_event.call_count, 2)
+        first_call_kwargs = fake_fallback_db.insert_event.call_args_list[0].kwargs
+        self.assertFalse(first_call_kwargs["success"])
+        self.assertEqual(first_call_kwargs["error_type"], "empty_completion")
+        second_call_kwargs = fake_fallback_db.insert_event.call_args_list[1].kwargs
+        self.assertTrue(second_call_kwargs["success"])
 
 
 if __name__ == "__main__":

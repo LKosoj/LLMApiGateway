@@ -25,6 +25,7 @@ from llm_gateway_core.services.openrouter_free_models import (
     _run_sum_even_squares_tests,
     _is_eligible_free_text_model,
     _score_metadata,
+    parse_capability_metadata,
 )
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
@@ -1182,3 +1183,128 @@ class OpenRouterFreeModelsApiTests(unittest.TestCase):
             response.json(),
             {"detail": "This endpoint is reserved for the master API key"},
         )
+
+
+class ParseCapabilityMetadataTests(unittest.TestCase):
+    """F-auto: pure parsing of supports_vision/supports_tools/context_window."""
+
+    def test_vision_tools_and_context_window_from_full_entry(self):
+        entry = {
+            "id": "vendor/model-a",
+            "architecture": {"input_modalities": ["text", "image"]},
+            "supported_parameters": ["tools", "response_format"],
+            "context_length": 128000,
+        }
+        metadata = parse_capability_metadata(entry)
+        self.assertTrue(metadata.supports_vision)
+        self.assertTrue(metadata.supports_tools)
+        self.assertEqual(metadata.context_window, 128000)
+
+    def test_no_image_input_modality_is_false_not_none(self):
+        entry = {
+            "id": "vendor/model-b",
+            "architecture": {"input_modalities": ["text"]},
+            "supported_parameters": [],
+        }
+        metadata = parse_capability_metadata(entry)
+        self.assertFalse(metadata.supports_vision)
+        self.assertFalse(metadata.supports_tools)
+
+    def test_missing_architecture_leaves_supports_vision_none(self):
+        entry = {"id": "vendor/model-c", "supported_parameters": ["tools"]}
+        metadata = parse_capability_metadata(entry)
+        self.assertIsNone(metadata.supports_vision)
+        self.assertTrue(metadata.supports_tools)
+
+    def test_context_window_falls_back_to_top_provider_context_length(self):
+        entry = {"id": "vendor/model-d", "top_provider": {"context_length": 64000}}
+        metadata = parse_capability_metadata(entry)
+        self.assertEqual(metadata.context_window, 64000)
+
+    def test_missing_context_length_is_none(self):
+        entry = {"id": "vendor/model-e"}
+        metadata = parse_capability_metadata(entry)
+        self.assertIsNone(metadata.context_window)
+
+    def test_missing_supported_parameters_leaves_supports_tools_none(self):
+        # A catalog entry with no `supported_parameters` key at all (plain
+        # OpenAI-style /models response) must not be read as "tools not
+        # supported" -- that's a materialized False, not "the catalog didn't
+        # say". Only a present `supported_parameters` list may resolve
+        # supports_tools to True/False.
+        entry = {"id": "vendor/model-f"}
+        metadata = parse_capability_metadata(entry)
+        self.assertIsNone(metadata.supports_tools)
+
+    def test_non_list_supported_parameters_leaves_supports_tools_none(self):
+        entry = {"id": "vendor/model-g", "supported_parameters": None}
+        metadata = parse_capability_metadata(entry)
+        self.assertIsNone(metadata.supports_tools)
+
+
+class OpenRouterCapabilityIndexTests(unittest.TestCase):
+    """F-auto: full-catalog capability index built during _refresh_once."""
+
+    def test_capability_index_covers_full_catalog_including_paid_models(self):
+        free_entry = _model_entry("provider/free-model:free")
+        paid_entry = {
+            "id": "provider/paid-model",
+            "name": "provider/paid-model",
+            "created": 1_760_000_000,
+            "context_length": 200000,
+            "pricing": {"prompt": "0.000003", "completion": "0.000006"},
+            "supported_parameters": ["tools"],
+            "architecture": {
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
+            },
+            "expiration_date": None,
+        }
+        catalog = [free_entry, paid_entry]
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        service._http_client = FakeOpenRouterClient(catalog)
+
+        run_async(service.refresh_once())
+
+        status = run_async(service.get_status())
+        scored_model_ids = {model["id"] for model in status["snapshot"]["models"]}
+        self.assertNotIn("provider/paid-model", scored_model_ids)
+
+        index = run_async(service.get_capability_index())
+        self.assertIn("free-model", index)
+        self.assertIn("paid-model", index)
+        self.assertTrue(index["paid-model"].supports_vision)
+        self.assertTrue(index["paid-model"].supports_tools)
+        self.assertEqual(index["paid-model"].context_window, 200000)
+
+    def test_capability_index_tie_break_keeps_larger_context_window(self):
+        entry_small = {
+            "id": "vendorA/shared-model",
+            "context_length": 8000,
+            "supported_parameters": [],
+        }
+        entry_large = {
+            "id": "vendorB/shared-model",
+            "context_length": 128000,
+            "supported_parameters": ["tools"],
+        }
+        catalog = [entry_small, entry_large]
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        service._http_client = FakeOpenRouterClient(catalog)
+
+        run_async(service.refresh_once())
+        index = run_async(service.get_capability_index())
+
+        self.assertEqual(index["shared-model"].context_window, 128000)
+        self.assertTrue(index["shared-model"].supports_tools)
+
+    def test_capability_index_defaults_to_empty_before_first_refresh(self):
+        service = OpenRouterFreeModelsService()
+        index = run_async(service.get_capability_index())
+        self.assertEqual(index, {})

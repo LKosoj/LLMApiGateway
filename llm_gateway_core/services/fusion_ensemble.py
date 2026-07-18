@@ -247,6 +247,32 @@ def _parse_judge_analysis(raw_text: str) -> Dict[str, Any]:
     return {"raw": raw_text}
 
 
+def _assign_reserve_candidates(
+    panel_raw: List[Any],
+    reserve: List[Dict[str, Any]],
+) -> Tuple[List[int], List[Dict[str, Any]]]:
+    """Pick reserve panel members to refill failed slots, in configuration order.
+
+    Walks ``panel_raw`` in order; every outcome that is an ``Exception`` but
+    not an ``AccountingError`` claims the next reserve candidate. Stops as
+    soon as the reserve is exhausted. ``AccountingError`` outcomes are never
+    refilled — a billing failure fails closed instead of being silently
+    retried on another model.
+    """
+    slots: List[int] = []
+    candidates: List[Dict[str, Any]] = []
+    reserve_iter = iter(reserve)
+    for index, outcome in enumerate(panel_raw):
+        if not isinstance(outcome, Exception) or isinstance(outcome, AccountingError):
+            continue
+        candidate = next(reserve_iter, None)
+        if candidate is None:
+            break
+        slots.append(index)
+        candidates.append(candidate)
+    return slots, candidates
+
+
 class FusionEnsembleService:
     def __init__(
         self,
@@ -349,41 +375,48 @@ class FusionEnsembleService:
 
         # 1. Fan-out: every panel member answers in parallel. When the Fusion
         #    model enables web tools, panel members run inside an agentic loop.
-        if web_tools:
-            panel_calls = [
-                self._call_member_with_tools(
-                    member,
+        panel_calls = [
+            self._panel_member_coro(
+                member,
+                panel_messages,
+                http_client,
+                proxy_http_clients,
+                request,
+                web_tools=web_tools,
+                observe=observe,
+            )
+            for member in panel
+        ]
+        panel_raw = await asyncio.gather(*panel_calls, return_exceptions=True)
+
+        # Refill failed panel slots from the configured reserve, one wave,
+        # each reserve model used at most once. AccountingError is fail-closed
+        # for billing and is never refilled (see _assign_reserve_candidates).
+        # ``effective_panel`` is a copy: ``panel`` is the config_loader's own
+        # list, shared by concurrent requests, and must not be mutated.
+        effective_panel = list(panel)
+        slots, candidates = _assign_reserve_candidates(panel_raw, fusion_config.get("reserve") or [])
+        if candidates:
+            refill_calls = [
+                self._panel_member_coro(
+                    candidate,
                     panel_messages,
                     http_client,
                     proxy_http_clients,
                     request,
-                    web_tools,
-                    cost_rate_registry,
+                    web_tools=web_tools,
                     observe=observe,
                 )
-                for member in panel
+                for candidate in candidates
             ]
-        elif observe:
-            panel_calls = [
-                self._call_member_observed(
-                    member,
-                    panel_messages,
-                    http_client,
-                    proxy_http_clients,
-                    request,
-                )
-                for member in panel
-            ]
-        else:
-            panel_calls = [
-                self._call_member(member, panel_messages, http_client, proxy_http_clients, request)
-                for member in panel
-            ]
-        panel_raw = await asyncio.gather(*panel_calls, return_exceptions=True)
+            refill_raw = await asyncio.gather(*refill_calls, return_exceptions=True)
+            for slot, candidate, outcome in zip(slots, candidates, refill_raw):
+                effective_panel[slot] = candidate
+                panel_raw[slot] = outcome
 
         panel_results: List[Dict[str, Any]] = []
         successful: List[Dict[str, Any]] = []
-        for member, outcome in zip(panel, panel_raw):
+        for member, outcome in zip(effective_panel, panel_raw):
             entry: Dict[str, Any] = {"provider": member.get("provider"), "model": member.get("model")}
             if isinstance(outcome, Exception):
                 if isinstance(outcome, AccountingError):
@@ -404,11 +437,28 @@ class FusionEnsembleService:
                 successful.append({"provider": member.get("provider"), "model": member.get("model"), "content": content})
             panel_results.append(entry)
 
+        # ``filled_from_reserve`` marks that a refill was ATTEMPTED for this
+        # slot, not that it succeeded: when the reserve candidate itself
+        # fails, this entry still carries the "error" key set above.
+        for slot in slots:
+            panel_results[slot]["filled_from_reserve"] = True
+
         if not successful:
             raise HTTPException(
                 status_code=502,
                 detail=f"All Fusion panel members failed for model '{gateway_model_name}'.",
             )
+
+        # TODO(fusion tool-calls): client tools from request_body are not
+        # forwarded into the panel today — _raw_chat_call only ever receives
+        # the internal web-tools schemas, request_body.get("tools") is never
+        # read on this path. If client tools are ever proxied into the panel,
+        # insert here: the first successful panel result carrying structural
+        # tool_calls should return early with finish_reason="tool_calls",
+        # skipping the judge and main model (reference: freellmapi
+        # fusion.ts:607-653). This is currently unreachable and the drop
+        # behavior (tool_calls ignored, finish_reason="stop") is pinned by
+        # tests.
 
         conversation_text = _messages_to_text(base_messages)
         panel_text = _format_panel_answers(successful)
@@ -532,6 +582,41 @@ class FusionEnsembleService:
         if isinstance(fusion_opts, dict) and "include_details" in fusion_opts:
             return bool(fusion_opts.get("include_details"))
         return default
+
+    def _panel_member_coro(
+        self,
+        member: Dict[str, Any],
+        panel_messages: List[Dict[str, Any]],
+        http_client: Any,
+        proxy_http_clients: Dict[str, Any],
+        request: Request,
+        *,
+        web_tools: Optional[Dict[str, Any]],
+        observe: bool,
+    ):
+        """Return the unawaited coroutine for one panel member's call.
+
+        Mirrors the fan-out branch previously inlined in ``_run_pipeline``:
+        web-tools members run the agentic tool loop, otherwise the observed or
+        plain single-call helper is used depending on ``observe``. Used for
+        both the initial panel wave and the reserve refill wave.
+        """
+        if web_tools:
+            return self._call_member_with_tools(
+                member,
+                panel_messages,
+                http_client,
+                proxy_http_clients,
+                request,
+                web_tools,
+                self._cost_rate_registry,
+                observe=observe,
+            )
+        if observe:
+            return self._call_member_observed(
+                member, panel_messages, http_client, proxy_http_clients, request
+            )
+        return self._call_member(member, panel_messages, http_client, proxy_http_clients, request)
 
     async def _call_member(
         self,

@@ -215,7 +215,7 @@ class RouterDispatchTests(unittest.TestCase):
         request = self._request(config_loader)
         seen_models = []
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             seen_models.append(payload["model"])
             if payload["model"] == "selector-upstream":
                 return _openai_response(
@@ -248,7 +248,7 @@ class RouterDispatchTests(unittest.TestCase):
         request = self._request(config_loader)
         seen_models = []
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             seen_models.append(payload["model"])
             if payload["model"] == "selector-upstream":
                 return _openai_response(json.dumps({"candidate_id": "gateway:gateway/high"}))
@@ -280,7 +280,7 @@ class RouterDispatchTests(unittest.TestCase):
         }
         request = self._request(config_loader)
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             if payload["model"] == "selector-upstream":
                 response, error = _openai_response(
                     json.dumps({"candidate_id": "gateway:gateway/high"}),
@@ -346,7 +346,7 @@ class RouterDispatchTests(unittest.TestCase):
                 router_service = request.state.runtime_snapshot.router_model_service
                 self.assertIs(router_service._cost_rate_registry, cost_rate_registry)
 
-                async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+                async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
                     if payload["model"] == "selector-upstream":
                         response, error = _openai_response(
                             json.dumps({"candidate_id": "gateway:gateway/high"}),
@@ -388,7 +388,7 @@ class RouterDispatchTests(unittest.TestCase):
                 )
                 request = self._request(config_loader)
 
-                async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+                async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
                     if payload["model"] == "selector-upstream":
                         return _openai_response(
                             json.dumps({"candidate_id": "gateway:gateway/high"}),
@@ -446,7 +446,7 @@ class RouterDispatchTests(unittest.TestCase):
             "messages": [{"role": "user", "content": "hard task"}],
         }
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             if payload["model"] == "selector-upstream":
                 return _openai_response(
                     json.dumps({"candidate_id": "gateway:gateway/high"}),
@@ -486,7 +486,7 @@ class RouterDispatchTests(unittest.TestCase):
         )
         request = self._request(config_loader)
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             return _openai_response(json.dumps({"candidate_id": "gateway:missing"}))
 
         with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
@@ -512,7 +512,7 @@ class RouterDispatchTests(unittest.TestCase):
         request = self._request(config_loader)
         service = request.state.runtime_snapshot.router_model_service
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             if payload["model"] == "selector-upstream":
                 response, error = _openai_response(
                     json.dumps({"candidate_id": "gateway:gateway/high"}),
@@ -574,7 +574,7 @@ class RouterDispatchTests(unittest.TestCase):
         service = request.state.runtime_snapshot.router_model_service
         seen_models = []
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             model = payload["model"]
             seen_models.append(model)
             if model in {"selector-broken", "model-a"}:
@@ -625,7 +625,7 @@ class RouterDispatchTests(unittest.TestCase):
         request = self._request(config_loader)
         service = request.state.runtime_snapshot.router_model_service
 
-        async def fake_make_llm_request(client, url, headers, payload, is_streaming):
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
             if payload["model"] == "selector-upstream":
                 return _openai_response(
                     json.dumps({"candidate_id": "gateway:gateway/high"}),
@@ -673,7 +673,7 @@ class RouterDispatchTests(unittest.TestCase):
         service = request.state.runtime_snapshot.router_model_service
         seen_models = []
 
-        async def invalid_selector_cost(client, url, headers, payload, is_streaming):
+        async def invalid_selector_cost(client, url, headers, payload, is_streaming, **_kwargs):
             seen_models.append(payload["model"])
             response, error = _openai_response(
                 json.dumps({"candidate_id": "gateway:gateway/high"})
@@ -713,7 +713,7 @@ class RouterDispatchTests(unittest.TestCase):
         request = self._request(config_loader)
         service = request.state.runtime_snapshot.router_model_service
 
-        async def fail_delegate(client, url, headers, payload, is_streaming):
+        async def fail_delegate(client, url, headers, payload, is_streaming, **_kwargs):
             if payload["model"] == "selector-upstream":
                 response, error = _openai_response(
                     json.dumps({"candidate_id": "gateway:gateway/high"})

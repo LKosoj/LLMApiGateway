@@ -147,7 +147,15 @@ class ModelsRuntimeConfigTests(unittest.TestCase):
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     def test_models_and_chat_use_same_fallback_provider(self, make_llm_request_mock):
         headers = {"Authorization": "Bearer test-gateway-key"}
-        make_llm_request_mock.return_value = ({"id": "chat-success"}, None)
+        make_llm_request_mock.return_value = (
+            {
+                "id": "chat-success",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                ],
+            },
+            None,
+        )
 
         with self._client() as (client, fake_http_client):
             models_response = client.get("/v1/models", headers=headers)

@@ -252,6 +252,19 @@ class FallbackModelRule(BaseModel):
     custom_body_params: Dict[str, Any] = Field(default_factory=dict)
     custom_headers: Dict[str, Any] = Field(default_factory=dict)
     payload_transforms: PayloadTransformConfig | None = None
+    # Capability metadata used by the chat dispatch capability guard to
+    # prefilter fallback-chain candidates. ``None``/absent means "no data" and
+    # never filters a candidate out.
+    supports_vision: Optional[bool] = None
+    supports_tools: Optional[bool] = None
+    context_window: Optional[int] = None
+    # Names of the capability fields above that F-auto (capability_autofill
+    # service) currently owns. Only fields listed here (or unset fields) may
+    # be overwritten by the resolver; a manual edit removes the field's name
+    # from this list, making it permanently hands-off for autofill.
+    capabilities_autofilled: Optional[
+        List[Literal["supports_vision", "supports_tools", "context_window"]]
+    ] = None
 
     @field_validator("custom_headers")
     @classmethod
@@ -259,6 +272,15 @@ class FallbackModelRule(BaseModel):
         # Same denylist as OperationRoute: never let a rule inject auth/cookie/x-api-key
         # headers that could exfiltrate quota or hijack provider sessions.
         return _validate_custom_headers(value)
+
+    @field_validator("context_window")
+    @classmethod
+    def validate_context_window(cls, value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return None
+        if int(value) <= 0:
+            raise ValueError("'context_window' must be greater than 0.")
+        return int(value)
 
     @field_validator("custom_body_params")
     @classmethod
@@ -292,8 +314,12 @@ class ModelFallbackConfig(BaseModel):
     max_total_attempts: Optional[int] = None
 
     compress_tool_results: bool = False
+    tool_call_rescue: bool = False
 
-    @field_validator('rotate_models', 'dynamic_penalty', 'strip_think_tags', 'compress_tool_results', mode='before')
+    @field_validator(
+        'rotate_models', 'dynamic_penalty', 'strip_think_tags', 'compress_tool_results', 'tool_call_rescue',
+        mode='before',
+    )
     def validate_rotate_models(cls, v):
         if isinstance(v, str):
             return v.lower() == 'true'
@@ -342,6 +368,7 @@ class UpstreamModelPoolConfig(BaseModel):
     dynamic_penalty: bool = False
     strip_think_tags: bool = False
     compress_tool_results: bool = False
+    tool_call_rescue: bool = False
     max_total_attempts: Optional[int] = None
     context_overflow_fallback: Optional[FallbackModelRule] = None
 
@@ -352,7 +379,10 @@ class UpstreamModelPoolConfig(BaseModel):
             raise ValueError("'fallback_models' must not be empty.")
         return value
 
-    @field_validator("rotate_models", "dynamic_penalty", "strip_think_tags", "compress_tool_results", mode="before")
+    @field_validator(
+        "rotate_models", "dynamic_penalty", "strip_think_tags", "compress_tool_results", "tool_call_rescue",
+        mode="before",
+    )
     def validate_bool_fields(cls, value):
         if isinstance(value, str):
             return value.lower() == "true"
@@ -506,6 +536,8 @@ class FusionModelConfig(BaseModel):
     include_details_default: bool = True
     # Optional agentic web tools for the panel members.
     web_tools: Optional[FusionWebToolsConfig] = None
+    # Optional standby panel members used to refill a failed panel slot.
+    reserve: List[FusionMember] = Field(default_factory=list)
 
     @field_validator("gateway_model_name", mode="before")
     @classmethod
@@ -522,6 +554,15 @@ class FusionModelConfig(BaseModel):
         if len(value) > FUSION_PANEL_MAX:
             raise ValueError(
                 f"Fusion 'panel' must contain at most {FUSION_PANEL_MAX} models."
+            )
+        return value
+
+    @field_validator("reserve")
+    @classmethod
+    def _validate_reserve(cls, value: List[FusionMember]) -> List[FusionMember]:
+        if len(value) > FUSION_PANEL_MAX:
+            raise ValueError(
+                f"A Fusion reserve can have at most {FUSION_PANEL_MAX} models."
             )
         return value
 

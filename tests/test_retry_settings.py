@@ -92,7 +92,15 @@ class RetrySettingsTests(unittest.TestCase):
 
         make_llm_request_mock.side_effect = [
             (None, "temporary failure"),
-            ({"id": "retry-success"}, None),
+            (
+                {
+                    "id": "retry-success",
+                    "choices": [
+                        {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                    ],
+                },
+                None,
+            ),
         ]
 
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
@@ -104,7 +112,15 @@ class RetrySettingsTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"id": "retry-success"})
+        self.assertEqual(
+            response.json(),
+            {
+                "id": "retry-success",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+                ],
+            },
+        )
         self.assertEqual(make_llm_request_mock.await_count, 2)
         sleep_mock.assert_not_awaited()
 

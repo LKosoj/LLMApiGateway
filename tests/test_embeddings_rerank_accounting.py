@@ -21,6 +21,7 @@ from llm_gateway_core.middleware.response_observation import (
     ResponseObservationMiddleware,
 )
 from llm_gateway_core.services.accounting import (
+    DEFAULT_OPERATION_COST_USD,
     AccountingReceipt,
     AccountingReservation,
     CostSource,
@@ -301,18 +302,20 @@ def test_buffered_embeddings_fails_closed_for_invalid_or_missing_cost_usage(
     run_async(scenario())
 
 
-def test_buffered_embeddings_commits_cost_unavailable_when_registry_price_missing() -> None:
-    """A missing/unconfigured registry price must not turn an already-successful
-    upstream call into a 503: usage is recorded with ``cost_unavailable=True``
-    and the response still succeeds."""
-
+def test_buffered_embeddings_uses_default_cost_when_registry_price_missing() -> None:
     async def scenario() -> None:
         request, services = _request(
             "/v1/embeddings",
             cost_rate_registry={},
         )
         _install_successful_commit(services.accounting_service)
-        downstream_payload = {"usage": {"prompt_tokens": 2, "total_tokens": 2}}
+        downstream_payload = {
+            "usage": {
+                "prompt_tokens": 2,
+                "total_tokens": 2,
+                "prompt_tokens_details": None,
+            }
+        }
         with _endpoint_dependencies(
             {"model": "gateway-model", "input": ["hello"]},
             [_route()],
@@ -326,9 +329,9 @@ def test_buffered_embeddings_commits_cost_unavailable_when_registry_price_missin
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         event = services.accounting_service.commit.await_args.args[1]
-        assert event.usage.cost == 0.0
-        assert event.usage.cost_unavailable is True
-        assert event.cost_source is CostSource.TOKEN_REGISTRY
+        assert event.usage.cost == DEFAULT_OPERATION_COST_USD
+        assert event.usage.cost_unavailable is False
+        assert event.cost_source is CostSource.OPERATION_DEFAULT
         _assert_no_legacy_writes(services)
 
     run_async(scenario())
@@ -414,6 +417,78 @@ def test_embeddings_fallback_commits_only_final_route_identity() -> None:
             response = await embeddings.create_embeddings(request)
 
         services.accounting_service.commit.assert_not_awaited()
+        await _run_response(request, response)
+        assert response.status_code == 200
+        assert downstream.await_count == 2
+        event = services.accounting_service.commit.await_args.args[1]
+        assert event.provider == "provider-b"
+        assert event.model == "model-b"
+        services.accounting_service.commit.assert_awaited_once()
+        services.accounting_service.release.assert_not_awaited()
+        _assert_no_legacy_writes(services)
+
+    run_async(scenario())
+
+
+def test_embeddings_fallback_on_route_accounting_error() -> None:
+    async def scenario() -> None:
+        request, services = _request("/v1/embeddings")
+        _install_successful_commit(services.accounting_service)
+        routes = [
+            _route("provider-a", "model-a"),
+            _route("provider-b", "model-b"),
+        ]
+        valid_payload = {
+            "data": [{"embedding": [0.1], "index": 0}],
+            "usage": {"prompt_tokens": 2, "total_tokens": 2, "cost": 0},
+        }
+        with _endpoint_dependencies(
+            {"model": "gateway-model", "input": ["hello"]},
+            routes,
+            [({"data": []}, 200), (valid_payload, 200)],
+        ) as (_, downstream):
+            response = await embeddings.create_embeddings(request)
+
+        await _run_response(request, response)
+        assert response.status_code == 200
+        assert downstream.await_count == 2
+        event = services.accounting_service.commit.await_args.args[1]
+        assert event.provider == "provider-b"
+        assert event.model == "model-b"
+        services.accounting_service.commit.assert_awaited_once()
+        services.accounting_service.release.assert_not_awaited()
+        _assert_no_legacy_writes(services)
+
+    run_async(scenario())
+
+
+def test_rerank_fallback_on_invalid_route_response() -> None:
+    async def scenario() -> None:
+        request, services = _request("/v1/rerank")
+        _install_successful_commit(services.accounting_service)
+        routes = [
+            _route("provider-a", "model-a"),
+            _route("provider-b", "model-b"),
+        ]
+        invalid_payload = {
+            "results": [{"index": 0, "relevance_score": "bad"}],
+            "usage": {"prompt_tokens": 2, "total_tokens": 2, "cost": 0},
+        }
+        valid_payload = {
+            "results": [{"index": 0, "relevance_score": 0.9}],
+            "usage": {"prompt_tokens": 2, "total_tokens": 2, "cost": 0},
+        }
+        with _endpoint_dependencies(
+            {
+                "model": "gateway-rerank",
+                "query": "query",
+                "documents": ["document"],
+            },
+            routes,
+            [(invalid_payload, 200), (valid_payload, 200)],
+        ) as (_, downstream):
+            response = await embeddings.create_rerank(request)
+
         await _run_response(request, response)
         assert response.status_code == 200
         assert downstream.await_count == 2

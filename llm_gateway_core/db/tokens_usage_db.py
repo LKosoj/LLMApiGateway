@@ -50,12 +50,12 @@ _ACCOUNTING_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 _INSERT_ACCOUNTING_USAGE_SQL = """
 INSERT INTO tokens_usage (
-    timestamp, duration_ms, prompt_tokens, completion_tokens, total_tokens,
+    timestamp, duration_ms, ttft_ms, prompt_tokens, completion_tokens, total_tokens,
     reasoning_tokens, cached_tokens, cost, gateway_model, operation, model,
     provider, request_id, is_estimated, cost_unavailable, cost_saved, api_key_id,
     accounting_event_id, accounting_kind, parent_accounting_event_id,
     usage_source, upstream_key_fingerprint, x_title
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _INSERT_ACCOUNTING_OUTBOX_SQL = """
@@ -82,7 +82,7 @@ INSERT INTO accounting_event_links (
 """
 
 _SELECT_ACCOUNTING_USAGE_SQL = """
-SELECT id, timestamp, duration_ms, prompt_tokens, completion_tokens,
+SELECT id, timestamp, duration_ms, ttft_ms, prompt_tokens, completion_tokens,
        total_tokens, reasoning_tokens, cached_tokens, cost, gateway_model,
        operation, model, provider, request_id, is_estimated, cost_unavailable,
        cost_saved, api_key_id, accounting_event_id, accounting_kind,
@@ -136,6 +136,7 @@ usage_summary AS (
            COUNT(*) AS usage_count,
            MIN(usage.id) AS usage_id,
            MIN(usage.duration_ms) AS usage_duration_ms,
+           MIN(usage.ttft_ms) AS usage_ttft_ms,
            MIN(usage.prompt_tokens) AS usage_prompt_tokens,
            MIN(usage.completion_tokens) AS usage_completion_tokens,
            MIN(usage.accounting_kind) AS usage_kind,
@@ -203,6 +204,7 @@ SELECT page.event_id,
        usage.usage_count,
        usage.usage_id,
        usage.usage_duration_ms,
+       usage.usage_ttft_ms,
        usage.usage_prompt_tokens,
        usage.usage_completion_tokens,
        usage.usage_kind,
@@ -369,6 +371,7 @@ def _insert_accounting_usage(
         (
             event.occurred_at.isoformat(),
             usage.duration_ms,
+            usage.ttft_ms,
             usage.prompt_tokens,
             usage.completion_tokens,
             usage.total_tokens,
@@ -866,6 +869,7 @@ def _source_audit_row_from_db(
                     "id": row["usage_id"],
                     "timestamp": row["usage_timestamp"],
                     "duration_ms": row["usage_duration_ms"],
+                    "ttft_ms": row["usage_ttft_ms"],
                     "prompt_tokens": row["usage_prompt_tokens"],
                     "completion_tokens": row["usage_completion_tokens"],
                     "total_tokens": row["usage_total_tokens"],
@@ -1050,6 +1054,7 @@ def _accounting_event_from_rows(
                 cost=usage_row["cost"],
                 cost_saved=usage_row["cost_saved"],
                 duration_ms=usage_row["duration_ms"],
+                ttft_ms=usage_row["ttft_ms"],
                 is_estimated=bool(usage_row["is_estimated"]),
                 cost_unavailable=bool(usage_row["cost_unavailable"]),
             ),
@@ -1233,6 +1238,12 @@ def _coerce_usage_summary(row) -> dict:
             "estimated_count": 0,
             "avg_duration_ms": None,
             "max_duration_ms": None,
+            "duration_p50_ms": None,
+            "duration_p95_ms": None,
+            "ttft_avg_ms": None,
+            "ttft_max_ms": None,
+            "ttft_p50_ms": None,
+            "ttft_p95_ms": None,
         }
     return {
         "requests": int(row["requests"] or 0),
@@ -1246,6 +1257,12 @@ def _coerce_usage_summary(row) -> dict:
         "estimated_count": int(row["estimated_count"] or 0),
         "avg_duration_ms": row["avg_duration_ms"],
         "max_duration_ms": row["max_duration_ms"],
+        "duration_p50_ms": row["duration_p50_ms"],
+        "duration_p95_ms": row["duration_p95_ms"],
+        "ttft_avg_ms": row["ttft_avg_ms"],
+        "ttft_max_ms": row["ttft_max_ms"],
+        "ttft_p50_ms": row["ttft_p50_ms"],
+        "ttft_p95_ms": row["ttft_p95_ms"],
     }
 
 
@@ -1787,6 +1804,7 @@ class TokensUsageDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME NOT NULL,
                 duration_ms INTEGER,
+                ttft_ms INTEGER,
                 prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0,
                 total_tokens INTEGER DEFAULT 0,
@@ -1818,6 +1836,8 @@ class TokensUsageDB:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN operation TEXT")
             if "duration_ms" not in existing_columns:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN duration_ms INTEGER")
+            if "ttft_ms" not in existing_columns:
+                cursor.execute("ALTER TABLE tokens_usage ADD COLUMN ttft_ms INTEGER")
             if "reasoning_tokens" not in existing_columns:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN reasoning_tokens INTEGER DEFAULT 0")
             if "is_estimated" not in existing_columns:
@@ -2172,6 +2192,26 @@ class TokensUsageDB:
 
                 cursor = await db.execute(
                     f"""
+                    WITH filtered AS (
+                        SELECT * FROM tokens_usage
+                        {where_clause}
+                    ),
+                    duration_ranked AS (
+                        SELECT
+                            duration_ms,
+                            ROW_NUMBER() OVER (ORDER BY duration_ms) AS rn,
+                            COUNT(*) OVER () AS cnt
+                        FROM filtered
+                        WHERE duration_ms IS NOT NULL
+                    ),
+                    ttft_ranked AS (
+                        SELECT
+                            ttft_ms,
+                            ROW_NUMBER() OVER (ORDER BY ttft_ms) AS rn,
+                            COUNT(*) OVER () AS cnt
+                        FROM filtered
+                        WHERE ttft_ms IS NOT NULL
+                    )
                     SELECT
                         COUNT(*) as requests,
                         COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
@@ -2183,9 +2223,29 @@ class TokensUsageDB:
                         COALESCE(SUM(cost_saved), 0.0) as cost_saved,
                         COALESCE(SUM(is_estimated), 0) as estimated_count,
                         CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms,
-                        MAX(duration_ms) as max_duration_ms
-                    FROM tokens_usage
-                    {where_clause}
+                        MAX(duration_ms) as max_duration_ms,
+                        (
+                            SELECT duration_ms FROM duration_ranked
+                            WHERE rn = CAST((cnt * 50 + 99) / 100 AS INTEGER)
+                        ) as duration_p50_ms,
+                        (
+                            SELECT duration_ms FROM duration_ranked
+                            WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)
+                        ) as duration_p95_ms,
+                        (
+                            SELECT CAST(AVG(ttft_ms) AS INTEGER) FROM filtered
+                            WHERE ttft_ms IS NOT NULL
+                        ) as ttft_avg_ms,
+                        (SELECT MAX(ttft_ms) FROM filtered) as ttft_max_ms,
+                        (
+                            SELECT ttft_ms FROM ttft_ranked
+                            WHERE rn = CAST((cnt * 50 + 99) / 100 AS INTEGER)
+                        ) as ttft_p50_ms,
+                        (
+                            SELECT ttft_ms FROM ttft_ranked
+                            WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)
+                        ) as ttft_p95_ms
+                    FROM filtered
                     """,
                     params,
                 )
