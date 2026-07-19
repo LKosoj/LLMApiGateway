@@ -1126,7 +1126,10 @@ class WebApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertIn("Internal gateway model 'llmgateway/light_model' failed", response.json()["detail"])
-        self.assertIn("returned no text content", response.json()["detail"])
+        self.assertIn(
+            "Model returned an empty completion with no tool call",
+            response.json()["detail"],
+        )
         self.assertEqual(fake_http_client.post.await_count, 1)
         search_adapter.assert_not_awaited()
 

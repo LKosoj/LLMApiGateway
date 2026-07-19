@@ -435,8 +435,12 @@ def test_restore_rejects_source_inside_outputs_before_mutation(tmp_path: Path) -
 @pytest.mark.parametrize("operation", ["backup", "restore"])
 def test_archive_and_manifest_must_be_distinct_before_write(
     operation: str,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    # restore_images checks root before artifact validation; satisfy the
+    # privilege gate so the distinct-artifacts contract is what gets exercised.
+    monkeypatch.setattr(storage_cli.os, "geteuid", lambda: 0)
     outputs = _empty_outputs(tmp_path)
     artifact = tmp_path / "same-artifact"
 

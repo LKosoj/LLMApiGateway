@@ -188,6 +188,20 @@ def _empty_rejection_dashboard() -> dict:
     }
 
 
+def _merge_fallback_outcomes(rows: list[dict], outcomes: list[dict]) -> list[dict]:
+    """Attach fallback attempt/error stats to usage breakdown rows by label."""
+    by_label = {str(item.get("label")): item for item in outcomes}
+    merged = []
+    for row in rows:
+        item = dict(row)
+        outcome = by_label.get(str(item.get("label")))
+        item["fallback_attempts"] = int(outcome["attempts"]) if outcome else 0
+        item["fallback_errors"] = int(outcome["errors"]) if outcome else 0
+        item["fallback_success_rate"] = outcome["success_rate"] if outcome else None
+        merged.append(item)
+    return merged
+
+
 def _filter_complete_usage_rows(rows: list[dict]) -> list[dict]:
     return [
         row for row in rows
@@ -469,9 +483,17 @@ async def get_analytics_dashboard(
                 status_code=rejection_status_code,
             )
         )
+    if is_master:
+        gather_tasks.append(tokens_usage_db.get_lifetime_totals())
     results = await asyncio.gather(*gather_tasks)
     usage_data, filter_options, fallback_data = results[:3]
-    rejection_data = results[3] if include_rejections else _empty_rejection_dashboard()
+    next_index = 3
+    if include_rejections:
+        rejection_data = results[next_index]
+        next_index += 1
+    else:
+        rejection_data = _empty_rejection_dashboard()
+    lifetime_data = results[next_index] if is_master else None
 
     active_records = active_requests_registry.list_records(
         api_key_id=api_key_id_filter if not api_key_unattributed else None
@@ -508,12 +530,22 @@ async def get_analytics_dashboard(
 
     breakdowns = dict(usage_data["breakdowns"])
     breakdowns["api_keys"] = _attach_api_key_names(breakdowns.get("api_keys", []), key_names)
+    breakdowns["providers"] = _merge_fallback_outcomes(
+        breakdowns.get("providers", []), fallback_data.get("providers", [])
+    )
+    breakdowns["resolved_targets"] = _merge_fallback_outcomes(
+        breakdowns.get("resolved_targets", []), fallback_data.get("targets", [])
+    )
     if not is_master:
         breakdowns["api_keys"] = []
         breakdowns["upstream_keys"] = []
 
     if is_master:
-        fallback_payload = fallback_data
+        fallback_payload = {
+            key: value
+            for key, value in fallback_data.items()
+            if key not in {"providers", "targets"}
+        }
     else:
         fallback_payload = {
             "summary": fallback_data["summary"],
@@ -572,6 +604,7 @@ async def get_analytics_dashboard(
             "rejections": reliability["rejections"]["summary"]["rejections"],
             "cost_per_million_tokens": cost_per_million_tokens,
         },
+        "lifetime": lifetime_data,
         "series": {
             "usage": usage_data["series"],
             "fallback": fallback_payload["series"],

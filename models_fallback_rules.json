@@ -416,6 +416,8 @@
           "temperature": 1
         },
         "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window"
@@ -518,7 +520,9 @@
         "model": "gpt-5.3-codex-spark",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true
       },
       {
         "provider": "z.ai",
@@ -583,6 +587,8 @@
         "retry_count": 1,
         "custom_body_params": {},
         "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window"
@@ -678,6 +684,8 @@
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": false,
         "context_window": 8192,
         "capabilities_autofilled": [
           "context_window"
@@ -688,7 +696,10 @@
         "model": "deepseek-ocr-2",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": false,
+        "context_window": 8192
       }
     ],
     "rotate_models": false,
@@ -822,6 +833,7 @@
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
+        "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
           "context_window"

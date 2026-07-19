@@ -69,6 +69,57 @@ def extract_request_x_title(request: Request | None) -> str | None:
     return cleaned_value or None
 
 
+# User-Agent values are attacker-controlled request bytes; bound what reaches
+# the usage row (the accounting contract itself caps text at 512 bytes).
+MAX_CLIENT_USER_AGENT_CHARS = 256
+
+
+def extract_request_client_ip(request: Request | None) -> str | None:
+    """Return the direct peer address of the caller (no forwarded-header trust)."""
+    if request is None:
+        return None
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None)
+    if not isinstance(host, str):
+        return None
+    cleaned_host = host.strip()
+    return cleaned_host or None
+
+
+def extract_request_user_agent(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    try:
+        value = request.headers.get("user-agent")
+    except Exception:
+        return None
+    if not isinstance(value, str):
+        return None
+    cleaned_value = value.strip()
+    if not cleaned_value:
+        return None
+    return cleaned_value[:MAX_CLIENT_USER_AGENT_CHARS]
+
+
+def extract_request_fallback_depth(request: Request | None) -> int | None:
+    """Count failed upstream attempts recorded for this request.
+
+    Reads the chat-dispatch attempt trail (``llmgateway_fallback_attempts``);
+    ``0`` means the first attempted upstream served the request, ``None`` means
+    no trail was recorded (non-chat paths).
+    """
+    if request is None:
+        return None
+    attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
+    if not isinstance(attempts, list):
+        return None
+    depth = 0
+    for entry in attempts:
+        if isinstance(entry, dict) and entry.get("error_class") is not None:
+            depth += 1
+    return depth
+
+
 def _as_non_negative_finite_float(value: Any) -> float | None:
     try:
         rate = float(value)

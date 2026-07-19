@@ -259,6 +259,7 @@ def test_isolated_gateway_process_copies_env_and_uses_canonical_launch(
         "env": {
             "GATEWAY_DB_DIR": str(expected_db_path),
             "GATEWAY_OUTPUTS_DIR": str(expected_outputs_path),
+            "FREE_LLM_CATALOG_ENABLED": "false",
             "KEEP": "value",
         },
         "stdout": subprocess.PIPE,

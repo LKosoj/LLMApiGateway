@@ -23,6 +23,7 @@ from llm_gateway_core.services.capability_autofill import CapabilityAutofillServ
 from llm_gateway_core.services.config_updates import ConfigUpdateCoordinator
 from llm_gateway_core.services.deep_research_process import DeepResearchProcessRunner
 from llm_gateway_core.services.fallback_model_evals import FallbackModelEvalService
+from llm_gateway_core.services.free_llm_catalog import FreeLlmCatalogService
 from llm_gateway_core.services.fusion_ensemble import FusionEnsembleService
 from llm_gateway_core.services.health import HealthService
 from llm_gateway_core.services.image_retention import ImageRetentionService
@@ -71,6 +72,7 @@ APP_SERVICE_FIELDS = (
     "openrouter_free_models_service",
     "fallback_model_eval_service",
     "capability_autofill_service",
+    "free_llm_catalog_service",
     "deep_research_process_runner",
     "upload_admission",
     "upload_admission_timeout_seconds",
@@ -152,6 +154,7 @@ class AppServicesContractTests(unittest.TestCase):
                 "openrouter_free_models_service": OpenRouterFreeModelsService,
                 "fallback_model_eval_service": FallbackModelEvalService,
                 "capability_autofill_service": CapabilityAutofillService,
+                "free_llm_catalog_service": FreeLlmCatalogService,
                 "deep_research_process_runner": DeepResearchProcessRunner,
                 "upload_admission": UploadAdmission,
                 "upload_admission_timeout_seconds": float,

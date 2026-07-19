@@ -250,6 +250,12 @@ class Settings(BaseSettings):
     )
     free_llm_catalog_enabled: bool = _get_bool_env("FREE_LLM_CATALOG_ENABLED", True)
 
+    # Kill switch for the periodic capability-autofill loop that fetches
+    # provider /models catalogs to fill unset supports_vision/supports_tools/
+    # context_window fields in fallback rules (test environments disable the
+    # real HTTP call). Editor-save triggered autofill is not affected.
+    capability_autofill_enabled: bool = _get_bool_env("CAPABILITY_AUTOFILL_ENABLED", True)
+
     # Example of Pydantic's .env handling (alternative approach)
     # class Config:
     #     env_file = '.env' # Relative to where the script is run

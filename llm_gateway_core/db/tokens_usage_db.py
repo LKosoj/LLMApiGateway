@@ -54,8 +54,9 @@ INSERT INTO tokens_usage (
     reasoning_tokens, cached_tokens, cost, gateway_model, operation, model,
     provider, request_id, is_estimated, cost_unavailable, cost_saved, api_key_id,
     accounting_event_id, accounting_kind, parent_accounting_event_id,
-    usage_source, upstream_key_fingerprint, x_title
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    usage_source, upstream_key_fingerprint, x_title,
+    client_ip, client_user_agent, fallback_depth
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _INSERT_ACCOUNTING_OUTBOX_SQL = """
@@ -393,12 +394,92 @@ def _insert_accounting_usage(
             usage_source,
             event.upstream_key_fingerprint,
             event.x_title,
+            event.client_ip,
+            event.client_user_agent,
+            event.fallback_depth,
         ),
     )
     usage_row_id = cursor.lastrowid
     if not isinstance(usage_row_id, int) or usage_row_id <= 0:
         _raise_accounting_conflict()
     return usage_row_id
+
+
+_UPSERT_USAGE_HOURLY_SQL = """
+INSERT INTO usage_hourly (
+    hour, requests, prompt_tokens, completion_tokens, total_tokens,
+    cost, cost_saved, duration_ms_sum, duration_count
+) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(hour) DO UPDATE SET
+    requests = requests + 1,
+    prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+    completion_tokens = completion_tokens + excluded.completion_tokens,
+    total_tokens = total_tokens + excluded.total_tokens,
+    cost = cost + excluded.cost,
+    cost_saved = cost_saved + excluded.cost_saved,
+    duration_ms_sum = duration_ms_sum + excluded.duration_ms_sum,
+    duration_count = duration_count + excluded.duration_count
+"""
+
+_UPSERT_USAGE_LIFETIME_SQL = """
+INSERT INTO usage_lifetime (
+    id, requests, prompt_tokens, completion_tokens, total_tokens,
+    cost, cost_saved, first_event_at
+) VALUES (1, 1, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    requests = requests + 1,
+    prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+    completion_tokens = completion_tokens + excluded.completion_tokens,
+    total_tokens = total_tokens + excluded.total_tokens,
+    cost = cost + excluded.cost,
+    cost_saved = cost_saved + excluded.cost_saved,
+    first_event_at = CASE
+        WHEN first_event_at IS NULL OR excluded.first_event_at < first_event_at
+        THEN excluded.first_event_at
+        ELSE first_event_at
+    END
+"""
+
+
+def _upsert_usage_aggregates(
+    conn: sqlite3.Connection,
+    event: AccountingEvent,
+) -> None:
+    """Fold one accepted event into the durable hourly/lifetime aggregates.
+
+    Runs inside the accept_accounting_event transaction, strictly on the
+    ACCEPTED path: duplicate re-deliveries roll back before the raw insert and
+    therefore never reach this fold, so aggregates count each event once.
+    """
+    usage = event.usage
+    occurred_at = event.occurred_at.isoformat()
+    hour = occurred_at[:13] + ":00:00"
+    duration_ms = usage.duration_ms if usage.duration_ms is not None else 0
+    duration_count = 1 if usage.duration_ms is not None else 0
+    conn.execute(
+        _UPSERT_USAGE_HOURLY_SQL,
+        (
+            hour,
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.total_tokens,
+            usage.cost,
+            usage.cost_saved,
+            duration_ms,
+            duration_count,
+        ),
+    )
+    conn.execute(
+        _UPSERT_USAGE_LIFETIME_SQL,
+        (
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.total_tokens,
+            usage.cost,
+            usage.cost_saved,
+            occurred_at,
+        ),
+    )
 
 
 def _insert_accounting_outbox(
@@ -1176,6 +1257,16 @@ def _period_date_format(period: str) -> str:
     raise ValueError(f"Invalid period: {period}. Must be 'hour', 'day', 'week', or 'month'.")
 
 
+# Throughput over rows where both completion tokens and a positive duration are
+# known; pairing numerator and denominator on the same rows keeps the ratio honest.
+_TOKENS_PER_SECOND_SQL = (
+    "SUM(CASE WHEN duration_ms > 0 AND completion_tokens IS NOT NULL"
+    " THEN completion_tokens ELSE 0 END) * 1000.0"
+    " / NULLIF(SUM(CASE WHEN duration_ms > 0 AND completion_tokens IS NOT NULL"
+    " THEN duration_ms ELSE 0 END), 0)"
+)
+
+
 def _append_optional_filter(where_parts: list[str], params: list, column: str, value: str | None) -> None:
     if value:
         where_parts.append(f"{column} = ?")
@@ -1244,6 +1335,9 @@ def _coerce_usage_summary(row) -> dict:
             "ttft_max_ms": None,
             "ttft_p50_ms": None,
             "ttft_p95_ms": None,
+            "tokens_per_second": None,
+            "first_attempt_requests": 0,
+            "fallback_tracked_requests": 0,
         }
     return {
         "requests": int(row["requests"] or 0),
@@ -1263,6 +1357,9 @@ def _coerce_usage_summary(row) -> dict:
         "ttft_max_ms": row["ttft_max_ms"],
         "ttft_p50_ms": row["ttft_p50_ms"],
         "ttft_p95_ms": row["ttft_p95_ms"],
+        "tokens_per_second": row["tokens_per_second"],
+        "first_attempt_requests": int(row["first_attempt_requests"] or 0),
+        "fallback_tracked_requests": int(row["fallback_tracked_requests"] or 0),
     }
 
 
@@ -1322,6 +1419,7 @@ class TokensUsageDB:
             _insert_accounting_usage(conn, event)
             _insert_accounting_outbox(conn, event, created_at)
             _insert_accounting_manifests(conn, event)
+            _upsert_usage_aggregates(conn, event)
             stored_event = _read_stored_accounting_event(conn, event.event_id, event)
             if stored_event is None or stored_event.billing_fingerprint != event.billing_fingerprint:
                 _raise_accounting_conflict()
@@ -1822,7 +1920,10 @@ class TokensUsageDB:
                 api_key_id INTEGER,
                 upstream_key_fingerprint TEXT,
                 x_title TEXT,
-                cost_unavailable INTEGER NOT NULL DEFAULT 0
+                cost_unavailable INTEGER NOT NULL DEFAULT 0,
+                client_ip TEXT,
+                client_user_agent TEXT,
+                fallback_depth INTEGER
             )
             ''')
 
@@ -1856,6 +1957,12 @@ class TokensUsageDB:
                 cursor.execute(
                     "ALTER TABLE tokens_usage ADD COLUMN cost_unavailable INTEGER NOT NULL DEFAULT 0"
                 )
+            if "client_ip" not in existing_columns:
+                cursor.execute("ALTER TABLE tokens_usage ADD COLUMN client_ip TEXT")
+            if "client_user_agent" not in existing_columns:
+                cursor.execute("ALTER TABLE tokens_usage ADD COLUMN client_user_agent TEXT")
+            if "fallback_depth" not in existing_columns:
+                cursor.execute("ALTER TABLE tokens_usage ADD COLUMN fallback_depth INTEGER")
 
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_tokens_usage_timestamp
@@ -1901,6 +2008,81 @@ class TokensUsageDB:
                 created_at DATETIME NOT NULL
             )
             ''')
+
+            # Durable analytics aggregates: raw tokens_usage rows are pruned by
+            # cleanup_old_records(), so long-horizon totals/series must live in
+            # tables the retention loop never touches. Both are updated in the
+            # same transaction as the raw usage insert (accept_accounting_event).
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usage_hourly (
+                hour TEXT PRIMARY KEY,
+                requests INTEGER NOT NULL DEFAULT 0,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                cost REAL NOT NULL DEFAULT 0.0,
+                cost_saved REAL NOT NULL DEFAULT 0.0,
+                duration_ms_sum INTEGER NOT NULL DEFAULT 0,
+                duration_count INTEGER NOT NULL DEFAULT 0
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usage_lifetime (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                requests INTEGER NOT NULL DEFAULT 0,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                cost REAL NOT NULL DEFAULT 0.0,
+                cost_saved REAL NOT NULL DEFAULT 0.0,
+                first_event_at TEXT
+            )
+            ''')
+
+            # One-time backfill: seed the durable aggregates from raw rows that
+            # existed before this schema was introduced, so unfiltered series
+            # can read exclusively from usage_hourly (hourly ⊇ raw afterwards).
+            hourly_rows = cursor.execute("SELECT COUNT(*) FROM usage_hourly").fetchone()[0]
+            if hourly_rows == 0:
+                cursor.execute('''
+                INSERT INTO usage_hourly (
+                    hour, requests, prompt_tokens, completion_tokens, total_tokens,
+                    cost, cost_saved, duration_ms_sum, duration_count
+                )
+                SELECT
+                    strftime('%Y-%m-%dT%H:00:00', timestamp),
+                    COUNT(*),
+                    COALESCE(SUM(prompt_tokens), 0),
+                    COALESCE(SUM(completion_tokens), 0),
+                    COALESCE(SUM(total_tokens), 0),
+                    COALESCE(SUM(cost), 0.0),
+                    COALESCE(SUM(cost_saved), 0.0),
+                    COALESCE(SUM(COALESCE(duration_ms, 0)), 0),
+                    COUNT(duration_ms)
+                FROM tokens_usage
+                WHERE strftime('%Y-%m-%dT%H:00:00', timestamp) IS NOT NULL
+                GROUP BY 1
+                ''')
+            lifetime_rows = cursor.execute("SELECT COUNT(*) FROM usage_lifetime").fetchone()[0]
+            if lifetime_rows == 0:
+                cursor.execute('''
+                INSERT INTO usage_lifetime (
+                    id, requests, prompt_tokens, completion_tokens, total_tokens,
+                    cost, cost_saved, first_event_at
+                )
+                SELECT
+                    1,
+                    COUNT(*),
+                    COALESCE(SUM(prompt_tokens), 0),
+                    COALESCE(SUM(completion_tokens), 0),
+                    COALESCE(SUM(total_tokens), 0),
+                    COALESCE(SUM(cost), 0.0),
+                    COALESCE(SUM(cost_saved), 0.0),
+                    MIN(timestamp)
+                FROM tokens_usage
+                HAVING COUNT(*) > 0
+                ''')
 
             conn.commit()
             logger.info("Tokens usage database initialized at %s", self.db_path)
@@ -2244,29 +2426,74 @@ class TokensUsageDB:
                         (
                             SELECT ttft_ms FROM ttft_ranked
                             WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)
-                        ) as ttft_p95_ms
+                        ) as ttft_p95_ms,
+                        {_TOKENS_PER_SECOND_SQL} as tokens_per_second,
+                        COALESCE(SUM(CASE WHEN fallback_depth = 0 THEN 1 ELSE 0 END), 0)
+                            as first_attempt_requests,
+                        COUNT(fallback_depth) as fallback_tracked_requests
                     FROM filtered
                     """,
                     params,
                 )
                 summary = _coerce_usage_summary(await cursor.fetchone())
 
-                cursor = await db.execute(
-                    f"""
-                    SELECT
-                        strftime('{date_format}', timestamp) as time_period,
-                        COUNT(*) as requests,
-                        COALESCE(SUM(total_tokens), 0) as total_tokens,
-                        COALESCE(SUM(cost), 0.0) as cost,
-                        COALESCE(SUM(cost_saved), 0.0) as cost_saved,
-                        CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms
-                    FROM tokens_usage
-                    {where_clause}
-                    GROUP BY time_period
-                    ORDER BY time_period ASC
-                    """,
-                    params,
+                unfiltered = not any(
+                    [
+                        api_key_id is not None,
+                        api_key_unattributed,
+                        operation,
+                        gateway_model,
+                        provider,
+                        model,
+                        upstream_key_fingerprint,
+                        usage_source,
+                        is_estimated is not None,
+                        x_title,
+                    ]
                 )
+                if unfiltered:
+                    # usage_hourly ⊇ raw rows (transactional upsert + startup
+                    # backfill), so the unscoped timeline survives the raw-row
+                    # retention pruning and covers the long ranges.
+                    cursor = await db.execute(
+                        f"""
+                        SELECT
+                            strftime('{date_format}', hour) as time_period,
+                            COALESCE(SUM(requests), 0) as requests,
+                            COALESCE(SUM(total_tokens), 0) as total_tokens,
+                            COALESCE(SUM(cost), 0.0) as cost,
+                            COALESCE(SUM(cost_saved), 0.0) as cost_saved,
+                            CAST(
+                                SUM(duration_ms_sum) * 1.0 / NULLIF(SUM(duration_count), 0)
+                                AS INTEGER
+                            ) as avg_duration_ms
+                        FROM usage_hourly
+                        WHERE hour >= ? AND hour <= ?
+                        GROUP BY time_period
+                        ORDER BY time_period ASC
+                        """,
+                        (
+                            start_date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00:00"),
+                            end_date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00:00"),
+                        ),
+                    )
+                else:
+                    cursor = await db.execute(
+                        f"""
+                        SELECT
+                            strftime('{date_format}', timestamp) as time_period,
+                            COUNT(*) as requests,
+                            COALESCE(SUM(total_tokens), 0) as total_tokens,
+                            COALESCE(SUM(cost), 0.0) as cost,
+                            COALESCE(SUM(cost_saved), 0.0) as cost_saved,
+                            CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms
+                        FROM tokens_usage
+                        {where_clause}
+                        GROUP BY time_period
+                        ORDER BY time_period ASC
+                        """,
+                        params,
+                    )
                 series = [dict(row) for row in await cursor.fetchall()]
 
                 async def grouped(label_sql: str, select_sql: str = "") -> list[dict]:
@@ -2280,7 +2507,8 @@ class TokensUsageDB:
                             COALESCE(SUM(cost), 0.0) as cost,
                             COALESCE(SUM(cost_saved), 0.0) as cost_saved,
                             COALESCE(SUM(is_estimated), 0) as estimated_count,
-                            CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms
+                            CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms,
+                            {_TOKENS_PER_SECOND_SQL} as tokens_per_second
                         FROM tokens_usage
                         {where_clause}
                         GROUP BY label
@@ -2304,6 +2532,49 @@ class TokensUsageDB:
                     "x_titles": await grouped("COALESCE(x_title, 'unknown')"),
                 }
 
+                # Per-provider latency: TTFT average plus nearest-rank p95 of
+                # the full duration, merged into the providers breakdown rows.
+                cursor = await db.execute(
+                    f"""
+                    SELECT
+                        COALESCE(provider, 'unknown') as label,
+                        CAST(AVG(ttft_ms) AS INTEGER) as ttft_avg_ms
+                    FROM (SELECT * FROM tokens_usage {where_clause})
+                    WHERE ttft_ms IS NOT NULL
+                    GROUP BY label
+                    """,
+                    params,
+                )
+                provider_ttft = {row["label"]: row["ttft_avg_ms"] for row in await cursor.fetchall()}
+
+                cursor = await db.execute(
+                    f"""
+                    WITH provider_ranked AS (
+                        SELECT
+                            COALESCE(provider, 'unknown') as label,
+                            duration_ms,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY COALESCE(provider, 'unknown')
+                                ORDER BY duration_ms
+                            ) as rn,
+                            COUNT(*) OVER (
+                                PARTITION BY COALESCE(provider, 'unknown')
+                            ) as cnt
+                        FROM (SELECT * FROM tokens_usage {where_clause})
+                        WHERE duration_ms IS NOT NULL
+                    )
+                    SELECT label, duration_ms as duration_p95_ms
+                    FROM provider_ranked
+                    WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)
+                    """,
+                    params,
+                )
+                provider_p95 = {row["label"]: row["duration_p95_ms"] for row in await cursor.fetchall()}
+
+                for row in breakdowns["providers"]:
+                    row["ttft_avg_ms"] = provider_ttft.get(row["label"])
+                    row["duration_p95_ms"] = provider_p95.get(row["label"])
+
                 cursor = await db.execute(
                     f"""
                     SELECT
@@ -2311,7 +2582,8 @@ class TokensUsageDB:
                         total_tokens, reasoning_tokens, cached_tokens, cost,
                         gateway_model, operation, model, provider, request_id,
                         is_estimated, usage_source, cost_saved, api_key_id,
-                        upstream_key_fingerprint, x_title
+                        upstream_key_fingerprint, x_title, client_ip,
+                        client_user_agent, fallback_depth
                     FROM tokens_usage
                     {where_clause}
                     ORDER BY timestamp DESC
@@ -2345,6 +2617,27 @@ class TokensUsageDB:
                 },
                 "recent_records": [],
             }
+
+    async def get_lifetime_totals(self) -> dict | None:
+        """Return the all-time counters that survive raw-row retention pruning."""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                for pragma in RUNTIME_PRAGMAS:
+                    await db.execute(pragma)
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    """
+                    SELECT requests, prompt_tokens, completion_tokens, total_tokens,
+                           cost, cost_saved, first_event_at
+                    FROM usage_lifetime
+                    WHERE id = 1
+                    """
+                )
+                row = await cursor.fetchone()
+                return dict(row) if row is not None else None
+        except Exception as e:
+            logger.error("Error retrieving lifetime usage totals: %s", e)
+            return None
 
     async def get_dashboard_filter_options(
         self,

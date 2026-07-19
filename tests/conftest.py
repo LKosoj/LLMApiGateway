@@ -19,6 +19,12 @@ os.environ.setdefault("LLMGATEWAY_LOG_DIR", _temp_log_dir)
 # or call refresh_once() directly.
 os.environ.setdefault("FREE_LLM_CATALOG_ENABLED", "false")
 
+# Same for the capability-autofill loop: its first iteration fetches provider
+# /models catalogs through the shared HTTP client, which tests replace with
+# mocks that assert exact call counts. Tests of the autofill path re-enable it
+# via patch.object(main.settings, "capability_autofill_enabled", True).
+os.environ.setdefault("CAPABILITY_AUTOFILL_ENABLED", "false")
+
 
 # Keep tests independent from optional config files that may exist in the
 # checkout and reference providers absent from a test's temp providers.json.

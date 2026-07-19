@@ -628,11 +628,38 @@ class FallbackEventsDB:
                 )
                 upstream = [dict(row) for row in await cursor.fetchall()]
 
+                # Outcome aggregates keyed the same way as the usage breakdowns
+                # (provider and "provider / model"), without the top-20 cut, so
+                # the dashboard can merge success/error stats into usage rows.
+                async def outcome_rows(label_sql: str) -> list[dict]:
+                    cursor = await db.execute(
+                        f"""
+                        SELECT
+                            {label_sql} as label,
+                            COUNT(*) as attempts,
+                            COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as successes,
+                            COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) as errors,
+                            ROUND(100.0 * SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) as success_rate
+                        FROM fallback_events
+                        {where_clause}
+                        GROUP BY label
+                        """,
+                        params,
+                    )
+                    return [dict(row) for row in await cursor.fetchall()]
+
+                providers = await outcome_rows("COALESCE(provider, 'unknown')")
+                targets = await outcome_rows(
+                    "COALESCE(provider, 'unknown') || ' / ' || COALESCE(model, 'unknown')"
+                )
+
                 return {
                     "summary": summary,
                     "series": series,
                     "error_types": error_types,
                     "upstream": upstream,
+                    "providers": providers,
+                    "targets": targets,
                 }
         except ValueError:
             raise
@@ -650,6 +677,8 @@ class FallbackEventsDB:
                 "series": [],
                 "error_types": [],
                 "upstream": [],
+                "providers": [],
+                "targets": [],
             }
 
     async def get_events_count_last_24h(self, api_key_id: int | None = None) -> dict[int, int]:

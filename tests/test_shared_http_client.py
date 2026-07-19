@@ -197,7 +197,41 @@ class SharedHttpClientTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await loop_task
 
-        run_async(scenario())
+        # conftest.py defaults CAPABILITY_AUTOFILL_ENABLED to "false" for
+        # tests; this test exercises the enabled fetch path.
+        with patch.object(main.settings, "capability_autofill_enabled", True):
+            run_async(scenario())
+
+    def test_run_capability_autofill_loop_disabled_skips_iteration_body(self):
+        # With the kill switch off the loop must not touch the OpenRouter
+        # service or materialize (whose provider /models fetch would consume
+        # mocked shared-HTTP-client calls in unrelated tests).
+        openrouter_service = Mock()
+        openrouter_service.get_status = AsyncMock()
+        capability_autofill_service = Mock()
+        capability_autofill_service.materialize = AsyncMock()
+
+        async def scenario():
+            loop_task = asyncio.create_task(
+                main.run_capability_autofill_loop(
+                    capability_autofill_service,
+                    runtime_manager=Mock(),
+                    config_update_coordinator=Mock(),
+                    shared_http_client=Mock(),
+                    openrouter_free_models_service=openrouter_service,
+                )
+            )
+            for _ in range(10):
+                await asyncio.sleep(0)
+            self.assertFalse(loop_task.done())
+            openrouter_service.get_status.assert_not_awaited()
+            capability_autofill_service.materialize.assert_not_awaited()
+            loop_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await loop_task
+
+        with patch.object(main.settings, "capability_autofill_enabled", False):
+            run_async(scenario())
 
     def test_select_capability_autofill_interval_uses_default_once_catalog_is_populated(self):
         self.assertEqual(

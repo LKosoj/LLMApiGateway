@@ -655,6 +655,9 @@ class AccountingEvent:
     child_fingerprints: tuple[str, ...] = ()
     upstream_key_fingerprint: str | None = None
     x_title: str | None = None
+    client_ip: str | None = None
+    client_user_agent: str | None = None
+    fallback_depth: int | None = None
 
     def __post_init__(self) -> None:
         if _normalize_int(self.version) != ACCOUNTING_EVENT_VERSION:
@@ -707,6 +710,14 @@ class AccountingEvent:
             _normalize_optional_text(self.upstream_key_fingerprint, max_bytes=_MAX_ID_BYTES),
         )
         object.__setattr__(self, "x_title", _normalize_optional_text(self.x_title))
+        object.__setattr__(self, "client_ip", _normalize_optional_text(self.client_ip))
+        object.__setattr__(
+            self,
+            "client_user_agent",
+            _normalize_optional_text(self.client_user_agent),
+        )
+        if self.fallback_depth is not None:
+            object.__setattr__(self, "fallback_depth", _normalize_int(self.fallback_depth))
 
         try:
             components = tuple(self.components)

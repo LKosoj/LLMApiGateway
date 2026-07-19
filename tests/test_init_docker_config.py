@@ -527,6 +527,10 @@ def test_initializer_cli_reports_uncertain_publication_without_paths_or_contents
     def fail_verify(*_args: object) -> None:
         raise DockerConfigInitializationError("target-file-verify-failed")
 
+    # The fixed container identity needs root to fchown; run as the current
+    # user so the mocked verify failure is what main() actually reports.
+    monkeypatch.setattr(initializer, "_CONTAINER_UID", os.getuid())
+    monkeypatch.setattr(initializer, "_CONTAINER_GID", os.getgid())
     monkeypatch.setattr(initializer, "_verify_published", fail_verify)
     monkeypatch.setattr(
         initializer,
@@ -559,6 +563,10 @@ def test_initializer_cli_bounds_post_publish_runtime_error(
     def fail_verify(*_args: object) -> None:
         raise RuntimeError(secret)
 
+    # The fixed container identity needs root to fchown; run as the current
+    # user so the mocked verify failure is what main() actually reports.
+    monkeypatch.setattr(initializer, "_CONTAINER_UID", os.getuid())
+    monkeypatch.setattr(initializer, "_CONTAINER_GID", os.getgid())
     monkeypatch.setattr(initializer, "_verify_published", fail_verify)
     monkeypatch.setattr(
         initializer,

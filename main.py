@@ -348,20 +348,21 @@ async def run_capability_autofill_loop(
             # cadence instead.
             sleep_seconds = interval_seconds
             try:
-                openrouter_status = await openrouter_free_models_service.get_status()
-                capability_index_empty = not await openrouter_free_models_service.get_capability_index()
-                # materialize() never raises: failures are logged and absorbed internally.
-                await capability_autofill_service.materialize(
-                    runtime_manager=runtime_manager,
-                    config_update_coordinator=config_update_coordinator,
-                    shared_http_client=shared_http_client,
-                    openrouter_free_models_service=openrouter_free_models_service,
-                )
-                sleep_seconds = _select_capability_autofill_interval(
-                    openrouter_configured=bool(openrouter_status.get("configured")),
-                    capability_index_empty=capability_index_empty,
-                    default_interval_seconds=interval_seconds,
-                )
+                if settings.capability_autofill_enabled:
+                    openrouter_status = await openrouter_free_models_service.get_status()
+                    capability_index_empty = not await openrouter_free_models_service.get_capability_index()
+                    # materialize() never raises: failures are logged and absorbed internally.
+                    await capability_autofill_service.materialize(
+                        runtime_manager=runtime_manager,
+                        config_update_coordinator=config_update_coordinator,
+                        shared_http_client=shared_http_client,
+                        openrouter_free_models_service=openrouter_free_models_service,
+                    )
+                    sleep_seconds = _select_capability_autofill_interval(
+                        openrouter_configured=bool(openrouter_status.get("configured")),
+                        capability_index_empty=capability_index_empty,
+                        default_interval_seconds=interval_seconds,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:

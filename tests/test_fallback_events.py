@@ -385,6 +385,59 @@ class FallbackEventsDBTests(unittest.TestCase):
         self.assertEqual(data["error_types"], [{"label": "http_429", "errors": 1, "avg_duration_ms": 1000}])
         self.assertEqual(data["upstream"][0]["upstream_key_fingerprint"], "fp-1")
 
+    def test_dashboard_fallback_reports_provider_and_target_outcomes(self):
+        self.db.insert_event(
+            request_id="req-outcome-1",
+            gateway_model="gateway-fast",
+            attempt_number=1,
+            provider="openrouter",
+            model="qwen",
+            success=False,
+            error_type="http_429",
+            error_message="Rate limited",
+            duration_ms=1000,
+        )
+        self.db.insert_event(
+            request_id="req-outcome-1",
+            gateway_model="gateway-fast",
+            attempt_number=2,
+            provider="openrouter",
+            model="qwen",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=500,
+        )
+        self.db.insert_event(
+            request_id="req-outcome-2",
+            gateway_model="gateway-fast",
+            attempt_number=1,
+            provider="devbox",
+            model="glm",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=300,
+        )
+
+        data = run_async(
+            self.db.get_dashboard_fallback(
+                "day",
+                datetime.now(timezone.utc) - timedelta(minutes=1),
+                datetime.now(timezone.utc) + timedelta(minutes=1),
+            )
+        )
+
+        providers = {row["label"]: row for row in data["providers"]}
+        self.assertEqual(providers["openrouter"]["attempts"], 2)
+        self.assertEqual(providers["openrouter"]["errors"], 1)
+        self.assertEqual(providers["openrouter"]["success_rate"], 50.0)
+        self.assertEqual(providers["devbox"]["attempts"], 1)
+        self.assertEqual(providers["devbox"]["errors"], 0)
+        targets = {row["label"]: row for row in data["targets"]}
+        self.assertEqual(targets["openrouter / qwen"]["attempts"], 2)
+        self.assertEqual(targets["devbox / glm"]["success_rate"], 100.0)
+
     def test_insert_event_timestamp_matches_utc_stats_window(self):
         self.db.insert_event(
             request_id="req-utc",

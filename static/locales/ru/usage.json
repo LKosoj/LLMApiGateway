@@ -62,6 +62,7 @@
     "tokenTrend": "Динамика токенов",
     "costByProvider": "Стоимость по провайдерам",
     "filteredBreakdown": "Детализация по фильтрам",
+    "providerPerformance": "Показатели провайдеров",
     "xTitleBreakdown": "Детализация по X-Title",
     "reliabilityTitle": "Надёжность",
     "virtualKeys": "Виртуальные ключи",
@@ -134,6 +135,7 @@
   "format": {
     "milliseconds": "{value} мс",
     "seconds": "{value} с",
+    "tokensPerSecond": "{value} ток/с",
     "retry": "повторов: {count}",
     "retryWithDelay": "повторов: {count} ({delay})",
     "xTitle": "X-Title: {value}",
@@ -146,6 +148,11 @@
     "costLabel": "Стоимость",
     "costSaved": "Экономия",
     "costPerMillion": "Стоимость за 1 млн",
+    "tokensPerSecond": "Токены/с",
+    "pinHonored": "Без failover",
+    "lifetimeRequests": "Запросы за всё время",
+    "lifetimeTokens": "Токены за всё время",
+    "lifetimeCost": "Стоимость за всё время",
     "averageDuration": "Средняя длительность",
     "durationP50": "Длительность p50",
     "durationP95": "Длительность p95",
@@ -197,7 +204,13 @@
     "metricHeader": "Показатель",
     "valueHeader": "Значение",
     "virtualKey": "Виртуальный ключ",
-    "gatewayHeader": "Шлюз"
+    "gatewayHeader": "Шлюз",
+    "tokensPerSecond": "Токены/с",
+    "ttftAvg": "Среднее TTFT",
+    "durationP95": "Длительность p95",
+    "fallbackErrors": "Ошибки fallback",
+    "clientIp": "IP клиента",
+    "userAgent": "User Agent"
   },
   "reliability": {
     "fallbackAttempts": "Попытки резервных маршрутов",

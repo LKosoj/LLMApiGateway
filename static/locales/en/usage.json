@@ -62,6 +62,7 @@
     "tokenTrend": "Token Trend",
     "costByProvider": "Cost by Provider",
     "filteredBreakdown": "Filtered Breakdown",
+    "providerPerformance": "Provider Performance",
     "xTitleBreakdown": "X-Title Breakdown",
     "reliabilityTitle": "Reliability",
     "virtualKeys": "Virtual Keys",
@@ -134,6 +135,7 @@
   "format": {
     "milliseconds": "{value} ms",
     "seconds": "{value} s",
+    "tokensPerSecond": "{value} tok/s",
     "retry": "retry: {count}",
     "retryWithDelay": "retry: {count} ({delay})",
     "xTitle": "X-Title: {value}",
@@ -146,6 +148,11 @@
     "costLabel": "Cost",
     "costSaved": "Cost Saved",
     "costPerMillion": "Cost / 1M",
+    "tokensPerSecond": "Tokens/s",
+    "pinHonored": "Pin Honored",
+    "lifetimeRequests": "All-Time Requests",
+    "lifetimeTokens": "All-Time Tokens",
+    "lifetimeCost": "All-Time Cost",
     "averageDuration": "Avg Duration",
     "durationP50": "Duration p50",
     "durationP95": "Duration p95",
@@ -197,7 +204,13 @@
     "metricHeader": "Metric",
     "valueHeader": "Value",
     "virtualKey": "Virtual Key",
-    "gatewayHeader": "Gateway"
+    "gatewayHeader": "Gateway",
+    "tokensPerSecond": "Tokens/s",
+    "ttftAvg": "Avg TTFT",
+    "durationP95": "Duration p95",
+    "fallbackErrors": "Fallback Errors",
+    "clientIp": "Client IP",
+    "userAgent": "User Agent"
   },
   "reliability": {
     "fallbackAttempts": "Fallback attempts",

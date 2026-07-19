@@ -37,8 +37,9 @@ MASTER_PAGES = (
     "/v1/ui/rejections",
     "/v1/ui/translator-debug",
     "/v1/ui/pricing",
+    "/v1/ui/free-models",
 )
-USER_PAGES = MASTER_PAGES[:3]
+USER_PAGES = MASTER_PAGES[:3] + MASTER_PAGES[-1:]
 
 
 def _write_config(root: Path) -> Path:
@@ -231,8 +232,8 @@ def test_master_and_user_navigation_matrix_has_exact_role_scope_and_visible_acti
         _login(user, r5_2_server, virtual_key)
 
         for context, pages, expected_links in (
-            (master, MASTER_PAGES, 9),
-            (user, USER_PAGES, 3),
+            (master, MASTER_PAGES, len(MASTER_PAGES)),
+            (user, USER_PAGES, len(USER_PAGES)),
         ):
             page = context.new_page()
             for index, path in enumerate(pages):

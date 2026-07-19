@@ -36,7 +36,13 @@ from ...services.chat_accounting import (
 )
 from ...services.runtime_config import AppServices, RuntimeSnapshot
 from ...services.stream_observation import SSEEvent, parse_sse_json
-from ...utils.usage_tracking import ModelCostRates, extract_request_x_title
+from ...utils.usage_tracking import (
+    ModelCostRates,
+    extract_request_client_ip,
+    extract_request_fallback_depth,
+    extract_request_user_agent,
+    extract_request_x_title,
+)
 
 
 CHAT_TERMINAL_HANDOFF_STATE_KEY = "llmgateway_chat_terminal_handoff"
@@ -379,6 +385,9 @@ class ChatTerminalOwner:
                 None,
             ),
             x_title=extract_request_x_title(self._request),
+            client_ip=extract_request_client_ip(self._request),
+            client_user_agent=extract_request_user_agent(self._request),
+            fallback_depth=extract_request_fallback_depth(self._request),
         )
         self._state = _OwnerState.COMMITTING
         try:

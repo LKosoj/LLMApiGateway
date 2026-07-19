@@ -69,6 +69,23 @@
         });
     }
 
+    function formatThroughput(value) {
+        const parsed = Number(value);
+        if (value == null || !Number.isFinite(parsed)) return t("usage:values.notAvailable");
+        return t("usage:format.tokensPerSecond", {
+            value: i18n.formatNumber(parsed, {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+            }),
+        });
+    }
+
+    function formatOptionalRate(value) {
+        const parsed = Number(value);
+        if (value == null || !Number.isFinite(parsed)) return t("usage:values.notAvailable");
+        return formatRate(parsed);
+    }
+
     function formatDuration(value) {
         const ms = numberValue(value);
         if (!ms) return t("usage:values.notAvailable");
@@ -219,6 +236,12 @@
         return card;
     }
 
+    function formatPinHonored(totals) {
+        const tracked = numberValue(totals.fallback_tracked_requests);
+        if (!tracked) return t("usage:values.notAvailable");
+        return formatRate(numberValue(totals.first_attempt_requests) / tracked * 100);
+    }
+
     function renderKpis(payload) {
         const totals = payload.totals || {};
         const kpis = [
@@ -227,6 +250,8 @@
             [t("usage:kpis.costLabel"), formatMoney(totals.cost)],
             [t("usage:kpis.costSaved"), formatMoney(totals.cost_saved)],
             [t("usage:kpis.costPerMillion"), formatMoney(totals.cost_per_million_tokens)],
+            [t("usage:kpis.tokensPerSecond"), formatThroughput(totals.tokens_per_second)],
+            [t("usage:kpis.pinHonored"), formatPinHonored(totals)],
             [t("usage:kpis.averageDuration"), formatDuration(totals.avg_duration_ms)],
             [t("usage:kpis.durationP50"), formatDuration(totals.duration_p50_ms)],
             [t("usage:kpis.durationP95"), formatDuration(totals.duration_p95_ms)],
@@ -238,6 +263,13 @@
             [t("usage:kpis.rejectionsLabel"), formatNumber(totals.rejections)],
             [t("usage:kpis.estimatedLabel"), formatNumber(totals.estimated_count)],
         ];
+        if (payload.lifetime) {
+            kpis.push(
+                [t("usage:kpis.lifetimeRequests"), formatNumber(payload.lifetime.requests)],
+                [t("usage:kpis.lifetimeTokens"), formatNumber(payload.lifetime.total_tokens)],
+                [t("usage:kpis.lifetimeCost"), formatMoney(payload.lifetime.cost)],
+            );
+        }
         state.els.kpis.replaceChildren(...kpis.map(([label, value]) => createKpi(label, value)));
     }
 
@@ -402,6 +434,28 @@
             {key: "cost_saved", label: t("usage:columns.costSaved"), format: formatMoney},
             {key: "estimated_count", label: t("usage:columns.estimatedHeader"), format: formatNumber},
             {key: "avg_duration_ms", label: t("usage:columns.averageDuration"), format: formatDuration},
+            {key: "tokens_per_second", label: t("usage:columns.tokensPerSecond"), format: formatThroughput},
+            {key: "fallback_errors", label: t("usage:columns.fallbackErrors"), format: formatNumber},
+            {key: "fallback_success_rate", label: t("usage:columns.successRate"), format: formatOptionalRate},
+        ], rows));
+    }
+
+    function renderProviderTable(payload) {
+        const rows = ((payload.breakdowns && payload.breakdowns.providers) || []).slice(0, 20);
+        if (rows.length === 0) {
+            renderEmpty(state.els.providerTable, t("usage:empty.providers"));
+            return;
+        }
+        state.els.providerTable.replaceChildren(createTable([
+            {key: "label", label: t("usage:columns.providerHeader"), technical: true},
+            {key: "requests", label: t("usage:columns.requestsHeader"), format: formatNumber},
+            {key: "total_tokens", label: t("usage:columns.tokensHeader"), format: formatNumber},
+            {key: "cost", label: t("usage:columns.costHeader"), format: formatMoney},
+            {key: "tokens_per_second", label: t("usage:columns.tokensPerSecond"), format: formatThroughput},
+            {key: "ttft_avg_ms", label: t("usage:columns.ttftAvg"), format: formatDuration},
+            {key: "duration_p95_ms", label: t("usage:columns.durationP95"), format: formatDuration},
+            {key: "fallback_errors", label: t("usage:columns.fallbackErrors"), format: formatNumber},
+            {key: "fallback_success_rate", label: t("usage:columns.successRate"), format: formatOptionalRate},
         ], rows));
     }
 
@@ -515,6 +569,8 @@
             {key: "x_title", label: t("usage:columns.xTitleHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
             {key: "provider", label: t("usage:columns.providerHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
             {key: "model", label: t("usage:columns.modelHeader"), format: value => value || t("usage:values.notAvailable"), technical: true},
+            {key: "client_ip", label: t("usage:columns.clientIp"), format: value => value || t("usage:values.notAvailable"), technical: true},
+            {key: "client_user_agent", label: t("usage:columns.userAgent"), format: value => (value ? String(value).slice(0, 40) : t("usage:values.notAvailable")), technical: true},
             {key: "total_tokens", label: t("usage:columns.tokensHeader"), format: formatNumber},
             {key: "cost", label: t("usage:columns.costHeader"), format: formatMoney},
         ], rows));
@@ -526,6 +582,7 @@
         renderLineChart(payload);
         renderBarChart(payload);
         renderBreakdownTable(payload);
+        renderProviderTable(payload);
         renderXTitleTable(payload);
         renderReliabilityTable(payload);
         renderKeyTable(payload);
@@ -637,6 +694,7 @@
             trendMeta: document.getElementById("analyticsTrendMeta"),
             costMeta: document.getElementById("analyticsCostMeta"),
             breakdownTable: document.getElementById("analyticsBreakdownTable"),
+            providerTable: document.getElementById("analyticsProviderTable"),
             xTitleTable: document.getElementById("analyticsXTitleTable"),
             reliabilityTable: document.getElementById("analyticsReliabilityTable"),
             keyTable: document.getElementById("analyticsKeyTable"),

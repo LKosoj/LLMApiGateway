@@ -937,6 +937,12 @@ def test_canonical_bytes_with_wrong_metadata_are_republished(tmp_path: Path) -> 
 def test_managed_directory_metadata_drift_forces_exact_convergence(
     tmp_path: Path, directory_key: str, mode: int,
 ) -> None:
+    if directory_key == "env_dir" and mode == 0o600 and os.geteuid() != 0:
+        pytest.skip(
+            "env_dir without the traversal bit blocks stat of gateway.env for "
+            "non-root; the script fails closed before convergence, root "
+            "(CAP_DAC_OVERRIDE) is required to exercise this drift"
+        )
     fixture = _prepare_test_mode(tmp_path)
     _run_test_mode(fixture)
     directory = Path(fixture[directory_key])

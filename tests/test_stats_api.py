@@ -26,6 +26,7 @@ class _FakeTokensUsageDB:
         self.count_calls: list[object] = []
         self.aggregated_calls: list[tuple[str, object, object, object]] = []
         self.dashboard_calls: list[dict] = []
+        self.lifetime_calls = 0
         self.records = [
             {"id": 1, "model": "m1", "operation": "chat"},
             {"id": 2, "model": "m2", "operation": "embeddings"},
@@ -112,6 +113,18 @@ class _FakeTokensUsageDB:
             "x_titles": ["tgBot"],
         }
 
+    async def get_lifetime_totals(self):
+        self.lifetime_calls += 1
+        return {
+            "requests": 1000,
+            "prompt_tokens": 50000,
+            "completion_tokens": 25000,
+            "total_tokens": 75000,
+            "cost": 1.23,
+            "cost_saved": 0.5,
+            "first_event_at": "2026-01-01T00:00:00+00:00",
+        }
+
     def cleanup_old_records(self, retention_days: int = 180):
         return None
 
@@ -157,6 +170,8 @@ class _FakeFallbackEventsDB:
             "series": [{"time_period": "2026-05-31", "attempts": 3, "successes": 2, "errors": 1}],
             "error_types": [{"label": "http_429", "errors": 1}],
             "upstream": [{"label": "openrouter / qwen", "provider": "openrouter", "model": "qwen", "upstream_key_fingerprint": "fp-1", "attempts": 3}],
+            "providers": [{"label": "openrouter", "attempts": 3, "successes": 2, "errors": 1, "success_rate": 66.67}],
+            "targets": [{"label": "openrouter / qwen", "attempts": 3, "successes": 2, "errors": 1, "success_rate": 66.67}],
         }
 
     def cleanup_old_records(self, retention_days: int = 180):
@@ -653,6 +668,35 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(totals["ttft_p50_ms"], 75)
         self.assertEqual(totals["ttft_p95_ms"], 115)
 
+    def test_analytics_dashboard_includes_lifetime_and_fallback_outcomes(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+        fake_fallback_events_db = _FakeFallbackEventsDB()
+
+        with self._client(
+            fake_tokens_usage_db,
+            _FakeApiKeysDB(valid_key_id=7),
+            fake_fallback_events_db=fake_fallback_events_db,
+        ) as client:
+            response = client.get(
+                "/v1/api/analytics-dashboard?range=7d&bucket=day",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(fake_tokens_usage_db.lifetime_calls, 1)
+        self.assertEqual(payload["lifetime"]["requests"], 1000)
+        self.assertEqual(payload["lifetime"]["first_event_at"], "2026-01-01T00:00:00+00:00")
+        provider_row = payload["breakdowns"]["providers"][0]
+        self.assertEqual(provider_row["fallback_attempts"], 3)
+        self.assertEqual(provider_row["fallback_errors"], 1)
+        self.assertEqual(provider_row["fallback_success_rate"], 66.67)
+        target_row = payload["breakdowns"]["resolved_targets"][0]
+        self.assertEqual(target_row["fallback_attempts"], 3)
+        # Outcome lists are merged into breakdowns, not exposed via reliability.
+        self.assertNotIn("providers", payload["reliability"]["fallback"])
+        self.assertNotIn("targets", payload["reliability"]["fallback"])
+
     def test_virtual_key_usage_dashboard_forces_own_scope(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
         fake_fallback_events_db = _FakeFallbackEventsDB()
@@ -680,6 +724,8 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(payload["filter_options"]["upstream_keys"], [])
         self.assertEqual(payload["reliability"]["fallback"]["error_types"], [])
         self.assertEqual(payload["reliability"]["fallback"]["upstream"], [])
+        self.assertIsNone(payload["lifetime"])
+        self.assertEqual(fake_tokens_usage_db.lifetime_calls, 0)
         self.assertNotIn("upstream_key_fingerprint", payload["recent_records"][0])
         self.assertEqual(fake_tokens_usage_db.dashboard_calls[0]["api_key_id"], 11)
         self.assertEqual(fake_fallback_events_db.dashboard_calls[0]["api_key_id"], 11)
