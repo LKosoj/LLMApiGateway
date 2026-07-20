@@ -18,6 +18,13 @@
       "inputRate": "Input rate ($/1M)",
       "outputRate": "Output rate ($/1M)",
       "delete": "Delete"
+    },
+    "autofillBadge": "Auto-filled from OpenRouter",
+    "setManualPrice": "Set manual price",
+    "status": {
+      "operationDefault": "Default {amount} per request (operation model)",
+      "upstreamOnly": "Cost tracked by upstream only",
+      "awaitingCatalog": "Awaiting OpenRouter catalog sync"
     }
   },
   "calculator": {
@@ -53,5 +60,10 @@
     "title": "Pricing changed on the server",
     "message": "Your local edits were kept. Reload the latest pricing only when you are ready to discard those edits.",
     "reload": "Reload and discard local edits"
+  },
+  "detail": {
+    "heading": "Row details",
+    "close": "Close",
+    "open": "View rate details"
   }
 }

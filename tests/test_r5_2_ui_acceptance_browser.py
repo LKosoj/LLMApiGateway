@@ -28,6 +28,8 @@ AXE_PATH = (
     / "axe.min.js"
 )
 MASTER_PAGES = (
+    "/v1/ui/overview",
+    "/v1/ui/activity",
     "/v1/ui/docs",
     "/v1/ui/usage-stats",
     "/v1/ui/quota",
@@ -39,7 +41,13 @@ MASTER_PAGES = (
     "/v1/ui/pricing",
     "/v1/ui/free-models",
 )
-USER_PAGES = MASTER_PAGES[:3] + MASTER_PAGES[-1:]
+USER_PAGES = (
+    "/v1/ui/overview",
+    "/v1/ui/activity",
+    "/v1/ui/docs",
+    "/v1/ui/quota",
+    "/v1/ui/free-models",
+)
 
 
 def _write_config(root: Path) -> Path:
@@ -144,29 +152,32 @@ def _wait_for_navigation(page: Page) -> None:
 
 
 def _assert_current_link_is_visible(page: Page) -> None:
-    scroller = page.locator(".gateway-nav-scroller")
+    # The nav mount now renders as a vertical list inside `<aside
+    # data-gateway-sidebar>`: a permanent sidebar on desktop (>=1024px) or a
+    # drawer that must already be open on mobile. Either way, the current
+    # link must be visible and fall within the sidebar's own bounds.
     current = page.locator('[data-gateway-nav] [aria-current="page"]')
     expect(current).to_have_count(1)
+    expect(current).to_be_visible()
     bounds = page.evaluate(
         """
         () => {
-            const viewport = document.querySelector('.gateway-nav-scroller')
+            const sidebar = document.querySelector('[data-gateway-sidebar]')
                 .getBoundingClientRect();
             const current = document.querySelector(
                 '[data-gateway-nav] [aria-current="page"]'
             ).getBoundingClientRect();
             return {
-                viewportLeft: viewport.left,
-                viewportRight: viewport.right,
-                currentLeft: current.left,
-                currentRight: current.right,
+                sidebarTop: sidebar.top,
+                sidebarBottom: sidebar.bottom,
+                currentTop: current.top,
+                currentBottom: current.bottom,
             };
         }
         """
     )
-    assert bounds["currentLeft"] >= bounds["viewportLeft"] - 1
-    assert bounds["currentRight"] <= bounds["viewportRight"] + 1
-    expect(scroller).to_be_visible()
+    assert bounds["currentTop"] >= bounds["sidebarTop"] - 1
+    assert bounds["currentBottom"] <= bounds["sidebarBottom"] + 1
 
 
 def _assert_axe_no_high_impact(page: Page, selector: str) -> None:
@@ -241,6 +252,8 @@ def test_master_and_user_navigation_matrix_has_exact_role_scope_and_visible_acti
                 page.set_viewport_size({"width": width, "height": 900})
                 page.goto(f"{r5_2_server}{path}")
                 _wait_for_navigation(page)
+                if width < 1024:
+                    page.locator("[data-gateway-nav-toggle]").click()
                 expect(page.locator("[data-gateway-nav]")).to_be_visible()
                 expect(page.locator("[data-gateway-nav] a")).to_have_count(expected_links)
                 _assert_current_link_is_visible(page)
@@ -411,10 +424,15 @@ def test_delayed_and_unknown_identity_are_single_fetch_and_fail_closed(
         context.close()
 
 
-def test_navigation_overflow_cues_work_at_three_widths_and_in_rtl(
+def test_navigation_sidebar_is_rtl_correct_at_three_widths(
     browser: Browser,
     r5_2_server: str,
 ) -> None:
+    # The nav mount now renders as a vertical list (no `.gateway-nav-scroller`,
+    # no `data-overflow-start/end`), so overflow cues no longer apply. This
+    # instead checks that the sidebar (desktop) / drawer (mobile) still lays
+    # out correctly and keeps the current link visible when the document is
+    # RTL, at each of the three widths.
     context = browser.new_context()
     try:
         _login(context, r5_2_server, MASTER_KEY)
@@ -423,38 +441,26 @@ def test_navigation_overflow_cues_work_at_three_widths_and_in_rtl(
             page.set_viewport_size({"width": width, "height": 900})
             page.goto(f"{r5_2_server}/v1/ui/pricing")
             _wait_for_navigation(page)
+            page.evaluate("() => { document.documentElement.dir = 'rtl'; }")
+            if width < 1024:
+                page.locator("[data-gateway-nav-toggle]").click()
             _assert_current_link_is_visible(page)
 
-        page.set_viewport_size({"width": 390, "height": 844})
-        page.evaluate(
-            """
-            () => {
-                window.gatewayNav.destroy();
-                document.documentElement.dir = 'rtl';
-                const root = document.querySelector('[data-gateway-nav]');
-                window.__rtlNavigation = gatewayUi.createNavigation(root, {
-                    direction: 'rtl',
-                    pathname: '/v1/ui/pricing',
-                    role: 'master',
-                    translate: (key) => gatewayI18n.t(key),
-                });
-            }
-            """
-        )
-        page.wait_for_timeout(50)
-        _assert_current_link_is_visible(page)
         assert page.locator(
             "[data-gateway-nav][data-overflow-start], "
             "[data-gateway-nav][data-overflow-end]"
-        ).count() == 1
+        ).count() == 0
     finally:
         context.close()
 
 
-def test_all_six_page_tablists_use_manual_keyboard_activation(
+def test_all_five_page_tablists_use_manual_keyboard_activation(
     browser: Browser,
     r5_2_server: str,
 ) -> None:
+    # rules-editor no longer has a top `.tabs` tablist (only the sidebar,
+    # which is a plain button list, not an ARIA tablist), so it is not
+    # covered by this ARIA-tablist keyboard-navigation check.
     context = browser.new_context(viewport={"width": 1440, "height": 900})
     try:
         _login(context, r5_2_server, MASTER_KEY)
@@ -477,10 +483,6 @@ def test_all_six_page_tablists_use_manual_keyboard_activation(
         page.locator('[data-playground-section-tab="web"]').click()
         expect(page.locator(".web-operation-tabs")).to_be_visible()
         _assert_manual_tab_keyboard(page, ".web-operation-tabs")
-
-        page.goto(f"{r5_2_server}/v1/ui/rules-editor")
-        _wait_for_navigation(page)
-        _assert_manual_tab_keyboard(page, ".container > .tabs")
     finally:
         context.close()
 

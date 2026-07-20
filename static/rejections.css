@@ -39,6 +39,24 @@
     font-size: 13px;
 }
 
+.stale-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--warning);
+    background: var(--warning-soft);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.stale-badge[hidden] {
+    display: none;
+}
+
 .rej-table-wrap {
     overflow-x: auto;
 }
@@ -146,6 +164,104 @@
     color: var(--text-muted);
 }
 
+.rej-table tbody tr[data-clickable] {
+    cursor: pointer;
+}
+
+.rej-table tbody tr[data-clickable]:hover {
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.rej-table tbody tr[data-clickable]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+/* ── Row detail sheet (bottom sheet on all viewports; full data is already
+   visible in the table on desktop, this is a convenience/mobile fallback) ── */
+.rej-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal, 1000);
+}
+
+.rej-sheet-backdrop {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, black 45%, transparent);
+}
+
+.rej-sheet-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 80vh;
+    margin: 0 auto;
+    width: min(560px, 100%);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    box-shadow: var(--shadow-lg);
+    padding: 18px 20px 24px;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+.rej-sheet-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.rej-sheet-head h2 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 16px;
+    font-weight: 700;
+    flex: 1;
+}
+
+#rejDetailClose {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    min-width: 44px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 22px;
+    line-height: 1;
+}
+
+#rejDetailClose:hover {
+    color: var(--text-strong);
+}
+
+.rej-sheet-fields {
+    display: grid;
+    grid-template-columns: minmax(90px, auto) 1fr;
+    gap: 10px 14px;
+    margin: 0;
+}
+
+.rej-sheet-fields dt {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.rej-sheet-fields dd {
+    margin: 0;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
 #messageArea {
     margin-top: 12px;
 }
@@ -174,5 +290,34 @@
 
     .rej-toolbar .spacer {
         display: none;
+    }
+}
+
+/* Mobile detail view: keep only the highest-priority columns (Time, Category,
+   Status) visible in the table; the rest is reachable via the row's detail
+   sheet (see #rejDetailSheet). Also enforce a 44px touch-target minimum on
+   the interactive controls that remain on screen. */
+@media (max-width: 768px) {
+    .rej-table th:nth-child(n+4),
+    .rej-table td:nth-child(n+4) {
+        display: none;
+    }
+
+    .rej-table {
+        min-width: 0;
+        table-layout: fixed;
+    }
+
+    .rej-table th,
+    .rej-table td {
+        padding: 8px 6px;
+        overflow-wrap: anywhere;
+    }
+
+    .rej-toolbar button,
+    .rej-pagination button,
+    .rej-field input,
+    .rej-field select {
+        min-height: 44px;
     }
 }

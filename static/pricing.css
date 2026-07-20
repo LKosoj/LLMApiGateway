@@ -111,6 +111,33 @@
     border-color: var(--accent, #6366f1);
 }
 
+/* Rows for models the gateway actually uses but that have no operator-set
+   rate yet (source !== "configured"/"openrouter_autofill"): Provider/Model
+   stay as plain text (not editable), and the rate columns are replaced by
+   one merged status note plus a "set manual price" action. */
+.pricing-table tr.pricing-row-readonly td {
+    opacity: 0.85;
+}
+
+.pricing-source-note {
+    font-size: 13px;
+    opacity: 0.75;
+}
+
+.pricing-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+}
+
 .pricing-empty-state {
     text-align: center;
     padding: 32px 16px;
@@ -137,6 +164,134 @@
 
 .pricing-table .btn-delete:hover {
     background: rgba(185, 74, 72, 0.08);
+}
+
+/* Expand-to-detail button: only relevant on mobile widths (see media query
+   below), where Input/Output rate columns are hidden and this is the only
+   way to reach them. Hidden by default so it never appears in the desktop
+   tab order. */
+.pricing-table .btn-expand {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: inherit;
+    cursor: pointer;
+    margin-left: 6px;
+}
+
+.pricing-table .btn-expand::after {
+    content: "\203A";
+    font-size: 16px;
+    line-height: 1;
+}
+
+/* ── Row detail sheet (mobile fallback for the hidden rate columns) ── */
+.pricing-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal, 1000);
+}
+
+.pricing-sheet-backdrop {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, black 45%, transparent);
+}
+
+.pricing-sheet-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 80vh;
+    margin: 0 auto;
+    width: min(480px, 100%);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    box-shadow: var(--shadow-lg);
+    padding: 18px 20px 24px;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+.pricing-sheet-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.pricing-sheet-head h2 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 16px;
+    font-weight: 700;
+    flex: 1;
+}
+
+#pricingDetailClose {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    min-width: 44px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 22px;
+    line-height: 1;
+}
+
+#pricingDetailClose:hover {
+    color: var(--text-strong);
+}
+
+.pricing-sheet-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 0;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+}
+
+.pricing-sheet-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 12px;
+}
+
+.pricing-sheet-field label {
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.pricing-sheet-field input {
+    min-height: 44px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: inherit;
+    font-family: inherit;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+.pricing-sheet-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* Calculator */
@@ -278,8 +433,59 @@
     .pricing-toolbar-actions {
         flex-direction: column;
     }
+}
 
+/* Mobile detail view: keep only Provider/Model (+ actions) visible in the
+   table; Input/Output rate are edited via the row's detail sheet (see
+   #pricingDetailSheet). Also enforce a 44px touch-target minimum on the
+   interactive controls that remain on screen. */
+@media (max-width: 768px) {
     .pricing-table {
-        min-width: 760px;
+        min-width: 0;
+        table-layout: fixed;
+    }
+
+    .pricing-table td input[type="text"],
+    .pricing-table td input[type="number"] {
+        min-width: 0;
+    }
+
+    .pricing-table th:nth-child(1),
+    .pricing-table td:nth-child(1) {
+        width: 38%;
+    }
+
+    .pricing-table th:nth-child(2),
+    .pricing-table td:nth-child(2) {
+        width: 38%;
+    }
+
+    .pricing-table th:nth-child(5),
+    .pricing-table td:nth-child(5) {
+        width: 24%;
+    }
+
+    .pricing-table th:nth-child(3),
+    .pricing-table td:nth-child(3),
+    .pricing-table th:nth-child(4),
+    .pricing-table td:nth-child(4) {
+        display: none;
+    }
+
+    .pricing-table .btn-expand {
+        display: inline-flex;
+        min-height: 44px;
+        min-width: 44px;
+    }
+
+    .pricing-table .btn-delete {
+        min-height: 44px;
+    }
+
+    .primary-button,
+    .secondary-button,
+    .pricing-table td input[type="text"],
+    .pricing-table td input[type="number"] {
+        min-height: 44px;
     }
 }

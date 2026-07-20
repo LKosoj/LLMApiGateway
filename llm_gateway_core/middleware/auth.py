@@ -58,8 +58,10 @@ if TYPE_CHECKING:
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 ANTHROPIC_API_KEY_HEADER_NAME = "x-api-key"
 
-DEFAULT_UI_PATH = "/v1/ui/usage-stats"
+DEFAULT_UI_PATH = "/v1/ui/overview"
 LOGIN_PATH = "/auth/login"
+ACCESS_DENIED_PATH = "/v1/ui/access-denied"
+MASTER_ONLY_REDIRECT_PATH = f"{ACCESS_DENIED_PATH}?reason=master-only"
 SESSION_COOKIE_NAME = "llmgateway_session"
 SESSION_TTL_SECONDS = 365 * 24 * 60 * 60
 SESSION_HMAC_CONFIGURATION_ERROR = "GATEWAY_API_KEY must be configured for session HMAC signing."
@@ -826,7 +828,7 @@ async def _prepare_api_key_auth(
                 if _is_html_navigation(request):
                     return (
                         RedirectResponse(
-                            url=DEFAULT_UI_PATH,
+                            url=MASTER_ONLY_REDIRECT_PATH,
                             status_code=status.HTTP_303_SEE_OTHER,
                         ),
                         None,

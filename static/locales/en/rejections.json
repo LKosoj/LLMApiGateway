@@ -4,6 +4,12 @@
     "refresh": "Refresh",
     "reset": "Reset"
   },
+  "detail": {
+    "close": "Close",
+    "heading": "Rejection details",
+    "requestId": "Request ID",
+    "xTitle": "X-Title"
+  },
   "empty": "No rejections match the current filters.",
   "errors": {
     "invalidFilters": "Invalid filter values.",
@@ -37,5 +43,8 @@
     "reason": "Reason",
     "status": "Status",
     "time": "Time"
+  },
+  "row": {
+    "open": "Open rejection {requestId} details"
   }
 }

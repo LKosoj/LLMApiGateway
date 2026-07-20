@@ -68,10 +68,14 @@
     "formulaPages": "Formula pages",
     "maxPages": "Max pages",
     "pdfPassword": "PDF password",
-    "savePreprocessedPdf": "Save preprocessed PDF"
+    "savePreprocessedPdf": "Save preprocessed PDF",
+    "advancedSettings": "Advanced settings",
+    "topP": "Top-p",
+    "maxTokens": "Max tokens"
   },
   "actions": {
     "sendMessage": "Send message",
+    "cancelMessage": "Cancel",
     "resetChat": "Reset chat",
     "runSearch": "Run search",
     "fetchRead": "Fetch and parse",
@@ -133,6 +137,8 @@
     "pdfDone": "Done in {seconds, number}s · downloads: {count, number}",
     "requestFailed": "Request failed.",
     "chatReset": "Chat reset.",
+    "chatCancelled": "Message cancelled.",
+    "assistantTyping": "Assistant is typing…",
     "modelsLoadFailed": "Failed to load models.",
     "tooManyFiles": "Select no more than {count, number} files for {field}."
   },
@@ -152,6 +158,8 @@
     "rawJson": "Raw JSON response",
     "assistant": "Assistant",
     "user": "User",
+    "cancelled": "(cancelled)",
+    "streamError": "Streaming error",
     "analysisRaw": "Analysis (raw)",
     "analysisUnavailable": "Analysis unavailable",
     "agreements": "Agreements",

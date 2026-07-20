@@ -177,6 +177,14 @@ textarea {
     font-variant-numeric: tabular-nums;
 }
 
+/* Touch-target minimum (WCAG 2.5.5) — opt-in utility for interactive controls
+ * that need to grow to 44px on touch/mobile without affecting their default
+ * (desktop) sizing everywhere else. */
+.touch-target-min {
+    min-height: 44px;
+    min-width: 44px;
+}
+
 /* ---------- Buttons ---------- */
 
 .primary-button,

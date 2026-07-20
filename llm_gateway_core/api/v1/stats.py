@@ -236,6 +236,38 @@ async def get_usage_stats_page(request: Request):
         raise HTTPException(status_code=500, detail="Could not load usage statistics page.")
 
 
+@stats_router.get("/ui/overview", response_class=HTMLResponse, tags=["Usage Stats UI"])
+async def get_overview_page(request: Request):
+    """Serves the HTML page for the gateway overview / landing dashboard."""
+    overview_html_path = HTML_DIR / "overview.html"
+    if not overview_html_path.exists():
+        logging.error(f"Overview HTML file not found at {overview_html_path}")
+        raise HTTPException(status_code=404, detail="Overview page not found.")
+    try:
+        return HTMLResponse(content=await get_template(overview_html_path))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error reading overview HTML file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load overview page.")
+
+
+@stats_router.get("/ui/activity", response_class=HTMLResponse, tags=["Usage Stats UI"])
+async def get_activity_page(request: Request):
+    """Serves the HTML page for the unified request activity journal."""
+    activity_html_path = HTML_DIR / "activity.html"
+    if not activity_html_path.exists():
+        logging.error(f"Activity HTML file not found at {activity_html_path}")
+        raise HTTPException(status_code=404, detail="Activity page not found.")
+    try:
+        return HTMLResponse(content=await get_template(activity_html_path))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error reading activity HTML file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load activity page.")
+
+
 @stats_router.get("/api/usage-stats/dashboard", response_class=JSONResponse, tags=["Usage Stats API"])
 async def get_usage_stats_dashboard(
     request: Request,

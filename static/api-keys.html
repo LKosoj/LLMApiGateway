@@ -35,6 +35,22 @@
             <button id="createKeyBtn" class="primary" data-i18n="api_keys:toolbar.create">+ Create API Key</button>
         </div>
 
+        <div class="keys-filters">
+            <input type="search" id="keysSearchInput" data-i18n-placeholder="api_keys:search.placeholder" placeholder="Search by name or ID">
+            <div class="keys-sort" role="group" data-i18n-aria-label="api_keys:sort.groupLabel" aria-label="Sort API keys">
+                <span class="keys-sort-label" data-i18n="api_keys:sort.label">Sort by:</span>
+                <button type="button" id="sortByName" class="keys-sort-btn" data-sort-field="name">
+                    <span data-i18n="api_keys:sort.name">Name</span><span class="sort-indicator" aria-hidden="true"></span>
+                </button>
+                <button type="button" id="sortByCreated" class="keys-sort-btn" data-sort-field="created">
+                    <span data-i18n="api_keys:sort.created">Created</span><span class="sort-indicator" aria-hidden="true"></span>
+                </button>
+                <button type="button" id="sortByLastUsed" class="keys-sort-btn" data-sort-field="lastUsed">
+                    <span data-i18n="api_keys:sort.lastUsed">Last used</span><span class="sort-indicator" aria-hidden="true"></span>
+                </button>
+            </div>
+        </div>
+
         <div id="keysArea">
             <p data-i18n="api_keys:table.loading">Loading API keys…</p>
         </div>
@@ -46,6 +62,8 @@
     <div id="keyModal" class="modal-overlay" hidden>
         <div class="modal">
             <h2 id="modalTitle" data-i18n="api_keys:modal.createTitle">Create API Key</h2>
+            <div id="modalError" class="modal-error"></div>
+            <div id="modalErrorDetail" class="message-detail" data-i18n-raw-detail></div>
             <div id="newKeyNotice" class="new-key-notice" style="display:none;">
                 <strong data-i18n="api_keys:modal.keyNotice.label">API key value</strong>
                 <span data-i18n="api_keys:modal.keyNotice.description">— the full value is available to master admins in this modal.</span>
@@ -54,10 +72,12 @@
             <div class="modal-field">
                 <label for="fieldName" data-i18n="api_keys:modal.fields.name">Name</label>
                 <input type="text" id="fieldName" placeholder="e.g. team-backend" data-i18n-placeholder="api_keys:modal.placeholders.name">
+                <p id="fieldNameError" class="field-error" hidden></p>
             </div>
             <div class="modal-field">
                 <label for="fieldBudget"><span data-i18n="api_keys:modal.fields.budget">Budget, USD</span> <span class="hint" data-i18n="api_keys:modal.hints.budget">(leave empty for no limit)</span></label>
                 <input type="number" id="fieldBudget" step="0.0001" placeholder="e.g. 10.00" data-i18n-placeholder="api_keys:modal.placeholders.budget">
+                <p id="fieldBudgetError" class="field-error" hidden></p>
             </div>
             <div class="modal-field">
                 <label for="fieldBudgetPeriod"><span data-i18n="api_keys:modal.fields.budgetPeriod">Budget reset period</span> <span class="hint" data-i18n="api_keys:modal.hints.budgetPeriod">(periodic reset of spent_usd at UTC boundary)</span></label>
@@ -71,21 +91,35 @@
                 <div style="flex:1;">
                     <label for="fieldRpm" data-i18n="api_keys:modal.fields.rpm">RPM</label>
                     <input type="number" id="fieldRpm" min="0" placeholder="requests/min" data-i18n-placeholder="api_keys:modal.placeholders.rpm">
+                    <p id="fieldRpmError" class="field-error" hidden></p>
                 </div>
                 <div style="flex:1;">
                     <label for="fieldTpm" data-i18n="api_keys:modal.fields.tpm">TPM</label>
                     <input type="number" id="fieldTpm" min="0" placeholder="tokens/min" data-i18n-placeholder="api_keys:modal.placeholders.tpm">
+                    <p id="fieldTpmError" class="field-error" hidden></p>
                 </div>
             </div>
             <div class="modal-field">
-                <label><span data-i18n="api_keys:modal.fields.allowedModels">Allowed Models</span> <span class="hint" data-i18n="api_keys:modal.hints.allowedModels">(leave all unchecked to allow any)</span></label>
-                <div id="allowedModelsList" class="allowed-models-list" data-model-catalog-state="idle">
+                <label id="allowedModelsLabel"><span data-i18n="api_keys:modal.fields.allowedModels">Allowed Models</span></label>
+                <div class="allowed-models-mode" role="radiogroup" aria-labelledby="allowedModelsLabel">
+                    <label>
+                        <input type="radio" name="allowedModelsMode" id="allowedModelsModeAll" value="all">
+                        <span data-i18n="api_keys:allowedModels.all">All configured models</span>
+                    </label>
+                    <label>
+                        <input type="radio" name="allowedModelsMode" id="allowedModelsModeSubset" value="subset">
+                        <span data-i18n="api_keys:allowedModels.subset">Only selected models</span>
+                    </label>
+                </div>
+                <p id="fieldAllowedModelsError" class="field-error" hidden></p>
+                <div id="allowedModelsList" class="allowed-models-list" data-model-catalog-state="idle" style="display:none;">
                     <span class="hint" data-i18n="api_keys:modelCatalogLoading">Loading models…</span>
                 </div>
             </div>
             <div class="modal-field">
                 <label for="fieldMetadata"><span data-i18n="api_keys:modal.fields.metadata">Metadata</span> <span class="hint" data-i18n="api_keys:modal.hints.metadata">(JSON object, optional)</span></label>
                 <textarea id="fieldMetadata" placeholder='{"owner": "team-a"}' data-i18n-placeholder="api_keys:modal.placeholders.metadata"></textarea>
+                <p id="fieldMetadataError" class="field-error" hidden></p>
             </div>
             <div class="modal-field" id="editOnlyFields" style="display:none;">
                 <label style="display:flex; align-items:center; gap:6px; font-weight:normal;">

@@ -42,6 +42,56 @@
             </div>
         </header>
 
+        <section id="docs-quickstart" class="docs-quickstart">
+            <div class="section-heading">
+                <p class="docs-kicker"><span data-i18n="docs:quickstart.kicker">Быстрый старт</span></p>
+                <h2><span data-i18n="docs:quickstart.heading">С чего начать</span></h2>
+            </div>
+            <div class="quickstart-grid">
+                <article class="quickstart-card">
+                    <h3><span data-i18n="docs:quickstart.apiKey.title">1. Получите API-ключ</span></h3>
+                    <p><span data-i18n="docs:quickstart.apiKey.text001">Master-ключ задаётся переменной окружения</span> <code>GATEWAY_API_KEY</code> <span data-i18n="docs:quickstart.apiKey.text002">на сервере gateway. Для отдельных пользователей создайте виртуальный ключ на странице</span> <a href="/v1/ui/api-keys"><span data-i18n="docs:quickstart.apiKey.linkText">API-ключи</span></a> <span data-i18n="docs:quickstart.apiKey.text003">(доступно только master-ключу).</span></p>
+                </article>
+                <article class="quickstart-card">
+                    <h3><span data-i18n="docs:quickstart.curl.title">2. Первый запрос через curl</span></h3>
+                    <p><span data-i18n="docs:quickstart.curl.text">Отправьте запрос на chat completions endpoint, указав ваш API-ключ.</span></p>
+                    <div class="docs-code-block">
+                        <pre class="quickstart-pre" tabindex="0"><code>curl -s <span data-docs-api-base></span>/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llmgateway/chat",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'</code></pre>
+                        <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                            <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                        </button>
+                    </div>
+                </article>
+                <article class="quickstart-card">
+                    <h3><span data-i18n="docs:quickstart.python.title">3. Python SDK</span></h3>
+                    <p><span data-i18n="docs:quickstart.python.text">Используйте OpenAI-совместимый SDK, указав base_url gateway.</span></p>
+                    <div class="docs-code-block">
+                        <pre class="quickstart-pre" tabindex="0"><code>from openai import OpenAI
+
+client = OpenAI(base_url="<span data-docs-api-base></span>", api_key="$GATEWAY_API_KEY")
+response = client.chat.completions.create(
+    model="llmgateway/chat",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)</code></pre>
+                        <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                            <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                        </button>
+                    </div>
+                </article>
+                <article class="quickstart-card">
+                    <h3><span data-i18n="docs:quickstart.usage.title">4. Посмотрите расход</span></h3>
+                    <p><span data-i18n="docs:quickstart.usage.text001">Расход по ключам и моделям доступен на странице</span> <a href="/v1/ui/usage-stats"><span data-i18n="docs:quickstart.usage.linkText">Аналитика</span></a><span data-i18n="docs:quickstart.usage.text002">.</span></p>
+                </article>
+            </div>
+        </section>
+
         <div class="docs-tabs" role="tablist" aria-label="Documentation sections" data-i18n-aria-label="docs:tabs.ariaLabel">
             <button class="docs-tab-button active" type="button" role="tab" aria-selected="true" aria-controls="apiDocsPanel" data-docs-tab="api">
                 <span data-i18n="docs:tabs.api">Gateway API</span>
@@ -52,7 +102,7 @@
         </div>
 
         <div id="apiDocsPanel" class="docs-tab-panel active" role="tabpanel">
-        <nav class="docs-toc" aria-label="Documentation sections" data-i18n-aria-label="docs:tabs.ariaLabel">
+        <nav class="docs-toc" aria-label="Documentation sections" data-i18n-aria-label="docs:tabs.ariaLabel" data-docs-toc>
             <a href="#models"><span data-i18n="docs:toc.models">Модели</span></a>
             <a href="#auth"><span data-i18n="docs:toc.auth">Авторизация</span></a>
             <a href="#text"><span data-i18n="docs:toc.text">Text</span></a>
@@ -66,6 +116,7 @@
             <a href="#keys"><span data-i18n="docs:toc.keys">Доступ</span></a>
         </nav>
 
+        <div class="docs-main">
         <section id="models" class="docs-section">
             <div class="section-heading">
                 <p class="docs-kicker"><span data-i18n="docs:sections.models.kicker">Gateway model names</span></p>
@@ -185,6 +236,7 @@
                     </table>
                 </article>
             </div>
+            <div class="docs-code-block">
             <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/rerank \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
@@ -199,6 +251,10 @@
     "top_n": 2,
     "return_documents": true
   }'</code></pre>
+            <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </button>
+            </div>
             <p><span data-i18n="docs:sections.rerank.text012">В отдельных конфигурациях ответ может быть в Jina-совместимом поле</span> <code>results[]</code>.</p>
         </section>
 
@@ -349,6 +405,7 @@
             </div>
             <div class="docs-panel">
                 <h3><span data-i18n="docs:sections.pdf.subheading2">Async job example</span></h3>
+                <div class="docs-code-block">
                 <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/pdf/jobs \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -F "model=llmgateway/pdf-converter" \
@@ -360,6 +417,10 @@
   -F "formulas_max_pages=10" \
   -F "max_pages=47" \
   -F "ocr_preprocess_save=true"</code></pre>
+                <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                    <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                </button>
+                </div>
                 <p>
                     <span data-i18n="docs:sections.pdf.text032">После завершения скачивайте файлы через</span>
                     <code>/v1/pdf/jobs/{job_id}/download/{artifact}?model=llmgateway/pdf-converter</code>.
@@ -474,6 +535,7 @@
             <div class="docs-grid two-columns">
                 <div class="docs-panel">
                     <h3><span data-i18n="docs:sections.web.subheading">Web search</span></h3>
+                    <div class="docs-code-block">
                     <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/search \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
@@ -484,9 +546,14 @@
     "language": "ru",
     "include_images": true
   }'</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
                 </div>
                 <div class="docs-panel">
                     <h3><span data-i18n="docs:sections.web.subheading2">Web read</span></h3>
+                    <div class="docs-code-block">
                     <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/read \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
@@ -496,9 +563,14 @@
     "format": "markdown",
     "include_images": true
   }'</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
                 </div>
                 <div class="docs-panel">
                     <h3><span data-i18n="docs:sections.web.subheading3">Web research</span></h3>
+                    <div class="docs-code-block">
                     <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/research \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
@@ -510,9 +582,14 @@
     "max_articles": 8,
     "output_language": "ru"
   }'</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
                 </div>
                 <div class="docs-panel">
                     <h3><span data-i18n="docs:sections.web.subheading4">Tavily-compatible search</span></h3>
+                    <div class="docs-code-block">
                     <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/tavily/search \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
@@ -525,9 +602,14 @@
     "include_domains": ["example.com"],
     "include_images": true
   }'</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
                 </div>
                 <div class="docs-panel">
                     <h3><span data-i18n="docs:sections.web.subheading5">Tavily-compatible extract</span></h3>
+                    <div class="docs-code-block">
                     <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/tavily/extract \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
@@ -537,9 +619,14 @@
     "format": "markdown",
     "include_images": true
   }'</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
                 </div>
                 <div class="docs-panel">
                     <h3><span data-i18n="docs:sections.web.subheading6">Web deep research</span></h3>
+                    <div class="docs-code-block">
                     <pre tabindex="0"><code>curl -s <span data-docs-api-base></span>/web/deep-research \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
@@ -554,6 +641,10 @@
     "format": "markdown",
     "image_generation": true
   }'</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
                 </div>
             </div>
         </section>
@@ -597,6 +688,7 @@
                 status/result/download модель передаётся в query string и проверяется так же, как при создании job.</span>
             </p>
         </section>
+        </div>
         </div>
 
         <section id="freeTierDocsPanel" class="docs-tab-panel docs-section" role="tabpanel" hidden>

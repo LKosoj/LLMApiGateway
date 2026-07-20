@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" data-i18n-page="activity">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="activity:pageTitle">LLM Gateway - Activity</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/theme.css">
+    <link rel="stylesheet" href="/static/activity.css">
+    <link rel="stylesheet" href="/static/request-drawer.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
+    <script src="/static/theme.js"></script>
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
+        </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
+    </div>
+
+    <div class="container">
+        <h1 data-i18n="activity:heading">Activity</h1>
+        <p data-i18n="activity:intro">A unified journal of gateway requests: successful and in-flight usage, plus governance rejections.</p>
+
+        <div class="act-toolbar">
+            <div class="act-field">
+                <label for="filterStatus" data-i18n="activity:filters.status">Status</label>
+                <select id="filterStatus">
+                    <option value="" data-i18n="activity:filters.statusOptions.all">All (2xx / active)</option>
+                    <option value="rejected" data-master-only hidden data-i18n="activity:filters.statusOptions.rejected">Rejected (4xx)</option>
+                    <option value="server_error" data-i18n="activity:filters.statusOptions.serverError">Server errors (5xx)</option>
+                </select>
+            </div>
+            <div class="act-field">
+                <label for="filterSince" data-i18n="activity:filters.since">Since (UTC)</label>
+                <input type="datetime-local" id="filterSince">
+            </div>
+            <div class="act-field">
+                <label for="filterProvider" data-i18n="activity:filters.provider">Provider</label>
+                <input type="text" id="filterProvider" placeholder="any" data-i18n-placeholder="activity:filters.any">
+            </div>
+            <div class="act-field" data-master-only hidden>
+                <label for="filterKeyId" data-i18n="activity:filters.keyId">Key ID</label>
+                <input type="number" id="filterKeyId" min="0" placeholder="any" data-i18n-placeholder="activity:filters.any">
+            </div>
+            <div class="act-field">
+                <label for="filterRequestId" data-i18n="activity:filters.requestId">Request ID</label>
+                <input type="text" id="filterRequestId" placeholder="any" data-i18n-placeholder="activity:filters.any">
+            </div>
+            <div class="act-field">
+                <label for="filterLimit" data-i18n="activity:filters.perPage">Per page</label>
+                <select id="filterLimit">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                </select>
+            </div>
+            <button id="applyFiltersBtn" class="primary" data-i18n="activity:actions.apply">Apply</button>
+            <button id="resetFiltersBtn" data-i18n="activity:actions.reset">Reset</button>
+            <div class="spacer"></div>
+            <button id="refreshBtn" data-i18n="activity:actions.refresh">Refresh</button>
+        </div>
+
+        <p class="act-hint" data-i18n="activity:filters.pageScopedHint">Since applies only to the Rejected (4xx) view. Provider, Key ID and Request ID filter the currently loaded page only.</p>
+
+        <div id="actMeta" class="act-meta"><span id="actMetaText"></span><span id="actStaleBadge" class="stale-badge" hidden></span></div>
+
+        <div id="serverErrorEmpty" class="act-empty" hidden>
+            <strong data-i18n="activity:serverError.title">No data source for 5xx</strong>
+            <span data-i18n="activity:serverError.reason">The gateway does not currently persist a journal of upstream 5xx errors, so this view cannot be populated.</span>
+        </div>
+
+        <div id="actListing">
+            <div class="act-table-wrap" tabindex="0">
+                <table class="act-table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="activity:table.time">Time</th>
+                            <th data-i18n="activity:table.requestId">Request ID</th>
+                            <th data-master-only hidden data-i18n="activity:table.key">Key</th>
+                            <th data-i18n="activity:table.operation">Operation</th>
+                            <th data-i18n="activity:table.model">Model</th>
+                            <th data-i18n="activity:table.provider">Provider</th>
+                            <th data-i18n="activity:table.status">Status</th>
+                            <th data-i18n="activity:table.latency">Latency</th>
+                            <th data-i18n="activity:table.cost">Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody id="actTableBody">
+                        <tr><td colspan="9" class="act-empty-cell" data-i18n="activity:loading">Loading activity...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="act-pagination">
+                <button id="prevPageBtn" disabled data-i18n="activity:pagination.newer">← Newer</button>
+                <span id="pageInfo"></span>
+                <button id="nextPageBtn" disabled data-i18n="activity:pagination.older">Older →</button>
+            </div>
+        </div>
+
+        <div id="messageArea" class="error-banner" hidden></div>
+        <pre id="messageDetail" data-i18n-raw-detail hidden></pre>
+    </div>
+
+    <div id="requestDrawerMount"></div>
+
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
+    <script src="/static/request-drawer.js"></script>
+    <script src="/static/activity.js"></script>
+</body>
+</html>

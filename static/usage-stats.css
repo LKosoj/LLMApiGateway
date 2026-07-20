@@ -269,7 +269,7 @@ table {
     border-collapse: separate;
     border-spacing: 0;
     margin-top: 15px;
-    font-size: 8px; /* Required by tests */
+    font-size: 13px;
     font-variant-numeric: tabular-nums;
     /* Surface choice: border only, no shadow. */
     border: 1px solid var(--border);
@@ -765,6 +765,12 @@ body.dark-mode .error-badge-overflow {
 }
 
 /* ── Topology tab ─────────────────────────────────────────── */
+.topology-scope-note {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
 .topology-toolbar {
     margin-bottom: 12px;
     display: flex;
@@ -1044,6 +1050,11 @@ body.dark-mode .error-badge-overflow {
     .controls button,
     .pagination-controls button {
         width: 100%;
+        min-height: 44px;
+    }
+
+    .topology-toolbar button {
+        min-height: 44px;
     }
 
     #statsArea,

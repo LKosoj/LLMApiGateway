@@ -1,0 +1,72 @@
+{
+  "pageTitle": "LLM Gateway - Обзор",
+  "heading": "Обзор",
+  "intro": "Краткая сводка активности шлюза, стоимости и состояния.",
+  "filters": {
+    "range": "Период",
+    "rangeOptions": {
+      "24h": "Последние 24 часа",
+      "7d": "Последние 7 дней",
+      "30d": "Последние 30 дней",
+      "90d": "Последние 90 дней"
+    }
+  },
+  "actions": {
+    "refresh": "Обновить"
+  },
+  "health": {
+    "label": "Состояние шлюза",
+    "unavailable": "Состояние недоступно",
+    "status": {
+      "ok": "OK ({phase})",
+      "error": "Сбой ({phase})"
+    },
+    "phase": {
+      "starting": "запускается",
+      "ready": "готов",
+      "stopping": "останавливается",
+      "failed": "ошибка",
+      "unknown": "неизвестно"
+    },
+    "version": "v{version}"
+  },
+  "empty": {
+    "title": "Пока нет данных",
+    "reason": "За выбранный период и в текущей области видимости запросов не зафиксировано."
+  },
+  "kpis": {
+    "requests": "Запросы",
+    "cost": "Стоимость",
+    "p95Latency": "P95 задержка",
+    "activeRequests": "Активные запросы",
+    "errors": "Ошибки fallback",
+    "rejections": "Отклонения"
+  },
+  "trend": {
+    "heading": "Динамика",
+    "metricLabel": "Метрика",
+    "metricRequests": "Запросы",
+    "metricCost": "Стоимость",
+    "meta": "{count, plural, one {# интервал} few {# интервала} many {# интервалов} other {# интервала}}",
+    "empty": "Нет данных для графика за этот период.",
+    "aria": "График динамики использования"
+  },
+  "topModels": {
+    "heading": "Топ моделей",
+    "columns": {
+      "model": "Модель",
+      "requests": "Запросы",
+      "cost": "Стоимость"
+    },
+    "empty": "За этот период нет данных по моделям."
+  },
+  "loading": "Загрузка…",
+  "values": {
+    "notAvailable": "Н/Д",
+    "unknownLabel": "Неизвестно"
+  },
+  "format": {
+    "milliseconds": "{value} мс",
+    "seconds": "{value} с"
+  }
+}

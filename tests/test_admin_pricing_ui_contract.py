@@ -145,6 +145,11 @@ def test_pricing_conflict_ui_uses_strict_paired_i18n_catalogs() -> None:
         "editor.table.inputRate",
         "editor.table.outputRate",
         "editor.table.delete",
+        "editor.autofillBadge",
+        "editor.setManualPrice",
+        "editor.status.operationDefault",
+        "editor.status.upstreamOnly",
+        "editor.status.awaitingCatalog",
         "calculator.title",
         "calculator.model",
         "calculator.selectModel",
@@ -167,6 +172,9 @@ def test_pricing_conflict_ui_uses_strict_paired_i18n_catalogs() -> None:
         "conflict.title",
         "conflict.message",
         "conflict.reload",
+        "detail.heading",
+        "detail.close",
+        "detail.open",
     }
     assert flatten(catalogs["en"]) == expected_keys
     assert flatten(catalogs["ru"]) == expected_keys
@@ -184,9 +192,18 @@ def test_pricing_conflict_ui_uses_strict_paired_i18n_catalogs() -> None:
             "page": "pricing",
             "file": "static/pricing.js",
             "kind": "js-sink",
-            "line": 384,
+            "line": 487,
             "column": 13,
             "text": "USD",
             "classification": "protocol",
-        }
+        },
+        {
+            "page": "pricing",
+            "file": "static/pricing.js",
+            "kind": "js-sink",
+            "line": 508,
+            "column": 33,
+            "text": "data-pricing-default-cost",
+            "classification": "code",
+        },
     ]

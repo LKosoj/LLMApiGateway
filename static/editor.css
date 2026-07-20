@@ -1037,10 +1037,18 @@ div[style*="position:relative"] {
     letter-spacing: 0;
     font-family: inherit;
     transition: background-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
-    margin-bottom: 15px; /* Keep its original margin */
-    flex-shrink: 0; /* Prevent button from shrinking */
+    margin-bottom: 15px;
+    flex-shrink: 0;
     box-shadow: var(--shadow-sm);
     box-shadow: 0 4px 12px -2px color-mix(in srgb, var(--accent) 35%, transparent), 0 2px 4px -2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* `#saveButton { display: block }` has higher specificity than the UA
+   `[hidden] { display: none }` rule, so without this guard the button stays
+   visible on tabs where JS sets `hidden` (openrouter-free, fallback-eval) —
+   just with an empty label. */
+#saveButton[hidden] {
+    display: none;
 }
 
 #saveButton:hover {
@@ -1245,6 +1253,10 @@ select:focus {
         width: 100%;
     }
 
+    .secondary-button {
+        min-height: 44px;
+    }
+
     .editor-conflict-state {
         align-items: stretch;
         flex-direction: column;
@@ -1259,6 +1271,228 @@ select:focus {
     .provider-base-url-field,
     .provider-api-key-field {
         grid-column: span 1;
+    }
+}
+
+/* Entity-first shell: sidebar entity list + main editor + optional inspector */
+.editor-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.editor-shell {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    flex: 1;
+    min-width: 0;
+}
+
+.editor-sidebar {
+    flex: 0 0 260px;
+    width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    position: sticky;
+    top: 70px;
+    max-height: calc(100dvh - 90px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-sunken);
+    box-sizing: border-box;
+}
+
+.editor-sidebar-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 8px 12px;
+    font-size: 14px;
+    background: var(--bg-elevated);
+    color: var(--text);
+    font-family: inherit;
+    outline: none;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.editor-sidebar-search-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.editor-entity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.editor-entity-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.editor-entity-group[hidden] {
+    display: none;
+}
+
+.editor-entity-group-title {
+    margin: 0 0 4px;
+    padding: 0 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text);
+}
+
+.editor-entity-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.editor-entity-item[hidden] {
+    display: none;
+}
+
+.editor-entity-item.is-filtered {
+    display: none;
+}
+
+.editor-entity-item:hover {
+    background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+}
+
+.editor-entity-item.active {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    font-weight: 700;
+}
+
+.editor-entity-item:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.editor-entity-empty {
+    margin: 0;
+    padding: 10px 8px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.editor-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+@media (max-width: 960px) {
+    .editor-shell {
+        flex-direction: column;
+    }
+
+    .editor-sidebar {
+        position: static;
+        width: 100%;
+        max-height: none;
+    }
+}
+
+.editor-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-nav);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 14px 0 10px;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: var(--shadow-md);
+}
+
+.editor-footer-status {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.editor-footer-doc {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-strong);
+}
+
+.editor-footer-validation {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.editor-footer-validation.is-dirty {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.editor-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+}
+
+.editor-footer-actions #saveButton {
+    width: auto;
+    min-width: 200px;
+    margin-bottom: 0;
+}
+
+@media (max-width: 640px) {
+    .editor-footer {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .editor-footer-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .editor-footer-actions #saveButton {
+        width: 100%;
+        min-width: 0;
     }
 }
 

@@ -242,6 +242,7 @@ class OpenRouterFreeModelsService:
         self._refresh_lock = asyncio.Lock()
         self._snapshot: OpenRouterFreeModelsSnapshot | None = None
         self._capability_index: dict[str, CapabilityMetadata] = {}
+        self._pricing_index: dict[str, dict[str, Any]] = {}
         self._configured = False
         self._running = False
         self._last_error: str | None = None
@@ -700,6 +701,21 @@ class OpenRouterFreeModelsService:
         async with self._lock:
             return dict(self._capability_index)
 
+    async def get_pricing_catalog(self) -> dict[str, dict[str, Any]] | None:
+        """Full-catalog per-model pricing (paid + free), keyed by exact catalog id.
+
+        Unlike ``get_capability_index()`` (keyed by a lossy basename), this is
+        keyed by the raw OpenRouter model id (e.g. ``"openai/gpt-oss-120b"``)
+        so pricing autofill can match a used model exactly, including looking
+        up a ``:free`` variant's paid base model. Returns ``None`` before the
+        first successful refresh (catalog not yet loaded) so callers can tell
+        "not loaded" apart from "loaded, no pricing data".
+        """
+        async with self._lock:
+            if self._snapshot is None:
+                return None
+            return dict(self._pricing_index)
+
     def _acquire_runtime_run(
         self,
         *,
@@ -958,6 +974,7 @@ class OpenRouterFreeModelsService:
             self._select_openrouter_api_key(context.provider_api_key),
         )
         capability_index = _build_capability_index(catalog)
+        pricing_index = _build_pricing_index(catalog)
         eligible_entries = [entry for entry in catalog if _is_eligible_free_text_model(entry, self._time_func())]
         fingerprint = _catalog_fingerprint(eligible_entries)
 
@@ -982,6 +999,7 @@ class OpenRouterFreeModelsService:
         async with self._lock:
             self._snapshot = snapshot
             self._capability_index = capability_index
+            self._pricing_index = pricing_index
             self._last_checked_at = snapshot.updated_at
             self._last_error = None
 
@@ -1568,6 +1586,24 @@ def _build_capability_index(catalog: list[dict[str, Any]]) -> dict[str, Capabili
         existing = index.get(key)
         if existing is None or (metadata.context_window or -1) > (existing.context_window or -1):
             index[key] = metadata
+    return index
+
+
+def _build_pricing_index(catalog: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Full-catalog pricing index, keyed by the exact (unmodified) catalog id.
+
+    Unlike ``_build_capability_index``, this preserves the full provider-
+    qualified id (e.g. ``"openai/gpt-oss-120b"``) so callers can match a used
+    model exactly instead of risking a cross-vendor basename collision.
+    """
+    index: dict[str, dict[str, Any]] = {}
+    for entry in catalog:
+        model_id = entry.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        pricing = entry.get("pricing")
+        if isinstance(pricing, dict):
+            index[model_id] = pricing
     return index
 
 

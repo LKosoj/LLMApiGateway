@@ -1,0 +1,96 @@
+{
+  "pageTitle": "LLM Gateway - Activity",
+  "heading": "Activity",
+  "intro": "A unified journal of gateway requests: successful and in-flight usage, plus governance rejections.",
+  "filters": {
+    "status": "Status",
+    "statusOptions": {
+      "all": "All (2xx / active)",
+      "rejected": "Rejected (4xx)",
+      "serverError": "Server errors (5xx)"
+    },
+    "since": "Since (UTC)",
+    "provider": "Provider",
+    "keyId": "Key ID",
+    "requestId": "Request ID",
+    "perPage": "Per page",
+    "any": "Any",
+    "pageScopedHint": "Since applies only to the Rejected (4xx) view. Provider, Key ID and Request ID filter the currently loaded page only."
+  },
+  "actions": {
+    "apply": "Apply",
+    "reset": "Reset",
+    "refresh": "Refresh",
+    "copy": "Copy"
+  },
+  "serverError": {
+    "title": "No data source for 5xx",
+    "reason": "The gateway does not currently persist a journal of upstream 5xx errors, so this view cannot be populated."
+  },
+  "loading": "Loading activity…",
+  "table": {
+    "time": "Time",
+    "requestId": "Request ID",
+    "key": "Key",
+    "operation": "Operation",
+    "model": "Model",
+    "provider": "Provider",
+    "status": "Status",
+    "latency": "Latency",
+    "cost": "Cost",
+    "empty": "No activity matches the current filters on this page."
+  },
+  "pagination": {
+    "newer": "← Newer",
+    "older": "Older →",
+    "empty": "0 of 0",
+    "range": "{start}–{end} of {total}"
+  },
+  "summary": "Showing {visible} of {loaded} loaded ({total} total) · updated {time}",
+  "drawer": {
+    "heading": "Request details",
+    "close": "Close",
+    "fields": {
+      "requestId": "Request ID",
+      "timeUtc": "Time (UTC)",
+      "timeLocal": "Time (local)",
+      "status": "Status",
+      "virtualKey": "Virtual key",
+      "operation": "Operation",
+      "requestedModel": "Requested model",
+      "provider": "Provider",
+      "resolvedModel": "Resolved model",
+      "promptTokens": "Prompt tokens",
+      "completionTokens": "Completion tokens",
+      "cost": "Cost",
+      "ttft": "TTFT (first token)",
+      "duration": "Duration",
+      "endpoint": "Endpoint",
+      "clientIp": "Client IP",
+      "xTitle": "X-Title",
+      "reason": "Reason"
+    },
+    "timeline": {
+      "heading": "Fallback timeline",
+      "unavailable": "The gateway does not currently persist a per-request fallback attempt log, so this timeline cannot be populated."
+    }
+  },
+  "status": {
+    "running": "Running",
+    "success": "Success"
+  },
+  "row": {
+    "openUsage": "Open request {requestId} details",
+    "openRejection": "Open rejection {requestId} details"
+  },
+  "values": {
+    "notAvailable": "N/A"
+  },
+  "format": {
+    "milliseconds": "{value} ms",
+    "seconds": "{value} s"
+  },
+  "errors": {
+    "invalidResponse": "The activity response has an invalid format."
+  }
+}

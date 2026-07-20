@@ -29,6 +29,14 @@ from ...services.config_updates import (
     ConfigUpdateError,
     ConfigUpdateErrorCode,
 )
+from ...services.pricing_autofill import (
+    PricingClassification,
+    PricingRow,
+    PricingSource,
+    classify_pricing_rows,
+    collect_operation_used_models,
+    collect_used_models,
+)
 from ...services.runtime_config import AppServices, RuntimeSnapshot
 from ...utils.html_cache import get_template
 from ...utils.usage_tracking import (
@@ -80,8 +88,28 @@ class ModelPricing(BaseModel):
         return value
 
 
+class PricingListItem(BaseModel):
+    """One ``/admin/pricing`` row.
+
+    ``source`` explains where the rate came from (or why there isn't one):
+    an operator-configured ``providers.json`` entry, a rate auto-filled from
+    the OpenRouter catalog, or one of the "no configured rate yet" statuses
+    for a model the runtime config actually uses. ``input_rate``/
+    ``output_rate`` are only populated for ``configured``/
+    ``openrouter_autofill`` rows; ``default_cost_per_request`` is only
+    populated for ``operation_default`` rows.
+    """
+
+    provider: str
+    model: str
+    source: PricingSource
+    input_rate: float | None = None
+    output_rate: float | None = None
+    default_cost_per_request: float | None = None
+
+
 class PricingListResponse(BaseModel):
-    items: list[ModelPricing]
+    items: list[PricingListItem]
 
 
 class PricingUpdateRequest(BaseModel):
@@ -119,9 +147,17 @@ PRICING_UPDATE_OPENAPI = {
                     "properties": {
                         "items": {
                             "type": "array",
-                            "items": {
-                                "$ref": "#/components/schemas/ModelPricing"
-                            },
+                            # Inlined (not a "$ref": ".../ModelPricing") on
+                            # purpose: FastAPI only registers a model under
+                            # components/schemas when it appears in an actual
+                            # response_model or Body() parameter. ModelPricing
+                            # is validated manually (see update_pricing) and no
+                            # longer nested in any response model now that GET
+                            # and PUT both respond with PricingListItem, so a
+                            # "$ref" here would point at a schema that doesn't
+                            # exist. Inlining sidesteps that entirely; see the
+                            # same pattern in rules_editor.py.
+                            "items": ModelPricing.model_json_schema(),
                         }
                     },
                 },
@@ -147,16 +183,69 @@ def _require_master(request: Request) -> None:
 
 def _pricing_items_from_registry(
     registry: Mapping[tuple[str, str], ModelCostRates],
-) -> list[ModelPricing]:
+) -> list[PricingListItem]:
     return [
-        ModelPricing(
+        PricingListItem(
             provider=provider,
             model=model,
+            source=PricingSource.CONFIGURED,
             input_rate=rates.input_rate,
             output_rate=rates.output_rate,
         )
         for (provider, model), rates in sorted(registry.items())
     ]
+
+
+def _row_to_item(row: PricingRow) -> PricingListItem:
+    return PricingListItem(
+        provider=row.provider,
+        model=row.model,
+        source=row.source,
+        input_rate=row.input_rate,
+        output_rate=row.output_rate,
+        default_cost_per_request=row.default_cost_per_request,
+    )
+
+
+async def _apply_pricing_autofill(
+    services: AppServices,
+    snapshot: RuntimeSnapshot,
+    classification: PricingClassification,
+) -> RuntimeSnapshot:
+    """Best-effort persist of OpenRouter-autofilled rates into providers.json.
+
+    The GET response is already fully classified from ``classification``
+    (computed before this write), so any failure here (a concurrent edit,
+    a source read/decode failure, an unexpected validation failure) is
+    absorbed silently: the caller still returns a correct, complete payload
+    from the pre-write ``snapshot``, and the next GET simply retries the
+    autofill. This never raises.
+    """
+    items = [
+        ModelPricing(
+            provider=row.provider,
+            model=row.model,
+            input_rate=row.input_rate,
+            output_rate=row.output_rate,
+        )
+        for row in classification.rows
+        if row.source in (PricingSource.CONFIGURED, PricingSource.OPENROUTER_AUTOFILL)
+    ]
+    try:
+        candidate_text = patch_provider_pricing(
+            _provider_source_text(snapshot),
+            items,
+        )
+        result = await services.config_update_coordinator.update(
+            base_snapshot=snapshot,
+            config_file=ConfigFile.PROVIDERS,
+            candidate_bytes=candidate_text.encode("utf-8"),
+            expected_revision=None,
+            comments_backup=True,
+        )
+    except (ConfigUpdateError, PricingPatchError, ValidationError):
+        return snapshot
+    return result.snapshot
 
 
 def patch_provider_pricing(
@@ -363,11 +452,20 @@ async def get_pricing_page(request: Request):
 async def get_pricing(request: Request) -> JSONResponse:
     _require_master(request)
     try:
-        _services, snapshot = capture_config_update_runtime(request)
+        services, snapshot = capture_config_update_runtime(request)
+        used_models = collect_used_models(snapshot.config_loader)
+        operation_model_pairs = collect_operation_used_models(snapshot.config_loader)
+        openrouter_catalog = await services.openrouter_free_models_service.get_pricing_catalog()
+        classification = classify_pricing_rows(
+            used_models=used_models,
+            configured_registry=snapshot.cost_rate_registry,
+            operation_model_pairs=operation_model_pairs,
+            openrouter_catalog=openrouter_catalog,
+        )
+        if classification.autofill_additions:
+            snapshot = await _apply_pricing_autofill(services, snapshot, classification)
         payload = PricingListResponse(
-            items=_pricing_items_from_registry(
-                snapshot.cost_rate_registry,
-            )
+            items=[_row_to_item(row) for row in classification.rows]
         )
         return _pricing_json_response(snapshot, payload)
     except ConfigUpdateError as exc:

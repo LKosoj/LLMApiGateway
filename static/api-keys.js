@@ -8,16 +8,26 @@
 
     const modalOverlay = document.getElementById("keyModal");
     const modalTitle = document.getElementById("modalTitle");
+    const modalError = document.getElementById("modalError");
+    const modalErrorDetail = document.getElementById("modalErrorDetail");
     const fieldName = document.getElementById("fieldName");
+    const fieldNameError = document.getElementById("fieldNameError");
     const fieldBudget = document.getElementById("fieldBudget");
+    const fieldBudgetError = document.getElementById("fieldBudgetError");
     const fieldBudgetPeriod = document.getElementById("fieldBudgetPeriod");
     const fieldRpm = document.getElementById("fieldRpm");
+    const fieldRpmError = document.getElementById("fieldRpmError");
     const fieldTpm = document.getElementById("fieldTpm");
+    const fieldTpmError = document.getElementById("fieldTpmError");
     const fieldMetadata = document.getElementById("fieldMetadata");
+    const fieldMetadataError = document.getElementById("fieldMetadataError");
     const fieldDisabled = document.getElementById("fieldDisabled");
     const fieldResetSpent = document.getElementById("fieldResetSpent");
     const editOnlyFields = document.getElementById("editOnlyFields");
     const allowedModelsList = document.getElementById("allowedModelsList");
+    const allowedModelsModeAll = document.getElementById("allowedModelsModeAll");
+    const allowedModelsModeSubset = document.getElementById("allowedModelsModeSubset");
+    const fieldAllowedModelsError = document.getElementById("fieldAllowedModelsError");
     const newKeyNotice = document.getElementById("newKeyNotice");
     const newKeyValue = document.getElementById("newKeyValue");
 
@@ -25,12 +35,20 @@
     const refreshKeysBtn = document.getElementById("refreshKeysBtn");
     const saveKeyBtn = document.getElementById("saveKeyBtn");
     const cancelKeyBtn = document.getElementById("cancelKeyBtn");
+    const keysSearchInput = document.getElementById("keysSearchInput");
+    const sortButtons = Array.from(document.querySelectorAll(".keys-sort-btn"));
 
     let editingKeyId = null;
     let availableModels = [];
     let modelCatalogState = "idle";
     let modelCatalogPromise = null;
     let selectedAllowedModels = new Set();
+    let allowedModelsMode = "all";
+    let currentRecordEtag = null;
+    let currentRecordEtagPromise = null;
+    let searchQuery = "";
+    let sortField = "name";
+    let sortDirection = "asc";
     let modalFocusOrigin = {kind: "create", keyId: null};
     let modalTitleName = null;
     let unsubscribeLocale = null;
@@ -41,6 +59,24 @@
         rawDetailElement: messageDetail,
         renderMessage: (message) => i18n.t(message.key, message.values || {}),
     });
+    // Form errors (field validation, save failures) render inside the dialog
+    // instead of messageStatus: the page container is inert while the modal
+    // is open, so a global message would be invisible to the user.
+    const modalErrorStatus = window.gatewayUi.createStatus(modalError, {
+        defaultTimeoutMs: 5000,
+        rawDetailElement: modalErrorDetail,
+        renderMessage: (message) => i18n.t(message.key, message.values || {}),
+    });
+    const modalErrorTarget = {status: modalErrorStatus, detail: modalErrorDetail};
+    const FIELD_ERROR_TARGETS = {
+        name: {input: fieldName, error: fieldNameError},
+        budget: {input: fieldBudget, error: fieldBudgetError},
+        rpm: {input: fieldRpm, error: fieldRpmError},
+        tpm: {input: fieldTpm, error: fieldTpmError},
+        metadata: {input: fieldMetadata, error: fieldMetadataError},
+        allowedModels: {input: allowedModelsModeSubset, error: fieldAllowedModelsError},
+    };
+    let activeFieldError = null;
     const dialogController = window.gatewayUi.createDialog({
         overlay: modalOverlay,
         dialog: modalOverlay.querySelector(".modal"),
@@ -63,16 +99,16 @@
         return i18n.t(`api_keys:${key}`, values);
     }
 
-    function publishStatus(message, isError = false, options = {}) {
-        messageDetail.hidden = !Object.hasOwn(options, "rawDetail") || options.rawDetail === null;
+    function publishStatus(message, isError = false, options = {}, target = {status: messageStatus, detail: messageDetail}) {
+        target.detail.hidden = !Object.hasOwn(options, "rawDetail") || options.rawDetail === null;
         if (isError) {
-            messageStatus.error(message, options);
+            target.status.error(message, options);
         } else {
-            messageStatus.polite(message, options);
+            target.status.polite(message, options);
         }
     }
 
-    function showApiError(payload, response) {
+    function showApiError(payload, response, target) {
         const descriptor = window.gatewayUi.describeApiError(payload, {
             status: response.status,
             requestId: response.headers.get("X-Request-ID"),
@@ -81,27 +117,77 @@
             {key: descriptor.summaryKey, values: descriptor.summaryValues},
             true,
             {rawDetail: descriptor.rawDetail},
+            target,
         );
     }
 
-    async function showResponseError(response) {
+    async function showResponseError(response, target) {
         const payload = await response.json().catch(() => null);
-        showApiError(payload, response);
+        showApiError(payload, response, target);
     }
 
-    function showNetworkError(error) {
+    // 412 (If-Match mismatch) means another tab/admin saved this key first.
+    // Show a distinct, actionable message instead of the generic HTTP-status
+    // error, and leave the form untouched: the draft must not be lost.
+    async function showConflictError(response) {
+        const payload = await response.json().catch(() => null);
+        const rawDetail = typeof payload?.detail === "string" ? payload.detail : null;
+        publishStatus(
+            {key: "api_keys:conflict.body"},
+            true,
+            {rawDetail},
+            modalErrorTarget,
+        );
+    }
+
+    function showNetworkError(error, target) {
         const descriptor = window.gatewayUi.describeApiError(null);
         publishStatus(
             {key: descriptor.summaryKey, values: descriptor.summaryValues},
             true,
             {rawDetail: error.message},
+            target,
         );
     }
 
+    function formatFieldErrorText(error) {
+        const message = i18n.t(error.key);
+        return error.rawDetail === null || error.rawDetail === undefined
+            ? message
+            : `${message} (${error.rawDetail})`;
+    }
+
+    function showFieldError(error) {
+        clearFieldError();
+        const target = FIELD_ERROR_TARGETS[error.field];
+        activeFieldError = error;
+        target.error.textContent = formatFieldErrorText(error);
+        target.error.hidden = false;
+        target.input.setAttribute("aria-invalid", "true");
+        target.input.setAttribute("aria-describedby", target.error.id);
+        target.input.focus();
+    }
+
+    function clearFieldError() {
+        if (activeFieldError === null) return;
+        const target = FIELD_ERROR_TARGETS[activeFieldError.field];
+        target.input.removeAttribute("aria-invalid");
+        target.input.removeAttribute("aria-describedby");
+        target.error.textContent = "";
+        target.error.hidden = true;
+        activeFieldError = null;
+    }
+
+    function rerenderFieldError() {
+        if (activeFieldError === null) return;
+        FIELD_ERROR_TARGETS[activeFieldError.field].error.textContent = formatFieldErrorText(activeFieldError);
+    }
+
     class ApiKeysValidationError extends Error {
-        constructor(key, rawDetail = null) {
+        constructor(key, field, rawDetail = null) {
             super(key);
             this.key = key;
+            this.field = field;
             this.rawDetail = rawDetail;
         }
     }
@@ -310,6 +396,47 @@
 
     let currentKeys = [];
 
+    function matchesSearch(record, query) {
+        if (!query) return true;
+        if ((record.name || "").toLowerCase().includes(query)) return true;
+        return String(record.id).includes(query);
+    }
+
+    function compareKeys(a, b, field, direction) {
+        const sortKey = {name: "name", created: "created_at", lastUsed: "last_used_at"}[field];
+        const av = a[sortKey] || "";
+        const bv = b[sortKey] || "";
+        const cmp = field === "name"
+            ? av.localeCompare(bv, undefined, {sensitivity: "base"})
+            : (av < bv ? -1 : av > bv ? 1 : 0);
+        return direction === "asc" ? cmp : -cmp;
+    }
+
+    function getDisplayedKeys() {
+        const query = searchQuery.trim().toLowerCase();
+        const filtered = query ? currentKeys.filter((record) => matchesSearch(record, query)) : currentKeys.slice();
+        filtered.sort((a, b) => compareKeys(a, b, sortField, sortDirection));
+        return filtered;
+    }
+
+    function updateSortButtonsUI() {
+        for (const button of sortButtons) {
+            const isActive = button.dataset.sortField === sortField;
+            button.classList.toggle("active", isActive);
+            if (isActive) {
+                button.setAttribute("data-sort-direction", sortDirection);
+                button.setAttribute("aria-pressed", "true");
+            } else {
+                button.removeAttribute("data-sort-direction");
+                button.setAttribute("aria-pressed", "false");
+            }
+        }
+    }
+
+    function applyFiltersAndRender() {
+        renderKeysTable(getDisplayedKeys());
+    }
+
     async function loadKeys() {
         try {
             const response = await apiFetch("/v1/admin/api-keys");
@@ -319,7 +446,7 @@
             }
             const data = await response.json();
             currentKeys = data.keys || [];
-            renderKeysTable(currentKeys);
+            applyFiltersAndRender();
         } catch (error) {
             console.error(error);
             showNetworkError(error);
@@ -442,6 +569,8 @@
             : i18n.t("api_keys:modal.editTitle", {name: modalTitleName});
         rerenderModelCatalogCopy();
         messageStatus.rerender();
+        modalErrorStatus.rerender();
+        rerenderFieldError();
         restoreLocaleViewState(viewState);
     }
 
@@ -485,13 +614,35 @@
         return Array.from(selectedAllowedModels).sort();
     }
 
+    // Explicit two-mode UX (P1-7): an empty allowed_models list used to mean
+    // "all configured models" implicitly, which was easy to misread as "no
+    // models allowed". The radio group makes the choice explicit; "all"
+    // always serializes to null, "subset" requires >=1 selected model.
+    function readAllowedModelsPayload() {
+        if (allowedModelsMode === "all") return null;
+        const selected = readAllowedModels();
+        if (!selected.length) {
+            throw new ApiKeysValidationError("api_keys:validation.allowedModelsRequired", "allowedModels");
+        }
+        return selected;
+    }
+
+    function updateAllowedModelsModeUI() {
+        allowedModelsModeAll.checked = allowedModelsMode === "all";
+        allowedModelsModeSubset.checked = allowedModelsMode === "subset";
+        allowedModelsList.style.display = allowedModelsMode === "subset" ? "flex" : "none";
+    }
+
     function openCreateModal() {
         modalFocusOrigin = {kind: "create", keyId: null};
         editingKeyId = null;
         modalTitleName = null;
+        currentRecordEtag = null;
         modalTitle.textContent = i18n.t("api_keys:modal.createTitle");
         editOnlyFields.style.display = "none";
         newKeyNotice.style.display = "none";
+        clearFieldError();
+        modalErrorStatus.clear();
         fieldName.value = "";
         fieldBudget.value = "";
         fieldBudgetPeriod.value = "none";
@@ -501,6 +652,8 @@
         fieldDisabled.checked = false;
         fieldResetSpent.checked = false;
         selectedAllowedModels = new Set();
+        allowedModelsMode = "all";
+        updateAllowedModelsModeUI();
         dialogController.open();
         renderModelCatalog();
         void loadAvailableModels();
@@ -510,10 +663,14 @@
         modalFocusOrigin = {kind: "edit", keyId: record.id};
         editingKeyId = record.id;
         modalTitleName = record.name;
+        currentRecordEtag = null;
+        currentRecordEtagPromise = null;
         modalTitle.textContent = i18n.t("api_keys:modal.editTitle", {name: modalTitleName});
         editOnlyFields.style.display = "flex";
         newKeyNotice.style.display = "block";
         newKeyValue.textContent = record.api_key || "";
+        clearFieldError();
+        modalErrorStatus.clear();
         fieldName.value = record.name;
         fieldBudget.value = record.budget_usd != null ? record.budget_usd : "";
         fieldBudgetPeriod.value = record.budget_period || "none";
@@ -523,15 +680,20 @@
         fieldDisabled.checked = !!record.disabled;
         fieldResetSpent.checked = false;
         selectedAllowedModels = new Set(record.allowed_models || []);
+        allowedModelsMode = (record.allowed_models || []).length ? "subset" : "all";
+        updateAllowedModelsModeUI();
         dialogController.open();
         renderModelCatalog();
         void loadAvailableModels();
-        void revealFullApiKey(record.id);
+        currentRecordEtagPromise = revealFullApiKey(record.id);
     }
 
     async function revealFullApiKey(keyId) {
         // The list response only carries a masked api_key; fetch the single
         // record to reveal the real value on demand while the modal is open.
+        // The response also carries the ETag used as the If-Match precondition
+        // on save, so two tabs editing the same key can't silently clobber
+        // each other.
         try {
             const response = await apiFetch(`/v1/admin/api-keys/${keyId}`);
             if (!response.ok) {
@@ -541,6 +703,7 @@
             const fullRecord = await response.json();
             if (editingKeyId !== keyId) return;
             newKeyValue.textContent = fullRecord.api_key || "";
+            currentRecordEtag = response.headers.get("ETag");
         } catch (error) {
             console.error(error);
             showNetworkError(error);
@@ -551,25 +714,25 @@
         dialogController.close(reason);
     }
 
-    function parseOptionalNumber(value) {
+    function parseOptionalNumber(value, field) {
         if (value === null || value === undefined || String(value).trim() === "") return null;
         const n = Number(value);
         if (Number.isNaN(n)) {
-            throw new ApiKeysValidationError("api_keys:validation.invalidNumber", String(value));
+            throw new ApiKeysValidationError("api_keys:validation.invalidNumber", field, String(value));
         }
         return n;
     }
 
-    function parseOptionalInt(value) {
+    function parseOptionalInt(value, field) {
         if (value === null || value === undefined || String(value).trim() === "") return null;
         const n = parseInt(value, 10);
         if (Number.isNaN(n)) {
-            throw new ApiKeysValidationError("api_keys:validation.invalidInteger", String(value));
+            throw new ApiKeysValidationError("api_keys:validation.invalidInteger", field, String(value));
         }
         return n;
     }
 
-    function parseMetadata(value) {
+    function parseMetadata(value, field) {
         const trimmed = value.trim();
         if (!trimmed) return null;
         let parsed;
@@ -578,28 +741,31 @@
         } catch (error) {
             throw new ApiKeysValidationError(
                 "api_keys:validation.invalidMetadata",
+                field,
                 error.message,
             );
         }
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-            throw new ApiKeysValidationError("api_keys:validation.metadataObject");
+            throw new ApiKeysValidationError("api_keys:validation.metadataObject", field);
         }
         return parsed;
     }
 
     async function saveKey() {
         saveKeyBtn.disabled = true;
+        clearFieldError();
+        modalErrorStatus.clear();
         try {
             const name = fieldName.value.trim();
-            if (!name) throw new ApiKeysValidationError("api_keys:validation.nameRequired");
+            if (!name) throw new ApiKeysValidationError("api_keys:validation.nameRequired", "name");
             const payload = {
                 name,
-                budget_usd: parseOptionalNumber(fieldBudget.value),
+                budget_usd: parseOptionalNumber(fieldBudget.value, "budget"),
                 budget_period: fieldBudgetPeriod.value,
-                rpm: parseOptionalInt(fieldRpm.value),
-                tpm: parseOptionalInt(fieldTpm.value),
-                allowed_models: readAllowedModels(),
-                metadata: parseMetadata(fieldMetadata.value),
+                rpm: parseOptionalInt(fieldRpm.value, "rpm"),
+                tpm: parseOptionalInt(fieldTpm.value, "tpm"),
+                allowed_models: readAllowedModelsPayload(),
+                metadata: parseMetadata(fieldMetadata.value, "metadata"),
             };
             let response;
             if (editingKeyId === null) {
@@ -611,14 +777,28 @@
             } else {
                 payload.disabled = fieldDisabled.checked;
                 payload.reset_spent = fieldResetSpent.checked;
+                const headers = {"Content-Type": "application/json"};
+                if (currentRecordEtagPromise) {
+                    try {
+                        await currentRecordEtagPromise;
+                    } catch (_error) {}
+                }
+                if (!currentRecordEtag) {
+                    throw new ApiKeysValidationError("api_keys:validation.etagMissing", "name");
+                }
+                headers["If-Match"] = currentRecordEtag;
                 response = await apiFetch(`/v1/admin/api-keys/${editingKeyId}`, {
                     method: "PATCH",
-                    headers: {"Content-Type": "application/json"},
+                    headers,
                     body: JSON.stringify(payload),
                 });
             }
+            if (response.status === 412) {
+                await showConflictError(response);
+                return;
+            }
             if (!response.ok) {
-                await showResponseError(response);
+                await showResponseError(response, modalErrorTarget);
                 return;
             }
             const data = await response.json();
@@ -639,13 +819,9 @@
             await loadKeys();
         } catch (error) {
             if (error instanceof ApiKeysValidationError) {
-                publishStatus(
-                    {key: error.key},
-                    true,
-                    {rawDetail: error.rawDetail},
-                );
+                showFieldError(error);
             } else {
-                showNetworkError(error);
+                showNetworkError(error, modalErrorTarget);
             }
         } finally {
             saveKeyBtn.disabled = false;
@@ -677,6 +853,28 @@
         if (checkbox.checked) selectedAllowedModels.add(checkbox.value);
         else selectedAllowedModels.delete(checkbox.value);
     });
+    for (const radio of [allowedModelsModeAll, allowedModelsModeSubset]) {
+        radio.addEventListener("change", () => {
+            if (!radio.checked) return;
+            allowedModelsMode = radio.value;
+            updateAllowedModelsModeUI();
+        });
+    }
+
+    keysSearchInput.addEventListener("input", () => {
+        searchQuery = keysSearchInput.value;
+        applyFiltersAndRender();
+    });
+    for (const button of sortButtons) {
+        button.addEventListener("click", () => {
+            const field = button.dataset.sortField;
+            sortDirection = field === sortField && sortDirection === "asc" ? "desc" : "asc";
+            sortField = field;
+            updateSortButtonsUI();
+            applyFiltersAndRender();
+        });
+    }
+    updateSortButtonsUI();
 
     Theme.attachToggle("darkModeToggle");
 

@@ -1,0 +1,72 @@
+{
+  "pageTitle": "LLM Gateway - Overview",
+  "heading": "Overview",
+  "intro": "A quick snapshot of gateway activity, cost and health.",
+  "filters": {
+    "range": "Range",
+    "rangeOptions": {
+      "24h": "Last 24 hours",
+      "7d": "Last 7 days",
+      "30d": "Last 30 days",
+      "90d": "Last 90 days"
+    }
+  },
+  "actions": {
+    "refresh": "Refresh"
+  },
+  "health": {
+    "label": "Gateway status",
+    "unavailable": "Status unavailable",
+    "status": {
+      "ok": "OK ({phase})",
+      "error": "Degraded ({phase})"
+    },
+    "phase": {
+      "starting": "Starting",
+      "ready": "Ready",
+      "stopping": "Stopping",
+      "failed": "Failed",
+      "unknown": "Unknown"
+    },
+    "version": "v{version}"
+  },
+  "empty": {
+    "title": "No data yet",
+    "reason": "No usage was recorded for the selected range and scope."
+  },
+  "kpis": {
+    "requests": "Requests",
+    "cost": "Cost",
+    "p95Latency": "P95 latency",
+    "activeRequests": "Active requests",
+    "errors": "Fallback errors",
+    "rejections": "Rejections"
+  },
+  "trend": {
+    "heading": "Trend",
+    "metricLabel": "Metric",
+    "metricRequests": "Requests",
+    "metricCost": "Cost",
+    "meta": "{count, plural, one {# bucket} other {# buckets}}",
+    "empty": "No trend data for this range.",
+    "aria": "Usage trend chart"
+  },
+  "topModels": {
+    "heading": "Top models",
+    "columns": {
+      "model": "Model",
+      "requests": "Requests",
+      "cost": "Cost"
+    },
+    "empty": "No model usage in this range."
+  },
+  "loading": "Loading…",
+  "values": {
+    "notAvailable": "N/A",
+    "unknownLabel": "Unknown"
+  },
+  "format": {
+    "milliseconds": "{value} ms",
+    "seconds": "{value} s"
+  }
+}

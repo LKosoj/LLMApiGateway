@@ -73,7 +73,7 @@ def test_docs_catalogs_and_html_cover_page_prose() -> None:
     assert required <= _leaf_keys(english)
 
     html = (ROOT / "static/gateway-docs.html").read_text(encoding="utf-8")
-    assert html.count("data-docs-api-base") == 9
+    assert html.count("data-docs-api-base") == 11
     assert html.count('data-i18n="docs:') >= 120
     assert 'data-i18n="docs:page.heading"' in html
     assert 'data-i18n-aria-label="docs:tabs.ariaLabel"' in html

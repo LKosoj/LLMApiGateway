@@ -70,6 +70,31 @@
     "leadAfterModel": ", which endpoints to call, and which parameters each service supports. Internal providers and routes are not needed on this page: the client works only with the gateway API.",
     "leadBeforeModel": "What to specify in"
   },
+  "quickstart": {
+    "apiKey": {
+      "linkText": "API Keys",
+      "text001": "The master key is set via the",
+      "text002": "environment variable on the gateway server. For individual users, create a virtual key on the",
+      "text003": "page (master key only).",
+      "title": "1. Get an API key"
+    },
+    "curl": {
+      "text": "Send a request to the chat completions endpoint with your API key.",
+      "title": "2. Your first request with curl"
+    },
+    "heading": "Where to start",
+    "kicker": "Quickstart",
+    "python": {
+      "text": "Use an OpenAI-compatible SDK pointed at the gateway base_url.",
+      "title": "3. Python SDK"
+    },
+    "usage": {
+      "linkText": "Analytics",
+      "text001": "Usage by key and model is available on the",
+      "text002": "page.",
+      "title": "4. Check usage"
+    }
+  },
   "sections": {
     "audio": {
       "heading": "Audio",

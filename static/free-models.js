@@ -10,6 +10,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusEl = document.getElementById('free-models-status');
     const errorDetailEl = document.getElementById('free-models-error-detail');
     const retryButton = document.getElementById('free-models-retry');
+    const controlsEl = document.getElementById('free-models-controls');
+    const searchInput = document.getElementById('free-models-search');
+    const searchClearButton = document.getElementById('free-models-search-clear');
+    const statusFilterEl = document.getElementById('free-models-status-filter');
+    const statusFilterRadios = Array.from(
+        document.querySelectorAll('input[name="free-models-status-filter"]')
+    );
 
     const LIMIT_KEYS = Object.freeze({
         rpm: 'free_models:limits.rpm',
@@ -32,6 +39,16 @@ document.addEventListener('DOMContentLoaded', () => {
     let inFlight = false;
     let stopped = false;
     let unsubscribeLocale = null;
+    // Set of provider-config model ids ("configured") once known, or `null`
+    // when unknown -- either because the caller's role cannot read
+    // provider config (virtual keys get a 403 on `/v1/config/*`, which is
+    // expected and not an error) or the lookup itself failed. `null` means
+    // the catalog renders as a single unsplit list, exactly as before this
+    // feature existed.
+    let configuredModelIds = null;
+    let searchQuery = '';
+    let searchDebounceTimer = null;
+    let statusFilter = 'all';
 
     function createNode(tagName, className = '', text = null) {
         const node = document.createElement(tagName);
@@ -125,12 +142,26 @@ document.addEventListener('DOMContentLoaded', () => {
         return details;
     }
 
+    function isModelConfigured(model) {
+        return configuredModelIds !== null && configuredModelIds.has(model.modelId);
+    }
+
+    function renderConfigBadge(model) {
+        const configured = isModelConfigured(model);
+        return createNode(
+            'span',
+            `free-models-config-badge ${configured ? 'badge-configured' : 'badge-external'}`,
+            i18n.t(configured ? 'free_models:configuredBadge' : 'free_models:externalBadge'),
+        );
+    }
+
     function renderModelRow(model) {
         const row = createNode('div', 'free-models-model');
         row.dataset.freeModelsModelId = model.modelId;
 
         const header = createNode('div', 'free-models-model-header');
         header.appendChild(createNode('span', 'free-models-model-name', model.displayName));
+        if (configuredModelIds !== null) header.appendChild(renderConfigBadge(model));
         header.appendChild(markTechnical(createNode('code', 'free-models-model-id', model.modelId)));
         header.appendChild(createCopyButton(model.modelId));
         row.appendChild(header);
@@ -183,6 +214,93 @@ document.addEventListener('DOMContentLoaded', () => {
         freeModelsList.replaceChildren(...providers.map(renderProviderCard));
     }
 
+    function normalizeQuery(value) {
+        return value.trim().toLowerCase();
+    }
+
+    function modelMatchesSearch(model, providerName, query) {
+        if (!query) return true;
+        return (
+            model.displayName.toLowerCase().includes(query)
+            || model.modelId.toLowerCase().includes(query)
+            || providerName.toLowerCase().includes(query)
+        );
+    }
+
+    function filterProviders(providers, query, modelPredicate) {
+        const result = [];
+        providers.forEach((provider) => {
+            const models = provider.models.filter(
+                (model) => modelMatchesSearch(model, provider.name, query) && modelPredicate(model)
+            );
+            if (models.length > 0) result.push({...provider, models});
+        });
+        return result;
+    }
+
+    function countModels(providers) {
+        return providers.reduce((total, provider) => total + provider.models.length, 0);
+    }
+
+    function buildSearchEmptyMessage() {
+        const node = createNode('p', 'free-models-empty', i18n.t('free_models:searchEmpty'));
+        node.dataset.freeModelsField = 'search-empty';
+        return node;
+    }
+
+    function buildSection(kind, count, providers) {
+        const section = createNode('section', 'free-models-section');
+        section.dataset.freeModelsSection = kind;
+        section.appendChild(
+            createNode('h2', 'free-models-section-heading', i18n.t(`free_models:sections.${kind}`, {count}))
+        );
+        providers.forEach((provider) => section.appendChild(renderProviderCard(provider)));
+        return section;
+    }
+
+    function renderCatalog() {
+        const query = normalizeQuery(searchQuery);
+        const providers = snapshot.providers;
+
+        if (configuredModelIds === null) {
+            const filtered = filterProviders(providers, query, () => true);
+            if (filtered.length === 0) {
+                clearCopyTimers();
+                freeModelsList.replaceChildren(buildSearchEmptyMessage());
+            } else {
+                renderProviders(filtered);
+            }
+            return;
+        }
+
+        const showConfigured = statusFilter !== 'external';
+        const showExternal = statusFilter !== 'configured';
+        const configuredProviders = filterProviders(providers, query, isModelConfigured);
+        const externalProviders = filterProviders(providers, query, (model) => !isModelConfigured(model));
+        const configuredCount = countModels(configuredProviders);
+        const externalCount = countModels(externalProviders);
+        const visibleCount = (showConfigured ? configuredCount : 0) + (showExternal ? externalCount : 0);
+
+        clearCopyTimers();
+        if (visibleCount === 0) {
+            freeModelsList.replaceChildren(buildSearchEmptyMessage());
+            return;
+        }
+
+        const sections = [];
+        if (showConfigured) sections.push(buildSection('configured', configuredCount, configuredProviders));
+        if (showExternal) sections.push(buildSection('external', externalCount, externalProviders));
+        freeModelsList.replaceChildren(...sections);
+    }
+
+    function renderControlsVisibility() {
+        const hasData = (pageState === 'ready' || pageState === 'stale')
+            && snapshot !== null
+            && snapshot.providers.length > 0;
+        controlsEl.hidden = !hasData;
+        statusFilterEl.hidden = !hasData || configuredModelIds === null;
+    }
+
     function renderListContent() {
         if (pageState === 'loading') {
             renderStateMessage(i18n.t('free_models:loading'));
@@ -191,7 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (pageState === 'empty') {
             renderStateMessage(i18n.t('free_models:empty'));
         } else {
-            renderProviders(snapshot.providers);
+            renderCatalog();
         }
     }
 
@@ -241,6 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
         retryButton.textContent = i18n.t('free_models:retry');
         updateSourceMeta();
         updateFilterHint();
+        renderControlsVisibility();
         renderListContent();
     }
 
@@ -295,13 +414,46 @@ document.addEventListener('DOMContentLoaded', () => {
         render();
     }
 
+    // Best-effort lookup of the provider-config model ids ("configured").
+    // A 403 is the expected outcome for virtual-key sessions -- `/v1/config/*`
+    // is master-only -- and is treated the same as any other lookup failure:
+    // the split/search badges fall back to the unsplit list, never an error.
+    async function fetchConfiguredModelIds() {
+        try {
+            const response = await apiFetch('/v1/config/providers/structured');
+            if (response.status === 403) return null;
+            if (!response.ok) {
+                console.warn(`Configured models lookup failed with status ${response.status}`);
+                return null;
+            }
+            const data = await response.json();
+            if (!data || !Array.isArray(data.providers)) return null;
+            const ids = new Set();
+            data.providers.forEach((provider) => {
+                const models = provider && typeof provider === 'object' ? provider.models : null;
+                if (models && typeof models === 'object') {
+                    Object.keys(models).forEach((modelId) => ids.add(modelId));
+                }
+            });
+            return ids;
+        } catch (error) {
+            if (stopped || error.message === 'Authentication required') return null;
+            console.warn('Configured models lookup failed');
+            return null;
+        }
+    }
+
     async function fetchFreeModels() {
         if (inFlight || stopped) return;
         inFlight = true;
         retryButton.disabled = true;
         try {
-            const response = await apiFetch('/v1/api/free-models');
+            const [response, configured] = await Promise.all([
+                apiFetch('/v1/api/free-models'),
+                fetchConfiguredModelIds(),
+            ]);
             if (stopped) return;
+            configuredModelIds = configured;
             if (!response.ok) throw new Error(`Free models request failed with status ${response.status}`);
             const data = await response.json();
             if (stopped) return;
@@ -329,9 +481,49 @@ document.addEventListener('DOMContentLoaded', () => {
         void fetchFreeModels();
     });
 
+    function refreshCatalogView() {
+        renderControlsVisibility();
+        renderListContent();
+    }
+
+    function applySearchQuery(value) {
+        searchQuery = value;
+        refreshCatalogView();
+    }
+
+    searchInput.addEventListener('input', () => {
+        searchClearButton.hidden = searchInput.value.length === 0;
+        if (searchDebounceTimer !== null) window.clearTimeout(searchDebounceTimer);
+        const value = searchInput.value;
+        searchDebounceTimer = window.setTimeout(() => {
+            searchDebounceTimer = null;
+            applySearchQuery(value);
+        }, 200);
+    });
+
+    searchClearButton.addEventListener('click', () => {
+        if (searchDebounceTimer !== null) {
+            window.clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = null;
+        }
+        searchInput.value = '';
+        searchClearButton.hidden = true;
+        applySearchQuery('');
+        searchInput.focus();
+    });
+
+    statusFilterRadios.forEach((radio) => {
+        radio.addEventListener('change', () => {
+            if (!radio.checked) return;
+            statusFilter = radio.value;
+            refreshCatalogView();
+        });
+    });
+
     window.addEventListener('beforeunload', () => {
         stopped = true;
         clearCopyTimers();
+        if (searchDebounceTimer !== null) window.clearTimeout(searchDebounceTimer);
         unsubscribeLocale?.();
     });
 

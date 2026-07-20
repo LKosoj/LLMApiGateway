@@ -63,7 +63,6 @@
     "hints": {
       "budget": "(leave empty for no limit)",
       "budgetPeriod": "(periodic reset of spent_usd at UTC boundary)",
-      "allowedModels": "(leave all unchecked to allow any)",
       "metadata": "(JSON object, optional)"
     },
     "placeholders": {
@@ -91,7 +90,9 @@
     "invalidNumber": "Enter a valid number.",
     "invalidInteger": "Enter a valid whole number.",
     "metadataObject": "Metadata must be a JSON object.",
-    "invalidMetadata": "Metadata must contain valid JSON."
+    "invalidMetadata": "Metadata must contain valid JSON.",
+    "allowedModelsRequired": "Select at least one model, or choose \"All configured models\".",
+    "etagMissing": "Record snapshot is not ready yet. Wait for the modal to finish loading and try again."
   },
   "status": {
     "created": "API key \"{name}\" created.",
@@ -101,5 +102,22 @@
   "modelCatalogLoading": "Loading models…",
   "modelCatalogEmpty": "No models detected. Use the Rules Editor to add models.",
   "modelCatalogError": "Could not load models.",
-  "modelCatalogRetry": "Retry"
+  "modelCatalogRetry": "Retry",
+  "allowedModels": {
+    "all": "All configured models",
+    "subset": "Only selected models"
+  },
+  "search": {
+    "placeholder": "Search by name or ID"
+  },
+  "sort": {
+    "groupLabel": "Sort API keys",
+    "label": "Sort by:",
+    "name": "Name",
+    "created": "Created",
+    "lastUsed": "Last used"
+  },
+  "conflict": {
+    "body": "This API key was changed elsewhere while you were editing it. Close this dialog, reopen the key to load the latest values, then reapply your changes."
+  }
 }

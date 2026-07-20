@@ -360,13 +360,13 @@
         const pad = {top: 14, right: 18, bottom: 52, left: 54};
         const chartW = width - pad.left - pad.right;
         const chartH = height - pad.top - pad.bottom;
-        const maxValue = Math.max(...bars.map(bar => numberValue(bar.cost)), ...bars.map(bar => numberValue(bar.requests)), 1);
+        const maxValue = Math.max(...bars.map(bar => numberValue(bar.cost)), 1);
         const gap = 12;
         const barW = Math.max(18, (chartW - gap * (bars.length - 1)) / bars.length);
         const svg = svgEl("svg", {viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": t("usage:charts.providerCostAria")});
         svg.appendChild(svgEl("line", {x1: pad.left, y1: pad.top + chartH, x2: pad.left + chartW, y2: pad.top + chartH, class: "analytics-axis"}));
         bars.forEach((bar, idx) => {
-            const value = numberValue(bar.cost) || numberValue(bar.requests);
+            const value = numberValue(bar.cost);
             const x = pad.left + idx * (barW + gap);
             const h = Math.max(2, value / maxValue * chartH);
             const y = pad.top + chartH - h;

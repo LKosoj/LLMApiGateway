@@ -13,15 +13,22 @@ def _editor_source() -> str:
     )
 
 
-def test_rules_editor_uses_shared_manual_tabs_controller() -> None:
+def test_rules_editor_uses_bespoke_manual_tabs_controller() -> None:
     source = _editor_source()
 
-    assert "window.gatewayUi.createTabs(ctx.elements.rulesTabList" in source
-    assert "activation: 'manual'" in source
-    assert "beforeActivate: ctx.beforeRulesTabActivate" in source
-    assert "onActivate: ctx.activateRulesTab" in source
-    assert "onReselect: ctx.reselectRulesTab" in source
-    assert "panels: ctx.elements.rulesTabPanels" in source
+    # The top `.tabs` tablist is gone, so the shared `window.gatewayUi.createTabs()`
+    # helper (which requires pre-existing `[role="tab"]` markup) can no longer bind
+    # to the rules editor; a bespoke controller replicates just the manual-activation
+    # contract (veto hook, activate/reselect hooks, repair-on-hidden) against the
+    # sidebar's `.editor-entity-item` buttons instead.
+    assert "ctx.state.rulesTabsController = window.gatewayUi.createTabs" not in source
+    assert "export function createRulesTabsController(ctx)" in source
+    assert "ctx.state.rulesTabsController = createRulesTabsController(ctx);" in source
+    assert "ctx.beforeRulesTabActivate" in source
+    assert "ctx.activateRulesTab" in source
+    assert "ctx.reselectRulesTab" in source
+    assert "async function repair()" in source
+    assert "document.querySelectorAll('.editor-entity-item')" in source
     assert "updateRulesTabA11y" not in source
     assert "tabRules.addEventListener('click'" not in source
 
@@ -44,11 +51,13 @@ def test_rules_editor_preserves_veto_retry_polling_and_repair_contracts() -> Non
 def test_rules_editor_declares_all_twelve_keys_and_panels_in_tab_order() -> None:
     source = _editor_source()
     html = RULES_HTML.read_text(encoding="utf-8")
-    panel_block = re.search(r"const rulesTabPanels = \[(.*?)\];", source, re.DOTALL)
+    elements_block = re.search(
+        r"export function createEditorElements\(\) \{(.*?)\n\}", source, re.DOTALL
+    )
 
-    assert panel_block is not None
-    panels = re.findall(r"editorContainer[A-Za-z]+", panel_block.group(1))
-    assert panels == [
+    assert elements_block is not None
+    panels = set(re.findall(r"editorContainer[A-Za-z]+", elements_block.group(1)))
+    assert panels == {
         "editorContainerRules",
         "editorContainerEmbeddings",
         "editorContainerRerank",
@@ -61,9 +70,17 @@ def test_rules_editor_declares_all_twelve_keys_and_panels_in_tab_order() -> None
         "editorContainerOpenRouterFree",
         "editorContainerFallbackEval",
         "editorContainerProviders",
-    ]
-    assert re.findall(r'data-tab="([^"]+)" role="tab"', html) == [
+    }
+
+    # The top tablist is gone; the sidebar is now the sole place the twelve
+    # entity keys are declared, grouped by category (Providers/Fallback/
+    # Operation/Fusion/Router/Pricing) rather than in the old top-tab order.
+    sidebar_match = re.search(r'<aside class="editor-sidebar".*?</aside>', html, re.DOTALL)
+    assert sidebar_match is not None
+    assert re.findall(r'data-entity-target="([^"]+)"', sidebar_match.group(0)) == [
+        "providers",
         "rules",
+        "model-rules",
         "embeddings",
         "rerank",
         "images",
@@ -71,10 +88,8 @@ def test_rules_editor_declares_all_twelve_keys_and_panels_in_tab_order() -> None
         "web",
         "fusion",
         "router",
-        "model-rules",
         "openrouter-free",
         "fallback-eval",
-        "providers",
     ]
 
 

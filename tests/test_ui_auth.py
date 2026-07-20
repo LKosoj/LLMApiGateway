@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -14,6 +15,8 @@ AUTHENTICATED_PAGES = {
     "quota.html": "quota",
     "rejections.html": "rejections",
     "translator-debug.html": "translator",
+    "overview.html": "overview",
+    "activity.html": "activity",
 }
 
 
@@ -82,6 +85,78 @@ def test_shared_nav_uses_strict_runtime_navigation_and_locale_contracts():
     assert "innerHTML" not in content
 
 
+def test_shared_nav_renders_identity_role_name_and_logout_for_both_roles():
+    content = read_static("shared-nav.js")
+
+    assert "data-gateway-identity" in content
+    assert "data-gateway-identity-role" in content
+    assert "data-gateway-identity-name" in content
+    assert "data-gateway-identity-logout" in content
+    assert "auth.logout()" in content
+    assert "i18n.t(`common:identity.role.${currentIdentity.role}`)" in content
+    assert "i18n.t('common:identity.name', {name: currentIdentity.name})" in content
+    assert "i18n.t('common:identity.logout')" in content
+    assert "currentIdentity.role !== 'master' && currentIdentity.role !== 'user'" in content
+    assert "innerHTML" not in content
+    # The bootstrap Promise.all must remain the single identity fetch (no duplicate call).
+    assert content.count("auth.fetchIdentity()") == 1
+
+
+def test_shared_nav_builds_sidebar_and_drawer_shell_for_desktop_and_mobile():
+    content = read_static("shared-nav.js")
+
+    assert "data-gateway-nav-toggle" in content
+    assert "data-gateway-nav-overlay" in content
+    assert "data-gateway-sidebar" in content
+    assert "data-gateway-nav-close" in content
+    assert "data-gateway-sidebar-footer" in content
+    assert "ui.createDialog(" in content
+    assert "layout: 'list'" in content
+    assert "innerHTML" not in content
+
+
+def test_shared_nav_css_defines_permanent_desktop_sidebar_and_mobile_drawer():
+    content = read_static("shared-nav.css")
+
+    for selector in (
+        ".gateway-nav-toggle",
+        ".gateway-nav-overlay",
+        ".gateway-sidebar",
+        ".gateway-nav-close",
+        ".gateway-nav-list",
+        ".gateway-sidebar-footer",
+    ):
+        assert selector in content
+    assert "@media (min-width: 1024px)" in content
+    assert "margin-inline-start: 240px" in content
+
+
+def test_navigation_toggle_close_overlay_locale_keys_exist_for_en_and_ru():
+    for locale in ("en", "ru"):
+        catalog = json.loads(
+            (PROJECT_ROOT / "static" / "locales" / locale / "common.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        navigation = catalog["navigation"]
+        for key in ("toggle", "close", "overlay"):
+            assert isinstance(navigation[key], str) and navigation[key]
+
+
+def test_identity_locale_keys_exist_for_en_and_ru():
+    for locale in ("en", "ru"):
+        catalog = json.loads(
+            (PROJECT_ROOT / "static" / "locales" / locale / "common.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        identity = catalog["identity"]
+        assert isinstance(identity["role"]["master"], str) and identity["role"]["master"]
+        assert isinstance(identity["role"]["user"], str) and identity["role"]["user"]
+        assert isinstance(identity["name"], str) and "{name}" in identity["name"]
+        assert isinstance(identity["logout"], str) and identity["logout"]
+
+
 def test_login_uses_synchronous_submit_guard_and_shared_error_contract():
     html = read_static("login.html")
     script = read_static("login.js")
@@ -111,26 +186,27 @@ def test_login_uses_synchronous_submit_guard_and_shared_error_contract():
     assert "i18n.subscribe" in script
     assert "innerHTML" not in script
     assert "next: nextInput.value" in script
-    assert "global.location.assign(payload.redirect_to || '/v1/ui/usage-stats')" in script
+    assert "global.location.assign(payload.redirect_to || '/v1/ui/overview')" in script
 
 
-def test_six_tab_groups_expose_semantic_tab_roles():
+def test_five_tab_groups_expose_semantic_tab_roles():
     rules = read_static("rules-editor.html")
     usage = read_static("usage-stats.html")
     playground = read_static("web-playground.html")
     docs = read_static("gateway-docs.html")
 
-    assert '<div class="tabs" role="tablist">' in rules
+    # rules-editor.html has no top tablist (the sidebar is the only entity
+    # navigation), but its panels still carry role="tabpanel".
+    assert 'role="tabpanel"' in rules
     assert '<div class="tabs" role="tablist">' in usage
     assert '<div class="fallback-sub-tabs" role="tablist">' in usage
     assert '<div class="tabs playground-section-tabs" role="tablist">' in playground
     assert '<div class="tabs web-operation-tabs" role="tablist">' in playground
     assert '<div class="docs-tabs" role="tablist"' in docs
-    for content in (rules, usage, playground, docs):
+    for content in (usage, playground, docs):
         assert 'role="tab"' in content
         assert 'role="tabpanel"' in content
     for content, selector in (
-        (rules, "data-tab="),
         (usage, "data-tab="),
         (usage, "data-subtab="),
         (playground, "data-playground-section-tab="),

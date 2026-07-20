@@ -164,6 +164,133 @@ body.dark-mode .docs-toc a:hover {
     color: var(--accent-text);
 }
 
+.docs-toc a.docs-toc-current {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+}
+
+/* ---------- Quickstart ---------- */
+
+.docs-quickstart {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.quickstart-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+}
+
+.quickstart-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-sm);
+    padding: 18px;
+}
+
+.quickstart-card h3 {
+    margin: 0;
+    font-size: 15px;
+    color: var(--text-strong);
+}
+
+.quickstart-card p {
+    margin: 0;
+    line-height: 1.6;
+    color: var(--text);
+}
+
+.quickstart-pre {
+    font-size: 12.5px;
+}
+
+/* ---------- Copy-to-clipboard buttons ---------- */
+
+.docs-code-block {
+    position: relative;
+}
+
+.docs-code-block pre {
+    padding-right: 44px;
+}
+
+.btn-copy {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, #ffffff 20%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, #0f172a 55%, transparent);
+    color: #e5e7eb;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-copy:hover {
+    background: color-mix(in srgb, #0f172a 80%, transparent);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+.btn-copy-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.btn-copy.copied {
+    border-color: var(--success);
+    color: var(--success);
+}
+
+/* ---------- Sticky table of contents (desktop) ----------
+   Breakpoint 1200px: at exactly 1024 the TOC would take 232 + 32 = 264px
+   out of the docs column and tables in service cards start overflowing
+   horizontally (see test_gateway_docs_page_renders_catalog_and_connection_sections). */
+
+@media (min-width: 1200px) {
+    #apiDocsPanel {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 232px;
+        align-items: start;
+        gap: 32px;
+    }
+
+    #apiDocsPanel .docs-main {
+        grid-column: 1;
+        grid-row: 1;
+        min-width: 0;
+    }
+
+    #apiDocsPanel [data-docs-toc] {
+        grid-column: 2;
+        grid-row: 1;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-self: start;
+        position: sticky;
+        top: calc(var(--nav-height) + 20px);
+        max-height: calc(100vh - var(--nav-height) - 40px);
+        overflow-y: auto;
+    }
+
+    .quickstart-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 .docs-tabs {
     display: flex;
     flex-wrap: wrap;
@@ -611,5 +738,9 @@ body.dark-mode .markdown-error {
     .three-columns,
     .service-grid {
         grid-template-columns: 1fr;
+    }
+
+    .docs-tab-button {
+        min-height: 44px;
     }
 }

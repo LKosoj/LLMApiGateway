@@ -3,9 +3,13 @@ import json
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from llm_gateway_core.api.v1.rules_editor import _trigger_capability_autofill
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from llm_gateway_core.api.v1.rules_editor import _trigger_capability_autofill, editor_router
 from llm_gateway_core.config.config_store import ConfigFile
 from llm_gateway_core.config.loader import ProviderDetails
+from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.capability_autofill import (
     CapabilityAutofillService,
     _build_model_fallback_configs,
@@ -14,7 +18,7 @@ from llm_gateway_core.services.capability_autofill import (
 from llm_gateway_core.services.config_updates import ConfigUpdateError, ConfigUpdateErrorCode
 from llm_gateway_core.services.openrouter_free_models import CapabilityMetadata
 from tests._async_compat import run_async
-from tests.runtime_test_support import make_app_services
+from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
 
 class _FakeLease:
@@ -605,6 +609,45 @@ class TriggerCapabilityAutofillHookTests(unittest.TestCase):
         self.assertTrue(asyncio.iscoroutine(coroutine))
         self.assertEqual(coroutine.cr_code.co_name, "materialize")
         coroutine.close()
+
+
+class CapabilityAutofillStatusApiTests(unittest.TestCase):
+    def _app_with_role(self, role: str) -> FastAPI:
+        app = FastAPI()
+        services = make_app_services()
+        runtime_snapshot = make_runtime_snapshot(http_client=services.http_client)
+        app.state.services = services
+
+        @app.middleware("http")
+        async def set_role(request, call_next):
+            request.state.api_key_role = role
+            request.state.runtime_snapshot = runtime_snapshot
+            return await call_next(request)
+
+        app.include_router(editor_router, prefix="/v1")
+        return app
+
+    def test_status_endpoint_rejects_non_master_role(self):
+        app = self._app_with_role(ROLE_USER)
+
+        response = TestClient(app).get("/v1/capability-autofill")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {"detail": "This endpoint is reserved for the master API key"},
+        )
+
+    def test_status_endpoint_returns_service_payload_for_master(self):
+        app = self._app_with_role(ROLE_MASTER)
+
+        response = TestClient(app).get("/v1/capability-autofill")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"lastRunAt": None, "lastError": None, "resolutions": {}},
+        )
 
 
 if __name__ == "__main__":

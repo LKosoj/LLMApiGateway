@@ -93,6 +93,9 @@ def _assert_profile_page(
 
     if expected_links is not None:
         _wait_for_navigation(page)
+        viewport = page.viewport_size
+        if viewport is not None and viewport["width"] < 1024:
+            page.locator("[data-gateway-nav-toggle]").click()
         expect(page.locator("[data-gateway-nav] a")).to_have_count(expected_links)
         _assert_current_link_is_visible(page)
 
@@ -267,6 +270,12 @@ def test_r5_8_768_keyboard_rtl_delayed_and_raw_detail_contract(
             () => {
                 window.gatewayNav.destroy();
                 document.documentElement.dir = 'rtl';
+                // The nav mount now lives inside a drawer overlay that
+                // `destroy()` leaves closed; the destroyed dialog controller
+                // can no longer open it, so reveal it directly for this
+                // manually re-created (mobile-width) navigation instance.
+                const overlay = document.querySelector('[data-gateway-nav-overlay]');
+                if (overlay) overlay.hidden = false;
                 const root = document.querySelector('[data-gateway-nav]');
                 window.__r58RtlNavigation = gatewayUi.createNavigation(root, {
                     direction: 'rtl',

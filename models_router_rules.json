@@ -1,7 +1,7 @@
 [
   {
     "gateway_model_name": "llmgateway/router",
-    "selector_model": "llmgateway/light_model",
+    "selector_model": "llmgateway/small",
     "targets": [
       {
         "type": "gateway_model",

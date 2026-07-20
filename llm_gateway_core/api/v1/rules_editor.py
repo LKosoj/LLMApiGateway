@@ -1375,6 +1375,7 @@ async def get_openrouter_free_models_status(request: Request):
 
 @editor_router.get("/capability-autofill", tags=["Config Editor API"])
 async def get_capability_autofill_status(request: Request):
+    _require_master(request)
     services, _runtime_snapshot = _capture_control_runtime(request)
     return await services.capability_autofill_service.get_status()
 

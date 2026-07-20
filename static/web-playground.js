@@ -59,10 +59,16 @@
         pdfDone: "status.pdfDone",
         requestFailed: "status.requestFailed",
         chatReset: "status.chatReset",
+        chatCancelled: "status.chatCancelled",
         modelsLoadFailed: "status.modelsLoadFailed",
         tooManyFiles: "status.tooManyFiles",
     });
+    // Pace UI updates between parsed SSE chunks so a Cancel click made while a
+    // burst of deltas is being processed has a real chance to interrupt before
+    // the next delta renders (also avoids repainting on every single token).
+    const CHAT_STREAM_CHUNK_DELAY_MS = 40;
     let simpleChatMessages = [];
+    let activeChatAbortController = null;
     let fusionModelNames = new Set();
     let pendingLocaleUiState = null;
     let unsubscribeLocale = null;
@@ -518,22 +524,41 @@
         return trimmed;
     }
 
+    function renderTypingIndicator() {
+        const label = escapeHtml(translate("status.assistantTyping"));
+        return `<span class="chat-typing-indicator" role="status" aria-label="${label}" data-playground-i18n-aria="status.assistantTyping">` +
+            `<span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span></span>`;
+    }
+
     function renderSimpleChatTranscript() {
         const transcript = document.getElementById("simpleChatTranscript");
         if (!transcript) return;
         transcript.hidden = simpleChatMessages.length === 0;
         transcript.innerHTML = simpleChatMessages.map((message) => {
             const role = message.role === "assistant" ? "assistant" : "user";
-            const content = role === "assistant"
-                ? renderMarkdown(message.content || "")
-                : `<p>${escapeHtml(message.content || "")}</p>`;
+            const isPendingAndEmpty = role === "assistant" && message.pending && !message.content;
+            const content = isPendingAndEmpty
+                ? renderTypingIndicator()
+                : (role === "assistant"
+                    ? renderMarkdown(message.content || "")
+                    : `<p>${escapeHtml(message.content || "")}</p>`);
+            const cancelledMarker = role === "assistant" && message.cancelled
+                ? `<span class="chat-cancelled-marker"> ${translatedSpan("results.cancelled")}</span>`
+                : "";
+            // Any partial text streamed before the failure stays visible above
+            // this — the error never silently replaces or hides real output.
+            const errorNote = role === "assistant" && message.error
+                ? `<p class="chat-error-text">${translatedSpan("results.streamError")}${
+                    message.errorDetail ? `: ${escapeHtml(message.errorDetail)}` : ""
+                }</p>`
+                : "";
             const fusionBlock = role === "assistant" && message.fusion
                 ? renderFusionBlock(message.fusion)
                 : "";
             return `
                 <article class="chat-message ${role}">
                     <div class="chat-role">${translatedSpan(role === "assistant" ? "results.assistant" : "results.user")}</div>
-                    <div class="chat-content">${content}</div>
+                    <div class="chat-content">${content}${cancelledMarker}${errorNote}</div>
                     ${fusionBlock}
                 </article>
             `;
@@ -626,6 +651,83 @@
                 .join("\n");
         }
         return message ? JSON.stringify(message, null, 2) : JSON.stringify(payload || {}, null, 2);
+    }
+
+    function extractStreamDeltaText(parsedEvent) {
+        const choice = parsedEvent && Array.isArray(parsedEvent.choices) ? parsedEvent.choices[0] : null;
+        const delta = choice && typeof choice.delta === "object" ? choice.delta : null;
+        return delta && typeof delta.content === "string" ? delta.content : "";
+    }
+
+    // Reads an OpenAI-compatible `text/event-stream` body (`data: {...}\n\n`
+    // frames, terminated by `data: [DONE]`) and calls onPartial with the
+    // accumulated assistant text after every delta. Yields to the browser
+    // between deltas so a concurrent Cancel click can interrupt the stream
+    // before the next delta is applied.
+    async function streamChatCompletion(body, controller, onPartial) {
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let accumulated = "";
+        let sawDone = false;
+        try {
+            while (true) {
+                if (controller.signal.aborted) {
+                    throw new DOMException("The user aborted a request.", "AbortError");
+                }
+                const {value, done} = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, {stream: true});
+                let boundary = buffer.indexOf("\n\n");
+                while (boundary !== -1) {
+                    const rawEvent = buffer.slice(0, boundary);
+                    buffer = buffer.slice(boundary + 2);
+                    for (const line of rawEvent.split("\n")) {
+                        if (!line.startsWith("data:")) continue;
+                        const data = line.slice(5).trim();
+                        if (!data) continue;
+                        if (data === "[DONE]") {
+                            sawDone = true;
+                            continue;
+                        }
+                        let parsedEvent;
+                        try {
+                            parsedEvent = JSON.parse(data);
+                        } catch (err) {
+                            // Do not silently drop a chunk the gateway sent as
+                            // JSON but we could not parse: surface it as a
+                            // real error in the chat feed instead of quietly
+                            // continuing with a truncated answer.
+                            throw new Error(`Malformed stream chunk from gateway: ${err.message}`);
+                        }
+                        const chunkText = extractStreamDeltaText(parsedEvent);
+                        if (!chunkText) continue;
+                        accumulated += chunkText;
+                        onPartial(accumulated);
+                        await new Promise((resolve) => setTimeout(resolve, CHAT_STREAM_CHUNK_DELAY_MS));
+                        if (controller.signal.aborted) {
+                            throw new DOMException("The user aborted a request.", "AbortError");
+                        }
+                    }
+                    boundary = buffer.indexOf("\n\n");
+                }
+            }
+        } finally {
+            try {
+                await reader.cancel();
+            } catch (_err) {
+                // Stream already closed/errored; nothing to clean up.
+            }
+        }
+        // A well-formed OpenAI-compatible stream always ends with `data:
+        // [DONE]`. If the body closed without it, either the gateway sent
+        // something other than an event-stream (e.g. plain JSON) or the
+        // connection was cut short; either way, do not silently present a
+        // truncated/empty answer as a completed one.
+        if (!sawDone) {
+            throw new Error("Stream ended before the gateway sent a completion signal.");
+        }
+        return accumulated;
     }
 
     function renderImagesSummary(images) {
@@ -1044,6 +1146,17 @@
         }
     }
 
+    async function readErrorResponseDetail(response) {
+        const text = await response.text();
+        let payload;
+        try {
+            payload = text ? JSON.parse(text) : {};
+        } catch (parseErr) {
+            payload = {detail: text || parseErr.message};
+        }
+        return typeof payload === "object" && payload ? (payload.detail || JSON.stringify(payload)) : String(payload);
+    }
+
     async function submitSimpleChatRequest(form) {
         const model = selectedFormValue(form, "model");
         const input = form.elements.message;
@@ -1061,50 +1174,82 @@
             ...simpleChatMessages,
             {role: "user", content},
         ]);
+        // Fusion (main + judge + panel) responses are rejected by the gateway
+        // when `stream: true` is set (400 Bad Request), so only plain chat
+        // models use the streaming path; Fusion keeps the buffered request it
+        // already relied on for panel/analysis rendering.
+        const isFusionModel = fusionModelNames.has(model);
         const button = form.querySelector(".run-button");
+        const streamControls = document.getElementById("chatStreamControls");
+        const controller = new AbortController();
+        activeChatAbortController = controller;
         button.disabled = true;
+        if (streamControls) streamControls.hidden = false;
         setStatus("chat", KEYS.running, false);
         const startedAt = performance.now();
-        try {
+
+        // Render the user's message plus a pending assistant bubble right
+        // away; the bubble fills in as the response streams (or pops once
+        // the buffered Fusion response arrives).
+        if (input) input.value = "";
+        simpleChatMessages = [...requestMessages, {role: "assistant", content: "", pending: true}];
+        renderSimpleChatTranscript();
+
+        const requestBody = {
+            model,
             // Only standard {role, content} fields go upstream; any locally
             // attached Fusion render data is stripped here.
-            const requestBody = {
-                model,
-                messages: requestMessages.map((m) => ({role: m.role, content: m.content})),
-                stream: false,
-            };
-            if (fusionModelNames.has(model)) {
-                const detailsCheckbox = document.getElementById("chatFusionDetails");
-                requestBody.fusion = {include_details: detailsCheckbox ? detailsCheckbox.checked : true};
-            }
+            messages: requestMessages.map((m) => ({role: m.role, content: m.content})),
+            stream: !isFusionModel,
+        };
+        if (isFusionModel) {
+            const detailsCheckbox = document.getElementById("chatFusionDetails");
+            requestBody.fusion = {include_details: detailsCheckbox ? detailsCheckbox.checked : true};
+        }
+
+        const updateAssistantBubble = (text) => {
+            const last = simpleChatMessages[simpleChatMessages.length - 1];
+            if (!last || last.role !== "assistant") return;
+            last.content = text;
+            last.pending = false;
+            renderSimpleChatTranscript();
+        };
+
+        try {
             const response = await apiFetch("/v1/chat/completions", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify(requestBody),
+                signal: controller.signal,
             });
-            const text = await response.text();
-            let payload;
-            try {
-                payload = text ? JSON.parse(text) : {};
-            } catch (parseErr) {
-                payload = {detail: text || parseErr.message};
-            }
-            if (!response.ok) {
-                const detail = typeof payload === "object" && payload ? (payload.detail || JSON.stringify(payload)) : String(payload);
-                setStatus("chat", KEYS.error, true, {status: response.status}, detail);
-                return;
+
+            if (isFusionModel) {
+                if (!response.ok) {
+                    throw Object.assign(new Error(await readErrorResponseDetail(response)), {statusCode: response.status});
+                }
+                const payload = await response.json().catch((parseErr) => {
+                    throw new Error(`Invalid JSON response: ${parseErr.message || parseErr}`);
+                });
+                const last = simpleChatMessages[simpleChatMessages.length - 1];
+                last.content = extractAssistantMessage(payload);
+                last.pending = false;
+                if (payload && payload.fusion && typeof payload.fusion === "object") {
+                    last.fusion = payload.fusion;
+                }
+            } else {
+                if (!response.ok) {
+                    throw Object.assign(new Error(await readErrorResponseDetail(response)), {statusCode: response.status});
+                }
+                if (!response.body) {
+                    throw new Error("This browser does not support reading streamed responses.");
+                }
+                const finalText = await streamChatCompletion(response.body, controller, updateAssistantBubble);
+                const last = simpleChatMessages[simpleChatMessages.length - 1];
+                last.content = finalText;
+                last.pending = false;
             }
 
-            const assistantContent = extractAssistantMessage(payload);
-            const assistantMessage = {role: "assistant", content: assistantContent};
-            if (payload && payload.fusion && typeof payload.fusion === "object") {
-                assistantMessage.fusion = payload.fusion;
-            }
-            simpleChatMessages = trimSimpleChatMessages([
-                ...requestMessages,
-                assistantMessage,
-            ]);
-            if (input) input.value = "";
+            simpleChatMessages = trimSimpleChatMessages(simpleChatMessages);
             renderSimpleChatTranscript();
             const durationMs = Math.round(performance.now() - startedAt);
             setStatus("chat", KEYS.chatDone, false, {
@@ -1113,9 +1258,30 @@
                 limit: CHAT_CONTEXT_LIMIT,
             });
         } catch (err) {
-            setStatus("chat", KEYS.requestFailed, true, {}, err.message || err);
+            const isCancelled = err && err.name === "AbortError";
+            const last = simpleChatMessages[simpleChatMessages.length - 1];
+            if (last && last.role === "assistant") {
+                last.pending = false;
+                if (isCancelled) {
+                    last.cancelled = true;
+                } else {
+                    last.error = true;
+                    last.errorDetail = err && err.message ? err.message : String(err);
+                }
+            }
+            simpleChatMessages = trimSimpleChatMessages(simpleChatMessages);
+            renderSimpleChatTranscript();
+            if (isCancelled) {
+                setStatus("chat", KEYS.chatCancelled, false);
+            } else if (err && err.statusCode) {
+                setStatus("chat", KEYS.error, true, {status: err.statusCode}, err.message || err);
+            } else {
+                setStatus("chat", KEYS.requestFailed, true, {}, err.message || err);
+            }
         } finally {
             button.disabled = false;
+            if (streamControls) streamControls.hidden = true;
+            activeChatAbortController = null;
         }
     }
 
@@ -1338,16 +1504,32 @@
         const form = document.getElementById("simpleChatForm");
         if (!form) return;
         const resetButton = document.getElementById("resetSimpleChatButton");
+        const cancelButton = document.getElementById("cancelChatButton");
         const modelSelect = document.getElementById("chatModel");
+        const input = form.elements.message;
         if (modelSelect) modelSelect.addEventListener("change", syncChatFusionOptions);
         form.addEventListener("submit", (event) => {
             event.preventDefault();
             submitSimpleChatRequest(form);
         });
+        if (input) {
+            input.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter" || event.shiftKey) return;
+                event.preventDefault();
+                form.requestSubmit();
+            });
+        }
+        if (cancelButton) {
+            cancelButton.addEventListener("click", () => {
+                activeChatAbortController?.abort();
+            });
+        }
         if (resetButton) {
             resetButton.addEventListener("click", () => {
+                // Abort any in-flight stream first so a late chunk cannot
+                // resurrect a message into the transcript we are about to clear.
+                activeChatAbortController?.abort();
                 simpleChatMessages = [];
-                const input = form.elements.message;
                 if (input) input.value = "";
                 renderSimpleChatTranscript();
                 setStatus("chat", KEYS.chatReset, false);

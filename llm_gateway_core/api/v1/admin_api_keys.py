@@ -8,11 +8,13 @@ session cookie). Virtual key holders cannot create, modify, or delete keys.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import math
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -20,6 +22,7 @@ from ..accounting_http import (
     AccountingHttpUse,
     accounting_error_response,
 )
+from ..error_envelope import error_response
 from ...config.paths import STATIC_DIR
 from ...db.api_keys_db import (
     VALID_BUDGET_PERIODS,
@@ -36,6 +39,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 admin_api_keys_router = APIRouter()
+
+_KEY_MUTATION_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _key_mutation_lock(key_id: int) -> asyncio.Lock:
+    lock = _KEY_MUTATION_LOCKS.get(key_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _KEY_MUTATION_LOCKS[key_id] = lock
+    return lock
 
 
 class ApiKeyCreatePayload(BaseModel):
@@ -130,6 +143,41 @@ def _serialize_record(record: ApiKeyRecord, *, reveal: bool = False) -> dict[str
     }
 
 
+def _record_etag(record: ApiKeyRecord) -> str:
+    """Deterministic ``ETag`` covering the admin-editable fields of a key.
+
+    Deliberately excludes usage-driven fields (``spent_usd``, ``last_used_at``,
+    ``budget_reset_at``): those change on every gateway request or scheduled
+    reset, independent of admin edits, so hashing them would make the
+    ``If-Match`` precondition fail on virtually every save of an active key.
+    Only fields an admin PATCH can change are covered, which is exactly what
+    the optimistic-concurrency check in :func:`update_api_key` needs.
+    """
+    fields = {
+        "name": record.name,
+        "budget_usd": record.budget_usd,
+        "budget_period": record.budget_period,
+        "rpm": record.rpm,
+        "tpm": record.tpm,
+        "allowed_models": sorted(record.allowed_models),
+        "disabled": record.disabled,
+        "metadata": record.metadata,
+    }
+    digest = hashlib.sha256(
+        json.dumps(fields, sort_keys=True, ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    return f'"{digest}"'
+
+
+async def _current_record_for_etag(request: Request, key_id: int) -> ApiKeyRecord | None:
+    """Read-only lookup so ``update_api_key`` can evaluate an ``If-Match``
+    precondition before delegating the actual mutation to
+    ``accounting_service`` (mutation handlers must not own storage directly;
+    see ``test_admin_mutation_handlers_have_no_direct_storage_or_cache_owner``)."""
+    db = _capture_app_services(request).api_keys_db
+    return await asyncio.to_thread(db.get_by_id, key_id)
+
+
 @admin_api_keys_router.get("/ui/api-keys", response_class=HTMLResponse, include_in_schema=False)
 async def get_api_keys_page(request: Request):
     _require_master(request)
@@ -170,12 +218,13 @@ async def create_api_key(request: Request, payload: ApiKeyCreatePayload) -> dict
 
 
 @admin_api_keys_router.get("/admin/api-keys/{key_id}")
-async def get_api_key(request: Request, key_id: int) -> dict[str, Any]:
+async def get_api_key(request: Request, key_id: int, response: Response) -> dict[str, Any]:
     _require_master(request)
     db = _capture_app_services(request).api_keys_db
     record = await asyncio.to_thread(db.get_by_id, key_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    response.headers["ETag"] = _record_etag(record)
     return _serialize_record(record, reveal=True)
 
 
@@ -185,6 +234,40 @@ async def update_api_key(
 ) -> Any:
     _require_master(request)
     services = _capture_app_services(request)
+    # If-Match is optional and backwards-compatible: a caller that never sent
+    # it (e.g. an older client, or a script) gets the pre-existing behavior
+    # with no precondition check. Callers that do send it get 412 instead of
+    # silently clobbering a concurrent edit from another tab/admin.
+    #
+    # The etag re-check and the mutation are serialised on a per-key
+    # ``asyncio.Lock`` so two concurrent PATCH requests that both fetched the
+    # same fresh etag can't both pass the precondition and both write — the
+    # second one now re-reads the current record inside the lock and observes
+    # the first write's fresh etag, so it correctly returns 412 instead of
+    # silently clobbering the earlier admin's change.
+    if_match = request.headers.get("if-match")
+    async with _key_mutation_lock(key_id):
+        if if_match is not None:
+            current = await _current_record_for_etag(request, key_id)
+            if current is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+            if _record_etag(current) != if_match.strip():
+                return error_response(
+                    request,
+                    status_code=status.HTTP_412_PRECONDITION_FAILED,
+                    detail="API key was modified by another request; reload and retry",
+                    code="api_key_conflict",
+                    extra={"current": _serialize_record(current)},
+                )
+        return await _apply_update(request, services, key_id, payload)
+
+
+async def _apply_update(
+    request: Request,
+    services: "AppServices",
+    key_id: int,
+    payload: "ApiKeyUpdatePayload",
+) -> Any:
     try:
         _validate_update_payload_constraints(payload)
         update_fields = {
@@ -234,4 +317,8 @@ async def delete_api_key(request: Request, key_id: int) -> Any:
         )
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    # A per-key mutation lock is no longer reachable via any PATCH once the key
+    # is deleted, so drop it to keep _KEY_MUTATION_LOCKS bounded by live keys
+    # rather than by every key_id ever PATCHed over the process lifetime.
+    _KEY_MUTATION_LOCKS.pop(key_id, None)
     return {"deleted": True, "id": key_id}

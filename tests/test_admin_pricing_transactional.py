@@ -197,20 +197,26 @@ def test_get_and_calculate_use_one_request_snapshot_and_exact_headers(
         {
             "provider": "primary",
             "model": "chat",
+            "source": "configured",
             "input_rate": 1.0,
             "output_rate": 2.0,
+            "default_cost_per_request": None,
         },
         {
             "provider": "primary",
             "model": "metadata-only",
+            "source": "configured",
             "input_rate": 3.0,
             "output_rate": 4.0,
+            "default_cost_per_request": None,
         },
         {
             "provider": "primary",
             "model": "rate-only",
+            "source": "configured",
             "input_rate": 5.0,
             "output_rate": 6.0,
+            "default_cost_per_request": None,
         },
     ]
     digest = hashlib.sha256(_provider_source().encode()).hexdigest()
@@ -303,14 +309,18 @@ def test_put_publishes_n_plus_one_and_preserves_metadata_and_backup(
             {
                 "provider": "primary",
                 "model": "chat",
+                "source": "configured",
                 "input_rate": 10.0,
                 "output_rate": 20.0,
+                "default_cost_per_request": None,
             },
             {
                 "provider": "primary",
                 "model": "new",
+                "source": "configured",
                 "input_rate": 0.0,
                 "output_rate": 7.5,
+                "default_cost_per_request": None,
             },
         ]
     }
@@ -610,22 +620,22 @@ def test_put_openapi_keeps_the_explicit_request_and_response_contract(
     assert schema["type"] == "object"
     assert schema["required"] == ["items"]
     assert schema["properties"]["items"]["type"] == "array"
+    # Inlined (not a "$ref"): ModelPricing is validated manually from the raw
+    # body rather than bound as a FastAPI Body()/response_model parameter, so
+    # FastAPI never registers it under components/schemas on its own.
     item_schema = schema["properties"]["items"]["items"]
-    assert set(item_schema) == {"$ref"}
-    target: Any = document
-    for token in item_schema["$ref"].removeprefix("#/").split("/"):
-        target = target[token.replace("~1", "/").replace("~0", "~")]
-    assert target["type"] == "object"
-    assert set(target["required"]) == {
+    assert "$ref" not in item_schema
+    assert item_schema["type"] == "object"
+    assert set(item_schema["required"]) == {
         "provider",
         "model",
         "input_rate",
         "output_rate",
     }
-    assert target["properties"]["provider"]["minLength"] == 1
-    assert target["properties"]["model"]["minLength"] == 1
-    assert target["properties"]["input_rate"]["minimum"] == 0
-    assert target["properties"]["output_rate"]["minimum"] == 0
+    assert item_schema["properties"]["provider"]["minLength"] == 1
+    assert item_schema["properties"]["model"]["minLength"] == 1
+    assert item_schema["properties"]["input_rate"]["minimum"] == 0
+    assert item_schema["properties"]["output_rate"]["minimum"] == 0
     assert operation["responses"]["200"]["content"]["application/json"][
         "schema"
     ]["$ref"].endswith("/PricingListResponse")

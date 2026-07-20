@@ -15,7 +15,7 @@
     "invalidResponse": "The translator response has an invalid format.",
     "unsupportedStep": "The response contains an unsupported translation step."
   },
-  "heading": "Translator Debugger",
+  "heading": "Translator Check",
   "input": {
     "mockHint": "— leave blank for the default mock",
     "mockPlaceholder": "Leave blank to use the built-in mock response",
@@ -26,7 +26,7 @@
     "title": "Input"
   },
   "intro": "Inspect how the gateway transforms requests between OpenAI and Anthropic formats. This master-only tool makes no real provider call.",
-  "pageTitle": "LLM Gateway - Translator Debugger",
+  "pageTitle": "LLM Gateway - Translator Check",
   "steps": {
     "clientRequest": {
       "notes": "The raw request body received from the client.",

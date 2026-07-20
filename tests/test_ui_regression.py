@@ -1252,6 +1252,10 @@ def test_api_keys_model_catalog_error_retry_and_locale_preserve_form(page: Page,
 
     page.goto(f"{server}/v1/ui/api-keys")
     page.locator("#createKeyBtn").click()
+    # P1-7: the allowed-models list is only shown once the admin switches
+    # the allowed-models mode to "subset" (default is "all"); the catalog
+    # fetch itself still fires unconditionally on modal open.
+    page.locator("#allowedModelsModeSubset").check()
     expect(page.locator("#allowedModelsList")).to_have_attribute(
         "data-model-catalog-state", "error"
     )
@@ -1479,23 +1483,23 @@ def test_fallback_chains_show_detailed_error_message(page: Page, server):
 def test_auth_login_flow(page: Page, server):
     _route_empty_analytics_dashboard(page, server)
 
-    # Go to root, should redirect to login with next=/v1/ui/usage-stats
+    # Go to root, should redirect to login with next=/v1/ui/overview
     page.goto(server)
-    # The actual redirect is to /auth/login?next=/v1/ui/usage-stats because of root_redirect
+    # The actual redirect is to /auth/login?next=/v1/ui/overview because of root_redirect
     # Note: Browser might normalize encoded slashes back to /
-    expect(page).to_have_url(f"{server}/auth/login?next=/v1/ui/usage-stats")
-    
+    expect(page).to_have_url(f"{server}/auth/login?next=/v1/ui/overview")
+
     # Enter invalid key
     page.fill('#apiKeyInput', "wrong-key")
     page.click('#submitButton')
     expect(page.locator("#errorBox")).to_be_visible()
-    
+
     # Enter valid key
     page.fill('#apiKeyInput', "test-key")
     page.click('#submitButton')
-    
-    # Should be redirected to usage-stats
-    expect(page).to_have_url(f"{server}/v1/ui/usage-stats")
+
+    # Should be redirected to overview
+    expect(page).to_have_url(f"{server}/v1/ui/overview")
 
 def test_editor_save_and_reload(page: Page, server):
     session = create_authenticated_session(server, "test-key")

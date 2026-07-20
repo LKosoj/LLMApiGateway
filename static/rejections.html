@@ -68,7 +68,7 @@
             <button id="refreshBtn" data-i18n="rejections:actions.refresh">Refresh</button>
         </div>
 
-        <div id="rejMeta" class="rej-meta"></div>
+        <div id="rejMeta" class="rej-meta"><span id="rejMetaText"></span><span id="rejStaleBadge" class="stale-badge" hidden></span></div>
 
         <div class="rej-table-wrap" tabindex="0">
             <table class="rej-table">
@@ -99,6 +99,17 @@
 
         <div id="messageArea" class="error-banner" hidden></div>
         <pre id="messageDetail" data-i18n-raw-detail hidden></pre>
+    </div>
+
+    <div id="rejDetailSheet" class="rej-sheet" hidden>
+        <div id="rejDetailBackdrop" class="rej-sheet-backdrop"></div>
+        <div class="rej-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="rejDetailTitle">
+            <div class="rej-sheet-head">
+                <h2 id="rejDetailTitle" data-i18n="rejections:detail.heading">Rejection details</h2>
+                <button id="rejDetailClose" type="button" aria-label="Close" data-i18n-aria-label="rejections:detail.close">&times;</button>
+            </div>
+            <dl class="rej-sheet-fields" id="rejDetailFields"></dl>
+        </div>
     </div>
 
     <script src="/static/vendor/ui-runtime.bundle.js"></script>

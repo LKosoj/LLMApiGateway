@@ -34,6 +34,13 @@
           "supports_tools",
           "supports_vision"
         ]
+      },
+      {
+        "provider": "alibaba",
+        "model": "qwen3.8-max-preview",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
       }
     ],
     "context_overflow_fallback": {
@@ -57,7 +64,7 @@
     "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/light_model",
@@ -78,14 +85,29 @@
         ]
       },
       {
-        "provider": "cerebras",
-        "model": "gpt-oss-120b",
+        "provider": "nvidia",
+        "model": "qwen/qwen3.5-397b-a17b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
-        "context_window": 131072,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it:free",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -104,21 +126,6 @@
         "supports_vision": false,
         "supports_tools": true,
         "context_window": 256000,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "openrouter",
-        "model": "google/gemma-4-31b-it:free",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 262144,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -169,6 +176,21 @@
           "supports_tools",
           "supports_vision"
         ]
+      },
+      {
+        "provider": "alibaba",
+        "model": "qwen3.6-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1000000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -192,7 +214,7 @@
     "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/qwen",
@@ -251,11 +273,34 @@
     "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/qwen3.5",
     "fallback_models": [
+      {
+        "provider": "kimicode",
+        "model": "k3",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {
+          "temperature": 1
+        },
+        "custom_headers": {},
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
+      },
+      {
+        "provider": "alibaba",
+        "model": "qwen3.8-max-preview",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1000000
+      },
       {
         "provider": "z.ai",
         "model": "glm-5.2",
@@ -272,19 +317,6 @@
           "context_window",
           "supports_tools",
           "supports_vision"
-        ]
-      },
-      {
-        "provider": "kimicode",
-        "model": "k3",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {
-          "temperature": 1
-        },
-        "custom_headers": {},
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window"
         ]
       },
       {
@@ -328,10 +360,10 @@
       ]
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/big_context",
@@ -398,14 +430,28 @@
       ]
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
+      {
+        "provider": "alibaba",
+        "model": "qwen3.8-max-preview",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1000000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools"
+        ]
+      },
       {
         "provider": "kimicode",
         "model": "k3",
@@ -459,21 +505,6 @@
         ]
       },
       {
-        "provider": "alibaba",
-        "model": "qwen3.7-max",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": false,
-        "supports_tools": true,
-        "context_window": 1000000,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
         "provider": "freemodel",
         "model": "gpt-5.5",
         "use_provider_order_as_fallback": false,
@@ -507,10 +538,10 @@
       ]
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/fast",
@@ -571,10 +602,10 @@
       ]
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/text",
@@ -670,10 +701,10 @@
       ]
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/ocr",
@@ -804,10 +835,10 @@
       ]
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/free_gd",
@@ -873,10 +904,10 @@
       ]
     },
     "rotate_models": false,
-    "dynamic_penalty": false,
+    "dynamic_penalty": true,
     "strip_think_tags": true,
     "compress_tool_results": true,
-    "tool_call_rescue": false
+    "tool_call_rescue": true
   },
   {
     "gateway_model_name": "llmgateway/small",
@@ -943,9 +974,9 @@
       }
     ],
     "rotate_models": false,
-    "dynamic_penalty": false,
-    "strip_think_tags": false,
-    "compress_tool_results": false,
-    "tool_call_rescue": false
+    "dynamic_penalty": true,
+    "strip_think_tags": true,
+    "compress_tool_results": true,
+    "tool_call_rescue": true
   }
 ]

@@ -175,13 +175,13 @@ def _open_editor(
     page.on("request", record_request)
     page.goto(f"{base_url}/v1/ui/rules-editor")
     expect(page.locator("#saveButton")).to_be_enabled()
-    tab_id = "tabEmbeddings" if tab == "embeddings" else "tabRerank"
+    entity_target = "embeddings" if tab == "embeddings" else "rerank"
     message = "Embeddings Routes" if tab == "embeddings" else "Rerank Routes"
     with page.expect_response(
         lambda response: response.url.endswith(OPERATION_PATH)
         and response.request.method == "GET"
     ) as loaded_response:
-        page.locator(f"#{tab_id}").click()
+        page.locator(f'[data-entity-target="{entity_target}"]').click()
     assert loaded_response.value.status == 200
     etag = loaded_response.value.headers["etag"]
     expect(page.locator("#messageArea")).to_contain_text(
@@ -524,7 +524,7 @@ def test_lazy_catalog_retry_locale_and_stale_response_isolation(
         assert len(primary_requests) == 2
         assert len(pending_primary) == 1
 
-        page.locator("#tabProviders").click()
+        page.locator('[data-entity-target="providers"]').click()
         expect(page.locator("#messageArea")).to_contain_text(
             "Providers loaded successfully"
         )
@@ -544,7 +544,7 @@ def test_lazy_catalog_retry_locale_and_stale_response_isolation(
             lambda response: response.url.endswith(OPERATION_PATH)
             and response.request.method == "GET"
         ):
-            page.locator("#tabEmbeddings").click()
+            page.locator('[data-entity-target="embeddings"]').click()
         expect(page.locator("#messageArea")).to_contain_text(
             "Embeddings Routes loaded successfully"
         )
@@ -642,7 +642,7 @@ def test_delayed_save_blocks_drag_and_completed_drag_marks_dirty(
                 );
                 rows[1].draggable = false;
                 document.querySelector('#addEmbeddingButton').disabled = true;
-                document.querySelector('#tabRerank').disabled = true;
+                document.querySelector('[data-entity-target="rerank"]').disabled = true;
             }
             """
         )
@@ -727,7 +727,7 @@ def test_delayed_save_blocks_drag_and_completed_drag_marks_dirty(
             False,
         ]
         expect(page.locator("#addEmbeddingButton")).to_be_disabled()
-        expect(page.locator("#tabRerank")).to_be_disabled()
+        expect(page.locator('[data-entity-target="rerank"]')).to_be_disabled()
         expect(page.locator("#saveButton")).to_have_attribute(
             "data-editor-dirty", "false"
         )

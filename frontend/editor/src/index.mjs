@@ -1,6 +1,6 @@
 import { registerFallback } from './fallback.mjs';
 import { registerFusion } from './fusion.mjs';
-import { createEditorElements, registerCore } from './core.mjs';
+import { createEditorElements, registerCore, registerEntityPanel, createRulesTabsController } from './core.mjs';
 import { registerOperations } from './operations.mjs';
 import { registerProviders } from './providers.mjs';
 import { registerRouter } from './router.mjs';
@@ -14,14 +14,7 @@ function startEditor(ctx) {
         WEB_DEEP_RESEARCH_CARD_OPTIONS,
     } = ctx;
 
-    ctx.state.rulesTabsController = window.gatewayUi.createTabs(ctx.elements.rulesTabList, {
-        activation: 'manual',
-        beforeActivate: ctx.beforeRulesTabActivate,
-        initialKey: ctx.state.activeEditor,
-        onActivate: ctx.activateRulesTab,
-        onReselect: ctx.reselectRulesTab,
-        panels: ctx.elements.rulesTabPanels,
-    });
+    ctx.state.rulesTabsController = createRulesTabsController(ctx);
     ctx.elements.addProviderButton.addEventListener('click', () => {
         if (ctx.state.providersLoadState !== 'ready') {
             ctx.showLocalizedMessage('error', 'Cannot add Provider: provider configuration has not loaded successfully.');
@@ -229,5 +222,6 @@ document.addEventListener('DOMContentLoaded', function () {
     registerOperations(ctx);
     registerFusion(ctx);
     registerRouter(ctx);
+    registerEntityPanel(ctx);
     startEditor(ctx);
 });

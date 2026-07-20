@@ -1,10 +1,17 @@
 {
   "appName": "LLM API Gateway",
   "loading": "Loading…",
+  "actions": {
+    "copy": "Copy",
+    "copied": "Copied!"
+  },
   "items": "{count, plural, one {# item} other {# items}}",
   "languageChanged": "Language changed to {locale}",
   "languageLabel": "Language",
   "localeChangeFailed": "The interface language could not be changed.",
+  "stale": {
+    "badge": "Stale · {time}"
+  },
   "errors": {
     "invalidApiKey": "Invalid API key.",
     "invalidRequest": "The request is invalid.",
@@ -24,15 +31,35 @@
   },
   "navigation": {
     "label": "Primary navigation",
+    "toggle": "Open navigation menu",
+    "close": "Close navigation menu",
+    "overlay": "Navigation menu overlay",
+    "overview": "Overview",
+    "activity": "Activity",
     "docs": "Docs",
-    "usage": "Usage Statistics",
+    "usage": "Analytics (legacy)",
     "quota": "Quota",
     "rules": "Rules Editor",
     "playground": "Playground",
     "apiKeys": "API Keys",
     "rejections": "Rejections",
-    "translator": "Translator Debug",
+    "translator": "Translator Check",
     "pricing": "Pricing",
     "freeModels": "Free LLM Catalog"
+  },
+  "access": {
+    "denied": {
+      "title": "Access restricted",
+      "body": "This section is available to the master API key only.",
+      "back": "Back to Overview"
+    }
+  },
+  "identity": {
+    "role": {
+      "master": "Master",
+      "user": "User"
+    },
+    "name": "Key: {name}",
+    "logout": "Sign out"
   }
 }

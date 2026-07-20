@@ -248,7 +248,7 @@
   },
   {
     "alibaba": {
-      "baseUrl": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "apikey": "${APIKEY_ALIBABA}",
       "models": {
         "qwen3.7-max": {

@@ -23,6 +23,8 @@ from i18n_inventory import validate_inventory  # noqa: E402
 EXPECTED_NAMESPACES = {
     "common",
     "auth",
+    "overview",
+    "activity",
     "docs",
     "editor",
     "playground",

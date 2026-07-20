@@ -86,6 +86,119 @@ def pricing_server(tmp_path: Path) -> Iterator[tuple[str, Path]]:
         yield base_url, providers_path
 
 
+def _write_config_with_used_models(root: Path) -> Path:
+    """Like ``_write_config``, but adds two used-but-unpriced routes so the
+    pricing page also has to render the read-only ``operation_default`` and
+    ``upstream_only`` rows. Deliberately never names a provider "openrouter",
+    so ``OpenRouterFreeModelsService`` (which auto-activates whenever a
+    provider is literally named "openrouter") never attempts a real network
+    call against openrouter.ai during this browser test.
+    """
+    providers_path = root / "providers.json"
+    providers_path.write_text(
+        json.dumps(
+            [
+                {
+                    "primary": {
+                        "baseUrl": "https://primary.invalid/v1",
+                        "apikey": "test-only-key",
+                        "models": {
+                            "chat": {
+                                "context_length": 131072,
+                                "input_rate": 1.0,
+                                "output_rate": 2.0,
+                            }
+                        },
+                    }
+                },
+                {
+                    "cohere": {
+                        "baseUrl": "https://cohere.invalid/v1",
+                        "apikey": "test-only-key",
+                    }
+                },
+                {
+                    "secondary": {
+                        "baseUrl": "https://secondary.invalid/v1",
+                        "apikey": "test-only-key",
+                    }
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    sources = {
+        "models_fallback_rules.json": json.dumps(
+            [
+                {
+                    "gateway_model_name": "llmgateway/secondary-chat",
+                    "fallback_models": [
+                        {
+                            "provider": "secondary",
+                            "model": "vendor/upstream-chat-model",
+                        }
+                    ],
+                }
+            ]
+        ),
+        "models_model_rules.json": "{}\n",
+        "models_operation_rules.json": json.dumps(
+            {
+                "rerank": [
+                    {
+                        "gateway_model_name": "llmgateway/rerank",
+                        "routes": [
+                            {
+                                "provider": "cohere",
+                                "model": "rerank-v3",
+                                "target_path": "/rerank",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        "models_fusion_rules.json": "[]\n",
+        "models_router_rules.json": "[]\n",
+    }
+    for filename, content in sources.items():
+        (root / filename).write_text(content, encoding="utf-8")
+    return providers_path
+
+
+@pytest.fixture
+def pricing_server_with_used_models(tmp_path: Path) -> Iterator[tuple[str, Path]]:
+    providers_path = _write_config_with_used_models(tmp_path)
+    port = get_free_port()
+    env = os.environ.copy()
+    env.update(
+        {
+            "GATEWAY_API_KEY": MASTER_KEY,
+            "GATEWAY_HOST": "127.0.0.1",
+            "GATEWAY_PORT": str(port),
+            "FALLBACK_PROVIDER": "primary",
+            "PROVIDERS_FILENAME": str(providers_path),
+            "FALLBACK_RULES_FILENAME": str(
+                tmp_path / "models_fallback_rules.json"
+            ),
+            "MODEL_RULES_FILENAME": str(tmp_path / "models_model_rules.json"),
+            "OPERATION_RULES_FILENAME": str(
+                tmp_path / "models_operation_rules.json"
+            ),
+            "FUSION_RULES_FILENAME": str(tmp_path / "models_fusion_rules.json"),
+            "ROUTER_RULES_FILENAME": str(tmp_path / "models_router_rules.json"),
+            "SESSION_COOKIE_SECURE": "false",
+            "VERIFY_MODELS_ON_STARTUP": "off",
+            "LOG_LEVEL": "WARNING",
+        }
+    )
+    base_url = f"http://127.0.0.1:{port}"
+
+    with isolated_gateway_process(env=env, temp_path=tmp_path) as process:
+        wait_for_gateway(base_url, process)
+        yield base_url, providers_path
+
+
 def _login(context: BrowserContext, base_url: str) -> None:
     response = context.request.post(
         f"{base_url}/auth/login",
@@ -458,7 +571,13 @@ def test_pricing_locale_rerender_preserves_state_and_inflight_requests(
         expect(page.locator("#calcCostValue")).to_have_text("$11.000000")
 
         rate_input = _input_rate(page)
-        rate_input.fill("7")
+        # At this 390px mobile viewport, the input-rate column is hidden and
+        # only reachable via the row detail sheet (P1-5 mobile detail view).
+        page.locator("#pricingTableBody tr .btn-expand").first.click()
+        expect(page.locator("#pricingDetailSheet")).to_be_visible()
+        page.locator("#pricingDetailInputRate").fill("7")
+        page.locator("#pricingDetailClose").click()
+        expect(page.locator("#pricingDetailSheet")).to_be_hidden()
         page.evaluate(
             """
             () => {
@@ -573,4 +692,66 @@ def test_pricing_locale_rerender_preserves_state_and_inflight_requests(
         }
     finally:
         peer_context.close()
+        context.close()
+
+
+def test_pricing_used_but_unpriced_models_render_readonly_and_set_manual_price_converts_them(
+    browser: Browser,
+    pricing_server_with_used_models: tuple[str, Path],
+) -> None:
+    base_url, _providers_path = pricing_server_with_used_models
+    context = browser.new_context(locale="en-US")
+    try:
+        _login(context, base_url)
+        page = context.new_page()
+        page.goto(f"{base_url}/v1/ui/pricing")
+
+        rows = page.locator("#pricingTableBody tr")
+        expect(rows).to_have_count(3)
+
+        # Rows render sorted by (provider, model): "cohere" < "primary" <
+        # "secondary", so the read-only operation_default row is first, the
+        # editable configured row is second, and the read-only upstream_only
+        # row is last. Editable rows show provider/model as <input> values,
+        # which locator(has_text=...) cannot see (it only inspects text
+        # content), so rows are addressed by index rather than by text.
+        operation_default_row = rows.nth(0)
+        configured_row = rows.nth(1)
+        upstream_only_row = rows.nth(2)
+
+        expect(operation_default_row).to_contain_text("rerank-v3")
+        expect(operation_default_row).to_contain_text("0.10")
+        expect(operation_default_row.locator("input")).to_have_count(0)
+        operation_default_button = operation_default_row.get_by_role(
+            "button", name="Set manual price"
+        )
+        expect(operation_default_button).to_be_enabled()
+
+        expect(configured_row.locator("input")).to_have_count(4)
+        expect(configured_row.locator("input").nth(2)).to_have_value("1")
+
+        expect(upstream_only_row).to_contain_text("vendor/upstream-chat-model")
+        expect(upstream_only_row).to_contain_text("upstream only")
+        expect(upstream_only_row.locator("input")).to_have_count(0)
+        expect(
+            upstream_only_row.get_by_role("button", name="Set manual price")
+        ).to_be_enabled()
+
+        # The calculator's model select must only offer priced (editable) rows.
+        expect(page.locator("#calcModel option")).to_have_count(2)
+
+        # Clicking "Set manual price" converts the operation_default row into
+        # an ordinary editable row (provider/model/input_rate/output_rate all
+        # become inputs, rates start at 0) and it becomes selectable in the
+        # calculator too.
+        operation_default_button.click()
+        converted_row = page.locator("#pricingTableBody tr").nth(0)
+        rate_inputs = converted_row.locator("input")
+        expect(rate_inputs).to_have_count(4)
+        expect(rate_inputs.nth(0)).to_have_value("cohere")
+        expect(rate_inputs.nth(1)).to_have_value("rerank-v3")
+        expect(rate_inputs.nth(2)).to_have_value("0")
+        expect(rate_inputs.nth(3)).to_have_value("0")
+        expect(page.locator("#calcModel option")).to_have_count(3)
+    finally:
         context.close()

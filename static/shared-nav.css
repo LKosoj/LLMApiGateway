@@ -74,6 +74,54 @@
     gap: 8px;
 }
 
+.gateway-identity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-inline-start: 8px;
+    border-inline-start: 1px solid var(--border, #e2e8f0);
+}
+
+.gateway-identity[hidden] {
+    display: none;
+}
+
+.gateway-identity-role {
+    padding: 2px 8px;
+    border-radius: var(--radius-sm, 6px);
+    background: var(--bg-sunken, #eceff4);
+    color: var(--text-strong, #0f172a);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.gateway-identity-name {
+    max-width: 160px;
+    overflow: hidden;
+    color: var(--text, #334155);
+    font-size: 12px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.gateway-identity-logout {
+    padding: 6px 10px;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-elevated, #ffffff);
+    color: var(--text, #334155);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.gateway-identity-logout:hover {
+    background: var(--bg-subtle, #f1f5f9);
+}
+
 .gateway-locale-label {
     color: var(--text-muted, #64748b);
     font-size: 12px;
@@ -131,5 +179,229 @@
         width: 72px;
         padding-inline: 7px 22px;
         font-size: 12px;
+    }
+
+    .gateway-identity-name {
+        display: none;
+    }
+}
+
+/* ---------- Sidebar / drawer shell ----------
+ * The nav mount is relocated (by shared-nav.js) into `.gateway-sidebar`,
+ * itself inside `.gateway-nav-overlay`, both mounted as direct children of
+ * `<body>` (outside `.top-nav`). This is required because `.top-nav-content`
+ * uses `backdrop-filter` on several pages, which creates a CSS containing
+ * block for `position: fixed` descendants and would otherwise confine the
+ * drawer to the top bar instead of the full viewport.
+ *
+ * Mobile-first: below is the drawer/overlay behaviour; the
+ * `@media (min-width: 1024px)` block at the end pins it as a permanent
+ * sidebar and hides the mobile-only controls.
+ */
+
+.gateway-nav-toggle {
+    display: flex;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: var(--radius-md, 10px);
+    background: var(--bg-elevated, #ffffff);
+    cursor: pointer;
+    transition: background-color var(--transition-fast, 150ms ease), border-color var(--transition-fast, 150ms ease);
+}
+
+.gateway-nav-toggle:hover {
+    background: var(--bg-sunken, #eceff4);
+}
+
+.gateway-nav-toggle-bars {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    width: 20px;
+}
+
+.gateway-nav-toggle-bar {
+    display: block;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--text, #334155);
+}
+
+.gateway-nav-overlay {
+    position: fixed;
+    z-index: var(--z-modal, 300);
+    inset: 0;
+    display: flex;
+    align-items: stretch;
+    justify-content: flex-start;
+    background: rgba(15, 23, 42, 0.45);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-base, 250ms ease), visibility var(--transition-base, 250ms ease);
+}
+
+/* Keep the overlay in the render/a11y tree while [hidden] so the drawer can
+ * slide/fade closed instead of popping away instantly. */
+.gateway-nav-overlay[hidden] {
+    display: flex;
+}
+
+.gateway-nav-overlay:not([hidden]) {
+    opacity: 1;
+    visibility: visible;
+}
+
+.gateway-sidebar {
+    position: relative;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    width: min(280px, 86vw);
+    max-width: 320px;
+    padding-block-start: 56px;
+    background: var(--bg-elevated, #ffffff);
+    border-inline-end: 1px solid var(--border, #e2e8f0);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-100%);
+    transition: transform var(--transition-base, 250ms ease);
+}
+
+[dir='rtl'] .gateway-sidebar {
+    border-inline-end: none;
+    border-inline-start: 1px solid var(--border, #e2e8f0);
+    transform: translateX(100%);
+}
+
+.gateway-nav-overlay:not([hidden]) .gateway-sidebar {
+    transform: translateX(0);
+}
+
+.gateway-nav-close {
+    position: absolute;
+    top: 8px;
+    inset-inline-end: 8px;
+    z-index: 1;
+    display: flex;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: var(--radius-md, 10px);
+    background: transparent;
+    color: var(--text-muted, #64748b);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color var(--transition-fast, 150ms ease), color var(--transition-fast, 150ms ease);
+}
+
+.gateway-nav-close:hover {
+    background: var(--bg-sunken, #eceff4);
+    color: var(--text-strong, #0f172a);
+}
+
+.gateway-nav-list {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    gap: 4px;
+    padding: 8px 12px;
+    overflow-y: auto;
+}
+
+.gateway-nav-list .nav-button {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: var(--radius-md, 10px);
+    color: var(--text-muted, #64748b);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color var(--transition-fast, 150ms ease), color var(--transition-fast, 150ms ease);
+}
+
+.gateway-nav-list .nav-button:hover {
+    background-color: var(--bg-sunken, #eceff4);
+    color: var(--text-strong, #0f172a);
+}
+
+.gateway-nav-list .nav-button.active {
+    background-color: var(--accent-soft, rgba(79, 70, 229, 0.11));
+    color: var(--accent-text, #4338ca);
+}
+
+.gateway-sidebar-footer {
+    flex: 0 0 auto;
+    padding: 12px;
+    border-top: 1px solid var(--border, #e2e8f0);
+}
+
+.gateway-sidebar-footer .gateway-identity {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding-inline-start: 0;
+    border-inline-start: none;
+}
+
+.gateway-sidebar-footer .gateway-identity-name {
+    display: block;
+    max-width: 100%;
+}
+
+.gateway-sidebar-footer .gateway-identity-logout {
+    width: 100%;
+}
+
+@media (min-width: 1024px) {
+    .gateway-nav-toggle,
+    .gateway-nav-close {
+        display: none;
+    }
+
+    .gateway-nav-overlay {
+        position: static;
+        z-index: auto;
+        inset: auto;
+        display: block;
+        overflow: visible;
+        background: none;
+        opacity: 1;
+        visibility: visible;
+        transition: none;
+    }
+
+    .gateway-nav-overlay[hidden] {
+        display: block;
+    }
+
+    .gateway-sidebar,
+    [dir='rtl'] .gateway-sidebar {
+        position: fixed;
+        inset-block: 0;
+        inset-inline-start: 0;
+        width: 240px;
+        max-width: 240px;
+        transform: none;
+        box-shadow: none;
+    }
+
+    body {
+        margin-inline-start: 240px;
     }
 }

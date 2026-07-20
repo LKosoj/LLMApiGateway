@@ -4,6 +4,13 @@ const SVG_TAGS = new Set(["circle", "line", "path", "polyline"]);
 const SVG_ATTRIBUTES = new Set(["cx", "cy", "d", "points", "r", "x1", "x2", "y1", "y2"]);
 
 const ICONS = Object.freeze({
+  overview: Object.freeze([
+    ["path", { d: "m12 14 4-4" }],
+    ["path", { d: "M3.34 19a10 10 0 1 1 17.32 0" }],
+  ]),
+  activity: Object.freeze([
+    ["path", { d: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.48 12H2" }],
+  ]),
   docs: Object.freeze([
     ["path", { d: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20" }],
     ["path", { d: "M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" }],
@@ -64,8 +71,10 @@ function navigationItem(id, href, labelKey, roles) {
 }
 
 export const NAV_ITEMS = Object.freeze([
+  navigationItem("overview", "/v1/ui/overview", "common:navigation.overview", ["master", "user"]),
+  navigationItem("activity", "/v1/ui/activity", "common:navigation.activity", ["master", "user"]),
   navigationItem("docs", "/v1/ui/docs", "common:navigation.docs", ["master", "user"]),
-  navigationItem("usage", "/v1/ui/usage-stats", "common:navigation.usage", ["master", "user"]),
+  navigationItem("usage", "/v1/ui/usage-stats", "common:navigation.usage", ["master"]),
   navigationItem("quota", "/v1/ui/quota", "common:navigation.quota", ["master", "user"]),
   navigationItem("rules", "/v1/ui/rules-editor", "common:navigation.rules", ["master"]),
   navigationItem("playground", "/v1/ui/playground", "common:navigation.playground", ["master"]),
@@ -167,6 +176,31 @@ export function measureNavigationOverflow(scroller, links, direction = "ltr") {
   };
 }
 
+function moveRovingFocus(links, fromIndex, delta) {
+  if (links.length === 0) return;
+  const nextIndex = (fromIndex + delta + links.length) % links.length;
+  links[nextIndex].focus();
+}
+
+function handleRovingKeydown(event, getLinks) {
+  const links = getLinks();
+  const fromIndex = links.indexOf(event.target);
+  if (fromIndex === -1) return;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    moveRovingFocus(links, fromIndex, 1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    moveRovingFocus(links, fromIndex, -1);
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    links[0]?.focus();
+  } else if (event.key === "End") {
+    event.preventDefault();
+    links[links.length - 1]?.focus();
+  }
+}
+
 export function createNavigation(root, options = {}) {
   if (!root?.ownerDocument || typeof root.replaceChildren !== "function") {
     throw new TypeError("A navigation mount element is required");
@@ -177,12 +211,14 @@ export function createNavigation(root, options = {}) {
     pathname: "/",
     role: "pending",
     translate: null,
+    layout: "scroller",
     ...options,
   };
   let scroller = null;
   let links = [];
   let resizeObserver = null;
   let mutationObserver = null;
+  let rovingKeydownHandler = null;
 
   function ensureCurrentVisible() {
     const currentLink = links.find((link) => link.getAttribute("aria-current") === "page");
@@ -198,6 +234,8 @@ export function createNavigation(root, options = {}) {
 
   function disconnectObservers() {
     if (scroller) scroller.removeEventListener("scroll", refreshOverflow);
+    if (rovingKeydownHandler) root.removeEventListener("keydown", rovingKeydownHandler);
+    rovingKeydownHandler = null;
     resizeObserver?.disconnect();
     mutationObserver?.disconnect();
     resizeObserver = null;
@@ -211,6 +249,7 @@ export function createNavigation(root, options = {}) {
     root.replaceChildren();
     root.removeAttribute("data-overflow-start");
     root.removeAttribute("data-overflow-end");
+    root.classList.toggle("gateway-nav-list", config.layout === "list");
     scroller = null;
     links = [];
     if (items.length === 0) return;
@@ -219,20 +258,33 @@ export function createNavigation(root, options = {}) {
     }
 
     const document = root.ownerDocument;
-    scroller = document.createElement("div");
-    scroller.classList.add("gateway-nav-scroller");
     const currentPath = normalizePathname(config.pathname);
     links = items.map((item) => createLink(document, item, currentPath, config.translate));
-    scroller.append(...links);
-    root.replaceChildren(scroller);
+
+    if (config.layout === "list") {
+      root.replaceChildren(...links);
+    } else {
+      scroller = document.createElement("div");
+      scroller.classList.add("gateway-nav-scroller");
+      scroller.append(...links);
+      root.replaceChildren(scroller);
+    }
+
     const ariaLabel = config.translate("common:navigation.label");
     if (typeof ariaLabel !== "string") {
       throw new TypeError("Navigation aria-label must be a string");
     }
     root.setAttribute("aria-label", ariaLabel);
-    scroller.addEventListener("scroll", refreshOverflow, { passive: true });
 
     ensureCurrentVisible();
+
+    if (config.layout === "list") {
+      rovingKeydownHandler = (event) => handleRovingKeydown(event, () => links);
+      root.addEventListener("keydown", rovingKeydownHandler);
+      return;
+    }
+
+    scroller.addEventListener("scroll", refreshOverflow, { passive: true });
     refreshOverflow();
 
     const ResizeObserverClass = config.ResizeObserver ?? globalThis.ResizeObserver;

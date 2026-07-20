@@ -164,6 +164,68 @@
         });
     }
 
+    function setupCopyButtons() {
+        document.querySelectorAll(".docs-code-block .btn-copy").forEach((button) => {
+            const codeElement = button.closest(".docs-code-block")?.querySelector("pre code");
+            if (!codeElement) return;
+            let resetTimer = null;
+            button.addEventListener("click", () => {
+                navigator.clipboard.writeText(codeElement.textContent).then(() => {
+                    if (resetTimer) window.clearTimeout(resetTimer);
+                    button.classList.add("copied");
+                    const copiedLabel = i18n.t("common:actions.copied");
+                    button.setAttribute("aria-label", copiedLabel);
+                    button.setAttribute("title", copiedLabel);
+                    resetTimer = window.setTimeout(() => {
+                        resetTimer = null;
+                        button.classList.remove("copied");
+                        const copyLabel = i18n.t("common:actions.copy");
+                        button.setAttribute("aria-label", copyLabel);
+                        button.setAttribute("title", copyLabel);
+                    }, 2000);
+                }).catch(() => undefined);
+            });
+        });
+    }
+
+    function setupToc() {
+        const tocNav = document.querySelector("[data-docs-toc]");
+        const headings = Array.from(document.querySelectorAll(".docs-main h2"));
+        if (!tocNav || headings.length === 0) return;
+
+        const tocLinks = new Map(
+            Array.from(tocNav.querySelectorAll('a[href^="#"]')).map(
+                (link) => [link.getAttribute("href").slice(1), link],
+            ),
+        );
+        if (tocLinks.size === 0) return;
+
+        let currentId = null;
+        const setCurrent = (id) => {
+            if (id === currentId) return;
+            if (currentId && tocLinks.has(currentId)) {
+                tocLinks.get(currentId).classList.remove("docs-toc-current");
+            }
+            currentId = id;
+            if (id && tocLinks.has(id)) {
+                tocLinks.get(id).classList.add("docs-toc-current");
+            }
+        };
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                const visible = entries
+                    .filter((entry) => entry.isIntersecting)
+                    .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+                if (visible.length > 0) {
+                    setCurrent(visible[0].target.closest(".docs-section")?.id || null);
+                }
+            },
+            { rootMargin: "-96px 0px -70% 0px", threshold: 0 },
+        );
+        headings.forEach((heading) => observer.observe(heading));
+    }
+
     function appendModelChip(parent, name, modelsById) {
         const chip = document.createElement("span");
         chip.className = "model-chip";
@@ -671,6 +733,8 @@
         Theme.attachToggle("darkModeToggle");
         renderApiBase();
         setupDocsTabs();
+        setupCopyButtons();
+        setupToc();
         document.addEventListener("change", captureLocaleChange, { capture: true });
         void i18n.ready.then(
             () => {

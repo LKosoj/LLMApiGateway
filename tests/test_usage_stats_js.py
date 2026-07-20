@@ -211,6 +211,25 @@ def test_usage_analytics_exposes_x_title_filter_and_breakdown():
     assert "renderXTitleTable(payload);" in js
 
 
+def test_usage_analytics_bar_chart_cost_scale_is_independent_of_request_count():
+    """The "Cost by Provider" bar chart must scale bar height by cost alone.
+
+    Regression guard for a bug where the chart's max was computed jointly
+    across cost (dollars, e.g. 0.01) and request counts (e.g. 5), so a
+    provider with a tiny but real cost got squashed to a near-invisible bar
+    whenever any provider had a larger request count. Request counts may
+    still surface as a text label next to the bar (when cost is zero), but
+    must never feed the shared scale or the bar's own height.
+    """
+    js = Path("static/usage-analytics.js").read_text(encoding="utf-8")
+
+    assert "const maxValue = Math.max(...bars.map(bar => numberValue(bar.cost)), 1);" in js
+    assert "...bars.map(bar => numberValue(bar.requests))" not in js
+    assert "const value = numberValue(bar.cost);" in js
+    assert "const value = numberValue(bar.cost) || numberValue(bar.requests);" not in js
+    assert 'numberValue(bar.cost) ? formatMoney(bar.cost) : formatNumber(bar.requests)' in js
+
+
 def test_usage_page_declares_localized_bindings_and_separate_raw_error_sinks():
     html = Path("static/usage-stats.html").read_text(encoding="utf-8")
 

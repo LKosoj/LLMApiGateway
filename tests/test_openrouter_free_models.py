@@ -1308,3 +1308,59 @@ class OpenRouterCapabilityIndexTests(unittest.TestCase):
         service = OpenRouterFreeModelsService()
         index = run_async(service.get_capability_index())
         self.assertEqual(index, {})
+
+
+class OpenRouterPricingIndexTests(unittest.TestCase):
+    """Pricing autofill: full-catalog pricing index built during _refresh_once."""
+
+    def test_pricing_catalog_is_none_before_first_refresh(self):
+        service = OpenRouterFreeModelsService()
+        catalog = run_async(service.get_pricing_catalog())
+        self.assertIsNone(catalog)
+
+    def test_pricing_catalog_covers_full_catalog_keyed_by_exact_model_id(self):
+        free_entry = _model_entry("provider/free-model:free", price="0")
+        paid_entry = {
+            "id": "provider/paid-model",
+            "name": "provider/paid-model",
+            "created": 1_760_000_000,
+            "context_length": 200000,
+            "pricing": {"prompt": "0.000003", "completion": "0.000006"},
+            "supported_parameters": ["tools"],
+            "architecture": {
+                "input_modalities": ["text"],
+                "output_modalities": ["text"],
+            },
+            "expiration_date": None,
+        }
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        service._http_client = FakeOpenRouterClient([free_entry, paid_entry])
+
+        run_async(service.refresh_once())
+        catalog = run_async(service.get_pricing_catalog())
+
+        # Keyed by the raw, unmodified catalog id (unlike the capability
+        # index's lossy basename key): the ":free" suffix is preserved so
+        # pricing autofill can normalize it explicitly instead of risking a
+        # cross-vendor basename collision.
+        self.assertEqual(catalog["provider/free-model:free"], {"prompt": "0", "completion": "0"})
+        self.assertEqual(
+            catalog["provider/paid-model"],
+            {"prompt": "0.000003", "completion": "0.000006"},
+        )
+
+    def test_pricing_catalog_skips_entries_without_a_pricing_dict(self):
+        entry_without_pricing = {"id": "provider/no-pricing-model"}
+        service = OpenRouterFreeModelsService(time_func=lambda: 1_770_000_000)
+        service._configured = True
+        service._provider_config = ProviderDetails(baseUrl="https://openrouter.ai/api/v1", apikey="key")
+        service._provider_api_key = "key"
+        service._http_client = FakeOpenRouterClient([entry_without_pricing])
+
+        run_async(service.refresh_once())
+        catalog = run_async(service.get_pricing_catalog())
+
+        self.assertEqual(catalog, {})

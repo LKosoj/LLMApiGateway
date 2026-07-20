@@ -66,7 +66,7 @@ def test_embeddings_tab_is_visible(page: Page, server):
     page.goto(f"{server}/v1/ui/rules-editor")
     
     # Check if Embeddings tab exists
-    embeddings_tab = page.locator("#tabEmbeddings")
+    embeddings_tab = page.locator('[data-entity-target="embeddings"]')
     expect(embeddings_tab).to_be_visible()
     expect(embeddings_tab).to_have_text("Embeddings")
 
@@ -85,7 +85,7 @@ def test_create_and_save_embedding_route(page: Page, server):
     ))
     
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     
     # Wait for loading to finish
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
@@ -114,7 +114,7 @@ def test_validation_error_display(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
     
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     
     # Wait for loading to finish
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
@@ -136,7 +136,7 @@ def test_delete_embedding_route(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
     
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     
     # Add a route
     page.click("#addEmbeddingButton")
@@ -152,7 +152,7 @@ def test_edit_embedding_route(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
 
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
 
@@ -169,7 +169,7 @@ def test_edit_embedding_route(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     assert "collapsed" in (page.locator("#editor-container-embeddings .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#editor-container-embeddings")
     expect(page.locator("#editor-container-embeddings .gateway-model-input")).to_have_value("my-emb-model-edited")
@@ -181,7 +181,7 @@ def test_create_and_save_embedding_route_with_retry_settings(page: Page, server)
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
 
     page.click("#addEmbeddingButton")
@@ -197,7 +197,7 @@ def test_create_and_save_embedding_route_with_retry_settings(page: Page, server)
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     assert "collapsed" in (page.locator("#editor-container-embeddings .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#editor-container-embeddings")
     page.locator("#editor-container-embeddings details.advanced-options summary").click()
@@ -244,7 +244,7 @@ def test_saving_embeddings_uses_loaded_operation_base_and_if_match(page: Page, s
     page.route("**/v1/config/model-operations/structured", handle_operation_rules)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
 
     page.click("#addEmbeddingButton")

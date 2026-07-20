@@ -18,7 +18,8 @@ document.addEventListener('DOMContentLoaded', () => {
         apply: document.getElementById('applyFiltersBtn'),
         reset: document.getElementById('resetFiltersBtn'),
         refresh: document.getElementById('refreshBtn'),
-        meta: document.getElementById('rejMeta'),
+        meta: document.getElementById('rejMetaText'),
+        staleBadge: document.getElementById('rejStaleBadge'),
         tableWrap: document.querySelector('.rej-table-wrap'),
         tbody: document.getElementById('rejTableBody'),
         prev: document.getElementById('prevPageBtn'),
@@ -26,14 +27,21 @@ document.addEventListener('DOMContentLoaded', () => {
         pageInfo: document.getElementById('pageInfo'),
         messageArea: document.getElementById('messageArea'),
         messageDetail: document.getElementById('messageDetail'),
+        detail: document.getElementById('rejDetailSheet'),
+        detailBackdrop: document.getElementById('rejDetailBackdrop'),
+        detailClose: document.getElementById('rejDetailClose'),
+        detailFields: document.getElementById('rejDetailFields'),
     };
     const pageStatus = window.gatewayUi.createStatus(els.messageArea, {
         rawDetailElement: els.messageDetail,
         renderMessage: (message) => i18n.t(message.key, message.values || {}),
     });
 
+    const SNAPSHOT_STORAGE_KEY = 'rejections:last-snapshot';
+
     let offset = 0;
     let snapshot = null;
+    let snapshotStale = false;
     let requestGeneration = 0;
     let unsubscribeLocale = null;
     let stopped = false;
@@ -50,6 +58,95 @@ document.addEventListener('DOMContentLoaded', () => {
         if (els.keyId.value !== '') params.set('api_key_id', els.keyId.value);
         if (els.since.value) params.set('since', els.since.value);
         return params.toString();
+    }
+
+    function filtersFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        return {
+            category: params.get('category') || '',
+            keyId: params.get('key_id') || '',
+            since: params.get('since') || '',
+            limit: params.get('limit') || '',
+            page: params.get('page') || '',
+        };
+    }
+
+    function applyUrlFilters(filters) {
+        if (filters.category && KNOWN_CATEGORIES.has(filters.category)) {
+            els.category.value = filters.category;
+        }
+        if (filters.keyId !== '') {
+            els.keyId.value = filters.keyId;
+        }
+        if (filters.since) {
+            els.since.value = filters.since;
+        }
+        const limitOptions = new Set(Array.from(els.limit.options, (option) => option.value));
+        if (filters.limit && limitOptions.has(filters.limit)) {
+            els.limit.value = filters.limit;
+        }
+        const page = Number.parseInt(filters.page, 10);
+        if (Number.isInteger(page) && page > 1) {
+            offset = (page - 1) * currentLimit();
+        }
+    }
+
+    function syncUrlFromState(push) {
+        const params = new URLSearchParams();
+        if (els.category.value) params.set('category', els.category.value);
+        if (els.keyId.value !== '') params.set('key_id', els.keyId.value);
+        if (els.since.value) params.set('since', els.since.value);
+        params.set('limit', String(currentLimit()));
+        const page = Math.floor(offset / currentLimit()) + 1;
+        if (page > 1) params.set('page', String(page));
+        const query = params.toString();
+        const url = `${window.location.pathname}${query ? `?${query}` : ''}`;
+        if (push) window.history.pushState(null, '', url);
+        else window.history.replaceState(null, '', url);
+    }
+
+    function loadStoredSnapshot() {
+        try {
+            const raw = window.sessionStorage.getItem(SNAPSHOT_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (
+                !parsed
+                || !Array.isArray(parsed.items)
+                || !Number.isInteger(parsed.total)
+                || !Number.isFinite(parsed.loadedAt)
+            ) {
+                return null;
+            }
+            return { items: parsed.items, total: parsed.total, loadedAt: parsed.loadedAt };
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function persistSnapshot(value) {
+        try {
+            window.sessionStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(value));
+        } catch (error) {
+            // sessionStorage may be unavailable (quota exceeded, private mode);
+            // the in-memory snapshot still works for the rest of this session.
+        }
+    }
+
+    function relativeStaleLabel(loadedAt) {
+        const diffMinutes = Math.max(1, Math.round((Date.now() - loadedAt) / 60000));
+        const relative = i18n.formatRelativeTime(-diffMinutes, 'minute');
+        return i18n.t('common:stale.badge', { time: relative });
+    }
+
+    function updateStaleBadge() {
+        if (!snapshotStale || snapshot === null) {
+            els.staleBadge.hidden = true;
+            els.staleBadge.textContent = '';
+            return;
+        }
+        els.staleBadge.hidden = false;
+        els.staleBadge.textContent = relativeStaleLabel(snapshot.loadedAt);
     }
 
     function formatTime(value) {
@@ -76,6 +173,35 @@ document.addEventListener('DOMContentLoaded', () => {
         return cell;
     }
 
+    function detailField(dl, labelKey, value) {
+        const dt = document.createElement('dt');
+        dt.textContent = i18n.t(labelKey);
+        const dd = document.createElement('dd');
+        dd.textContent = value;
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+    }
+
+    function openDetailSheet(item) {
+        els.detailFields.replaceChildren();
+        detailField(els.detailFields, 'rejections:table.time', formatTime(item.timestamp));
+        detailField(els.detailFields, 'rejections:table.category', String(item.category ?? '—'));
+        detailField(els.detailFields, 'rejections:table.status', String(item.status_code ?? '—'));
+        detailField(els.detailFields, 'rejections:table.method', String(item.method || '—'));
+        detailField(els.detailFields, 'rejections:table.path', String(item.path || '—'));
+        detailField(els.detailFields, 'rejections:table.key', item.api_key_id == null ? '—' : `#${item.api_key_id}`);
+        detailField(els.detailFields, 'rejections:detail.xTitle', String(item.x_title || '—'));
+        detailField(els.detailFields, 'rejections:table.clientIp', String(item.client_ip || '—'));
+        detailField(els.detailFields, 'rejections:table.reason', String(item.reason || '—'));
+        detailField(els.detailFields, 'rejections:detail.requestId', String(item.request_id || '—'));
+        els.detail.hidden = false;
+        els.detailClose.focus();
+    }
+
+    function closeDetailSheet() {
+        els.detail.hidden = true;
+    }
+
     function renderRows(items) {
         if (items.length === 0) {
             const row = document.createElement('tr');
@@ -88,6 +214,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const rows = items.map((item) => {
             const row = document.createElement('tr');
+            row.tabIndex = 0;
+            row.dataset.clickable = 'true';
+            row.setAttribute('role', 'button');
+            row.dataset.requestId = item.request_id != null ? String(item.request_id) : '';
+            row.setAttribute('aria-label', i18n.t('rejections:row.open', {
+                requestId: item.request_id || '—',
+            }));
+            row.addEventListener('click', () => openDetailSheet(item));
+            row.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openDetailSheet(item);
+                }
+            });
+
             row.appendChild(createCell(formatTime(item.timestamp)));
             row.appendChild(createCategoryCell(item.category));
 
@@ -142,6 +283,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (snapshot === null) return;
         renderRows(snapshot.items);
         renderPagination(snapshot.items.length, snapshot.total);
+        updateStaleBadge();
     }
 
     function showError(message, rawDetail = null) {
@@ -157,8 +299,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function captureViewState() {
+        const active = document.activeElement;
+        const activeRowId = active && active.tagName === 'TR' && active.dataset.requestId
+            ? active.dataset.requestId
+            : null;
         return {
-            activeElement: document.activeElement,
+            activeElement: active,
+            activeRowId,
             scrollX: window.scrollX,
             scrollY: window.scrollY,
             tableLeft: els.tableWrap.scrollLeft,
@@ -167,7 +314,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function restoreViewState(state) {
-        if (state.activeElement?.isConnected) {
+        if (state.activeRowId) {
+            const row = els.tbody.querySelector(
+                `tr[data-request-id="${CSS.escape(state.activeRowId)}"]`,
+            );
+            if (row) row.focus({preventScroll: true});
+        } else if (state.activeElement?.isConnected) {
             state.activeElement.focus({preventScroll: true});
         }
         els.tableWrap.scrollLeft = state.tableLeft;
@@ -194,6 +346,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const descriptor = window.gatewayUi.describeApiError(body, {
                     status: response.status,
                 });
+                if (response.status >= 500 && snapshot !== null) {
+                    snapshotStale = true;
+                    renderSnapshot();
+                }
                 showError(
                     {key: descriptor.summaryKey, values: descriptor.summaryValues},
                     descriptor.rawDetail,
@@ -215,12 +371,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 total: data.total,
                 loadedAt: Date.now(),
             };
+            snapshotStale = false;
+            persistSnapshot(snapshot);
             clearError();
             renderSnapshot();
         } catch (error) {
             if (stopped || generation !== requestGeneration) return;
             if (error.message === 'Authentication required') return;
             const descriptor = window.gatewayUi.describeApiError(null);
+            if (snapshot !== null) {
+                snapshotStale = true;
+                renderSnapshot();
+            }
             showError(
                 {key: descriptor.summaryKey, values: descriptor.summaryValues},
                 error.message,
@@ -230,6 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     els.apply.addEventListener('click', () => {
         offset = 0;
+        syncUrlFromState(true);
         void loadRejections();
     });
     els.refresh.addEventListener('click', () => void loadRejections());
@@ -239,18 +402,33 @@ document.addEventListener('DOMContentLoaded', () => {
         els.since.value = '';
         els.limit.value = '50';
         offset = 0;
+        syncUrlFromState(false);
         void loadRejections();
     });
     els.limit.addEventListener('change', () => {
         offset = 0;
+        syncUrlFromState(false);
         void loadRejections();
     });
     els.prev.addEventListener('click', () => {
         offset = Math.max(0, offset - currentLimit());
+        syncUrlFromState(false);
         void loadRejections();
     });
     els.next.addEventListener('click', () => {
         offset += currentLimit();
+        syncUrlFromState(false);
+        void loadRejections();
+    });
+    els.detailClose.addEventListener('click', closeDetailSheet);
+    els.detailBackdrop.addEventListener('click', closeDetailSheet);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !els.detail.hidden) closeDetailSheet();
+    });
+
+    window.addEventListener('popstate', () => {
+        if (stopped) return;
+        applyUrlFilters(filtersFromUrl());
         void loadRejections();
     });
 
@@ -262,12 +440,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     Promise.all([bootstrapRoleUI(), i18n.ready]).then(() => {
         if (stopped) return;
+        applyUrlFilters(filtersFromUrl());
+        const stored = loadStoredSnapshot();
+        if (stored !== null) {
+            snapshot = stored;
+            snapshotStale = true;
+        }
         unsubscribeLocale = i18n.subscribe(() => {
             const viewState = captureViewState();
             renderSnapshot();
             pageStatus.rerender();
             restoreViewState(viewState);
         });
+        renderSnapshot();
         void loadRejections();
     }).catch(() => undefined);
 });

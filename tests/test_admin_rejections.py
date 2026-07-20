@@ -16,7 +16,7 @@ from llm_gateway_core.db import rejections_db as rejections_db_module
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.middleware.auth import (
-    DEFAULT_UI_PATH,
+    MASTER_ONLY_REDIRECT_PATH,
     ROLE_USER,
     SESSION_COOKIE_NAME,
     api_key_auth,
@@ -277,7 +277,7 @@ class RejectionsUiMasterOnlyTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(resp.status_code, 303)
-        self.assertEqual(resp.headers["location"], DEFAULT_UI_PATH)
+        self.assertEqual(resp.headers["location"], MASTER_ONLY_REDIRECT_PATH)
 
 
 if __name__ == "__main__":

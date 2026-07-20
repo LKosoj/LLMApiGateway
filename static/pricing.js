@@ -2,7 +2,8 @@
 (function () {
     'use strict';
 
-    // State: array of {provider, model, input_rate, output_rate, _dirty}
+    // State: array of {provider, model, input_rate, output_rate, source,
+    // default_cost_per_request, _dirty, _manual}
     let state = [];
     let baseEtag = null;
     let dirty = false;
@@ -11,6 +12,7 @@
     let saving = false;
     let calculationSnapshot = null;
     let unsubscribeLocale = null;
+    let detailIdx = null;
 
     // ---------- DOM references ----------
     const tableBody = document.getElementById('pricingTableBody');
@@ -30,6 +32,13 @@
     const rawDetail = document.getElementById('pricingRawDetail');
     const conflictState = document.getElementById('pricingConflictState');
     const reloadPricingBtn = document.getElementById('reloadPricingBtn');
+    const detailSheet = document.getElementById('pricingDetailSheet');
+    const detailBackdrop = document.getElementById('pricingDetailBackdrop');
+    const detailClose = document.getElementById('pricingDetailClose');
+    const detailProvider = document.getElementById('pricingDetailProvider');
+    const detailModel = document.getElementById('pricingDetailModel');
+    const detailInputRate = document.getElementById('pricingDetailInputRate');
+    const detailOutputRate = document.getElementById('pricingDetailOutputRate');
     const { apiFetch } = window.gatewayAuth;
     const i18n = window.gatewayI18n;
 
@@ -94,9 +103,31 @@
         addRowBtn.disabled = disabled;
         saveBtn.disabled = disabled;
         tableBody.querySelectorAll('input, button').forEach((control) => {
-            control.disabled = disabled;
+            control.disabled = disabled || control.dataset.forceDisabled === 'true';
         });
         reloadPricingBtn.disabled = loading || saving;
+    }
+
+    // A row is editable once it carries (or has been given) a real rate:
+    // an operator-configured rate, an OpenRouter-autofilled rate, or a rate
+    // the user just chose to set manually (see makeSetManualPriceCell). Rows
+    // still reporting one of the other statuses stay text-only until then.
+    function isEditableRow(item) {
+        return (
+            item._manual === true
+            || !item.source
+            || item.source === 'configured'
+            || item.source === 'openrouter_autofill'
+        );
+    }
+
+    function formatOperationDefaultNote(amount) {
+        return i18n.t('pricing:editor.status.operationDefault', {
+            amount: i18n.formatCurrency(Number(amount), 'USD', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 6,
+            }),
+        });
     }
 
     function showConflict() {
@@ -130,6 +161,58 @@
             const tr = document.createElement('tr');
             if (item._dirty) { tr.classList.add('dirty'); }
 
+            if (!isEditableRow(item)) {
+                tr.classList.add('pricing-row-readonly');
+
+                const providerTd = document.createElement('td');
+                providerTd.textContent = item.provider || '';
+                tr.appendChild(providerTd);
+
+                const modelTd = document.createElement('td');
+                modelTd.textContent = item.model || '';
+                tr.appendChild(modelTd);
+
+                const noteTd = document.createElement('td');
+                noteTd.colSpan = 2;
+                noteTd.className = 'pricing-source-note';
+                if (item.source === 'operation_default') {
+                    noteTd.setAttribute('data-pricing-default-cost', String(item.default_cost_per_request));
+                    noteTd.textContent = formatOperationDefaultNote(item.default_cost_per_request);
+                } else if (item.source === 'awaiting_openrouter_catalog') {
+                    noteTd.setAttribute('data-i18n', 'pricing:editor.status.awaitingCatalog');
+                    noteTd.textContent = i18n.t('pricing:editor.status.awaitingCatalog');
+                } else {
+                    noteTd.setAttribute('data-i18n', 'pricing:editor.status.upstreamOnly');
+                    noteTd.textContent = i18n.t('pricing:editor.status.upstreamOnly');
+                }
+                tr.appendChild(noteTd);
+
+                const actionTd = document.createElement('td');
+                const manualBtn = document.createElement('button');
+                manualBtn.type = 'button';
+                manualBtn.className = 'secondary-button pricing-set-manual';
+                manualBtn.setAttribute('data-i18n', 'pricing:editor.setManualPrice');
+                manualBtn.textContent = i18n.t('pricing:editor.setManualPrice');
+                if (item.source === 'awaiting_openrouter_catalog') {
+                    manualBtn.dataset.forceDisabled = 'true';
+                    manualBtn.disabled = true;
+                }
+                manualBtn.addEventListener('click', () => {
+                    state[idx]._manual = true;
+                    state[idx].input_rate = 0;
+                    state[idx].output_rate = 0;
+                    state[idx]._dirty = true;
+                    markDirty();
+                    renderTable();
+                    rebuildCalcSelect();
+                });
+                actionTd.appendChild(manualBtn);
+                tr.appendChild(actionTd);
+
+                tableBody.appendChild(tr);
+                return;
+            }
+
             const makeCell = (field, labelKey, type = 'text') => {
                 const td = document.createElement('td');
                 const input = document.createElement('input');
@@ -155,7 +238,15 @@
             };
 
             tr.appendChild(makeCell('provider', 'pricing:editor.table.provider'));
-            tr.appendChild(makeCell('model', 'pricing:editor.table.model'));
+            const modelTd = makeCell('model', 'pricing:editor.table.model');
+            if (item.source === 'openrouter_autofill') {
+                const badge = document.createElement('span');
+                badge.className = 'pricing-badge';
+                badge.setAttribute('data-i18n', 'pricing:editor.autofillBadge');
+                badge.textContent = i18n.t('pricing:editor.autofillBadge');
+                modelTd.appendChild(badge);
+            }
+            tr.appendChild(modelTd);
             tr.appendChild(makeCell(
                 'input_rate',
                 'pricing:editor.table.inputRate',
@@ -180,6 +271,15 @@
                 rebuildCalcSelect();
             });
             tdDel.appendChild(delBtn);
+
+            const expandBtn = document.createElement('button');
+            expandBtn.type = 'button';
+            expandBtn.className = 'btn-expand';
+            expandBtn.setAttribute('data-i18n-aria-label', 'pricing:detail.open');
+            expandBtn.setAttribute('aria-label', i18n.t('pricing:detail.open'));
+            expandBtn.addEventListener('click', () => openDetailSheet(idx));
+            tdDel.appendChild(expandBtn);
+
             tr.appendChild(tdDel);
 
             tableBody.appendChild(tr);
@@ -196,7 +296,7 @@
         placeholder.setAttribute('data-i18n', 'pricing:calculator.selectModel');
         placeholder.textContent = i18n.t('pricing:calculator.selectModel');
         calcModelSel.appendChild(placeholder);
-        state.forEach((item) => {
+        state.filter(isEditableRow).forEach((item) => {
             const opt = document.createElement('option');
             const key = `${item.provider}::${item.model}`;
             opt.value = key;
@@ -247,9 +347,12 @@
             return;
         }
 
-        // Validate
+        // Validate (rows the gateway reports as used-but-unpriced are read-only
+        // until the operator explicitly opts in via "Set manual price", so they
+        // never block Save and are never sent below).
         for (let i = 0; i < state.length; i++) {
             const item = state[i];
+            if (!isEditableRow(item)) { continue; }
             if (!item.provider || !String(item.provider).trim()) {
                 publishStatus({
                     key: 'pricing:validation.providerRequired',
@@ -281,7 +384,7 @@
         }
 
         const payload = {
-            items: state.map(item => ({
+            items: state.filter(isEditableRow).map(item => ({
                 provider: String(item.provider).trim(),
                 model: String(item.model).trim(),
                 input_rate: Number(item.input_rate),
@@ -397,6 +500,14 @@
         const windowY = window.scrollY;
         toastStatus.rerender();
         renderCalculationResult();
+        // operation_default rows interpolate a formatted currency amount into
+        // their status note; the global data-i18n rebind only re-applies
+        // static per-root text, so the interpolated copy is re-rendered here.
+        tableBody.querySelectorAll('[data-pricing-default-cost]').forEach((td) => {
+            td.textContent = formatOperationDefaultNote(
+                td.getAttribute('data-pricing-default-cost'),
+            );
+        });
         window.requestAnimationFrame(() => window.scrollTo(windowX, windowY));
     }
 
@@ -444,6 +555,44 @@
         } finally {
             calcBtn.disabled = false;
         }
+    });
+
+    // ---------- Row detail sheet (mobile) ----------
+    function syncDetailFields() {
+        if (detailIdx === null) { return; }
+        const item = state[detailIdx];
+        detailProvider.textContent = item.provider || '—';
+        detailModel.textContent = item.model || '—';
+        detailInputRate.value = item.input_rate !== undefined ? item.input_rate : '';
+        detailOutputRate.value = item.output_rate !== undefined ? item.output_rate : '';
+    }
+
+    function openDetailSheet(idx) {
+        detailIdx = idx;
+        syncDetailFields();
+        detailSheet.hidden = false;
+        detailClose.focus();
+    }
+
+    function closeDetailSheet() {
+        detailSheet.hidden = true;
+        detailIdx = null;
+    }
+
+    function applyDetailRate(field, input) {
+        const val = input.value === '' ? Number.NaN : Number(input.value);
+        state[detailIdx][field] = val;
+        state[detailIdx]._dirty = true;
+        markDirty();
+        renderTable();
+    }
+
+    detailInputRate.addEventListener('input', () => applyDetailRate('input_rate', detailInputRate));
+    detailOutputRate.addEventListener('input', () => applyDetailRate('output_rate', detailOutputRate));
+    detailClose.addEventListener('click', closeDetailSheet);
+    detailBackdrop.addEventListener('click', closeDetailSheet);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !detailSheet.hidden) { closeDetailSheet(); }
     });
 
     // ---------- Init ----------

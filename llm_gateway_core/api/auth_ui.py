@@ -11,6 +11,7 @@ from ..config.settings import settings
 from .error_envelope import error_response
 from ..utils.html_cache import get_template
 from ..middleware.auth import (
+    ACCESS_DENIED_PATH,
     API_KEY_DISABLED_DETAIL,
     DEFAULT_UI_PATH,
     ROLE_MASTER,
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
 auth_router = APIRouter()
 
 LOGIN_TEMPLATE_PATH = STATIC_DIR / "login.html"
+ACCESS_DENIED_TEMPLATE_PATH = STATIC_DIR / "access-denied.html"
 
 
 def _invalid_login_response(
@@ -120,6 +122,21 @@ async def login_page(request: Request, next: str | None = None):
         return RedirectResponse(url=next_path, status_code=status.HTTP_303_SEE_OTHER)
 
     return await _render_login_page(next_path)
+
+
+@auth_router.get(ACCESS_DENIED_PATH, response_class=HTMLResponse, include_in_schema=False)
+async def access_denied_page(request: Request):
+    """Serves the page explaining why a master-only UI section was denied."""
+    if not ACCESS_DENIED_TEMPLATE_PATH.exists():
+        logging.error(f"Access denied HTML file not found at {ACCESS_DENIED_TEMPLATE_PATH}")
+        raise HTTPException(status_code=404, detail="Access denied page not found.")
+    try:
+        return HTMLResponse(content=await get_template(ACCESS_DENIED_TEMPLATE_PATH))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error(f"Error reading access denied HTML file: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load access denied page.")
 
 
 @auth_router.post("/auth/login", include_in_schema=False)

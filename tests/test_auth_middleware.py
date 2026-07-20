@@ -12,6 +12,7 @@ from llm_gateway_core.db.api_keys_db import ApiKeyRecord, ApiKeysDB
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.middleware.auth import (
     ApiKeyAuthMiddleware,
+    MASTER_ONLY_REDIRECT_PATH,
     ROLE_USER,
     SESSION_COOKIE_NAME,
     create_authenticated_session,
@@ -133,7 +134,7 @@ class AuthMiddlewareTests(unittest.TestCase):
 
         response = self.client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/auth/login?next=/v1/ui/usage-stats")
+        self.assertEqual(response.headers["location"], "/auth/login?next=/v1/ui/overview")
 
     def test_generated_images_mount_requires_auth_and_blocks_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -204,11 +205,11 @@ class AuthMiddlewareTests(unittest.TestCase):
 
         root_response = self.client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
         self.assertEqual(root_response.status_code, 303)
-        self.assertEqual(root_response.headers["location"], "/v1/ui/usage-stats")
+        self.assertEqual(root_response.headers["location"], "/v1/ui/overview")
 
         login_page_response = self.client.get("/auth/login", headers={"Accept": "text/html"}, follow_redirects=False)
         self.assertEqual(login_page_response.status_code, 303)
-        self.assertEqual(login_page_response.headers["location"], "/v1/ui/usage-stats")
+        self.assertEqual(login_page_response.headers["location"], "/v1/ui/overview")
 
     def test_login_cookie_is_secure_by_default(self):
         app = build_test_app()
@@ -257,7 +258,7 @@ class AuthMiddlewareTests(unittest.TestCase):
 
         self.assertEqual(ui_response.status_code, 200)
         self.assertEqual(root_response.status_code, 303)
-        self.assertEqual(root_response.headers["location"], "/v1/ui/usage-stats")
+        self.assertEqual(root_response.headers["location"], "/v1/ui/overview")
 
     def test_invalid_login_is_rejected(self):
         response = self.client.post(
@@ -430,7 +431,7 @@ class AuthMiddlewareTests(unittest.TestCase):
 
         root_response = self.client.get("/", headers=headers, follow_redirects=False)
         self.assertEqual(root_response.status_code, 303)
-        self.assertEqual(root_response.headers["location"], "/v1/ui/usage-stats")
+        self.assertEqual(root_response.headers["location"], "/v1/ui/overview")
 
     def test_usage_producing_request_is_active_during_handler_and_finished_after_response(self):
         response = self.client.post(
@@ -562,6 +563,57 @@ class AuthMiddlewareTests(unittest.TestCase):
         call_kwargs = mock_db.insert_rejection.call_args.kwargs
         self.assertEqual(call_kwargs["category"], "master_only")
         self.assertEqual(call_kwargs["status_code"], 403)
+
+    def test_master_only_ui_navigation_for_user_role_redirects_to_access_denied_page(self):
+        record = make_enabled_user_record()
+        app = build_test_app(api_keys_db=api_keys_db_with_record(record))
+
+        with TestClient(app) as client:
+            client.cookies.set(
+                SESSION_COOKIE_NAME,
+                create_authenticated_session(role=ROLE_USER, key_id=record.id),
+            )
+            response = client.get(
+                "/v1/ui/rules-editor",
+                headers={"Accept": "text/html"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], MASTER_ONLY_REDIRECT_PATH)
+        self.assertEqual(MASTER_ONLY_REDIRECT_PATH, "/v1/ui/access-denied?reason=master-only")
+
+    def test_master_role_is_never_redirected_to_access_denied_and_can_open_it_directly(self):
+        with TestClient(build_test_app()) as client:
+            client.cookies.set(SESSION_COOKIE_NAME, create_authenticated_session())
+
+            rules_response = client.get(
+                "/v1/ui/rules-editor",
+                headers={"Accept": "text/html"},
+                follow_redirects=False,
+            )
+            access_denied_response = client.get(
+                "/v1/ui/access-denied",
+                headers={"Accept": "text/html"},
+            )
+
+        self.assertEqual(rules_response.status_code, 200)
+        self.assertEqual(access_denied_response.status_code, 200)
+        self.assertIn("text/html", access_denied_response.headers["content-type"])
+
+    def test_user_role_can_open_access_denied_page_directly(self):
+        record = make_enabled_user_record()
+        app = build_test_app(api_keys_db=api_keys_db_with_record(record))
+
+        with TestClient(app) as client:
+            client.cookies.set(
+                SESSION_COOKIE_NAME,
+                create_authenticated_session(role=ROLE_USER, key_id=record.id),
+            )
+            response = client.get("/v1/ui/access-denied", headers={"Accept": "text/html"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
 
 
 if __name__ == "__main__":

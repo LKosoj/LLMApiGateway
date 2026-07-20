@@ -11,16 +11,10 @@ const rulesPreviewArea = document.getElementById('rulesPreviewArea');
 const rulesList = document.getElementById('rulesList');
 const rulesEmptyState = document.getElementById('rulesEmptyState');
 
-const tabRules = document.getElementById('tabRules');
-const tabEmbeddings = document.getElementById('tabEmbeddings');
-const tabRerank = document.getElementById('tabRerank');
-const tabImages = document.getElementById('tabImages');
-const tabAudio = document.getElementById('tabAudio');
-const tabWeb = document.getElementById('tabWeb');
-const tabOpenRouterFree = document.getElementById('tabOpenRouterFree');
-const tabFallbackEval = document.getElementById('tabFallbackEval');
-const tabProviders = document.getElementById('tabProviders');
-const tabModelRules = document.getElementById('tabModelRules');
+// The top tab bar was removed; the sidebar entity item is the only surface
+// that still needs an availability toggle (fallback.mjs sets `.hidden` on it
+// once OpenRouter Free is known to be configured or not).
+const tabOpenRouterFree = document.querySelector('[data-entity-target="openrouter-free"]');
 const editorContainerRules = document.getElementById('editor-container-rules');
 const editorContainerEmbeddings = document.getElementById('editor-container-embeddings');
 const editorContainerRerank = document.getElementById('editor-container-rerank');
@@ -31,12 +25,10 @@ const editorContainerOpenRouterFree = document.getElementById('editor-container-
 const editorContainerFallbackEval = document.getElementById('editor-container-fallback-eval');
 const editorContainerProviders = document.getElementById('editor-container-providers');
 const editorContainerModelRules = document.getElementById('editor-container-model-rules');
-const tabFusion = document.getElementById('tabFusion');
 const editorContainerFusion = document.getElementById('editor-container-fusion');
 const addFusionButton = document.getElementById('addFusionButton');
 const fusionList = document.getElementById('fusionList');
 const fusionEmptyState = document.getElementById('fusionEmptyState');
-const tabRouter = document.getElementById('tabRouter');
 const editorContainerRouter = document.getElementById('editor-container-router');
 const addRouterButton = document.getElementById('addRouterButton');
 const routerList = document.getElementById('routerList');
@@ -83,21 +75,6 @@ const fallbackEvalStatus = document.getElementById('fallbackEvalStatus');
 const fallbackEvalModels = document.getElementById('fallbackEvalModels');
 const fallbackEvalEmptyState = document.getElementById('fallbackEvalEmptyState');
 const modelRulesRawInput = document.getElementById('modelRulesRawInput');
-const rulesTabList = tabRules.closest('.tabs');
-const rulesTabPanels = [
-    editorContainerRules,
-    editorContainerEmbeddings,
-    editorContainerRerank,
-    editorContainerImages,
-    editorContainerAudio,
-    editorContainerWeb,
-    editorContainerFusion,
-    editorContainerRouter,
-    editorContainerModelRules,
-    editorContainerOpenRouterFree,
-    editorContainerFallbackEval,
-    editorContainerProviders,
-];
 
     return {
         messageArea,
@@ -111,16 +88,7 @@ const rulesTabPanels = [
         rulesPreviewArea,
         rulesList,
         rulesEmptyState,
-        tabRules,
-        tabEmbeddings,
-        tabRerank,
-        tabImages,
-        tabAudio,
-        tabWeb,
         tabOpenRouterFree,
-        tabFallbackEval,
-        tabProviders,
-        tabModelRules,
         editorContainerRules,
         editorContainerEmbeddings,
         editorContainerRerank,
@@ -131,12 +99,10 @@ const rulesTabPanels = [
         editorContainerFallbackEval,
         editorContainerProviders,
         editorContainerModelRules,
-        tabFusion,
         editorContainerFusion,
         addFusionButton,
         fusionList,
         fusionEmptyState,
-        tabRouter,
         editorContainerRouter,
         addRouterButton,
         routerList,
@@ -183,8 +149,6 @@ const rulesTabPanels = [
         fallbackEvalModels,
         fallbackEvalEmptyState,
         modelRulesRawInput,
-        rulesTabList,
-        rulesTabPanels,
     };
 }
 
@@ -592,7 +556,7 @@ export function registerCore(ctx) {
     function syncInteractionLock() {
         if (isInteractionLocked()) {
             const controls = document.querySelectorAll(
-                '.tabs .tab-button, #reloadEditorDocumentButton'
+                '#reloadEditorDocumentButton, .editor-entity-item'
             );
             controls.forEach(control => {
                 if (!ctx.state.lockedControls.has(control)) {
@@ -1633,31 +1597,23 @@ export function registerCore(ctx) {
 
         ctx.state.activeEditor = tabName;
         ctx.state.activeRulesTabContext = context;
+        // The sidebar (registerEntityPanel) owns the active-entity highlight
+        // and footer label; it no longer observes a top tab bar, so it must
+        // be told explicitly whenever the active editor changes.
+        ctx.renderActiveEntity?.();
         updateControlsVisibility();
-        ctx.elements.tabOpenRouterFree.classList.remove('active');
-        ctx.elements.tabFallbackEval.classList.remove('active');
         ctx.elements.editorContainerOpenRouterFree.classList.remove('active');
         ctx.elements.editorContainerOpenRouterFree.style.display = 'none';
         ctx.elements.editorContainerFallbackEval.classList.remove('active');
         ctx.elements.editorContainerFallbackEval.style.display = 'none';
-        ctx.elements.tabFusion.classList.remove('active');
         ctx.elements.editorContainerFusion.classList.remove('active');
         ctx.elements.editorContainerFusion.style.display = 'none';
-        ctx.elements.tabRouter.classList.remove('active');
         ctx.elements.editorContainerRouter.classList.remove('active');
         ctx.elements.editorContainerRouter.style.display = 'none';
-        ctx.elements.tabModelRules.classList.remove('active');
         ctx.elements.editorContainerModelRules.classList.remove('active');
         ctx.elements.editorContainerModelRules.style.display = 'none';
 
         if (tabName === 'rules') {
-            ctx.elements.tabRules.classList.add('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.add('active');
             ctx.elements.editorContainerRules.style.display = 'flex';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1676,13 +1632,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadRulesEditor();
         } else if (tabName === 'embeddings') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.add('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.add('active');
@@ -1701,13 +1650,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadEmbeddingsEditor();
         } else if (tabName === 'rerank') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.add('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1726,13 +1668,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadRerankEditor();
         } else if (tabName === 'images') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.add('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1751,13 +1686,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadImagesEditor();
         } else if (tabName === 'audio') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.add('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1776,13 +1704,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadAudioEditor();
         } else if (tabName === 'web') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.add('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1801,14 +1722,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadWebEditor();
         } else if (tabName === 'openrouter-free') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabOpenRouterFree.classList.add('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1829,14 +1742,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadOpenRouterFreeModels(true, context);
         } else if (tabName === 'fallback-eval') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabFallbackEval.classList.add('active');
-            ctx.elements.tabProviders.classList.remove('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1857,14 +1762,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadFallbackModelEvals(true, context);
         } else if (tabName === 'providers') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabFallbackEval.classList.remove('active');
-            ctx.elements.tabProviders.classList.add('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1883,15 +1780,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.style.display = 'flex';
             return ctx.loadProvidersEditor();
         } else if (tabName === 'fusion') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabFallbackEval.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
-            ctx.elements.tabFusion.classList.add('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1912,16 +1800,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerFusion.style.display = 'flex';
             return ctx.loadFusionEditor();
         } else if (tabName === 'router') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabFallbackEval.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
-            ctx.elements.tabFusion.classList.remove('active');
-            ctx.elements.tabRouter.classList.add('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -1944,17 +1822,6 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerRouter.style.display = 'flex';
             return ctx.loadRouterEditor();
         } else if (tabName === 'model-rules') {
-            ctx.elements.tabRules.classList.remove('active');
-            ctx.elements.tabEmbeddings.classList.remove('active');
-            ctx.elements.tabRerank.classList.remove('active');
-            ctx.elements.tabImages.classList.remove('active');
-            ctx.elements.tabAudio.classList.remove('active');
-            ctx.elements.tabWeb.classList.remove('active');
-            ctx.elements.tabFallbackEval.classList.remove('active');
-            ctx.elements.tabProviders.classList.remove('active');
-            ctx.elements.tabFusion.classList.remove('active');
-            ctx.elements.tabRouter.classList.remove('active');
-            ctx.elements.tabModelRules.classList.add('active');
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
             ctx.elements.editorContainerEmbeddings.classList.remove('active');
@@ -2135,5 +2002,279 @@ export function registerCore(ctx) {
         reloadActiveDocument,
         ConfigUiError,
         LocalizedUiError,
+    });
+}
+
+// Entity-first sidebar navigation, sticky footer status, and inspector.
+// The sidebar is the only tablist-equivalent UI for the rules editor (the
+// former top `.tabs` bar was removed): sidebar buttons drive the same
+// `rulesTabsController.activate()` API the tab bar used to, so ETag/CAS, the
+// dirty-confirm guard, and conflict handling are untouched. `renderActiveEntity`
+// is invoked directly by `activateRulesTab()` on every tab switch (exposed via
+// `ctx.renderActiveEntity`), and a MutationObserver on the sidebar's own list
+// keeps it in sync with the openrouter-free entity's dynamic `hidden` toggle
+// (set by fallback.mjs) and the Save button's `data-editor-dirty` state.
+const ENTITY_DOCUMENT_LABEL_KEYS = {
+    rules: 'editor:tabs.rules',
+    embeddings: 'editor:tabs.embeddings',
+    rerank: 'editor:tabs.rerank',
+    images: 'editor:tabs.images',
+    audio: 'editor:tabs.audio',
+    web: 'editor:tabs.web',
+    fusion: 'editor:tabs.fusion',
+    router: 'editor:tabs.router',
+    'model-rules': 'editor:tabs.modelRules',
+    'openrouter-free': 'editor:tabs.openrouterFree',
+    'fallback-eval': 'editor:tabs.fallbackEval',
+    providers: 'editor:tabs.providers',
+};
+
+const ENTITY_VALIDATION_LABEL_KEYS = {
+    dirty: 'editor:footer.unsavedChanges',
+    clean: 'editor:footer.allSaved',
+};
+
+export function registerEntityPanel(ctx) {
+    const entityNavList = document.getElementById('entityNavList');
+    const entityItems = Array.from(document.querySelectorAll('.editor-entity-item'));
+    const entityGroups = Array.from(document.querySelectorAll('.editor-entity-group'));
+    const searchInput = document.getElementById('entitySearchInput');
+    const searchEmptyState = document.getElementById('entityListEmptyState');
+    const footerDocument = document.getElementById('editorFooterDocument');
+    const footerValidation = document.getElementById('editorFooterValidation');
+    const footerPreviewButton = document.getElementById('footerPreviewButton');
+
+    if (!entityNavList || entityItems.length === 0) {
+        return;
+    }
+
+    function t(key, values = {}) {
+        return ctx.gatewayI18n.t(key, values);
+    }
+
+    function renderValidationSummary() {
+        if (!footerValidation || ctx.gatewayI18n.currentLocale === null) return;
+        const dirty = ctx.isCurrentEditorDirty();
+        const labelKey = ENTITY_VALIDATION_LABEL_KEYS[dirty ? 'dirty' : 'clean'];
+        footerValidation.textContent = t(labelKey);
+        footerValidation.classList.toggle('is-dirty', dirty);
+    }
+
+    function renderActiveEntity() {
+        // `t()` throws until the i18n runtime finishes loading its catalogs;
+        // this can run before that (e.g. the initial tablist commit fires
+        // synchronously, well before `initEditor()`'s `await gatewayI18n.ready`
+        // in index.mjs). Skip translated rendering until ready; the readiness
+        // subscription below re-renders once it is.
+        if (ctx.gatewayI18n.currentLocale === null) return;
+        const key = ctx.state.activeEditor || null;
+        entityItems.forEach((item) => {
+            const isActive = key !== null && item.dataset.entityTarget === key;
+            item.classList.toggle('active', isActive);
+            item.setAttribute('aria-current', isActive ? 'true' : 'false');
+        });
+        const labelKey = key ? ENTITY_DOCUMENT_LABEL_KEYS[key] : null;
+        const label = labelKey ? t(labelKey) : '';
+        if (footerDocument) {
+            footerDocument.textContent = label;
+        }
+        if (footerPreviewButton) {
+            footerPreviewButton.hidden = key !== 'rules';
+        }
+        renderValidationSummary();
+    }
+
+    function applySearchFilter() {
+        const query = (searchInput?.value || '').trim().toLowerCase();
+        let anyGroupVisible = false;
+        entityGroups.forEach((group) => {
+            let groupHasVisible = false;
+            group.querySelectorAll('.editor-entity-item').forEach((item) => {
+                if (item.hidden) {
+                    item.classList.remove('is-filtered');
+                    return;
+                }
+                const matches = !query || item.textContent.toLowerCase().includes(query);
+                item.classList.toggle('is-filtered', !matches);
+                if (matches) groupHasVisible = true;
+            });
+            group.hidden = !groupHasVisible;
+            if (groupHasVisible) anyGroupVisible = true;
+        });
+        if (searchEmptyState) {
+            searchEmptyState.hidden = anyGroupVisible;
+        }
+    }
+
+    entityItems.forEach((item) => {
+        item.addEventListener('click', () => {
+            const target = item.dataset.entityTarget;
+            const controller = ctx.state.rulesTabsController;
+            if (!target || !controller) return;
+            void controller.activate(target, {reason: 'pointer', focus: false});
+        });
+    });
+
+    if (searchInput) {
+        // Filtering the entity list is not a document edit: stop these events
+        // from reaching the `.container` delegate listener in index.mjs so
+        // they never bump `editorMutationVersion` (the save/load staleness
+        // guard) or the beforeunload dirty check.
+        ['input', 'change'].forEach((eventName) => {
+            searchInput.addEventListener(eventName, (event) => {
+                event.stopPropagation();
+                applySearchFilter();
+            });
+        });
+    }
+
+    if (footerPreviewButton) {
+        footerPreviewButton.addEventListener('click', () => {
+            ctx.elements.previewRulesButton?.click();
+        });
+    }
+
+    // Observe only the entity buttons themselves (not `subtree` over all of
+    // `entityNavList`): `applySearchFilter()` below also toggles `hidden` on
+    // the wrapping `.editor-entity-group` elements, which live in that same
+    // subtree, so a subtree-wide observer would re-trigger itself on every
+    // search-filter pass and spin forever.
+    const entityAvailabilityObserver = new MutationObserver(() => {
+        renderActiveEntity();
+        applySearchFilter();
+    });
+    entityItems.forEach((item) => {
+        entityAvailabilityObserver.observe(item, {
+            attributes: true,
+            attributeFilter: ['hidden'],
+        });
+    });
+
+    if (ctx.elements.saveButton) {
+        const dirtyObserver = new MutationObserver(renderValidationSummary);
+        dirtyObserver.observe(ctx.elements.saveButton, {
+            attributes: true,
+            attributeFilter: ['data-editor-dirty'],
+        });
+    }
+
+    ctx.gatewayI18n.subscribe(renderActiveEntity);
+    // The very first render can land before the i18n runtime is ready (see
+    // the guard in renderActiveEntity); re-render once it is so the footer
+    // and inspector are never left blank.
+    ctx.gatewayI18n.ready.then(renderActiveEntity).catch(() => undefined);
+
+    renderActiveEntity();
+    applySearchFilter();
+
+    Object.assign(ctx, { renderActiveEntity });
+}
+
+// Bespoke replacement for `window.gatewayUi.createTabs()` now that the rules
+// editor no longer has a top `.tabs` tablist for that shared helper to bind
+// to (it requires pre-existing `[role="tab"]` markup). This mirrors just the
+// contract `activateRulesTab`/`beforeRulesTabActivate`/`reselectRulesTab`
+// need: a manual-activation `.activate(key, {reason, focus})` call that runs
+// the veto hook before committing, and a `.repair()` that reselects the
+// nearest visible sidebar entity when the active one becomes hidden (e.g.
+// OpenRouter Free toggling unavailable). The pending-vs-active operation
+// split below (`beginOperation`/`isPending`/`isActive`/`promote`) preserves
+// the same race-safety `tabs.mjs` provides: a stale in-flight activation
+// (superseded by a newer click, or abandoned via a cancelled unsaved-changes
+// confirm) never clobbers state that a later, still-current activation owns.
+export function createRulesTabsController(ctx) {
+    // Mirrors `createTabs()`'s synchronous `commit(initial, false)` at
+    // construction time: `activeKey` must already equal the intended initial
+    // tab *before* any async activation runs, so a `repair()` call that races
+    // ahead of the real `.activate(initialKey, {reason: 'initial'})` call
+    // (e.g. from `initializeOpenRouterFreeTabAvailability()`, which starts
+    // concurrently in `initEditor()`) sees the correct current key instead of
+    // treating "not yet activated" as "hidden" and jumping to another entity.
+    let activeKey = ctx.state.activeEditor ?? null;
+    let sequence = 0;
+    let pendingAbort = null;
+    let activeAbort = null;
+
+    function getEntityItems() {
+        return Array.from(document.querySelectorAll('.editor-entity-item'));
+    }
+
+    function beginOperation() {
+        pendingAbort?.abort();
+        pendingAbort = new AbortController();
+        sequence += 1;
+        return { abortController: pendingAbort, token: sequence };
+    }
+
+    function isPending(abortController, token) {
+        return pendingAbort === abortController && sequence === token && !abortController.signal.aborted;
+    }
+
+    function isActive(abortController) {
+        return activeAbort === abortController && !abortController.signal.aborted;
+    }
+
+    function promote(abortController) {
+        activeAbort?.abort();
+        activeAbort = abortController;
+        pendingAbort = null;
+    }
+
+    async function activate(key, activateOptions = {}) {
+        const reason = activateOptions.reason ?? 'programmatic';
+        const previousKey = activeKey;
+        const { abortController, token } = beginOperation();
+        const context = Object.freeze({
+            key,
+            previousKey,
+            reason,
+            signal: abortController.signal,
+            isCurrent: () => isPending(abortController, token) || isActive(abortController),
+        });
+
+        if (key === activeKey) {
+            promote(abortController);
+            if (!ctx.reselectRulesTab) return true;
+            await ctx.reselectRulesTab(context);
+            return isActive(abortController);
+        }
+
+        if (ctx.beforeRulesTabActivate) {
+            const permitted = await ctx.beforeRulesTabActivate(context);
+            if (!isPending(abortController, token)) return false;
+            if (permitted === false) {
+                pendingAbort = null;
+                abortController.abort();
+                return false;
+            }
+        }
+        if (!isPending(abortController, token)) return false;
+        promote(abortController);
+        activeKey = key;
+        if (ctx.activateRulesTab) await ctx.activateRulesTab(context);
+        return isActive(abortController);
+    }
+
+    async function repair() {
+        const items = getEntityItems();
+        const index = items.findIndex((el) => el.dataset.entityTarget === activeKey);
+        const activeItem = items[index];
+        if (activeItem && !activeItem.hidden) return false;
+        const forward = items.slice(index + 1).find((el) => !el.hidden);
+        const backward = items
+            .slice(0, Math.max(index, 0))
+            .reverse()
+            .find((el) => !el.hidden);
+        const replacement = forward || backward;
+        if (!replacement) return false;
+        return activate(replacement.dataset.entityTarget, { reason: 'repair', focus: false });
+    }
+
+    return Object.freeze({
+        activate,
+        repair,
+        get activeKey() {
+            return activeKey;
+        },
     });
 }

@@ -16,6 +16,8 @@
   "namespaces": [
     "common",
     "auth",
+    "overview",
+    "activity",
     "docs",
     "editor",
     "playground",
@@ -35,6 +37,14 @@
     "login": [
       "common",
       "auth"
+    ],
+    "overview": [
+      "common",
+      "overview"
+    ],
+    "activity": [
+      "common",
+      "activity"
     ],
     "docs": [
       "common",
@@ -76,6 +86,9 @@
     "free-models": [
       "common",
       "free_models"
+    ],
+    "access-denied": [
+      "common"
     ]
   }
 }

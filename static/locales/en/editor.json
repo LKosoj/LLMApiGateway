@@ -4,6 +4,25 @@
     "heading": "LLM Gateway - Configuration Editor",
     "versionLabel": "Product version"
   },
+  "panel": {
+    "search": "Search entities",
+    "entityListLabel": "Configuration entities",
+    "noResults": "No entities match your search.",
+    "groups": {
+      "providers": "Providers",
+      "fallback": "Fallback",
+      "operation": "Operation",
+      "fusion": "Fusion",
+      "router": "Router",
+      "pricing": "Pricing"
+    }
+  },
+  "footer": {
+    "save": "Save panel",
+    "validation": "Validation status",
+    "unsavedChanges": "Unsaved changes",
+    "allSaved": "All changes saved"
+  },
   "tabs": {
     "rules": "Fallback Rules",
     "embeddings": "Embeddings",

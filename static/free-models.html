@@ -37,6 +37,48 @@
 
         <p id="free-models-filter-hint" class="free-models-filter-hint"></p>
 
+        <div id="free-models-controls" class="free-models-controls" hidden>
+            <div class="free-models-search-wrap">
+                <input
+                    type="text"
+                    id="free-models-search"
+                    class="free-models-search-input"
+                    placeholder="Search by name, model ID or provider…"
+                    data-i18n-placeholder="free_models:search.placeholder"
+                    autocomplete="off"
+                >
+                <button
+                    id="free-models-search-clear"
+                    type="button"
+                    class="free-models-search-clear"
+                    aria-label="Clear search"
+                    data-i18n-aria-label="free_models:search.clear"
+                    hidden
+                >×</button>
+            </div>
+            <div
+                id="free-models-status-filter"
+                class="free-models-status-filter"
+                role="radiogroup"
+                aria-label="Filter by configuration status"
+                data-i18n-aria-label="free_models:filter.groupLabel"
+                hidden
+            >
+                <label class="free-models-status-filter-option">
+                    <input type="radio" name="free-models-status-filter" value="all" checked>
+                    <span data-i18n="free_models:filter.all">All</span>
+                </label>
+                <label class="free-models-status-filter-option">
+                    <input type="radio" name="free-models-status-filter" value="configured">
+                    <span data-i18n="free_models:filter.configured">Configured</span>
+                </label>
+                <label class="free-models-status-filter-option">
+                    <input type="radio" name="free-models-status-filter" value="external">
+                    <span data-i18n="free_models:filter.external">External</span>
+                </label>
+            </div>
+        </div>
+
         <div id="free-models-list" class="free-models-list" data-free-models-state="loading">
             <p class="free-models-empty" data-free-models-field="state-message" data-i18n="free_models:loading">Loading the free-tier catalog…</p>
         </div>

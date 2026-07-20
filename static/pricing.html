@@ -121,6 +121,32 @@
         </section>
     </div>
 
+    <div id="pricingDetailSheet" class="pricing-sheet" hidden>
+        <div id="pricingDetailBackdrop" class="pricing-sheet-backdrop"></div>
+        <div class="pricing-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="pricingDetailTitle">
+            <div class="pricing-sheet-head">
+                <h2 id="pricingDetailTitle" data-i18n="pricing:detail.heading">Row details</h2>
+                <button id="pricingDetailClose" type="button" aria-label="Close" data-i18n-aria-label="pricing:detail.close">&times;</button>
+            </div>
+            <div class="pricing-sheet-row">
+                <span data-i18n="pricing:editor.table.provider">Provider</span>
+                <strong id="pricingDetailProvider"></strong>
+            </div>
+            <div class="pricing-sheet-row">
+                <span data-i18n="pricing:editor.table.model">Model</span>
+                <strong id="pricingDetailModel"></strong>
+            </div>
+            <div class="pricing-sheet-field">
+                <label for="pricingDetailInputRate" data-i18n="pricing:editor.table.inputRate">Input rate ($/1M)</label>
+                <input type="number" id="pricingDetailInputRate" min="0" step="any">
+            </div>
+            <div class="pricing-sheet-field">
+                <label for="pricingDetailOutputRate" data-i18n="pricing:editor.table.outputRate">Output rate ($/1M)</label>
+                <input type="number" id="pricingDetailOutputRate" min="0" step="any">
+            </div>
+        </div>
+    </div>
+
     <script src="/static/vendor/ui-runtime.bundle.js"></script>
     <script src="/static/shared-auth.js"></script>
     <script src="/static/shared-nav.js"></script>

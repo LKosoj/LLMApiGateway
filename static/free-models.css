@@ -150,12 +150,156 @@ h1 {
     margin: 0 0 20px;
 }
 
+/* ── Search / filter controls ── */
+.free-models-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 20px;
+}
+
+.free-models-search-wrap {
+    position: relative;
+    flex: 1 1 260px;
+    min-width: 200px;
+}
+
+.free-models-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 8px 36px 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+}
+
+.free-models-search-input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+}
+
+.free-models-search-clear {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.free-models-search-clear:hover {
+    background: var(--bg-sunken);
+    color: var(--text);
+}
+
+.free-models-status-filter {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-sunken);
+}
+
+.free-models-status-filter-option {
+    position: relative;
+    display: inline-flex;
+    cursor: pointer;
+}
+
+.free-models-status-filter-option input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.free-models-status-filter-option span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 6px 14px;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.free-models-status-filter-option input:checked + span {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+}
+
+.free-models-status-filter-option input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
 /* ── Provider / model list ── */
 .free-models-list {
     display: flex;
     flex-direction: column;
     gap: 16px;
     margin-top: 10px;
+}
+
+.free-models-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.free-models-section + .free-models-section {
+    margin-top: 12px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+}
+
+.free-models-section-heading {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.free-models-config-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.badge-configured {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.badge-external {
+    background: var(--bg-sunken);
+    color: var(--text-muted);
 }
 
 .free-models-empty {
@@ -382,10 +526,37 @@ h1 {
         width: calc(100% - 24px);
         padding: 24px 18px 32px;
         border-radius: var(--radius-lg);
+        /* `overflow: hidden` on .container turns it into a CSS scroll
+           container, which constrains `position: sticky` on descendants to
+           its own (non-scrolling) box instead of the viewport -- the sticky
+           search/filter bar below would never actually stick. Nothing on
+           this page relies on .container clipping its children. */
+        overflow: visible;
     }
 
     h1 {
         font-size: 28px;
         line-height: 1.2;
+    }
+
+    .free-models-controls {
+        position: sticky;
+        top: var(--nav-height);
+        z-index: 10;
+        margin: 0 0 16px;
+        padding: 10px 0;
+        background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+    }
+
+    .free-models-status-filter-option span {
+        min-height: 44px;
+        padding: 6px 14px;
+    }
+
+    .free-models-retry,
+    .free-models-copy {
+        min-height: 44px;
     }
 }

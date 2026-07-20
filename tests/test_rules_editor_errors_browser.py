@@ -97,7 +97,7 @@ def _open_rules_tab(browser: Browser, base_url: str) -> Page:
     page = context.new_page()
     page.goto(f"{base_url}/v1/ui/rules-editor")
     expect(page.locator("#saveButton")).to_be_enabled()
-    page.locator("#tabRules").click()
+    page.locator('[data-entity-target="rules"]').click()
     expect(page.locator("#messageArea")).to_contain_text(
         "Fallback Rules loaded successfully"
     )

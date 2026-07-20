@@ -25,5 +25,22 @@
   "modelIdCopy": "Copy",
   "modelIdCopied": "Copied!",
   "modelIdCopyFailed": "Copy failed",
-  "quirksSummary": "Connection quirks ({count})"
+  "quirksSummary": "Connection quirks ({count})",
+  "search": {
+    "placeholder": "Search by name, model ID or provider…",
+    "clear": "Clear search"
+  },
+  "filter": {
+    "groupLabel": "Filter by configuration status",
+    "all": "All",
+    "configured": "Configured",
+    "external": "External"
+  },
+  "searchEmpty": "No models match your search.",
+  "sections": {
+    "configured": "Configured ({count})",
+    "external": "External ({count})"
+  },
+  "configuredBadge": "Configured",
+  "externalBadge": "External"
 }

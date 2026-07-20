@@ -25,5 +25,22 @@
   "modelIdCopy": "Копировать",
   "modelIdCopied": "Скопировано!",
   "modelIdCopyFailed": "Не удалось скопировать",
-  "quirksSummary": "Особенности подключения ({count})"
+  "quirksSummary": "Особенности подключения ({count})",
+  "search": {
+    "placeholder": "Поиск по названию, ID модели или провайдеру…",
+    "clear": "Очистить поиск"
+  },
+  "filter": {
+    "groupLabel": "Фильтр по статусу настройки",
+    "all": "Все",
+    "configured": "Настроенные",
+    "external": "Внешние"
+  },
+  "searchEmpty": "Нет моделей, соответствующих поиску.",
+  "sections": {
+    "configured": "Настроенные ({count})",
+    "external": "Внешние ({count})"
+  },
+  "configuredBadge": "Настроено",
+  "externalBadge": "Внешний"
 }

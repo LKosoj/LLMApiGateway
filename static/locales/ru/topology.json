@@ -61,5 +61,9 @@
     "zoomOutAction": "Уменьшить масштаб",
     "fitViewAction": "Показать всю схему",
     "toggleInteractivityAction": "Переключить интерактивность"
+  },
+  "scope": {
+    "config": "Конфигурация шлюза — общая",
+    "activity": "Активность — по текущему ключу"
   }
 }

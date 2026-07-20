@@ -79,7 +79,17 @@ def server():
         env["FUSION_RULES_FILENAME"] = str(fusion_rules_path)
         port = get_free_port()
         env["GATEWAY_PORT"] = str(port)
-        env["LOG_LEVEL"] = "DEBUG"
+        # WARNING, not DEBUG: this fixture is shared by tests that navigate
+        # through many real UI pages in one browser context (e.g.
+        # test_admin_navigation_is_consistent_across_ui_pages). The gateway
+        # subprocess's combined stdout/stderr is a pipe the harness only
+        # drains at teardown (see isolated_gateway_process in
+        # ui_server_helpers.py); DEBUG-level logging across that many
+        # requests fills the OS pipe buffer, which blocks the gateway's
+        # single-threaded event loop on the next log write and hangs every
+        # in-flight request. Other heavy browser-test files already avoid
+        # this with LOG_LEVEL=WARNING.
+        env["LOG_LEVEL"] = "WARNING"
         base_url = f"http://localhost:{port}"
 
         with isolated_gateway_process(env=env, temp_path=temp_path) as proc:
@@ -138,8 +148,8 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator("#catalogStatus")).to_contain_text("Загружено gateway-моделей")
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/light_model")).to_have_count(1)
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/rerank")).to_have_count(1)
-    expect(page.locator("[data-docs-api-base]")).to_have_count(9)
-    assert page.locator("[data-docs-api-base]").all_inner_texts() == [api_base] * 9
+    expect(page.locator("[data-docs-api-base]")).to_have_count(11)
+    assert page.locator("[data-docs-api-base]").all_inner_texts() == [api_base] * 11
     expect(page.locator("#insecureTransportWarning")).to_be_hidden()
     expect(page.locator("#text .service-card")).to_have_count(3)
     expect(page.locator("#text")).to_contain_text("OpenAI-compatible chat completion")
@@ -264,8 +274,8 @@ def test_gateway_docs_warns_on_public_http_origin(page: Page, server):
         expect(page.locator("html")).to_have_attribute("data-i18n-state", "ready")
         assert page.evaluate("window.gatewayI18n.currentLocale") == "en"
 
-        expect(page.locator("[data-docs-api-base]")).to_have_count(9)
-        assert page.locator("[data-docs-api-base]").all_inner_texts() == [f"{origin}/v1"] * 9
+        expect(page.locator("[data-docs-api-base]")).to_have_count(11)
+        assert page.locator("[data-docs-api-base]").all_inner_texts() == [f"{origin}/v1"] * 11
         warning = page.locator("#insecureTransportWarning")
         expect(warning).to_have_attribute("role", "note")
         if should_warn:
@@ -441,27 +451,16 @@ def test_playground_simple_chat_preserves_limited_context_and_resets(page: Page,
         body = json.loads(route.request.post_data or "{}")
         messages = body.get("messages") or []
         captured_messages.append(messages)
+        # The playground's chat tab always requests `stream: true` for plain
+        # (non-Fusion) models, so the mock must reply with a real
+        # `text/event-stream` body instead of a buffered JSON completion.
+        chunk = json.dumps(
+            {"choices": [{"delta": {"content": f"reply {len(captured_messages)}"}}]}
+        )
         route.fulfill(
             status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {
-                    "id": f"chatcmpl-{len(captured_messages)}",
-                    "object": "chat.completion",
-                    "model": body.get("model"),
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": f"reply {len(captured_messages)}",
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-                }
-            ),
+            content_type="text/event-stream",
+            body=f"data: {chunk}\n\ndata: [DONE]\n\n",
         )
 
     page.route(f"{server}/v1/chat/completions", handle_chat)
@@ -496,13 +495,16 @@ def test_playground_simple_chat_preserves_limited_context_and_resets(page: Page,
 
 
 def test_admin_navigation_is_consistent_across_ui_pages(page: Page, server):
+    page.set_viewport_size({"width": 1440, "height": 900})
     add_session(page, server)
     route_empty_analytics_dashboard(page, server)
 
-    expected_labels = ["Docs", "Usage Statistics", "Quota", "Rules Editor", "Playground", "API Keys", "Rejections", "Translator Debug", "Pricing", "Free LLM Catalog"]
+    expected_labels = ["Overview", "Activity", "Docs", "Analytics (legacy)", "Quota", "Rules Editor", "Playground", "API Keys", "Rejections", "Translator Check", "Pricing", "Free LLM Catalog"]
     pages = [
+        ("/v1/ui/overview", "Overview"),
+        ("/v1/ui/activity", "Activity"),
         ("/v1/ui/docs", "Docs"),
-        ("/v1/ui/usage-stats", "Usage Statistics"),
+        ("/v1/ui/usage-stats", "Analytics (legacy)"),
         ("/v1/ui/rules-editor", "Rules Editor"),
         ("/v1/ui/playground", "Playground"),
         ("/v1/ui/api-keys", "API Keys"),
@@ -510,11 +512,11 @@ def test_admin_navigation_is_consistent_across_ui_pages(page: Page, server):
 
     for path, active_label in pages:
         page.goto(f"{server}{path}")
-        nav_buttons = page.locator(".top-nav-content .nav-button")
+        nav_buttons = page.locator("[data-gateway-nav] .nav-button")
         expect(nav_buttons).to_have_count(len(expected_labels))
         assert [" ".join(label.split()) for label in nav_buttons.all_text_contents()] == expected_labels
-        expect(page.locator(".top-nav-content .nav-button.active")).to_have_text(active_label)
-        current_page_button = page.locator('.top-nav-content .nav-button[aria-current="page"]')
+        expect(page.locator("[data-gateway-nav] .nav-button.active")).to_have_text(active_label)
+        current_page_button = page.locator('[data-gateway-nav] .nav-button[aria-current="page"]')
         expect(current_page_button).to_have_count(1)
         expect(current_page_button).to_have_text(active_label)
 

@@ -1,10 +1,17 @@
 {
   "appName": "LLM API Gateway",
   "loading": "Загрузка…",
+  "actions": {
+    "copy": "Копировать",
+    "copied": "Скопировано!"
+  },
   "items": "{count, plural, one {# элемент} few {# элемента} many {# элементов} other {# элемента}}",
   "languageChanged": "Язык изменён на {locale}",
   "languageLabel": "Язык",
   "localeChangeFailed": "Не удалось сменить язык интерфейса.",
+  "stale": {
+    "badge": "Устарело · {time}"
+  },
   "errors": {
     "invalidApiKey": "Неверный API-ключ.",
     "invalidRequest": "Некорректный запрос.",
@@ -24,15 +31,35 @@
   },
   "navigation": {
     "label": "Основная навигация",
+    "toggle": "Открыть меню навигации",
+    "close": "Закрыть меню навигации",
+    "overlay": "Оверлей меню навигации",
+    "overview": "Обзор",
+    "activity": "Активность",
     "docs": "Документация",
-    "usage": "Статистика",
+    "usage": "Аналитика (устар.)",
     "quota": "Квота",
     "rules": "Редактор правил",
     "playground": "Песочница",
     "apiKeys": "API-ключи",
     "rejections": "Отклонения",
-    "translator": "Отладка переводчика",
+    "translator": "Проверка транслятора",
     "pricing": "Тарифы",
     "freeModels": "Бесплатные модели"
+  },
+  "access": {
+    "denied": {
+      "title": "Доступ ограничен",
+      "body": "Этот раздел доступен только для master API-ключа.",
+      "back": "Вернуться к обзору"
+    }
+  },
+  "identity": {
+    "role": {
+      "master": "Master",
+      "user": "Пользователь"
+    },
+    "name": "Ключ: {name}",
+    "logout": "Выйти"
   }
 }

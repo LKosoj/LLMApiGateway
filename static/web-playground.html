@@ -44,7 +44,8 @@
         </div>
 
         <section class="playground-section" data-playground-section-panel="chat" role="tabpanel" hidden>
-            <section class="playground-panel">
+            <section class="playground-panel chat-panel">
+                <div class="chat-transcript" id="simpleChatTranscript" aria-live="polite" hidden></div>
                 <form class="playground-form" id="simpleChatForm" autocomplete="off">
                     <div class="field-group">
                         <label for="chatModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
@@ -56,17 +57,38 @@
                             <span><span data-i18n="playground:labels.fusionDetails">Fusion: include panel answers &amp; analysis</span> (<code>include_details</code>)</span>
                         </label>
                     </div>
-                    <div class="field-group">
-                        <label for="simpleChatInput" data-i18n="playground:labels.message">Message</label>
-                        <textarea id="simpleChatInput" name="message" rows="4" required></textarea>
-                    </div>
-                    <div class="playground-actions">
-                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.sendMessage">Send message</button>
-                        <button type="button" class="secondary-button reset-button" id="resetSimpleChatButton" data-i18n="playground:actions.resetChat">Reset chat</button>
-                        <span class="playground-status" data-status-for="chat"></span>
+                    <details class="chat-advanced-panel">
+                        <summary data-i18n="playground:labels.advancedSettings">Advanced settings</summary>
+                        <div class="field-row">
+                            <div class="field-group">
+                                <label for="chatTemperature" data-i18n="playground:labels.temperature">Temperature</label>
+                                <input id="chatTemperature" name="temperature" type="number" min="0" max="2" step="0.05" placeholder="default" data-i18n-placeholder="playground:placeholders.default">
+                            </div>
+                            <div class="field-group">
+                                <label for="chatTopP" data-i18n="playground:labels.topP">Top-p</label>
+                                <input id="chatTopP" name="top_p" type="number" min="0" max="1" step="0.05" placeholder="default" data-i18n-placeholder="playground:placeholders.default">
+                            </div>
+                            <div class="field-group">
+                                <label for="chatMaxTokens" data-i18n="playground:labels.maxTokens">Max tokens</label>
+                                <input id="chatMaxTokens" name="max_tokens" type="number" min="1" step="1" placeholder="default" data-i18n-placeholder="playground:placeholders.default">
+                            </div>
+                        </div>
+                    </details>
+                    <div class="chat-input-bar">
+                        <div class="field-group">
+                            <label for="simpleChatInput" data-i18n="playground:labels.message">Message</label>
+                            <textarea id="simpleChatInput" name="message" rows="3" required></textarea>
+                        </div>
+                        <div class="chat-stream-controls" id="chatStreamControls" hidden>
+                            <button type="button" class="cancel-button" id="cancelChatButton" data-i18n="playground:actions.cancelMessage">Cancel</button>
+                        </div>
+                        <div class="playground-actions">
+                            <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.sendMessage">Send message</button>
+                            <button type="button" class="secondary-button reset-button" id="resetSimpleChatButton" data-i18n="playground:actions.resetChat">Reset chat</button>
+                            <span class="playground-status" data-status-for="chat"></span>
+                        </div>
                     </div>
                 </form>
-                <div class="chat-transcript" id="simpleChatTranscript" aria-live="polite" hidden></div>
             </section>
         </section>
 

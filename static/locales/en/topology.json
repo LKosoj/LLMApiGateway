@@ -61,5 +61,9 @@
     "zoomOutAction": "Zoom out",
     "fitViewAction": "Fit view",
     "toggleInteractivityAction": "Toggle interactivity"
+  },
+  "scope": {
+    "config": "Gateway configuration — shared",
+    "activity": "Activity — scoped to current key"
   }
 }

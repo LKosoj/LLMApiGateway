@@ -1,0 +1,154 @@
+/* Shared request-drawer component (Activity + Rejections detail view).
+   Class names are namespaced with req-drawer- to avoid colliding with
+   page-local .status-pill / .act-* / .rej-* rules loaded on the same page. */
+
+.req-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal, 1000);
+}
+
+.req-drawer-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(480px, 100%);
+    background: var(--bg-elevated);
+    border-left: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    padding: 18px 20px;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+.req-drawer-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.req-drawer-title {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 16px;
+    font-weight: 700;
+    flex: 1;
+}
+
+.req-drawer-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    min-width: 40px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 22px;
+    line-height: 1;
+}
+
+.req-drawer-close:hover {
+    color: var(--text-strong);
+}
+
+.req-drawer-section {
+    margin-bottom: 18px;
+}
+
+.req-drawer-section-heading {
+    margin: 0 0 8px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.req-drawer-field {
+    display: grid;
+    grid-template-columns: minmax(110px, auto) 1fr;
+    gap: 4px 14px;
+    margin-bottom: 10px;
+    font-size: 13px;
+}
+
+.req-drawer-field-label {
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.req-drawer-field-value {
+    overflow-wrap: anywhere;
+}
+
+.req-drawer-copyable {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.req-drawer-copyable code {
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.req-drawer-copy-btn {
+    flex: 0 0 auto;
+    min-height: 26px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.req-drawer-copy-btn:hover {
+    color: var(--text-strong);
+    border-color: var(--border-strong);
+}
+
+.req-drawer-status-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.req-drawer-status-success {
+    color: var(--text);
+    background: var(--success-soft);
+}
+
+.req-drawer-status-running {
+    color: var(--accent-text);
+    background: var(--accent-soft);
+}
+
+.req-drawer-status-rejected {
+    color: var(--text);
+    background: var(--error-soft);
+}
+
+.req-drawer-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+@media (max-width: 480px) {
+    .req-drawer-panel {
+        width: 100%;
+    }
+}

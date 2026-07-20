@@ -1,0 +1,96 @@
+{
+  "pageTitle": "LLM Gateway - Активность",
+  "heading": "Активность",
+  "intro": "Единый журнал запросов шлюза: успешные и текущие обращения, а также отклонения контроля доступа.",
+  "filters": {
+    "status": "Статус",
+    "statusOptions": {
+      "all": "Все (2xx / активные)",
+      "rejected": "Отклонённые (4xx)",
+      "serverError": "Ошибки сервера (5xx)"
+    },
+    "since": "Начиная с (UTC)",
+    "provider": "Провайдер",
+    "keyId": "ID ключа",
+    "requestId": "Request ID",
+    "perPage": "На странице",
+    "any": "любой",
+    "pageScopedHint": "Фильтр «Начиная с» действует только для вида «Отклонённые (4xx)». Фильтры по провайдеру, ID ключа и Request ID применяются только к уже загруженной странице."
+  },
+  "actions": {
+    "apply": "Применить",
+    "reset": "Сбросить",
+    "refresh": "Обновить",
+    "copy": "Копировать"
+  },
+  "serverError": {
+    "title": "Нет источника данных для 5xx",
+    "reason": "Шлюз пока не сохраняет журнал ошибок 5xx от upstream-провайдеров, поэтому этот раздел невозможно заполнить."
+  },
+  "loading": "Загрузка активности…",
+  "table": {
+    "time": "Время",
+    "requestId": "Request ID",
+    "key": "Ключ",
+    "operation": "Операция",
+    "model": "Модель",
+    "provider": "Провайдер",
+    "status": "Статус",
+    "latency": "Задержка",
+    "cost": "Стоимость",
+    "empty": "На этой странице нет активности, соответствующей текущим фильтрам."
+  },
+  "pagination": {
+    "newer": "← Новее",
+    "older": "Старше →",
+    "empty": "0 из 0",
+    "range": "{start}–{end} из {total}"
+  },
+  "summary": "Показано {visible} из {loaded} загруженных ({total} всего) · обновлено {time}",
+  "drawer": {
+    "heading": "Детали запроса",
+    "close": "Закрыть",
+    "fields": {
+      "requestId": "Request ID",
+      "timeUtc": "Время (UTC)",
+      "timeLocal": "Время (локальное)",
+      "status": "Статус",
+      "virtualKey": "Виртуальный ключ",
+      "operation": "Операция",
+      "requestedModel": "Запрошенная модель",
+      "provider": "Провайдер",
+      "resolvedModel": "Фактическая модель",
+      "promptTokens": "Токены запроса",
+      "completionTokens": "Токены ответа",
+      "cost": "Стоимость",
+      "ttft": "TTFT (до первого токена)",
+      "duration": "Длительность",
+      "endpoint": "Endpoint",
+      "clientIp": "IP клиента",
+      "xTitle": "X-Title",
+      "reason": "Причина"
+    },
+    "timeline": {
+      "heading": "Таймлайн fallback",
+      "unavailable": "Шлюз пока не сохраняет журнал попыток fallback по каждому запросу, поэтому этот таймлайн невозможно заполнить."
+    }
+  },
+  "status": {
+    "running": "Выполняется",
+    "success": "Успех"
+  },
+  "row": {
+    "openUsage": "Открыть детали запроса {requestId}",
+    "openRejection": "Открыть детали отклонения {requestId}"
+  },
+  "values": {
+    "notAvailable": "Н/Д"
+  },
+  "format": {
+    "milliseconds": "{value} мс",
+    "seconds": "{value} с"
+  },
+  "errors": {
+    "invalidResponse": "Ответ активности имеет неверный формат."
+  }
+}

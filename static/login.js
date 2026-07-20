@@ -88,7 +88,7 @@
                 }));
                 return;
             }
-            global.location.assign(payload.redirect_to || '/v1/ui/usage-stats');
+            global.location.assign(payload.redirect_to || '/v1/ui/overview');
         } catch (error) {
             showDescriptor(ui.describeApiError({detail: error.message}));
         } finally {

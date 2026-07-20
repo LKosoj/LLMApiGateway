@@ -8,7 +8,7 @@ from llm_gateway_core.api.v1.admin_api_keys import admin_api_keys_router
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from llm_gateway_core.middleware.auth import (
     ApiKeyAuthMiddleware,
-    DEFAULT_UI_PATH,
+    MASTER_ONLY_REDIRECT_PATH,
     ROLE_USER,
     SESSION_COOKIE_NAME,
     create_authenticated_session,
@@ -74,7 +74,7 @@ class ApiKeysUiMasterOnlyTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], DEFAULT_UI_PATH)
+        self.assertEqual(response.headers["location"], MASTER_ONLY_REDIRECT_PATH)
 
     def test_master_session_can_open_api_keys_ui(self):
         self.client.cookies.set(SESSION_COOKIE_NAME, create_authenticated_session())

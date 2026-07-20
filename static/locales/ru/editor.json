@@ -4,6 +4,25 @@
     "heading": "LLM Gateway — редактор конфигурации",
     "versionLabel": "Версия продукта"
   },
+  "panel": {
+    "search": "Поиск сущностей",
+    "entityListLabel": "Сущности конфигурации",
+    "noResults": "Нет сущностей, соответствующих поиску.",
+    "groups": {
+      "providers": "Провайдеры",
+      "fallback": "Фолбэк",
+      "operation": "Операции",
+      "fusion": "Fusion",
+      "router": "Router",
+      "pricing": "Оценка стоимости"
+    }
+  },
+  "footer": {
+    "save": "Панель сохранения",
+    "validation": "Статус проверки",
+    "unsavedChanges": "Есть несохранённые изменения",
+    "allSaved": "Все изменения сохранены"
+  },
   "tabs": {
     "rules": "Правила фолбэка",
     "embeddings": "Эмбеддинги",

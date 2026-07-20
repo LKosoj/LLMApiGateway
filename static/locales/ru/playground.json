@@ -68,10 +68,14 @@
     "formulaPages": "Страницы с формулами",
     "maxPages": "Максимум страниц",
     "pdfPassword": "Пароль PDF",
-    "savePreprocessedPdf": "Сохранить предобработанный PDF"
+    "savePreprocessedPdf": "Сохранить предобработанный PDF",
+    "advancedSettings": "Дополнительные настройки",
+    "topP": "Top-p",
+    "maxTokens": "Максимум токенов"
   },
   "actions": {
     "sendMessage": "Отправить сообщение",
+    "cancelMessage": "Отмена",
     "resetChat": "Сбросить чат",
     "runSearch": "Запустить поиск",
     "fetchRead": "Загрузить и разобрать",
@@ -133,6 +137,8 @@
     "pdfDone": "Готово за {seconds, number} с · файлов: {count, number}",
     "requestFailed": "Не удалось выполнить запрос.",
     "chatReset": "Чат сброшен.",
+    "chatCancelled": "Сообщение отменено.",
+    "assistantTyping": "Ассистент печатает…",
     "modelsLoadFailed": "Не удалось загрузить модели.",
     "tooManyFiles": "Выберите не более {count, number} файлов для поля {field}."
   },
@@ -152,6 +158,8 @@
     "rawJson": "Исходный JSON-ответ",
     "assistant": "Ассистент",
     "user": "Пользователь",
+    "cancelled": "(отменено)",
+    "streamError": "Ошибка потоковой передачи",
     "analysisRaw": "Исходный анализ",
     "analysisUnavailable": "Анализ недоступен",
     "agreements": "Совпадения",
