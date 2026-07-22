@@ -15,9 +15,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -30,9 +30,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -55,9 +55,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -79,9 +79,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -94,9 +94,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -109,9 +109,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -127,9 +127,9 @@
         "supports_tools": true,
         "context_window": 256000,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -142,14 +142,14 @@
         "supports_tools": true,
         "context_window": 131072,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
         "provider": "freemodel",
-        "model": "gpt-5.4-mini",
+        "model": "gpt-5.6-luna",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -157,9 +157,9 @@
         "supports_tools": true,
         "context_window": 400000,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -172,9 +172,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -187,9 +187,9 @@
         "supports_tools": true,
         "context_window": 1000000,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
@@ -205,9 +205,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -231,9 +231,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -246,9 +246,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
@@ -264,9 +264,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -314,9 +314,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -329,9 +329,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -354,9 +354,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -378,9 +378,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -393,9 +393,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -408,9 +408,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
@@ -424,9 +424,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -448,8 +448,8 @@
         "supports_tools": true,
         "context_window": 1000000,
         "capabilities_autofilled": [
-          "context_window",
-          "supports_tools"
+          "supports_tools",
+          "context_window"
         ]
       },
       {
@@ -484,9 +484,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -499,14 +499,14 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
         "provider": "freemodel",
-        "model": "gpt-5.5",
+        "model": "gpt-5.6-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {
           "reasoning_effort": "high"
@@ -516,9 +516,9 @@
         "supports_tools": true,
         "context_window": 1050000,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
@@ -532,9 +532,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -565,9 +565,9 @@
         "supports_tools": true,
         "context_window": 202752,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -580,9 +580,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
@@ -596,9 +596,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -635,9 +635,9 @@
         "supports_tools": true,
         "context_window": 1050000,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -653,9 +653,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -679,15 +679,15 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
     "context_overflow_fallback": {
       "provider": "freemodel",
-      "model": "gpt-5.5",
+      "model": "gpt-5.6-sol",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {},
@@ -695,9 +695,9 @@
       "supports_tools": true,
       "context_window": 1050000,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -766,9 +766,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -783,9 +783,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -798,9 +798,9 @@
         "supports_tools": true,
         "context_window": 1000000,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -813,9 +813,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
@@ -829,9 +829,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -853,9 +853,9 @@
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -882,9 +882,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],
@@ -898,9 +898,9 @@
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
-        "context_window",
+        "supports_vision",
         "supports_tools",
-        "supports_vision"
+        "context_window"
       ]
     },
     "rotate_models": false,
@@ -922,9 +922,9 @@
         "supports_tools": true,
         "context_window": 131072,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -937,9 +937,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -952,9 +952,9 @@
         "supports_tools": true,
         "context_window": 262144,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       },
       {
@@ -967,9 +967,9 @@
         "supports_tools": true,
         "context_window": 131072,
         "capabilities_autofilled": [
-          "context_window",
+          "supports_vision",
           "supports_tools",
-          "supports_vision"
+          "context_window"
         ]
       }
     ],

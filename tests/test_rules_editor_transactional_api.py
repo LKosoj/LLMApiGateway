@@ -1088,6 +1088,50 @@ def test_validate_candidate_provider_models_names_missing_pair_in_exception(
 
         assert "model-a" in str(raised.value)
         assert "shared" in str(raised.value)
+        assert "gateway-shared" in str(raised.value)
+
+    run_async(scenario())
+
+
+def test_validate_candidate_names_gateway_model_when_provider_missing(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        candidate_loader = _loader(
+            tmp_path / "candidate", provider_name="shared"
+        )
+        candidate_loader._fallback_rules_base = {
+            "gateway-shared": {
+                "fallback_models": [
+                    {"provider": "missing-provider", "model": "model-a"},
+                ]
+            }
+        }
+        candidate_loader.fallback_rules = dict(
+            candidate_loader._fallback_rules_base
+        )
+        candidate_catalog = ProviderModelsService()
+        candidate_snapshot = make_runtime_snapshot(
+            generation=99,
+            config_loader=candidate_loader,
+            provider_models_service=candidate_catalog,
+        )
+        request = Mock()
+        request.headers = {}
+        request.state = Mock()
+        request.state.api_key_record = None
+        request.state.role = ROLE_MASTER
+
+        with pytest.raises(ValueError) as raised:
+            await rules_editor._validate_candidate_provider_models(
+                request,
+                candidate_snapshot,
+                Mock(spec=httpx.AsyncClient),
+            )
+
+        message = str(raised.value)
+        assert "gateway-shared" in message
+        assert "missing-provider" in message
 
     run_async(scenario())
 

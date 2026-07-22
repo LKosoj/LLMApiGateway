@@ -1766,7 +1766,10 @@ def test_preflight_exception_message_surfaces_as_validation_error_detail(
 ) -> None:
     async def scenario() -> None:
         harness = await _make_harness(tmp_path, monkeypatch)
-        message = "Fallback model 'foo' is not available from provider 'bar'."
+        message = (
+            "Gateway model 'llmgateway/text': "
+            "fallback model 'foo' is not available from provider 'bar'."
+        )
 
         async def reject(_snapshot: RuntimeSnapshot) -> None:
             raise ValueError(message)

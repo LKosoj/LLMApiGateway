@@ -658,7 +658,7 @@ async def _validate_candidate_provider_models(
     candidate_service = candidate_snapshot.provider_models_service
 
     unique_providers: dict[str, Any] = {}
-    for config in fallback_rules.values():
+    for gateway_model, config in fallback_rules.items():
         for fallback_model in _iter_rule_targets(config):
             provider_name = fallback_model["provider"]
             if provider_name in unique_providers:
@@ -668,7 +668,8 @@ async def _validate_candidate_provider_models(
             )
             if provider_config is None:
                 raise ValueError(
-                    f"Fallback provider '{provider_name}' is not configured."
+                    f"Gateway model '{gateway_model}': "
+                    f"fallback provider '{provider_name}' is not configured."
                 )
             unique_providers[provider_name] = provider_config
 
@@ -723,13 +724,14 @@ async def _validate_candidate_provider_models(
         provider_name, provider_models = result
         models_by_provider[provider_name] = provider_models
 
-    for config in fallback_rules.values():
+    for gateway_model, config in fallback_rules.items():
         for fallback_model in _iter_rule_targets(config):
             provider_name = fallback_model["provider"]
             model_name = fallback_model["model"]
             if model_name not in models_by_provider.get(provider_name, set()):
                 raise ValueError(
-                    f"Fallback model '{model_name}' is not available from "
+                    f"Gateway model '{gateway_model}': "
+                    f"fallback model '{model_name}' is not available from "
                     f"provider '{provider_name}'."
                 )
 
