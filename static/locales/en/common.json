@@ -34,6 +34,8 @@
     "toggle": "Open navigation menu",
     "close": "Close navigation menu",
     "overlay": "Navigation menu overlay",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
     "overview": "Overview",
     "activity": "Activity",
     "docs": "Docs",

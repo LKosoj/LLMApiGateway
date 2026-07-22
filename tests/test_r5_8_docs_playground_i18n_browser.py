@@ -14,6 +14,22 @@ __all__ = ["server"]
 pytestmark = pytest.mark.browser
 
 
+def _change_locale(page: Page, locale: str) -> None:
+    page.evaluate(
+        """(value) => {
+            const select = document.querySelector('#localeSelect');
+            select.value = value;
+            select.dispatchEvent(new Event('change', {bubbles: true}));
+        }""",
+        locale,
+    )
+    page.wait_for_function(
+        "value => document.querySelector('#localeSelect').dataset.localeState === 'ready' "
+        "&& window.gatewayI18n.currentLocale === value",
+        arg=locale,
+    )
+
+
 def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     page: Page,
     server: str,
@@ -62,7 +78,7 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     assert docs_scroll > 0
     docs_requests_before_locale = dict(counters)
 
-    page.locator("#localeSelect").select_option("ru")
+    _change_locale(page, "ru")
     expect(page.locator("html")).to_have_attribute("lang", "ru")
     expect(page.locator("h1")).to_contain_text("Документация по подключению моделей")
     assert dict(counters) == docs_requests_before_locale
@@ -293,7 +309,7 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     assert playground_state["audioHref"].startswith("blob:")
     requests_before_locale = dict(counters)
 
-    page.locator("#localeSelect").select_option("ru")
+    _change_locale(page, "ru")
     expect(page.locator("html")).to_have_attribute("lang", "ru")
     expect(page.locator("#searchForm .run-button")).to_have_text("Запустить поиск")
     expect(search_result.locator("details.raw-details summary")).to_have_text(

@@ -109,7 +109,11 @@ def test_shared_nav_builds_sidebar_and_drawer_shell_for_desktop_and_mobile():
     assert "data-gateway-nav-overlay" in content
     assert "data-gateway-sidebar" in content
     assert "data-gateway-nav-close" in content
+    assert "data-gateway-sidebar-collapse" in content
     assert "data-gateway-sidebar-footer" in content
+    assert "data-gateway-sidebar-settings" in content
+    assert "gateway-locale-icon" in content
+    assert "llmgateway:sidebar" in content
     assert "ui.createDialog(" in content
     assert "layout: 'list'" in content
     assert "innerHTML" not in content
@@ -122,13 +126,17 @@ def test_shared_nav_css_defines_permanent_desktop_sidebar_and_mobile_drawer():
         ".gateway-nav-toggle",
         ".gateway-nav-overlay",
         ".gateway-sidebar",
+        ".gateway-sidebar-collapse",
         ".gateway-nav-close",
         ".gateway-nav-list",
         ".gateway-sidebar-footer",
+        ".gateway-sidebar-settings",
     ):
         assert selector in content
     assert "@media (min-width: 1024px)" in content
     assert "margin-inline-start: 240px" in content
+    assert "margin-inline-start: 72px" in content
+    assert "[data-collapsed]" in content
 
 
 def test_navigation_toggle_close_overlay_locale_keys_exist_for_en_and_ru():
@@ -139,7 +147,13 @@ def test_navigation_toggle_close_overlay_locale_keys_exist_for_en_and_ru():
             )
         )
         navigation = catalog["navigation"]
-        for key in ("toggle", "close", "overlay"):
+        for key in (
+            "toggle",
+            "close",
+            "overlay",
+            "collapseSidebar",
+            "expandSidebar",
+        ):
             assert isinstance(navigation[key], str) and navigation[key]
 
 

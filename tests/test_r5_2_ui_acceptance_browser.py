@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -356,6 +357,7 @@ def test_delayed_and_unknown_identity_are_single_fetch_and_fail_closed(
         assert health_request_count == 1
         assert page.evaluate("window.__pendingRoleLeaks") == []
 
+        page.locator("[data-gateway-nav-toggle]").click()
         theme_toggle = page.locator("#darkModeToggle")
         version = page.locator("[data-product-version]")
         expect(theme_toggle).to_have_attribute("aria-label", "Switch to dark mode")
@@ -450,6 +452,105 @@ def test_navigation_sidebar_is_rtl_correct_at_three_widths(
             "[data-gateway-nav][data-overflow-start], "
             "[data-gateway-nav][data-overflow-end]"
         ).count() == 0
+    finally:
+        context.close()
+
+
+def test_language_and_theme_controls_live_in_sidebar_on_desktop_and_mobile(
+    browser: Browser,
+    r5_2_server: str,
+) -> None:
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        _login(context, r5_2_server, MASTER_KEY)
+        page = context.new_page()
+        page.add_init_script(
+            "localStorage.setItem('llmgateway:locale', 'en');"
+            "localStorage.setItem('llmgateway:theme', 'light');"
+        )
+        page.goto(f"{r5_2_server}/v1/ui/overview")
+        _wait_for_navigation(page)
+
+        settings = page.locator("[data-gateway-sidebar-settings]")
+        expect(settings).to_be_visible()
+        expect(settings.locator(".gateway-locale-icon")).to_have_count(1)
+        expect(settings.locator("#localeSelect")).to_have_count(1)
+        expect(settings.locator("#darkModeToggle")).to_have_count(1)
+        expect(page.locator(".top-nav-content #localeSelect")).to_have_count(0)
+        expect(page.locator(".top-nav-content #darkModeToggle")).to_have_count(0)
+
+        sidebar = page.locator("[data-gateway-sidebar]")
+        collapse = page.locator("[data-gateway-sidebar-collapse]")
+        expect(collapse).to_be_visible()
+        expect(collapse).to_have_attribute("aria-expanded", "true")
+        expect(collapse).to_have_attribute("aria-label", "Collapse sidebar")
+        expect(sidebar).not_to_have_attribute("data-collapsed", "")
+        expect(sidebar).to_have_css("width", "240px")
+
+        collapse.click()
+        expect(collapse).to_have_attribute("aria-expanded", "false")
+        expect(collapse).to_have_attribute("aria-label", "Expand sidebar")
+        expect(sidebar).to_have_attribute("data-collapsed", "")
+        expect(page.locator("body")).to_have_attribute(
+            "data-gateway-sidebar-collapsed", ""
+        )
+        expect(sidebar).to_have_css("width", "72px")
+        expect(page.locator('[data-nav-id="overview"]')).to_have_attribute(
+            "title", "Overview"
+        )
+        expect(page.locator("[data-gateway-sidebar] .nav-button-icon")).to_have_count(
+            len(MASTER_PAGES)
+        )
+        expect(settings.locator("#localeSelect")).to_be_visible()
+        expect(settings.locator("#darkModeToggle")).to_be_visible()
+        assert page.evaluate(
+            "localStorage.getItem('llmgateway:sidebar')"
+        ) == "collapsed"
+
+        page.goto(f"{r5_2_server}/v1/ui/docs")
+        _wait_for_navigation(page)
+        sidebar = page.locator("[data-gateway-sidebar]")
+        collapse = page.locator("[data-gateway-sidebar-collapse]")
+        expect(sidebar).to_have_attribute("data-collapsed", "")
+        expect(collapse).to_have_attribute("aria-expanded", "false")
+        page.evaluate("() => window.gatewayI18n.changeLanguage('ru')")
+        expect(collapse).to_have_attribute(
+            "aria-label", "Развернуть боковую панель"
+        )
+        expect(page.locator('[data-nav-id="docs"]')).to_have_attribute(
+            "title", "Документация"
+        )
+
+        collapse.click()
+        expect(sidebar).not_to_have_attribute("data-collapsed", "")
+        expect(collapse).to_have_attribute(
+            "aria-label", "Свернуть боковую панель"
+        )
+        expect(page.locator('[data-nav-id="docs"]')).not_to_have_attribute(
+            "title", "Документация"
+        )
+        assert page.evaluate(
+            "localStorage.getItem('llmgateway:sidebar')"
+        ) == "expanded"
+
+        settings.locator("#localeSelect").select_option("ru")
+        expect(page.locator("html")).to_have_attribute("lang", "ru")
+        settings.locator("#darkModeToggle").click()
+        expect(page.locator("body")).to_have_class(
+            re.compile(r"(?:^|\s)dark-mode(?:\s|$)")
+        )
+        assert page.evaluate("localStorage.getItem('llmgateway:theme')") == "dark"
+
+        collapse.click()
+        expect(sidebar).to_have_attribute("data-collapsed", "")
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(settings).to_be_hidden()
+        expect(collapse).to_be_hidden()
+        page.locator("[data-gateway-nav-toggle]").click()
+        expect(settings).to_be_visible()
+        expect(sidebar).not_to_have_attribute("data-collapsed", "")
+        expect(page.locator('[data-nav-id="docs"] .nav-button-label')).to_be_visible()
+        _assert_axe_no_high_impact(page, "[data-gateway-sidebar]")
     finally:
         context.close()
 

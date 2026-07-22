@@ -589,7 +589,7 @@ def test_usage_analytics_topology_locale_rerender_is_snapshot_only_and_state_saf
             })"""
         )
         before_english = dict(counters)
-        page.select_option("#localeSelect", "en")
+        page.evaluate("() => window.gatewayI18n.changeLanguage('en')")
         expect(page.locator("html")).to_have_attribute("lang", "en")
         expect(page.locator("#analyticsKpis")).to_contain_text("Total Tokens")
         page.wait_for_function(
@@ -625,7 +625,7 @@ def test_usage_analytics_topology_locale_rerender_is_snapshot_only_and_state_saf
         assert page.evaluate("window.__r58Injected !== true")
 
         before_error_locale = dict(counters)
-        page.select_option("#localeSelect", "ru")
+        page.evaluate("() => window.gatewayI18n.changeLanguage('ru')")
         expect(page.locator("html")).to_have_attribute("lang", "ru")
         expect(page.locator("#analyticsStatus")).to_contain_text("HTTP 503")
         assert dict(counters) == before_error_locale

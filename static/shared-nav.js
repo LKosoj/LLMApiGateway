@@ -18,16 +18,20 @@
     let identityRoleElement = null;
     let identityNameElement = null;
     let identityLogoutButton = null;
+    let identityLogoutLabel = null;
 
     let sidebarFooter = null;
     let sidebarOverlay = null;
     let sidebarPanel = null;
     let sidebarDialog = null;
+    let sidebarCollapseButton = null;
     let navToggleButton = null;
     let navCloseButton = null;
     let desktopMediaQuery = null;
+    let sidebarCollapsed = false;
 
     const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
+    const SIDEBAR_STORAGE_KEY = 'llmgateway:sidebar';
 
     function localeErrorElement() {
         return document.querySelector('[data-locale-error]');
@@ -72,12 +76,46 @@
         if (navToggleButton) navToggleButton.setAttribute('aria-label', i18n.t('common:navigation.toggle'));
         if (navCloseButton) navCloseButton.setAttribute('aria-label', i18n.t('common:navigation.close'));
         if (sidebarOverlay) sidebarOverlay.setAttribute('aria-label', i18n.t('common:navigation.overlay'));
+        applyCurrentSidebarMode();
+    }
+
+    function applyCurrentSidebarMode() {
+        if (!sidebarPanel) return;
+        const collapsed = sidebarCollapsed && desktopMediaQuery?.matches === true;
+        sidebarPanel.toggleAttribute('data-collapsed', collapsed);
+        document.body.toggleAttribute('data-gateway-sidebar-collapsed', collapsed);
+        if (sidebarCollapseButton) {
+            const label = collapsed
+                ? i18n.t('common:navigation.expandSidebar')
+                : i18n.t('common:navigation.collapseSidebar');
+            sidebarCollapseButton.setAttribute('aria-expanded', String(!collapsed));
+            sidebarCollapseButton.setAttribute('aria-label', label);
+            sidebarCollapseButton.setAttribute('title', label);
+        }
+        sidebarPanel.querySelectorAll('.nav-button').forEach((link) => {
+            const label = link.querySelector('.nav-button-label')?.textContent;
+            if (collapsed && label) {
+                link.setAttribute('title', label);
+            } else {
+                link.removeAttribute('title');
+            }
+        });
+    }
+
+    function setSidebarCollapsed(collapsed) {
+        sidebarCollapsed = collapsed;
+        global.localStorage.setItem(
+            SIDEBAR_STORAGE_KEY,
+            collapsed ? 'collapsed' : 'expanded',
+        );
+        applyCurrentSidebarMode();
     }
 
     function handleDesktopMediaChange(event) {
         if (event.matches && sidebarDialog?.state === 'open') {
             sidebarDialog.close('cancel');
         }
+        applyCurrentSidebarMode();
     }
 
     // Builds the desktop sidebar / mobile drawer shell around the existing
@@ -90,6 +128,15 @@
         const topNavContent = navRoot.closest('.top-nav-content');
         if (!topNavContent) {
             throw new Error('.top-nav-content must exist before shared navigation');
+        }
+        const settings = topNavContent.querySelector('.gateway-nav-actions');
+        if (!settings) {
+            throw new Error('.gateway-nav-actions must exist before shared navigation');
+        }
+        const localeLabel = settings.querySelector('.gateway-locale-label');
+        const localeSelect = settings.querySelector('.gateway-locale-select');
+        if (!localeLabel || !localeSelect) {
+            throw new Error('locale controls must exist before shared navigation');
         }
 
         sidebarOverlay = document.createElement('div');
@@ -109,11 +156,55 @@
         navCloseButton.setAttribute('data-dialog-close', 'cancel');
         navCloseButton.textContent = '×';
 
+        sidebarCollapseButton = document.createElement('button');
+        sidebarCollapseButton.type = 'button';
+        sidebarCollapseButton.className = 'gateway-sidebar-collapse';
+        sidebarCollapseButton.setAttribute('data-gateway-sidebar-collapse', '');
+        sidebarCollapseButton.setAttribute('aria-controls', 'gateway-sidebar');
+        const collapseIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        collapseIcon.classList.add('gateway-sidebar-collapse-icon');
+        collapseIcon.setAttribute('viewBox', '0 0 24 24');
+        collapseIcon.setAttribute('aria-hidden', 'true');
+        collapseIcon.setAttribute('focusable', 'false');
+        const collapseFrame = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        collapseFrame.setAttribute('d', 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z');
+        const collapseDivider = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        collapseDivider.setAttribute('d', 'M9 3v18');
+        const collapseArrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        collapseArrow.setAttribute('d', 'm15 9-3 3 3 3');
+        collapseIcon.append(collapseFrame, collapseDivider, collapseArrow);
+        sidebarCollapseButton.appendChild(collapseIcon);
+        sidebarCollapseButton.addEventListener('click', () => {
+            setSidebarCollapsed(!sidebarCollapsed);
+        });
+
         sidebarFooter = document.createElement('div');
         sidebarFooter.className = 'gateway-sidebar-footer';
         sidebarFooter.setAttribute('data-gateway-sidebar-footer', '');
 
-        sidebarPanel.append(navCloseButton, navRoot, sidebarFooter);
+        settings.classList.add('gateway-sidebar-settings');
+        settings.setAttribute('data-gateway-sidebar-settings', '');
+        const languageIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        languageIcon.classList.add('gateway-locale-icon');
+        languageIcon.setAttribute('viewBox', '0 0 24 24');
+        languageIcon.setAttribute('aria-hidden', 'true');
+        languageIcon.setAttribute('focusable', 'false');
+        const globe = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        globe.setAttribute('cx', '12');
+        globe.setAttribute('cy', '12');
+        globe.setAttribute('r', '9');
+        const latitude = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        latitude.setAttribute('d', 'M3 12h18');
+        const longitude = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        longitude.setAttribute('d', 'M12 3c3 3.3 3 14.7 0 18M12 3c-3 3.3-3 14.7 0 18');
+        languageIcon.append(globe, latitude, longitude);
+        const localeControl = document.createElement('div');
+        localeControl.className = 'gateway-locale-control';
+        localeControl.append(languageIcon, localeLabel, localeSelect);
+        settings.insertBefore(localeControl, settings.firstChild);
+        sidebarFooter.appendChild(settings);
+
+        sidebarPanel.append(navCloseButton, sidebarCollapseButton, navRoot, sidebarFooter);
         sidebarOverlay.appendChild(sidebarPanel);
         document.body.insertBefore(sidebarOverlay, document.body.firstChild);
 
@@ -163,6 +254,8 @@
             desktopMediaQuery = global.matchMedia(DESKTOP_MEDIA_QUERY);
             desktopMediaQuery.addEventListener('change', handleDesktopMediaChange);
         }
+        sidebarCollapsed = global.localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'collapsed';
+        applyCurrentSidebarMode();
     }
 
     function ensureIdentityElements() {
@@ -193,6 +286,20 @@
             void auth.logout();
         });
 
+        const identityLogoutIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        identityLogoutIcon.classList.add('gateway-identity-logout-icon');
+        identityLogoutIcon.setAttribute('viewBox', '0 0 24 24');
+        identityLogoutIcon.setAttribute('aria-hidden', 'true');
+        identityLogoutIcon.setAttribute('focusable', 'false');
+        const logoutDoor = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        logoutDoor.setAttribute('d', 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4');
+        const logoutArrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        logoutArrow.setAttribute('d', 'm16 17 5-5-5-5M21 12H9');
+        identityLogoutIcon.append(logoutDoor, logoutArrow);
+        identityLogoutLabel = document.createElement('span');
+        identityLogoutLabel.className = 'gateway-identity-logout-label';
+        identityLogoutButton.append(identityLogoutIcon, identityLogoutLabel);
+
         identityContainer.append(identityRoleElement, identityNameElement, identityLogoutButton);
         sidebarFooter.appendChild(identityContainer);
         return identityContainer;
@@ -215,7 +322,9 @@
         } else {
             identityNameElement.hidden = true;
         }
-        identityLogoutButton.textContent = i18n.t('common:identity.logout');
+        const logoutLabel = i18n.t('common:identity.logout');
+        identityLogoutLabel.textContent = logoutLabel;
+        identityLogoutButton.setAttribute('aria-label', logoutLabel);
     }
 
     async function bootstrap() {
@@ -229,7 +338,6 @@
         const navRoot = document.querySelector('[data-gateway-nav]');
         if (navRoot) {
             buildSidebarShell(navRoot);
-            applyCurrentSidebarLabels();
             navigation = ui.createNavigation(navRoot, {
                 direction: i18n.dir,
                 pathname: global.location.pathname,
@@ -237,6 +345,7 @@
                 layout: 'list',
                 translate,
             });
+            applyCurrentSidebarLabels();
         }
 
         const select = document.querySelector('[data-locale-select]');
@@ -266,6 +375,7 @@
         navigation?.destroy();
         sidebarDialog?.destroy();
         desktopMediaQuery?.removeEventListener('change', handleDesktopMediaChange);
+        document.body.removeAttribute('data-gateway-sidebar-collapsed');
     }
 
     global.gatewayNav = Object.freeze({

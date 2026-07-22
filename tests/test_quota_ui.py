@@ -498,6 +498,7 @@ def test_quota_stale_recovery_and_locale_change_do_not_overlap_requests(
     page.clock.run_for(2_000)
     expect(page.locator(".countdown-badge").first).to_have_text("00:58")
 
+    page.locator("[data-gateway-nav-toggle]").click()
     page.locator("#localeSelect").select_option("ru")
     expect(page.locator("#quota-status")).to_contain_text("Обновлено")
     expect(page.locator(".countdown-badge").first).to_have_text("00:58")

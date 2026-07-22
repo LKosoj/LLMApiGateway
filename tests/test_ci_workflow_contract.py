@@ -122,7 +122,7 @@ def test_browser_marker_is_registered_and_applied_to_every_browser_module():
         assert re.search(r"^pytestmark = pytest\.mark\.browser$", content, flags=re.MULTILINE), module
 
 
-def test_browser_marker_collects_exactly_164_tests_from_the_expected_modules():
+def test_browser_marker_collects_exactly_165_tests_from_the_expected_modules():
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only", "-q", "-m", "browser"],
         cwd=PROJECT_ROOT,
@@ -136,7 +136,7 @@ def test_browser_marker_collects_exactly_164_tests_from_the_expected_modules():
 
     assert result.returncode == 0, output
     assert "PytestUnknownMarkWarning" not in output
-    assert len(node_ids) == 164
+    assert len(node_ids) == 165
     assert collected_modules == set(BROWSER_TEST_MODULES)
 
 

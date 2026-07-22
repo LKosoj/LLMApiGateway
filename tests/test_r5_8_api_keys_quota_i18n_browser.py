@@ -18,6 +18,22 @@ __all__ = ["provider_mock", "server"]
 pytestmark = pytest.mark.browser
 
 
+def _change_locale(page: Page, locale: str) -> None:
+    page.evaluate(
+        """(value) => {
+            const select = document.querySelector('#localeSelect');
+            select.value = value;
+            select.dispatchEvent(new Event('change', {bubbles: true}));
+        }""",
+        locale,
+    )
+    page.wait_for_function(
+        "value => document.querySelector('#localeSelect').dataset.localeState === 'ready' "
+        "&& window.gatewayI18n.currentLocale === value",
+        arg=locale,
+    )
+
+
 def test_api_keys_and_quota_locale_switch_is_snapshot_only(
     page: Page,
     server: str,
@@ -133,12 +149,12 @@ def test_api_keys_and_quota_locale_switch_is_snapshot_only(
     )
     before_keys_locale = dict(counters)
 
-    page.select_option("#localeSelect", "ru")
+    _change_locale(page, "ru")
     expect(page.locator("html")).to_have_attribute("lang", "ru")
     expect(page.locator('[data-key-field="status"]')).to_have_text("Активен")
     expect(page.locator("#modalTitle")).to_contain_text("Изменить")
     assert dict(counters) == before_keys_locale
-    page.select_option("#localeSelect", "en")
+    _change_locale(page, "en")
     expect(page.locator("html")).to_have_attribute("lang", "en")
     assert dict(counters) == before_keys_locale
     assert page.evaluate(
@@ -158,6 +174,7 @@ def test_api_keys_and_quota_locale_switch_is_snapshot_only(
     page.locator("#cancelKeyBtn").click()
     expect(page.locator("#keyModal")).to_be_hidden()
     expect(page.locator("body")).not_to_have_class("dark-mode")
+    page.locator("[data-gateway-nav-toggle]").click()
     page.locator("#darkModeToggle").click()
     expect(page.locator("body")).to_have_class("dark-mode")
     assert page.evaluate(
@@ -210,7 +227,7 @@ def test_api_keys_and_quota_locale_switch_is_snapshot_only(
     assert state_before["cardLeft"] > 0
     before_quota_locale = dict(counters)
 
-    page.select_option("#localeSelect", "ru")
+    _change_locale(page, "ru")
     expect(page.locator("html")).to_have_attribute("lang", "ru")
     page.clock.run_for(20)
     expect(page.locator("#quota-status")).to_contain_text("Обновлено")
@@ -219,7 +236,7 @@ def test_api_keys_and_quota_locale_switch_is_snapshot_only(
     )
     expect(raw_detail).to_have_text(raw_upstream_detail)
     assert dict(counters) == before_quota_locale
-    page.select_option("#localeSelect", "en")
+    _change_locale(page, "en")
     expect(page.locator("html")).to_have_attribute("lang", "en")
     page.clock.run_for(20)
     expect(page.locator("#quota-status")).to_contain_text("Updated")
