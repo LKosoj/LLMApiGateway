@@ -1760,6 +1760,35 @@ def test_candidate_build_failure_preserves_boundary_and_ownership(
     run_async(scenario())
 
 
+def test_preflight_exception_message_surfaces_as_validation_error_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        harness = await _make_harness(tmp_path, monkeypatch)
+        message = "Fallback model 'foo' is not available from provider 'bar'."
+
+        async def reject(_snapshot: RuntimeSnapshot) -> None:
+            raise ValueError(message)
+
+        error = await _expect_update_error(
+            harness.coordinator.update(
+                base_snapshot=harness.initial_snapshot,
+                config_file=ConfigFile.MODEL_RULES,
+                candidate_bytes=_model_rules("candidate"),
+                preflight=reject,
+            ),
+            ConfigUpdateErrorCode.VALIDATION_FAILED,
+        )
+
+        assert error.errors == (
+            {"type": "preflight", "loc": [], "msg": message},
+        )
+        await harness.shutdown()
+
+    run_async(scenario())
+
+
 @pytest.mark.parametrize("fatal", [False, True], ids=["ordinary", "cancelled"])
 def test_preflight_failure_closes_candidate_and_preserves_primary_contract(
     tmp_path: Path,

@@ -2103,6 +2103,9 @@
       ctx.elements.messageArea.className = type;
       ctx.elements.messageArea.textContent = t(descriptor.key, resolveDescriptorValues(descriptor));
       setRawDetail(descriptor.rawDetail);
+      if (type === "error" || type === "warning") {
+        ctx.elements.messageArea.scrollIntoView({ block: "nearest" });
+      }
     }
     function rerenderLocale() {
       Array.from(ctx.state.localizedBindings).forEach(renderLocalizedBinding);
@@ -2126,7 +2129,7 @@
       return `${normalized.slice(0, ctx.constants.MAX_SAFE_ERROR_LENGTH - 1)}…`;
     }
     function ruleValidationMessages(detail) {
-      return Array.isArray(detail.errors) ? detail.errors.filter((error) => error && typeof error === "object" && error.type === "rule_validation" && typeof error.msg === "string").map((error) => error.msg) : [];
+      return Array.isArray(detail.errors) ? detail.errors.filter((error) => error && typeof error === "object" && (error.type === "rule_validation" || error.type === "preflight") && typeof error.msg === "string").map((error) => error.msg) : [];
     }
     function safeResponseError(response, body) {
       const detail = body && typeof body === "object" && body.detail && typeof body.detail === "object" ? body.detail : null;

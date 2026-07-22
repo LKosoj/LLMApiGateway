@@ -1066,18 +1066,38 @@ div[style*="position:relative"] {
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 55%, transparent), var(--shadow-sm);
 }
 
+/* Single sticky notice bar directly under the top nav. Every save / load
+   error, conflict banner, and success confirmation is rendered here — no
+   duplicate rendering elsewhere on the page, so users never have to scroll
+   to find out why an action succeeded or failed. */
+.editor-notice-bar {
+    position: sticky;
+    top: 62px;
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0 0 12px;
+    pointer-events: none;
+}
+
+.editor-notice-bar > * {
+    pointer-events: auto;
+}
+
 .editor-conflict-state {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 18px;
-    margin: 14px 0;
+    margin: 6px 0 0;
     padding: 14px 16px;
     border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
     border-left: 4px solid var(--warning);
     border-radius: var(--radius-md);
     background: var(--warning-soft);
     color: var(--text-strong);
+    box-shadow: var(--shadow-sm);
 }
 
 .editor-conflict-state[hidden] {
@@ -1110,15 +1130,22 @@ div[style*="position:relative"] {
 }
 
 #messageArea {
-    margin-top: 10px;
-    margin-bottom: 5px;
+    margin: 0;
     padding: 12px 16px;
     border-radius: var(--radius-md);
     text-align: center;
     font-weight: 500;
     flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
     transition: background-color var(--transition-base), color var(--transition-base), border-color var(--transition-base);
     font-size: 14px;
+}
+
+/* Hide the message area entirely when there is no active message.
+   JS toggles it by setting className to '' / 'success' / 'warning' /
+   'error' — no class ⇒ no visible slot in the sticky notice bar. */
+#messageArea:not(.success):not(.warning):not(.error) {
+    display: none;
 }
 
 #messageArea.success {
@@ -1142,7 +1169,8 @@ div[style*="position:relative"] {
     border-color: color-mix(in srgb, var(--error) 30%, transparent);
 }
 
-#messageArea pre { /* For displaying JSON errors */
+#messageRawDetail { /* Raw JSON / structured error detail below the message */
+    margin: 0;
     text-align: left;
     white-space: pre-wrap;
     word-wrap: break-word;
@@ -1154,7 +1182,11 @@ div[style*="position:relative"] {
     padding: 12px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
-    margin-top: 10px;
+    box-shadow: var(--shadow-sm);
+}
+
+#messageRawDetail[hidden] {
+    display: none;
 }
 
 select {

@@ -27,6 +27,29 @@
     <div class="container">
         <h1><span data-i18n="editor:page.heading">LLM Gateway - Configuration Editor</span> <span class="page-version" data-product-version aria-label="Product version" data-i18n-aria-label="editor:page.versionLabel"></span></h1>
 
+        <div class="editor-notice-bar" id="editorNoticeBar" aria-live="polite">
+            <div
+                id="editorConflictState"
+                class="editor-conflict-state"
+                role="alert"
+                tabindex="-1"
+                hidden
+            >
+                <div class="editor-conflict-copy">
+                    <strong data-i18n="editor:conflict.title"></strong>
+                    <span data-i18n="editor:conflict.message"></span>
+                </div>
+                <button
+                    id="reloadEditorDocumentButton"
+                    type="button"
+                    class="secondary-button"
+                    data-i18n="editor:conflict.reload"
+                ></button>
+            </div>
+            <div id="messageArea"></div>
+            <pre id="messageRawDetail" data-i18n-raw-detail hidden></pre>
+        </div>
+
         <div class="editor-shell">
             <aside class="editor-sidebar" data-i18n-aria-label="editor:panel.entityListLabel" aria-label="Configuration entities">
                 <div class="editor-sidebar-search">
@@ -408,24 +431,6 @@
         </div>
             </div>
         </div>
-        <div
-            id="editorConflictState"
-            class="editor-conflict-state"
-            role="alert"
-            tabindex="-1"
-            hidden
-        >
-            <div class="editor-conflict-copy">
-                <strong data-i18n="editor:conflict.title"></strong>
-                <span data-i18n="editor:conflict.message"></span>
-            </div>
-            <button
-                id="reloadEditorDocumentButton"
-                type="button"
-                class="secondary-button"
-                data-i18n="editor:conflict.reload"
-            ></button>
-        </div>
         <div class="editor-footer" id="editorFooter" data-i18n-aria-label="editor:footer.save" aria-label="Save panel">
             <div class="editor-footer-status">
                 <span class="editor-footer-doc" id="editorFooterDocument"></span>
@@ -443,8 +448,6 @@
                 <button id="saveButton" data-editor-dirty="false" data-i18n="editor:actions.saveConfiguration">Save Configuration</button>
             </div>
         </div>
-        <div id="messageArea"></div>
-        <pre id="messageRawDetail" data-i18n-raw-detail hidden></pre>
     </div>
 
     <script src="/static/vendor/ui-runtime.bundle.js"></script>

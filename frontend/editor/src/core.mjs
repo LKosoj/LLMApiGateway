@@ -321,6 +321,13 @@ export function registerCore(ctx) {
         ctx.elements.messageArea.className = type;
         ctx.elements.messageArea.textContent = t(descriptor.key, resolveDescriptorValues(descriptor));
         setRawDetail(descriptor.rawDetail);
+        // The notice bar is sticky under the top nav, so it's already in
+        // view — but if the user is deep in a long tab, scrollIntoView makes
+        // sure the message lands at the top of the viewport instead of being
+        // pinned only after the next scroll gesture.
+        if (type === 'error' || type === 'warning') {
+            ctx.elements.messageArea.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     function rerenderLocale() {
@@ -347,14 +354,16 @@ export function registerCore(ctx) {
     }
 
     function ruleValidationMessages(detail) {
-        // A rule_validation entry is a self-contained sentence naming the gateway
-        // model and the target it rejected. Every other entry carries a msg that
-        // says nothing without its loc path, so it stays behind detail.message.
+        // rule_validation and preflight both carry self-contained sentences —
+        // the loader names which gateway model rejected which target, and the
+        // preflight names the (provider, model) pair that /models did not list.
+        // Every other entry needs its loc path to make sense, so it stays
+        // behind detail.message.
         return Array.isArray(detail.errors)
             ? detail.errors
                 .filter((error) => error
                     && typeof error === 'object'
-                    && error.type === 'rule_validation'
+                    && (error.type === 'rule_validation' || error.type === 'preflight')
                     && typeof error.msg === 'string')
                 .map((error) => error.msg)
             : [];

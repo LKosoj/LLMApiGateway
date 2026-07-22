@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -27,6 +28,9 @@ from ..utils.log_redaction import safe_exception_type_name
 if TYPE_CHECKING:
     from .runtime_candidate import RuntimeCandidate
     from .runtime_config import RuntimeGenerationManager, RuntimeSnapshot
+
+
+logger = logging.getLogger(__name__)
 
 
 ConfigCandidatePreflight = Callable[["RuntimeSnapshot"], Awaitable[None]]
@@ -324,8 +328,19 @@ class ConfigUpdateCoordinator:
                 except BaseException as exc:
                     if not isinstance(exc, Exception):
                         raise
+                    logger.exception(
+                        "Configuration preflight rejected candidate for %s.",
+                        config_file.value,
+                    )
                     raise ConfigUpdateError(
-                        ConfigUpdateErrorCode.VALIDATION_FAILED
+                        ConfigUpdateErrorCode.VALIDATION_FAILED,
+                        errors=(
+                            {
+                                "type": "preflight",
+                                "loc": [],
+                                "msg": str(exc),
+                            },
+                        ),
                     ) from None
 
             await self._commit_lock.acquire()

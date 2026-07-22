@@ -64,6 +64,36 @@ class ProviderModelsService:
     def clear(self) -> None:
         self._cache.clear()
 
+    def snapshot_cache_entry(
+        self, provider_name: str
+    ) -> ProviderModelsCacheEntry | None:
+        """Return a still-fresh cached entry for ``provider_name``, or ``None``.
+
+        Used to graft a warm entry into another service (e.g. a candidate
+        snapshot's fresh cache during a config update) without breaking
+        encapsulation. Stale entries are ignored so the receiver never adopts
+        an expired snapshot.
+        """
+        entry = self._cache.get(provider_name)
+        if entry is None:
+            return None
+        now = self._time_func()
+        if now - entry.fetched_at >= self.ttl_seconds:
+            return None
+        return entry
+
+    def install_cache_entry(
+        self,
+        provider_name: str,
+        entry: ProviderModelsCacheEntry,
+    ) -> None:
+        """Install ``entry`` under ``provider_name`` without contacting upstream.
+
+        The caller is responsible for ensuring the entry is compatible with
+        this service's TTL and describes the same provider config.
+        """
+        self._cache[provider_name] = entry
+
     async def get_models(
         self,
         provider_name: str,

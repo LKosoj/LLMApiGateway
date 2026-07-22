@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import json
 from typing import Any, Literal
@@ -649,45 +650,88 @@ async def _validate_candidate_provider_models(
     request: Request,
     candidate_snapshot: RuntimeSnapshot,
     shared_http_client: httpx.AsyncClient,
+    *,
+    base_snapshot: RuntimeSnapshot | None = None,
 ) -> None:
-    config_loader = candidate_snapshot.config_loader
-    fallback_rules = config_loader._fallback_rules_base
-    provider_models_service = candidate_snapshot.provider_models_service
+    candidate_loader = candidate_snapshot.config_loader
+    fallback_rules = candidate_loader._fallback_rules_base
+    candidate_service = candidate_snapshot.provider_models_service
 
-    models_by_provider: dict[str, set[str]] = {}
+    unique_providers: dict[str, Any] = {}
     for config in fallback_rules.values():
         for fallback_model in _iter_rule_targets(config):
             provider_name = fallback_model["provider"]
-            if provider_name in models_by_provider:
+            if provider_name in unique_providers:
                 continue
-
-            provider_config = config_loader.providers_config.get(provider_name)
+            provider_config = candidate_loader.providers_config.get(
+                provider_name
+            )
             if provider_config is None:
-                raise ValueError("Fallback provider is not configured.")
-            http_client = (
-                candidate_snapshot.proxy_http_clients[provider_name]
-                if provider_name in candidate_snapshot.proxy_http_clients
-                else shared_http_client
-            )
-            auth_headers = await resolve_provider_auth_headers(
-                request,
-                provider_name=provider_name,
-                provider_config=provider_config,
-            )
-            provider_models = await provider_models_service.get_models(
-                provider_name,
-                provider_config,
-                http_client,
-                auth_headers=auth_headers,
-            )
-            models_by_provider[provider_name] = set(provider_models)
+                raise ValueError(
+                    f"Fallback provider '{provider_name}' is not configured."
+                )
+            unique_providers[provider_name] = provider_config
+
+    # Graft still-fresh cache entries from the base snapshot for providers
+    # whose config has not changed — a routine Save of Fallback Rules leaves
+    # providers.json untouched, so we can skip the cold /models round-trip.
+    if base_snapshot is not None:
+        base_service = base_snapshot.provider_models_service
+        base_providers = base_snapshot.config_loader.providers_config
+        for provider_name, candidate_cfg in unique_providers.items():
+            base_cfg = base_providers.get(provider_name)
+            if base_cfg is None:
+                continue
+            if base_cfg.model_dump() != candidate_cfg.model_dump():
+                continue
+            warm_entry = base_service.snapshot_cache_entry(provider_name)
+            if warm_entry is not None:
+                candidate_service.install_cache_entry(
+                    provider_name, warm_entry
+                )
+
+    async def _load(provider_name: str, provider_config: Any) -> tuple[str, set[str]]:
+        http_client = (
+            candidate_snapshot.proxy_http_clients[provider_name]
+            if provider_name in candidate_snapshot.proxy_http_clients
+            else shared_http_client
+        )
+        auth_headers = await resolve_provider_auth_headers(
+            request,
+            provider_name=provider_name,
+            provider_config=provider_config,
+        )
+        models = await candidate_service.get_models(
+            provider_name,
+            provider_config,
+            http_client,
+            auth_headers=auth_headers,
+        )
+        return provider_name, set(models)
+
+    load_results = await asyncio.gather(
+        *(
+            _load(provider_name, provider_config)
+            for provider_name, provider_config in unique_providers.items()
+        ),
+        return_exceptions=True,
+    )
+    models_by_provider: dict[str, set[str]] = {}
+    for result in load_results:
+        if isinstance(result, BaseException):
+            raise result
+        provider_name, provider_models = result
+        models_by_provider[provider_name] = provider_models
 
     for config in fallback_rules.values():
         for fallback_model in _iter_rule_targets(config):
             provider_name = fallback_model["provider"]
             model_name = fallback_model["model"]
             if model_name not in models_by_provider.get(provider_name, set()):
-                raise ValueError("Fallback model is not available from provider.")
+                raise ValueError(
+                    f"Fallback model '{model_name}' is not available from "
+                    f"provider '{provider_name}'."
+                )
 
 
 def _iter_rule_targets(config: dict) -> list[dict]:
@@ -975,6 +1019,7 @@ async def save_models_rules_structured(request: Request):
                 request,
                 candidate_snapshot,
                 services.http_client,
+                base_snapshot=snapshot,
             )
 
         result = await coordinator.update(

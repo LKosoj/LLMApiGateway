@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import json
 from pathlib import Path
@@ -1021,7 +1022,8 @@ def test_structured_fallback_preflight_uses_candidate_catalog_and_clients(
         )
 
         assert response.status_code == 200
-        assert candidate_catalog.get_models.await_args_list == [  # type: ignore[attr-defined]
+        # Parallel gather doesn't guarantee call order — compare as a set.
+        expected_calls = [
             call(
                 "shared",
                 candidate_loader.providers_config["shared"],
@@ -1035,8 +1037,192 @@ def test_structured_fallback_preflight_uses_candidate_catalog_and_clients(
                 auth_headers={"Authorization": "Bearer proxied-key"},
             ),
         ]
+        actual_calls = candidate_catalog.get_models.await_args_list  # type: ignore[attr-defined]
+        assert len(actual_calls) == len(expected_calls)
+        for expected in expected_calls:
+            assert expected in actual_calls
         captured_catalog.get_models.assert_not_awaited()  # type: ignore[attr-defined]
         await client.aclose()
+
+    run_async(scenario())
+
+
+def test_validate_candidate_provider_models_names_missing_pair_in_exception(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        candidate_loader = _loader(
+            tmp_path / "candidate", provider_name="shared"
+        )
+        candidate_loader._fallback_rules_base = {
+            "gateway-shared": {
+                "fallback_models": [
+                    {"provider": "shared", "model": "model-a"},
+                ]
+            }
+        }
+        candidate_loader.fallback_rules = dict(
+            candidate_loader._fallback_rules_base
+        )
+        candidate_catalog = ProviderModelsService()
+        candidate_catalog.get_models = AsyncMock(  # type: ignore[method-assign]
+            return_value=["some-other-model"]
+        )
+        candidate_snapshot = make_runtime_snapshot(
+            generation=99,
+            config_loader=candidate_loader,
+            provider_models_service=candidate_catalog,
+        )
+        request = Mock()
+        request.headers = {}
+        request.state = Mock()
+        request.state.api_key_record = None
+        request.state.role = ROLE_MASTER
+
+        with pytest.raises(ValueError) as raised:
+            await rules_editor._validate_candidate_provider_models(
+                request,
+                candidate_snapshot,
+                Mock(spec=httpx.AsyncClient),
+            )
+
+        assert "model-a" in str(raised.value)
+        assert "shared" in str(raised.value)
+
+    run_async(scenario())
+
+
+def test_validate_candidate_reuses_base_cache_for_unchanged_provider(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        base_loader = _loader(tmp_path / "base", provider_name="shared")
+        base_loader._fallback_rules_base = {}
+        base_loader.fallback_rules = {}
+        candidate_loader = _loader(
+            tmp_path / "candidate", provider_name="shared"
+        )
+        candidate_loader._fallback_rules_base = {
+            "gateway-shared": {
+                "fallback_models": [
+                    {"provider": "shared", "model": "model-a"},
+                ]
+            }
+        }
+        candidate_loader.fallback_rules = dict(
+            candidate_loader._fallback_rules_base
+        )
+
+        from llm_gateway_core.services.provider_models import (
+            ProviderModelsCacheEntry,
+        )
+
+        warm_entry = ProviderModelsCacheEntry(
+            models=["model-a", "model-b"],
+            entries={"model-a": {"id": "model-a"}, "model-b": {"id": "model-b"}},
+            fetched_at=100.0,
+        )
+        base_catalog = ProviderModelsService(time_func=lambda: 100.0)
+        base_catalog.install_cache_entry("shared", warm_entry)
+        candidate_catalog = ProviderModelsService(time_func=lambda: 100.0)
+
+        async def refuse_fetch(*_a, **_kw):
+            raise AssertionError(
+                "candidate service must reuse the base cache and not fetch"
+            )
+
+        candidate_catalog._fetch_model_entries = refuse_fetch  # type: ignore[method-assign]
+
+        base_snapshot = make_runtime_snapshot(
+            generation=1,
+            config_loader=base_loader,
+            provider_models_service=base_catalog,
+        )
+        candidate_snapshot = make_runtime_snapshot(
+            generation=2,
+            config_loader=candidate_loader,
+            provider_models_service=candidate_catalog,
+        )
+        request = Mock()
+        request.headers = {}
+        request.state = Mock()
+        request.state.api_key_record = None
+        request.state.role = ROLE_MASTER
+
+        await rules_editor._validate_candidate_provider_models(
+            request,
+            candidate_snapshot,
+            Mock(spec=httpx.AsyncClient),
+            base_snapshot=base_snapshot,
+        )
+        # Warm entry was grafted onto the candidate cache, so get_models
+        # returns from memory without hitting the (booby-trapped) fetcher.
+        assert candidate_catalog._cache["shared"] is warm_entry
+
+    run_async(scenario())
+
+
+def test_validate_candidate_loads_all_providers_concurrently(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        candidate_loader = _loader(
+            tmp_path / "candidate", provider_name="shared"
+        )
+        candidate_loader.providers_config = {
+            "alpha": ProviderDetails(
+                baseUrl="https://alpha.example/v1", apikey="alpha-key"
+            ),
+            "beta": ProviderDetails(
+                baseUrl="https://beta.example/v1", apikey="beta-key"
+            ),
+        }
+        candidate_loader._fallback_rules_base = {
+            "gw": {
+                "fallback_models": [
+                    {"provider": "alpha", "model": "m"},
+                    {"provider": "beta", "model": "m"},
+                ]
+            }
+        }
+        candidate_loader.fallback_rules = dict(
+            candidate_loader._fallback_rules_base
+        )
+
+        both_started = asyncio.Event()
+        started = 0
+
+        async def slow_get(name, cfg, http_client, auth_headers=None):
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            # Wait for both providers to be in-flight before returning.
+            # Sequential code would deadlock here; parallel gather will not.
+            await asyncio.wait_for(both_started.wait(), timeout=1.0)
+            return ["m"]
+
+        candidate_catalog = ProviderModelsService()
+        candidate_catalog.get_models = AsyncMock(  # type: ignore[method-assign]
+            side_effect=slow_get
+        )
+        candidate_snapshot = make_runtime_snapshot(
+            generation=1,
+            config_loader=candidate_loader,
+            provider_models_service=candidate_catalog,
+        )
+        request = Mock()
+        request.headers = {}
+        request.state = Mock()
+        request.state.api_key_record = None
+        request.state.role = ROLE_MASTER
+
+        await rules_editor._validate_candidate_provider_models(
+            request,
+            candidate_snapshot,
+            Mock(spec=httpx.AsyncClient),
+        )
+        assert candidate_catalog.get_models.await_count == 2  # type: ignore[attr-defined]
 
     run_async(scenario())
 
