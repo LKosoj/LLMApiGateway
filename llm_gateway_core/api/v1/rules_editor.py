@@ -833,6 +833,7 @@ def _build_playground_models(config_loader) -> dict[str, list[str]]:
     fallback_rules = config_loader.fallback_rules or {}
     fusion_rules = getattr(config_loader, "fusion_rules", None) or {}
     router_rules = getattr(config_loader, "router_rules", None) or {}
+    providers_config = getattr(config_loader, "providers_config", None) or {}
 
     def _names(section: str) -> list[str]:
         return sorted((rules.get(section) or {}).keys())
@@ -840,9 +841,13 @@ def _build_playground_models(config_loader) -> dict[str, list[str]]:
     # Fusion and Router models are callable as regular chat models, so they
     # belong in the chat selector. ``fusion`` is also returned separately so the
     # UI can mark them and enable Fusion-specific controls.
+    # ``providers`` lets the Chat tab switch from gateway models to a provider
+    # model addressed directly; its model catalog is loaded per provider from
+    # ``/v1/config/providers/{provider}/models``.
     return {
         "chat": sorted(set(fallback_rules.keys()) | set(fusion_rules.keys()) | set(router_rules.keys())),
         "fusion": sorted(fusion_rules.keys()),
+        "providers": sorted(providers_config.keys()),
         "web_search": _names("web_search"),
         "web_read": _names("web_read"),
         "web_research": _names("web_research"),

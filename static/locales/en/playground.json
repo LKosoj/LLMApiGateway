@@ -22,6 +22,9 @@
     "deepResearch": "Deep Research"
   },
   "labels": {
+    "modelSource": "Model type",
+    "provider": "Provider",
+    "providerModel": "Provider model",
     "gatewayModel": "Gateway model",
     "searchModel": "Search model",
     "readModel": "Read model",
@@ -90,6 +93,8 @@
     "startPdfConversion": "Start conversion job"
   },
   "options": {
+    "gatewayModels": "Gateway models",
+    "providerModels": "Provider models",
     "off": "Off",
     "all": "All",
     "providerDefault": "provider default",
@@ -113,19 +118,25 @@
     "researchLanguage": "Selects source-search languages, not the final answer language.",
     "researchOutputLanguage": "Controls the language used for the synthesized final report.",
     "researchArticleFormat": "Controls the format requested from the page reader before analysis.",
-    "generatedImagesRetention": "Locally published PNGs are stored in protected server storage and removed after 10 days; Docker Compose keeps them across restart and recreate. Provider-hosted URLs follow the provider's lifecycle."
+    "generatedImagesRetention": "Locally published PNGs are stored in protected server storage and removed after 10 days; Docker Compose keeps them across restart and recreate. Provider-hosted URLs follow the provider's lifecycle.",
+    "providerDirect": "The request goes straight to the selected provider: no fallback chain, no Fusion or Router rule is applied."
   },
   "models": {
     "empty": "— No models configured —",
     "fusionSuffix": "Fusion",
     "selectFirst": "Select a model first",
     "loadingVoices": "Loading voices...",
-    "voiceUnavailable": "Voice list unavailable"
+    "voiceUnavailable": "Voice list unavailable",
+    "selectProvider": "Select a provider first",
+    "loadingProviderModels": "Loading provider models...",
+    "providerModelsUnavailable": "Provider model list unavailable"
   },
   "status": {
     "voiceCatalogEmpty": "Voice catalog is empty; provider default will be used.",
     "voiceLoadFailed": "Failed to load voices.",
     "selectModelFirst": "Select a model first.",
+    "selectProviderFirst": "Select a provider first.",
+    "providerModelsLoadFailed": "Failed to load models for provider {provider}.",
     "enterMessage": "Enter a message.",
     "running": "Running…",
     "uploadingPdf": "Uploading PDF…",

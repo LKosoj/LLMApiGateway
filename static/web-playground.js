@@ -35,7 +35,9 @@
     ];
     const BLOB_URLS = new Map();
     const VOICE_CACHE = new Map();
+    const PROVIDER_MODEL_CACHE = new Map();
     let voiceRequestToken = 0;
+    let providerModelsRequestToken = 0;
     const CHAT_CONTEXT_LIMIT = 20;
     const i18n = window.gatewayI18n;
     const KEYS = Object.freeze({
@@ -44,10 +46,15 @@
         modelsSelectFirst: "models.selectFirst",
         modelsLoadingVoices: "models.loadingVoices",
         modelsVoiceUnavailable: "models.voiceUnavailable",
+        modelsSelectProvider: "models.selectProvider",
+        modelsLoadingProviderModels: "models.loadingProviderModels",
+        modelsProviderModelsUnavailable: "models.providerModelsUnavailable",
         providerDefault: "options.providerDefault",
         voiceCatalogEmpty: "status.voiceCatalogEmpty",
         voiceLoadFailed: "status.voiceLoadFailed",
         selectModelFirst: "status.selectModelFirst",
+        selectProviderFirst: "status.selectProviderFirst",
+        providerModelsLoadFailed: "status.providerModelsLoadFailed",
         enterMessage: "status.enterMessage",
         running: "status.running",
         uploadingPdf: "status.uploadingPdf",
@@ -223,6 +230,17 @@
             if (isFusion) opt.dataset.fusion = "true";
             select.appendChild(opt);
         });
+    }
+
+    function setSelectPlaceholder(select, key) {
+        select.innerHTML = "";
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.dataset.playgroundOptionKey = key;
+        opt.textContent = translate(key);
+        opt.selected = true;
+        select.appendChild(opt);
+        select.disabled = true;
     }
 
     function setVoiceSelectState(key, disabled) {
@@ -1158,9 +1176,15 @@
     }
 
     async function submitSimpleChatRequest(form) {
-        const model = selectedFormValue(form, "model");
+        const isProviderSource = chatModelSource() === "provider";
+        const provider = isProviderSource ? selectedFormValue(form, "provider") : "";
+        const model = selectedFormValue(form, isProviderSource ? "provider_model" : "model");
         const input = form.elements.message;
         const content = input ? String(input.value || "").trim() : "";
+        if (isProviderSource && !provider) {
+            setStatus("chat", KEYS.selectProviderFirst, true);
+            return;
+        }
         if (!model) {
             setStatus("chat", KEYS.selectModelFirst, true);
             return;
@@ -1178,7 +1202,7 @@
         // when `stream: true` is set (400 Bad Request), so only plain chat
         // models use the streaming path; Fusion keeps the buffered request it
         // already relied on for panel/analysis rendering.
-        const isFusionModel = fusionModelNames.has(model);
+        const isFusionModel = !isProviderSource && fusionModelNames.has(model);
         const button = form.querySelector(".run-button");
         const streamControls = document.getElementById("chatStreamControls");
         const controller = new AbortController();
@@ -1215,10 +1239,17 @@
             renderSimpleChatTranscript();
         };
 
+        const requestHeaders = {"Content-Type": "application/json"};
+        if (isProviderSource) {
+            // Pins the upstream for this one request: the gateway sends the
+            // model id straight to that provider, with no fallback chain.
+            requestHeaders["X-LLMGateway-Provider"] = provider;
+        }
+
         try {
             const response = await apiFetch("/v1/chat/completions", {
                 method: "POST",
-                headers: {"Content-Type": "application/json"},
+                headers: requestHeaders,
                 body: JSON.stringify(requestBody),
                 signal: controller.signal,
             });
@@ -1493,11 +1524,76 @@
         });
     }
 
+    function chatModelSource() {
+        const select = document.getElementById("chatModelSource");
+        return select && select.value === "provider" ? "provider" : "gateway";
+    }
+
     function syncChatFusionOptions() {
         const select = document.getElementById("chatModel");
         const options = document.getElementById("chatFusionOptions");
         if (!select || !options) return;
-        options.hidden = !fusionModelNames.has(select.value);
+        // Fusion is a gateway-model feature; a provider model never has one.
+        options.hidden = chatModelSource() === "provider" || !fusionModelNames.has(select.value);
+    }
+
+    function syncChatModelSource() {
+        const isProvider = chatModelSource() === "provider";
+        const gatewayGroup = document.getElementById("chatGatewayModelGroup");
+        const providerGroup = document.getElementById("chatProviderGroup");
+        const providerModelGroup = document.getElementById("chatProviderModelGroup");
+        const providerHint = document.getElementById("chatProviderHint");
+        const gatewaySelect = document.getElementById("chatModel");
+        const providerModelSelect = document.getElementById("chatProviderModel");
+        if (gatewayGroup) gatewayGroup.hidden = isProvider;
+        if (providerGroup) providerGroup.hidden = !isProvider;
+        if (providerModelGroup) providerModelGroup.hidden = !isProvider;
+        if (providerHint) providerHint.hidden = !isProvider;
+        // A hidden control that stays `required` makes the browser refuse to
+        // submit the form without ever showing why, so ownership of `required`
+        // follows the visible selector.
+        if (gatewaySelect) gatewaySelect.required = !isProvider;
+        if (providerModelSelect) providerModelSelect.required = isProvider;
+        syncChatFusionOptions();
+        if (isProvider) refreshChatProviderModels();
+    }
+
+    async function refreshChatProviderModels() {
+        const providerSelect = document.getElementById("chatProvider");
+        const modelSelect = document.getElementById("chatProviderModel");
+        if (!providerSelect || !modelSelect) return;
+        const provider = providerSelect.disabled ? "" : providerSelect.value;
+        if (!provider) {
+            setSelectPlaceholder(modelSelect, KEYS.modelsSelectProvider);
+            return;
+        }
+        if (PROVIDER_MODEL_CACHE.has(provider)) {
+            populateSelect(modelSelect, PROVIDER_MODEL_CACHE.get(provider), null);
+            return;
+        }
+        const requestToken = ++providerModelsRequestToken;
+        setSelectPlaceholder(modelSelect, KEYS.modelsLoadingProviderModels);
+        try {
+            const response = await apiFetch(`/v1/config/providers/${encodeURIComponent(provider)}/models`);
+            const payload = await response.json().catch(() => ({}));
+            if (requestToken !== providerModelsRequestToken) return;
+            if (!response.ok) {
+                const detail = payload && typeof payload === "object" ? (payload.detail || JSON.stringify(payload)) : "";
+                throw new Error(detail || `status ${response.status}`);
+            }
+            const models = (Array.isArray(payload.models) ? payload.models : [])
+                .map((item) => (typeof item === "string" ? item : item && item.id))
+                .filter(Boolean);
+            PROVIDER_MODEL_CACHE.set(provider, models);
+            populateSelect(modelSelect, models, null);
+            clearStatus("chat");
+        } catch (err) {
+            if (requestToken !== providerModelsRequestToken) return;
+            // The catalog comes from the provider itself: keep the failure
+            // visible instead of leaving a stale or empty list looking normal.
+            setSelectPlaceholder(modelSelect, KEYS.modelsProviderModelsUnavailable);
+            setStatus("chat", KEYS.providerModelsLoadFailed, true, {provider}, err.message || err);
+        }
     }
 
     function wireSimpleChatForm() {
@@ -1506,8 +1602,12 @@
         const resetButton = document.getElementById("resetSimpleChatButton");
         const cancelButton = document.getElementById("cancelChatButton");
         const modelSelect = document.getElementById("chatModel");
+        const sourceSelect = document.getElementById("chatModelSource");
+        const providerSelect = document.getElementById("chatProvider");
         const input = form.elements.message;
         if (modelSelect) modelSelect.addEventListener("change", syncChatFusionOptions);
+        if (sourceSelect) sourceSelect.addEventListener("change", syncChatModelSource);
+        if (providerSelect) providerSelect.addEventListener("change", refreshChatProviderModels);
         form.addEventListener("submit", (event) => {
             event.preventDefault();
             submitSimpleChatRequest(form);
@@ -1644,7 +1744,9 @@
                 const select = document.getElementById(id);
                 if (select) populateSelect(select, models[section] || [], section === "chat" ? fusionModelNames : null);
             });
-            syncChatFusionOptions();
+            const providerSelect = document.getElementById("chatProvider");
+            if (providerSelect) populateSelect(providerSelect, models.providers || [], null);
+            syncChatModelSource();
         } catch (err) {
             STATUS_KINDS.forEach((kind) => {
                 setStatus(kind, KEYS.modelsLoadFailed, true, {}, err.message || err);

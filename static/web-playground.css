@@ -119,6 +119,14 @@ body.dark-mode .playground-form select {
     min-width: 140px;
 }
 
+/* `.field-group`'s own `display: flex` outranks the user-agent `[hidden]`
+   rule, so hidden groups (chat model source switch, Fusion options) need this
+   to actually disappear. */
+.playground-form .field-group[hidden],
+.playground-form .field-help[hidden] {
+    display: none;
+}
+
 .playground-form .toggle-field {
     display: flex;
     align-items: center;

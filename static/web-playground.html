@@ -47,10 +47,28 @@
             <section class="playground-panel chat-panel">
                 <div class="chat-transcript" id="simpleChatTranscript" aria-live="polite" hidden></div>
                 <form class="playground-form" id="simpleChatForm" autocomplete="off">
-                    <div class="field-group">
-                        <label for="chatModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
-                        <select id="chatModel" name="model" required></select>
+                    <div class="field-row chat-model-row">
+                        <div class="field-group">
+                            <label for="chatModelSource" data-i18n="playground:labels.modelSource">Model type</label>
+                            <select id="chatModelSource" name="model_source">
+                                <option value="gateway" selected data-i18n="playground:options.gatewayModels">Gateway models</option>
+                                <option value="provider" data-i18n="playground:options.providerModels">Provider models</option>
+                            </select>
+                        </div>
+                        <div class="field-group" id="chatGatewayModelGroup">
+                            <label for="chatModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
+                            <select id="chatModel" name="model" required></select>
+                        </div>
+                        <div class="field-group" id="chatProviderGroup" hidden>
+                            <label for="chatProvider" data-i18n="playground:labels.provider">Provider</label>
+                            <select id="chatProvider" name="provider"></select>
+                        </div>
+                        <div class="field-group" id="chatProviderModelGroup" hidden>
+                            <label for="chatProviderModel" data-i18n="playground:labels.providerModel">Provider model</label>
+                            <select id="chatProviderModel" name="provider_model"></select>
+                        </div>
                     </div>
+                    <p class="field-help" id="chatProviderHint" data-i18n="playground:help.providerDirect" hidden>The request goes straight to the selected provider: no fallback chain, no Fusion or Router rule is applied.</p>
                     <div class="field-group fusion-options" id="chatFusionOptions" hidden>
                         <label class="fusion-checkbox">
                             <input type="checkbox" id="chatFusionDetails" checked>

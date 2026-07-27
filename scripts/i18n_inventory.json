@@ -3502,7 +3502,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-code",
-      "line": 57,
+      "line": 75,
       "column": 144,
       "text": "include_details",
       "classification": "code"
@@ -3511,7 +3511,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 113,
+      "line": 131,
       "column": 83,
       "text": "latest EU AI Act updates",
       "classification": "sample"
@@ -3520,7 +3520,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 138,
+      "line": 156,
       "column": 54,
       "text": "markdown",
       "classification": "protocol"
@@ -3529,7 +3529,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 139,
+      "line": 157,
       "column": 50,
       "text": "text",
       "classification": "protocol"
@@ -3538,7 +3538,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 150,
+      "line": 168,
       "column": 106,
       "text": "example.com, docs.example.com",
       "classification": "sample"
@@ -3547,7 +3547,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 154,
+      "line": 172,
       "column": 106,
       "text": "spam.example",
       "classification": "sample"
@@ -3556,7 +3556,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 173,
+      "line": 191,
       "column": 76,
       "text": "https://example.com/article",
       "classification": "sample"
@@ -3565,7 +3565,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 178,
+      "line": 196,
       "column": 59,
       "text": "markdown",
       "classification": "protocol"
@@ -3574,7 +3574,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 179,
+      "line": 197,
       "column": 46,
       "text": "text",
       "classification": "protocol"
@@ -3583,7 +3583,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 208,
+      "line": 226,
       "column": 89,
       "text": "LLM gateway web search",
       "classification": "sample"
@@ -3592,7 +3592,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 223,
+      "line": 241,
       "column": 54,
       "text": "markdown",
       "classification": "protocol"
@@ -3601,7 +3601,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 224,
+      "line": 242,
       "column": 50,
       "text": "text",
       "classification": "protocol"
@@ -3610,7 +3610,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 235,
+      "line": 253,
       "column": 112,
       "text": "example.com, docs.example.com",
       "classification": "sample"
@@ -3619,7 +3619,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 239,
+      "line": 257,
       "column": 112,
       "text": "spam.example",
       "classification": "sample"
@@ -3628,7 +3628,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 258,
+      "line": 276,
       "column": 107,
       "text": "https://example.com/article https://example.com/another",
       "classification": "sample"
@@ -3637,7 +3637,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 264,
+      "line": 282,
       "column": 63,
       "text": "markdown",
       "classification": "protocol"
@@ -3646,7 +3646,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 265,
+      "line": 283,
       "column": 50,
       "text": "text",
       "classification": "protocol"
@@ -3655,7 +3655,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 313,
+      "line": 331,
       "column": 48,
       "text": "ru",
       "classification": "protocol"
@@ -3664,7 +3664,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 314,
+      "line": 332,
       "column": 48,
       "text": "en",
       "classification": "protocol"
@@ -3673,7 +3673,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 315,
+      "line": 333,
       "column": 48,
       "text": "zh",
       "classification": "protocol"
@@ -3682,7 +3682,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 322,
+      "line": 340,
       "column": 57,
       "text": "ru",
       "classification": "protocol"
@@ -3691,7 +3691,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 323,
+      "line": 341,
       "column": 48,
       "text": "en",
       "classification": "protocol"
@@ -3700,7 +3700,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 324,
+      "line": 342,
       "column": 48,
       "text": "zh",
       "classification": "protocol"
@@ -3709,7 +3709,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 331,
+      "line": 349,
       "column": 63,
       "text": "markdown",
       "classification": "protocol"
@@ -3718,7 +3718,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 332,
+      "line": 350,
       "column": 50,
       "text": "text",
       "classification": "protocol"
@@ -3727,7 +3727,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 381,
+      "line": 399,
       "column": 63,
       "text": "markdown",
       "classification": "protocol"
@@ -3736,7 +3736,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 382,
+      "line": 400,
       "column": 50,
       "text": "text",
       "classification": "protocol"
@@ -3745,7 +3745,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 427,
+      "line": 445,
       "column": 52,
       "text": "ru",
       "classification": "protocol"
@@ -3754,7 +3754,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 428,
+      "line": 446,
       "column": 52,
       "text": "en",
       "classification": "protocol"
@@ -3763,7 +3763,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 429,
+      "line": 447,
       "column": 52,
       "text": "zh",
       "classification": "protocol"
@@ -3772,7 +3772,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 430,
+      "line": 448,
       "column": 52,
       "text": "de",
       "classification": "protocol"
@@ -3781,7 +3781,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 431,
+      "line": 449,
       "column": 52,
       "text": "fr",
       "classification": "protocol"
@@ -3790,7 +3790,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 432,
+      "line": 450,
       "column": 52,
       "text": "es",
       "classification": "protocol"
@@ -3799,7 +3799,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 433,
+      "line": 451,
       "column": 52,
       "text": "it",
       "classification": "protocol"
@@ -3808,7 +3808,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 434,
+      "line": 452,
       "column": 52,
       "text": "pt",
       "classification": "protocol"
@@ -3817,7 +3817,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 435,
+      "line": 453,
       "column": 52,
       "text": "ja",
       "classification": "protocol"
@@ -3826,7 +3826,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 436,
+      "line": 454,
       "column": 52,
       "text": "ko",
       "classification": "protocol"
@@ -3835,7 +3835,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 442,
+      "line": 460,
       "column": 62,
       "text": "mp3",
       "classification": "protocol"
@@ -3844,7 +3844,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 443,
+      "line": 461,
       "column": 53,
       "text": "wav",
       "classification": "protocol"
@@ -3853,7 +3853,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 444,
+      "line": 462,
       "column": 54,
       "text": "opus",
       "classification": "protocol"
@@ -3862,7 +3862,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 445,
+      "line": 463,
       "column": 54,
       "text": "flac",
       "classification": "protocol"
@@ -3871,7 +3871,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 446,
+      "line": 464,
       "column": 53,
       "text": "aac",
       "classification": "protocol"
@@ -3880,7 +3880,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 451,
+      "line": 469,
       "column": 129,
       "text": "1",
       "classification": "sample"
@@ -3889,7 +3889,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 479,
+      "line": 497,
       "column": 52,
       "text": "ru",
       "classification": "protocol"
@@ -3898,7 +3898,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 480,
+      "line": 498,
       "column": 52,
       "text": "en",
       "classification": "protocol"
@@ -3907,7 +3907,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 481,
+      "line": 499,
       "column": 52,
       "text": "zh",
       "classification": "protocol"
@@ -3916,7 +3916,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 482,
+      "line": 500,
       "column": 52,
       "text": "de",
       "classification": "protocol"
@@ -3925,7 +3925,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 483,
+      "line": 501,
       "column": 52,
       "text": "fr",
       "classification": "protocol"
@@ -3934,7 +3934,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 484,
+      "line": 502,
       "column": 52,
       "text": "es",
       "classification": "protocol"
@@ -3943,7 +3943,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 485,
+      "line": 503,
       "column": 52,
       "text": "it",
       "classification": "protocol"
@@ -3952,7 +3952,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 486,
+      "line": 504,
       "column": 52,
       "text": "pt",
       "classification": "protocol"
@@ -3961,7 +3961,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 487,
+      "line": 505,
       "column": 52,
       "text": "ja",
       "classification": "protocol"
@@ -3970,7 +3970,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 488,
+      "line": 506,
       "column": 52,
       "text": "ko",
       "classification": "protocol"
@@ -3979,7 +3979,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 494,
+      "line": 512,
       "column": 63,
       "text": "json",
       "classification": "protocol"
@@ -3988,7 +3988,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 495,
+      "line": 513,
       "column": 54,
       "text": "text",
       "classification": "protocol"
@@ -3997,7 +3997,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 496,
+      "line": 514,
       "column": 53,
       "text": "srt",
       "classification": "protocol"
@@ -4006,7 +4006,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 497,
+      "line": 515,
       "column": 53,
       "text": "vtt",
       "classification": "protocol"
@@ -4015,7 +4015,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 502,
+      "line": 520,
       "column": 145,
       "text": "0",
       "classification": "sample"
@@ -4024,7 +4024,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 534,
+      "line": 552,
       "column": 59,
       "text": "1024x1024",
       "classification": "protocol"
@@ -4033,7 +4033,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 535,
+      "line": 553,
       "column": 59,
       "text": "1024x1536",
       "classification": "protocol"
@@ -4042,7 +4042,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 536,
+      "line": 554,
       "column": 59,
       "text": "1536x1024",
       "classification": "protocol"
@@ -4051,7 +4051,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 537,
+      "line": 555,
       "column": 57,
       "text": "512x512",
       "classification": "protocol"
@@ -4060,7 +4060,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 538,
+      "line": 556,
       "column": 57,
       "text": "768x768",
       "classification": "protocol"
@@ -4069,7 +4069,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 549,
+      "line": 567,
       "column": 53,
       "text": "url",
       "classification": "protocol"
@@ -4078,7 +4078,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 550,
+      "line": 568,
       "column": 58,
       "text": "b64_json",
       "classification": "protocol"
@@ -4087,7 +4087,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 589,
+      "line": 607,
       "column": 59,
       "text": "1024x1024",
       "classification": "protocol"
@@ -4096,7 +4096,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 590,
+      "line": 608,
       "column": 59,
       "text": "1024x1536",
       "classification": "protocol"
@@ -4105,7 +4105,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 591,
+      "line": 609,
       "column": 59,
       "text": "1536x1024",
       "classification": "protocol"
@@ -4114,7 +4114,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 592,
+      "line": 610,
       "column": 57,
       "text": "512x512",
       "classification": "protocol"
@@ -4123,7 +4123,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 593,
+      "line": 611,
       "column": 57,
       "text": "768x768",
       "classification": "protocol"
@@ -4132,7 +4132,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 604,
+      "line": 622,
       "column": 53,
       "text": "url",
       "classification": "protocol"
@@ -4141,7 +4141,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 605,
+      "line": 623,
       "column": 58,
       "text": "b64_json",
       "classification": "protocol"
@@ -4150,7 +4150,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 633,
+      "line": 651,
       "column": 63,
       "text": "DOCX + MD",
       "classification": "protocol"
@@ -4159,7 +4159,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 634,
+      "line": 652,
       "column": 54,
       "text": "DOCX",
       "classification": "protocol"
@@ -4168,7 +4168,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 635,
+      "line": 653,
       "column": 52,
       "text": "MD",
       "classification": "protocol"
@@ -4177,7 +4177,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 656,
+      "line": 674,
       "column": 62,
       "text": "off",
       "classification": "protocol"
@@ -4186,7 +4186,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 657,
+      "line": 675,
       "column": 57,
       "text": "mathpix",
       "classification": "protocol"
@@ -4195,7 +4195,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 658,
+      "line": 676,
       "column": 64,
       "text": "local_im2latex",
       "classification": "protocol"

@@ -101,7 +101,7 @@
       },
       {
         "provider": "nvidia",
-        "model": "qwen/qwen3.5-397b-a17b",
+        "model": "nvidia/nemotron-4-340b-instruct",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -439,6 +439,23 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
+        "provider": "kimicode",
+        "model": "k3",
+        "use_provider_order_as_fallback": false,
+        "retry_delay": 1,
+        "retry_count": 2,
+        "custom_body_params": {
+          "temperature": 1
+        },
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
+      },
+      {
         "provider": "alibaba",
         "model": "qwen3.8-max-preview",
         "use_provider_order_as_fallback": false,
@@ -450,23 +467,6 @@
         "capabilities_autofilled": [
           "context_window",
           "supports_tools"
-        ]
-      },
-      {
-        "provider": "kimicode",
-        "model": "k3",
-        "use_provider_order_as_fallback": false,
-        "retry_delay": 1,
-        "retry_count": 1,
-        "custom_body_params": {
-          "temperature": 1
-        },
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window"
         ]
       },
       {

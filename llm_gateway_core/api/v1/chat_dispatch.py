@@ -20,6 +20,7 @@ from ...config.loader import (
 from ...config.settings import settings
 from ...db.fallback_events_db import FallbackEventsDB
 from ..error_envelope import StructuredHTTPException
+from ...middleware.auth import ROLE_MASTER
 from ...services.access_control import enforce_virtual_key_access
 from ...services.accounting import AccountingValidationError
 from ...services.active_requests import update_active_request
@@ -107,6 +108,9 @@ TEMPORARY_MODEL_FAILURE_STATUS_RE = re.compile(
     re.IGNORECASE,
 )
 ANTHROPIC_API_KEY_HEADER_NAME = "X-Api-Key"
+# Master-only header pinning one provider for a single chat request; see
+# `_resolve_direct_provider`.
+DIRECT_PROVIDER_HEADER = "X-LLMGateway-Provider"
 
 
 def _provider_key_routing_strategy(provider_config: object, pool_config: object | None) -> str:
@@ -1318,6 +1322,31 @@ def _min_retry_after_seconds(
     return min(86400, max(1, math.ceil(min(remaining_candidates))))
 
 
+def _resolve_direct_provider(request: Request, providers_config: dict) -> str | None:
+    """Return the provider pinned on this request by header, or ``None``.
+
+    ``X-LLMGateway-Provider`` addresses one provider model directly: the model
+    id in the body belongs to that provider, so gateway model policy,
+    Fusion/Router rules and fallback chains are all skipped and a failure is
+    reported as-is instead of being retried elsewhere. Bypassing routing is an
+    admin capability, so the header is rejected for every non-master key.
+    """
+    provider_name = (request.headers.get(DIRECT_PROVIDER_HEADER) or "").strip()
+    if not provider_name:
+        return None
+    if getattr(request.state, "api_key_role", None) != ROLE_MASTER:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{DIRECT_PROVIDER_HEADER} is reserved for the master API key",
+        )
+    if provider_name not in providers_config:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Provider '{provider_name}' is not defined in providers.json",
+        )
+    return provider_name
+
+
 def _local_stream_observation_http_error(
     error: LocalStreamObservationError,
 ) -> HTTPException:
@@ -1369,21 +1398,29 @@ async def dispatch_chat_request(
     if enforce_model_access:
         enforce_virtual_key_access(request, requested_model)
 
-    try:
-        model_resolution = resolve_model_name(
-            requested_model,
-            getattr(config_loader_instance, "model_rules", None),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    routing_model = model_resolution.effective_model
-    if model_resolution.changed:
-        logging.info(
-            "Model policy resolved requested model '%s' to routing model '%s' via %s.",
-            requested_model,
-            routing_model,
-            model_resolution.matched_rule,
-        )
+    direct_provider = _resolve_direct_provider(request, providers_config)
+
+    if direct_provider:
+        # The model id belongs to the provider, not to the gateway, so no
+        # gateway-side name policy applies to it.
+        model_resolution = None
+        routing_model = requested_model
+    else:
+        try:
+            model_resolution = resolve_model_name(
+                requested_model,
+                getattr(config_loader_instance, "model_rules", None),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        routing_model = model_resolution.effective_model
+        if model_resolution.changed:
+            logging.info(
+                "Model policy resolved requested model '%s' to routing model '%s' via %s.",
+                requested_model,
+                routing_model,
+                model_resolution.matched_rule,
+            )
 
     payload_to_log = redact_payload_for_log(request_body_json)
     logging.debug(
@@ -1406,7 +1443,11 @@ async def dispatch_chat_request(
     )
 
     fusion_rules = getattr(config_loader_instance, "fusion_rules", None)
-    fusion_config = fusion_rules.get(routing_model) if isinstance(fusion_rules, dict) else None
+    fusion_config = (
+        fusion_rules.get(routing_model)
+        if isinstance(fusion_rules, dict) and not direct_provider
+        else None
+    )
     if fusion_config is not None:
         if request.headers.get("x-llmgateway-fusion"):
             raise HTTPException(status_code=400, detail="Nested Fusion calls are not allowed.")
@@ -1437,7 +1478,11 @@ async def dispatch_chat_request(
         )
 
     router_rules = getattr(config_loader_instance, "router_rules", None)
-    router_config = router_rules.get(routing_model) if isinstance(router_rules, dict) else None
+    router_config = (
+        router_rules.get(routing_model)
+        if isinstance(router_rules, dict) and not direct_provider
+        else None
+    )
     if router_config is not None:
         router_service = runtime_snapshot.router_model_service
         if accounting_handoff is not None:
@@ -1458,13 +1503,21 @@ async def dispatch_chat_request(
             request_body=request_body_json,
         )
 
-    model_config = fallback_rules.get(routing_model)
+    model_config = None if direct_provider else fallback_rules.get(routing_model)
     context_overflow_fallback = None
     strip_think_tags = False
     tool_call_rescue = False
     max_total_attempts: int | None = None
     dynamic_penalty_enabled = False
-    if not model_config:
+    if direct_provider:
+        model_fallbacks_sequence = [{"provider": direct_provider, "model": requested_model}]
+        rotate_models = False
+        logging.info(
+            "Direct provider request: model '%s' is sent to provider '%s' without any fallback chain.",
+            requested_model,
+            direct_provider,
+        )
+    elif not model_config:
         if model_resolution.changed:
             raise HTTPException(
                 status_code=404,

@@ -155,13 +155,13 @@ jobs:
         shell: bash
         run: python -m pytest --fixtures -q | grep -Eq '^page[[:space:]]'
 
-      - name: Verify exactly 168 browser tests are collected
+      - name: Verify exactly 170 browser tests are collected
         shell: bash
         run: |
           collection="$(python -m pytest --collect-only -q -m browser)"
           printf '%s\n' "$collection"
           collected="$(printf '%s\n' "$collection" | grep -c '::')"
-          test "$collected" -eq 168
+          test "$collected" -eq 170
 
       - name: Run all browser tests without silent skips
         shell: bash
@@ -172,8 +172,8 @@ jobs:
             echo 'Browser job must not skip browser tests.' >&2
             exit 1
           fi
-          if ! grep -Eq '(^|, )168 passed(,| )' browser-pytest.log; then
-            echo 'Browser job must execute all 168 browser tests successfully.' >&2
+          if ! grep -Eq '(^|, )170 passed(,| )' browser-pytest.log; then
+            echo 'Browser job must execute all 170 browser tests successfully.' >&2
             exit 1
           fi
 

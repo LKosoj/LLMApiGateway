@@ -22,6 +22,9 @@
     "deepResearch": "Глубокое исследование"
   },
   "labels": {
+    "modelSource": "Тип моделей",
+    "provider": "Провайдер",
+    "providerModel": "Модель провайдера",
     "gatewayModel": "Модель шлюза",
     "searchModel": "Модель поиска",
     "readModel": "Модель чтения",
@@ -90,6 +93,8 @@
     "startPdfConversion": "Запустить преобразование"
   },
   "options": {
+    "gatewayModels": "Модели шлюза",
+    "providerModels": "Модели провайдеров",
     "off": "выкл.",
     "all": "все",
     "providerDefault": "по умолчанию провайдера",
@@ -113,19 +118,25 @@
     "researchLanguage": "Выбирает языки поиска источников, а не язык итогового ответа.",
     "researchOutputLanguage": "Задаёт язык итогового отчёта.",
     "researchArticleFormat": "Задаёт формат, который запрашивается у сервиса чтения страниц перед анализом.",
-    "generatedImagesRetention": "Локальные PNG хранятся в защищённом хранилище сервера и удаляются через 10 дней; Docker Compose сохраняет их после перезапуска и пересоздания. Срок жизни URL провайдера определяется самим провайдером."
+    "generatedImagesRetention": "Локальные PNG хранятся в защищённом хранилище сервера и удаляются через 10 дней; Docker Compose сохраняет их после перезапуска и пересоздания. Срок жизни URL провайдера определяется самим провайдером.",
+    "providerDirect": "Запрос уходит напрямую выбранному провайдеру: без цепочки fallback, без правил Fusion и Router."
   },
   "models": {
     "empty": "— Модели не настроены —",
     "fusionSuffix": "Fusion",
     "selectFirst": "Сначала выберите модель",
     "loadingVoices": "Загрузка голосов...",
-    "voiceUnavailable": "Список голосов недоступен"
+    "voiceUnavailable": "Список голосов недоступен",
+    "selectProvider": "Сначала выберите провайдера",
+    "loadingProviderModels": "Загрузка моделей провайдера...",
+    "providerModelsUnavailable": "Список моделей провайдера недоступен"
   },
   "status": {
     "voiceCatalogEmpty": "Каталог голосов пуст; будет использован голос провайдера по умолчанию.",
     "voiceLoadFailed": "Не удалось загрузить голоса.",
     "selectModelFirst": "Сначала выберите модель.",
+    "selectProviderFirst": "Сначала выберите провайдера.",
+    "providerModelsLoadFailed": "Не удалось загрузить модели провайдера {provider}.",
     "enterMessage": "Введите сообщение.",
     "running": "Выполняется…",
     "uploadingPdf": "Загрузка PDF…",
