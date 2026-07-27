@@ -282,6 +282,19 @@ class FallbackModelRule(BaseModel):
             raise ValueError("'context_window' must be greater than 0.")
         return int(value)
 
+    @field_validator("capabilities_autofilled")
+    @classmethod
+    def validate_capabilities_autofilled(
+        cls, value: Optional[List[str]]
+    ) -> Optional[List[str]]:
+        # The list is a set of owned field names, so its order carries no
+        # meaning — but it is serialized back to disk verbatim. Normalizing it
+        # here keeps a re-serialized rule byte-identical to the file it came
+        # from, which is what the config-revision comparison relies on.
+        if value is None:
+            return None
+        return sorted(set(value))
+
     @field_validator("custom_body_params")
     @classmethod
     def validate_custom_body_params(cls, value: Dict[str, Any]) -> Dict[str, Any]:

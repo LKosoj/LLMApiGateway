@@ -47,6 +47,24 @@ logger = logging.getLogger(__name__)
 CAPABILITY_FIELDS: tuple[str, ...] = ("supports_vision", "supports_tools", "context_window")
 
 
+def _format_error_locations(error: ConfigUpdateError) -> str:
+    """Name the config sources a failed update points at, or return ''.
+
+    A bare error code says the write was rejected but not which file drifted;
+    ``config_sources_out_of_sync`` carries that in ``errors[*]["loc"]``.
+    """
+    locations = sorted(
+        {
+            str(part)
+            for entry in error.errors or ()
+            for part in entry.get("loc") or ()
+        }
+    )
+    if not locations:
+        return ""
+    return f" ({', '.join(locations)})"
+
+
 @dataclass(frozen=True, slots=True)
 class _WorklistEntry:
     """One fallback-chain candidate, with a mutable handle into the working copy."""
@@ -103,9 +121,10 @@ class CapabilityAutofillService:
                 self._last_error = None
             except ConfigUpdateError as exc:
                 logger.warning(
-                    "Capability autofill materialize skipped a write: %s. "
+                    "Capability autofill materialize skipped a write: %s%s. "
                     "The next trigger will retry.",
                     exc.code,
+                    _format_error_locations(exc),
                 )
                 self._last_error = f"{exc} The next trigger will retry."
             except Exception as exc:

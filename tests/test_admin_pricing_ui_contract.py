@@ -113,7 +113,14 @@ def test_pricing_conflict_ui_uses_strict_paired_i18n_catalogs() -> None:
     }
     assert catalogs["en"].keys() == catalogs["ru"].keys()
     assert catalogs["en"]["conflict"].keys() == catalogs["ru"]["conflict"].keys()
-    assert set(catalogs["en"]["conflict"]) == {"title", "message", "reload"}
+    assert set(catalogs["en"]["conflict"]) == {
+        "title",
+        "message",
+        "reload",
+        "outOfSyncTitle",
+        "outOfSyncMessage",
+        "resync",
+    }
 
     def flatten(value: object, prefix: str = "") -> set[str]:
         assert isinstance(value, dict)
@@ -167,11 +174,15 @@ def test_pricing_conflict_ui_uses_strict_paired_i18n_catalogs() -> None:
         "status.mustLoad",
         "status.saved",
         "status.selectModel",
+        "status.resynced",
         "contract.missingEtag",
         "contract.invalidShape",
         "conflict.title",
         "conflict.message",
         "conflict.reload",
+        "conflict.outOfSyncTitle",
+        "conflict.outOfSyncMessage",
+        "conflict.resync",
         "detail.heading",
         "detail.close",
         "detail.open",
@@ -192,7 +203,7 @@ def test_pricing_conflict_ui_uses_strict_paired_i18n_catalogs() -> None:
             "page": "pricing",
             "file": "static/pricing.js",
             "kind": "js-sink",
-            "line": 487,
+            "line": 541,
             "column": 13,
             "text": "USD",
             "classification": "protocol",
@@ -201,7 +212,7 @@ def test_pricing_conflict_ui_uses_strict_paired_i18n_catalogs() -> None:
             "page": "pricing",
             "file": "static/pricing.js",
             "kind": "js-sink",
-            "line": 508,
+            "line": 562,
             "column": 33,
             "text": "data-pricing-default-cost",
             "classification": "code",

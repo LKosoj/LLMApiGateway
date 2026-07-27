@@ -420,6 +420,10 @@ _ERROR_CASES = {
         409,
         "The configuration revision changed.",
     ),
+    ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC: (
+        409,
+        "The loaded configuration no longer matches the files on disk.",
+    ),
     ConfigUpdateErrorCode.GENERATION_BUSY: (
         409,
         "The previous runtime generation is still retiring.",

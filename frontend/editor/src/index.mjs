@@ -130,7 +130,7 @@ function startEditor(ctx) {
     }
 
     ctx.elements.reloadEditorDocumentButton.addEventListener('click', () => {
-        void ctx.reloadActiveDocument();
+        void ctx.reloadAfterConflict();
     });
 
     const editorRoot = document.querySelector('.container');

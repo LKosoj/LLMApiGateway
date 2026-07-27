@@ -875,6 +875,34 @@ async def get_web_playground_models(request: Request):
     return JSONResponse(content=_build_playground_models(config_loader))
 
 
+@editor_router.post("/config/resync", tags=["Config Editor API"])
+async def resync_config_from_disk(request: Request):
+    """Reloads all six configuration files from disk into a new generation.
+
+    Every writer refuses to commit while the loaded sources differ from the
+    files on disk (``config_sources_out_of_sync``), and a plain reload in the
+    UI cannot clear that: it re-reads the same in-memory snapshot. This is the
+    only path that adopts an out-of-band edit without restarting the process.
+    """
+    _require_master(request)
+    try:
+        _services, snapshot = capture_config_update_runtime(request)
+        coordinator = _services.config_update_coordinator
+        result = await coordinator.resync(base_snapshot=snapshot)
+        return JSONResponse(
+            content={
+                "message": "Configuration reloaded from disk.",
+                "generation": result.snapshot.generation,
+            },
+            headers={
+                "X-Config-Generation": str(result.snapshot.generation),
+                "Cache-Control": "no-store",
+            },
+        )
+    except ConfigUpdateError as exc:
+        return config_error_response(exc)
+
+
 @editor_router.get("/config/models-rules", response_class=PlainTextResponse, tags=["Config Editor API"])
 async def get_models_rules_text(request: Request):
     """Fetches the current raw text content of models_fallback_rules.json."""

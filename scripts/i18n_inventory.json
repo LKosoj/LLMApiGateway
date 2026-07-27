@@ -343,7 +343,7 @@
       "page": "pricing",
       "file": "static/pricing.js",
       "kind": "js-sink",
-      "line": 487,
+      "line": 541,
       "column": 13,
       "text": "USD",
       "classification": "protocol"
@@ -352,7 +352,7 @@
       "page": "pricing",
       "file": "static/pricing.js",
       "kind": "js-sink",
-      "line": 508,
+      "line": 562,
       "column": 33,
       "text": "data-pricing-default-cost",
       "classification": "code"

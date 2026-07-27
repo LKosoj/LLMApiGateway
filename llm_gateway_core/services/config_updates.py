@@ -54,6 +54,7 @@ class ConfigUpdateErrorCode(StrEnum):
     VALIDATION_FAILED = "config_validation_failed"
     GENERATION_STALE = "config_generation_stale"
     REVISION_CONFLICT = "config_revision_conflict"
+    SOURCES_OUT_OF_SYNC = "config_sources_out_of_sync"
     GENERATION_BUSY = "config_generation_busy"
     COMMIT_FAILED = "config_commit_failed"
     UPDATE_UNAVAILABLE = "config_update_unavailable"
@@ -64,6 +65,9 @@ _ERROR_MESSAGES = {
     ConfigUpdateErrorCode.VALIDATION_FAILED: "Configuration validation failed.",
     ConfigUpdateErrorCode.GENERATION_STALE: "The configuration generation is stale.",
     ConfigUpdateErrorCode.REVISION_CONFLICT: "The configuration revision changed.",
+    ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC: (
+        "The loaded configuration no longer matches the files on disk."
+    ),
     ConfigUpdateErrorCode.GENERATION_BUSY: "The previous runtime generation is still retiring.",
     ConfigUpdateErrorCode.COMMIT_FAILED: "The configuration update could not be committed.",
     ConfigUpdateErrorCode.UPDATE_UNAVAILABLE: "Configuration updates are unavailable.",
@@ -265,6 +269,28 @@ class ConfigUpdateCoordinator:
             base_bundle=base_bundle,
             config_file=config_file,
             expected_revision=expected_revision,
+        )
+
+    def check_sources(
+        self,
+        *,
+        base_snapshot: RuntimeSnapshot,
+        config_file: ConfigFile,
+    ) -> None:
+        """Reject early when the disk no longer matches the loaded sources.
+
+        The same check runs again under the commit lock; this one only lets
+        a writer fail before paying for candidate construction.
+        """
+        self._validate_base_input(
+            base_snapshot=base_snapshot,
+            config_file=config_file,
+            expected_revision=None,
+        )
+        base_bundle = self._require_source_bundle(base_snapshot)
+        self._validate_source_digests(
+            base_bundle=base_bundle,
+            config_file=config_file,
         )
 
     async def update(
@@ -577,6 +603,152 @@ class ConfigUpdateCoordinator:
         finally:
             self._finish_update()
 
+    async def resync(
+        self,
+        *,
+        base_snapshot: RuntimeSnapshot,
+    ) -> ConfigUpdateResult:
+        """Republish the runtime from the current on-disk sources.
+
+        Writers refuse to commit while the loaded sources differ from the
+        files on disk, and nothing else reloads them: without this, an
+        out-of-band edit locks every configuration editor until the process
+        restarts. No file is written here — the disk is the input, and the
+        only outcome is a new runtime generation that matches it.
+        """
+        self._admit_update()
+        candidate: RuntimeCandidate | None = None
+        pending_candidate_slots = 0
+        publish_attempted = False
+        published = False
+        try:
+            self._validate_base_input(
+                base_snapshot=base_snapshot,
+                config_file=ConfigFile.PROVIDERS,
+                expected_revision=None,
+            )
+            base_bundle = self._require_source_bundle(base_snapshot)
+            self._raise_if_not_accepting()
+            self._validate_manager_generation(base_snapshot.generation)
+
+            try:
+                disk_bundle = base_bundle.recapture()
+            except ConfigSourceError:
+                raise ConfigUpdateError(
+                    ConfigUpdateErrorCode.REVISION_CONFLICT
+                ) from None
+            disk_digests = disk_bundle.content_digests()
+            if disk_digests == base_bundle.content_digests():
+                return ConfigUpdateResult(
+                    snapshot=base_snapshot,
+                    cleanup_pending=False,
+                )
+
+            try:
+                disk_loader = ConfigLoader.from_source_bundle(
+                    disk_bundle
+                ).load_complete()
+            except ConfigError as exc:
+                logger.warning(
+                    "Configuration resync rejected the on-disk sources: %s.",
+                    safe_exception_type_name(exc),
+                )
+                raise ConfigUpdateError(
+                    ConfigUpdateErrorCode.VALIDATION_FAILED,
+                    errors=_rule_validation_errors(exc),
+                ) from None
+
+            candidate = await self._build_candidate(
+                base_snapshot=base_snapshot,
+                candidate_loader=disk_loader,
+            )
+
+            await self._commit_lock.acquire()
+            try:
+                self._raise_if_admitted_update_cannot_commit()
+                self._validate_manager_generation(base_snapshot.generation)
+                try:
+                    recheck_bundle = base_bundle.recapture()
+                except ConfigSourceError:
+                    raise ConfigUpdateError(
+                        ConfigUpdateErrorCode.REVISION_CONFLICT
+                    ) from None
+                if recheck_bundle.content_digests() != disk_digests:
+                    raise ConfigUpdateError(
+                        ConfigUpdateErrorCode.REVISION_CONFLICT
+                    )
+
+                from .runtime_config import (
+                    RuntimeGenerationConflictError,
+                    RuntimeManagerStateError,
+                )
+
+                try:
+                    self._runtime_manager.validate_publish(
+                        candidate.snapshot,
+                        expected_generation=base_snapshot.generation,
+                    )
+                except RuntimeGenerationConflictError:
+                    raise ConfigUpdateError(
+                        ConfigUpdateErrorCode.GENERATION_STALE
+                    ) from None
+                except RuntimeManagerStateError:
+                    raise ConfigUpdateError(
+                        ConfigUpdateErrorCode.GENERATION_BUSY
+                    ) from None
+
+                pending_candidate_slots = (
+                    self._runtime_manager.pending_unpublished_generations.count(
+                        candidate.snapshot.generation
+                    )
+                )
+                publish_attempted = True
+                published_snapshot = candidate.publish(
+                    expected_generation=base_snapshot.generation
+                )
+                published = True
+            finally:
+                self._commit_lock.release()
+
+            logger.info(
+                "Configuration resynced from disk into generation %d.",
+                published_snapshot.generation,
+            )
+            return ConfigUpdateResult(
+                snapshot=published_snapshot,
+                cleanup_pending=(
+                    self._pending_cleanup is not None
+                    or self._pending_comments_backup is not None
+                ),
+            )
+        except BaseException as primary:
+            replacement: BaseException = primary
+            if publish_attempted and not published and candidate is not None:
+                outcome = self._classify_runtime_publish_outcome(
+                    base_snapshot=base_snapshot,
+                    candidate=candidate,
+                    pending_candidate_slots=pending_candidate_slots,
+                )
+                if outcome is _RuntimePublishOutcome.PUBLISHED:
+                    published = True
+                elif outcome is _RuntimePublishOutcome.AMBIGUOUS:
+                    published = True
+                    self._mark_publication_outcome_ambiguous(exception=primary)
+                    if isinstance(primary, Exception):
+                        replacement = ConfigUpdateError(
+                            ConfigUpdateErrorCode.UPDATE_BROKEN
+                        )
+            if candidate is not None and not published:
+                cleanup_terminal = await self._close_candidate(candidate)
+                if cleanup_terminal is not None and isinstance(
+                    replacement,
+                    Exception,
+                ):
+                    replacement = cleanup_terminal
+            raise replacement
+        finally:
+            self._finish_update()
+
     async def close(self) -> None:
         loop = self._bind_loop()
         if self._state is ConfigUpdateState.STOPPED:
@@ -733,14 +905,10 @@ class ConfigUpdateCoordinator:
             config_file,
             expected_revision,
         )
-        try:
-            current_bundle = base_bundle.recapture()
-        except ConfigSourceError:
-            raise ConfigUpdateError(
-                ConfigUpdateErrorCode.REVISION_CONFLICT
-            ) from None
-        if current_bundle != base_bundle:
-            raise ConfigUpdateError(ConfigUpdateErrorCode.REVISION_CONFLICT)
+        self._validate_source_digests(
+            base_bundle=base_bundle,
+            config_file=config_file,
+        )
 
         from .runtime_config import (
             RuntimeGenerationConflictError,
@@ -768,6 +936,64 @@ class ConfigUpdateCoordinator:
             raise ConfigUpdateError(ConfigUpdateErrorCode.UPDATE_UNAVAILABLE)
         if self._runtime_manager.current_generation != expected_generation:
             raise ConfigUpdateError(ConfigUpdateErrorCode.GENERATION_STALE)
+
+    @staticmethod
+    def _validate_source_digests(
+        *,
+        base_bundle: ConfigSourceBundle,
+        config_file: ConfigFile,
+    ) -> None:
+        """Reject a write whose validation base no longer matches the disk.
+
+        Only content identity is compared: the candidate was validated
+        against the bytes of all six sources, so bytes are what must still
+        hold. Filesystem metadata is deliberately excluded — a ``chmod`` or
+        an atomic replacement with identical bytes changes nothing the
+        candidate depends on.
+
+        Drift here always means the loaded snapshot fell behind the disk,
+        and that holds for the file being written just as much as for the
+        other five: re-reading through the API only ever serves the loaded
+        snapshot, so a reload cannot clear it and only a resync can.
+        ``REVISION_CONFLICT`` stays reserved for a stale ``If-Match`` — the
+        one conflict a reload does fix.
+        """
+        try:
+            current_bundle = base_bundle.recapture()
+        except ConfigSourceError:
+            raise ConfigUpdateError(
+                ConfigUpdateErrorCode.REVISION_CONFLICT
+            ) from None
+
+        current_digests = current_bundle.content_digests()
+        base_digests = base_bundle.content_digests()
+        drifted = tuple(
+            candidate_file
+            for candidate_file in ConfigFile
+            if current_digests[candidate_file] != base_digests[candidate_file]
+        )
+        if not drifted:
+            return
+        logger.warning(
+            "Loaded configuration no longer matches disk for %s; "
+            "an update of %s cannot proceed until the runtime is resynced.",
+            ", ".join(drifted_file.value for drifted_file in drifted),
+            config_file.value,
+        )
+        raise ConfigUpdateError(
+            ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC,
+            errors=tuple(
+                {
+                    "type": "source_drift",
+                    "loc": [drifted_file.value],
+                    "msg": (
+                        f"{drifted_file.value} on disk differs from the "
+                        "configuration this process loaded"
+                    ),
+                }
+                for drifted_file in drifted
+            ),
+        )
 
     @staticmethod
     def _validate_expected_revision(

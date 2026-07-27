@@ -1813,6 +1813,8 @@
     const rawDetailElement = document.getElementById("messageRawDetail");
     const saveButton = document.getElementById("saveButton");
     const conflictState = document.getElementById("editorConflictState");
+    const conflictTitle = document.getElementById("editorConflictTitle");
+    const conflictMessage = document.getElementById("editorConflictMessage");
     const reloadEditorDocumentButton = document.getElementById("reloadEditorDocumentButton");
     const addRuleButton = document.getElementById("addRuleButton");
     const previewRulesButton = document.getElementById("previewRulesButton");
@@ -1886,6 +1888,8 @@
       rawDetailElement,
       saveButton,
       conflictState,
+      conflictTitle,
+      conflictMessage,
       reloadEditorDocumentButton,
       addRuleButton,
       previewRulesButton,
@@ -2263,14 +2267,72 @@
         );
       }
     }
-    function showConflict(documentName) {
+    const CONFLICT_COPY = {
+      revision: {
+        title: "editor:conflict.title",
+        message: "editor:conflict.message",
+        action: "editor:conflict.reload"
+      },
+      outOfSync: {
+        title: "editor:conflict.outOfSyncTitle",
+        message: "editor:conflict.outOfSyncMessage",
+        action: "editor:conflict.resync"
+      }
+    };
+    function applyConflictCopy(element, key) {
+      element.setAttribute("data-i18n", key);
+      element.textContent = t(key);
+    }
+    function conflictModeFor(body) {
+      const detail = body && typeof body === "object" ? body.detail : null;
+      return detail && detail.code === "config_sources_out_of_sync" ? "outOfSync" : "revision";
+    }
+    function showConflict(documentName, mode = "revision") {
+      const resolvedMode = CONFLICT_COPY[mode] ? mode : "revision";
+      const copy = CONFLICT_COPY[resolvedMode];
       ctx.elements.conflictState.dataset.document = documentName;
+      ctx.elements.conflictState.dataset.mode = resolvedMode;
+      applyConflictCopy(ctx.elements.conflictTitle, copy.title);
+      applyConflictCopy(ctx.elements.conflictMessage, copy.message);
+      applyConflictCopy(ctx.elements.reloadEditorDocumentButton, copy.action);
       ctx.elements.conflictState.hidden = false;
       ctx.elements.conflictState.focus();
     }
     function clearConflict() {
       ctx.elements.conflictState.hidden = true;
       delete ctx.elements.conflictState.dataset.document;
+      delete ctx.elements.conflictState.dataset.mode;
+    }
+    async function resyncConfigSources() {
+      try {
+        const response = await ctx.apiFetch("/v1/config/resync", { method: "POST" });
+        if (!response.ok) {
+          const body = await readJsonBody(response).catch(() => ({}));
+          showLocalizedMessage(
+            "error",
+            "editor:conflict.resyncFailed",
+            {},
+            safeResponseError(response, body)
+          );
+          return false;
+        }
+      } catch (error) {
+        showLocalizedMessage(
+          "error",
+          "editor:conflict.resyncFailed",
+          {},
+          safeClientError(error)
+        );
+        return false;
+      }
+      showLocalizedMessage("success", "editor:conflict.resynced");
+      return true;
+    }
+    async function reloadAfterConflict() {
+      if (ctx.elements.conflictState.dataset.mode === "outOfSync" && !await resyncConfigSources()) {
+        return false;
+      }
+      return reloadActiveDocument();
     }
     function currentDocumentName() {
       if (["embeddings", "rerank", "images", "audio", "web"].includes(ctx.state.activeEditor)) {
@@ -2399,7 +2461,7 @@
       });
       const body = await readJsonBody(response).catch(() => ({}));
       if (response.status === 409) {
-        showConflict(documentName);
+        showConflict(documentName, conflictModeFor(body));
         return null;
       }
       if (!response.ok) {
@@ -3512,6 +3574,8 @@
       readJsonBody,
       showConflict,
       clearConflict,
+      resyncConfigSources,
+      reloadAfterConflict,
       currentDocumentName,
       isInteractionLocked,
       syncInteractionLock,
@@ -6923,7 +6987,7 @@
       });
     }
     ctx.elements.reloadEditorDocumentButton.addEventListener("click", () => {
-      void ctx.reloadActiveDocument();
+      void ctx.reloadAfterConflict();
     });
     const editorRoot = document.querySelector(".container");
     ["input", "change"].forEach((eventName) => {

@@ -600,7 +600,7 @@ def test_out_of_band_source_drift_precedes_semantics_and_candidate_work(
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "config_revision_conflict"
+    assert response.json()["detail"]["code"] == "config_sources_out_of_sync"
     semantics.assert_not_called()
     update.assert_not_awaited()
     assert {path.name for path in tmp_path.iterdir()} == names_before

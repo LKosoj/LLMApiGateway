@@ -95,7 +95,16 @@ def test_editor_conflict_panel_uses_strict_paired_i18n_catalogs() -> None:
     }
     assert catalogs["en"].keys() == catalogs["ru"].keys()
     assert catalogs["en"]["conflict"].keys() == catalogs["ru"]["conflict"].keys()
-    assert set(catalogs["en"]["conflict"]) == {"title", "message", "reload"}
+    assert set(catalogs["en"]["conflict"]) == {
+        "title",
+        "message",
+        "reload",
+        "outOfSyncTitle",
+        "outOfSyncMessage",
+        "resync",
+        "resynced",
+        "resyncFailed",
+    }
     assert catalogs["en"]["catalog"].keys() == catalogs["ru"]["catalog"].keys()
     assert set(catalogs["en"]["catalog"]) == {
         "empty",

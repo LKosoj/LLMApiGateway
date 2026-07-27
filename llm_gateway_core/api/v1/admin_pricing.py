@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from ...config.config_store import (
     ConfigFile,
     ConfigSourceBundle,
-    ConfigSourceError,
 )
 from ...config.paths import STATIC_DIR
 from ...middleware.auth import ROLE_MASTER
@@ -414,15 +413,10 @@ def _capture_config_update_base(
         config_file=ConfigFile.PROVIDERS,
         expected_revision=expected_revision,
     )
-    source_bundle = _snapshot_source_bundle(snapshot)
-    try:
-        current_bundle = source_bundle.recapture()
-    except ConfigSourceError:
-        raise ConfigUpdateError(
-            ConfigUpdateErrorCode.REVISION_CONFLICT
-        ) from None
-    if current_bundle != source_bundle:
-        raise ConfigUpdateError(ConfigUpdateErrorCode.REVISION_CONFLICT)
+    coordinator.check_sources(
+        base_snapshot=snapshot,
+        config_file=ConfigFile.PROVIDERS,
+    )
     return services, snapshot, coordinator
 
 

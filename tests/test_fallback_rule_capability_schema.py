@@ -43,7 +43,7 @@ class FallbackRuleCapabilitySchemaTests(unittest.TestCase):
             model="model-a",
             capabilities_autofilled=["supports_vision", "context_window"],
         )
-        self.assertEqual(rule.capabilities_autofilled, ["supports_vision", "context_window"])
+        self.assertEqual(rule.capabilities_autofilled, ["context_window", "supports_vision"])
 
         with self.assertRaises(ValidationError):
             FallbackModelRule(
@@ -52,13 +52,46 @@ class FallbackRuleCapabilitySchemaTests(unittest.TestCase):
                 capabilities_autofilled=["not_a_real_field"],
             )
 
+    def test_capabilities_autofilled_is_normalized_to_a_sorted_set(self):
+        # The list is an unordered set of owned field names, but it is written
+        # back to disk verbatim: two orderings of the same set would serialize
+        # to different bytes and read as a configuration revision conflict.
+        rule = FallbackModelRule(
+            provider="a",
+            model="model-a",
+            capabilities_autofilled=[
+                "supports_vision",
+                "supports_tools",
+                "context_window",
+                "supports_vision",
+            ],
+        )
+        self.assertEqual(
+            rule.capabilities_autofilled,
+            ["context_window", "supports_tools", "supports_vision"],
+        )
+
+        reordered = FallbackModelRule(
+            provider="a",
+            model="model-a",
+            capabilities_autofilled=[
+                "context_window",
+                "supports_vision",
+                "supports_tools",
+            ],
+        )
+        self.assertEqual(
+            reordered.model_dump(exclude_none=True)["capabilities_autofilled"],
+            rule.model_dump(exclude_none=True)["capabilities_autofilled"],
+        )
+
     def test_capabilities_autofilled_none_round_trips_excluded(self):
         rule = FallbackModelRule(provider="a", model="model-a")
         self.assertIsNone(rule.capabilities_autofilled)
         dumped = rule.model_dump(exclude_none=True)
         self.assertNotIn("capabilities_autofilled", dumped)
 
-    def test_capabilities_autofilled_with_values_round_trips_exactly(self):
+    def test_capabilities_autofilled_with_values_round_trips_sorted(self):
         rule = FallbackModelRule(
             provider="a",
             model="model-a",
@@ -67,7 +100,7 @@ class FallbackRuleCapabilitySchemaTests(unittest.TestCase):
             capabilities_autofilled=["supports_tools", "context_window"],
         )
         dumped = rule.model_dump(exclude_none=True)
-        self.assertEqual(dumped["capabilities_autofilled"], ["supports_tools", "context_window"])
+        self.assertEqual(dumped["capabilities_autofilled"], ["context_window", "supports_tools"])
 
     def test_legacy_config_without_capability_fields_round_trips_unchanged(self):
         legacy_item = {

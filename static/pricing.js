@@ -13,6 +13,7 @@
     let calculationSnapshot = null;
     let unsubscribeLocale = null;
     let detailIdx = null;
+    let conflictMode = 'revision';
 
     // ---------- DOM references ----------
     const tableBody = document.getElementById('pricingTableBody');
@@ -31,6 +32,8 @@
     const toast = document.getElementById('toast');
     const rawDetail = document.getElementById('pricingRawDetail');
     const conflictState = document.getElementById('pricingConflictState');
+    const conflictTitle = document.getElementById('pricingConflictTitle');
+    const conflictMessage = document.getElementById('pricingConflictMessage');
     const reloadPricingBtn = document.getElementById('reloadPricingBtn');
     const detailSheet = document.getElementById('pricingDetailSheet');
     const detailBackdrop = document.getElementById('pricingDetailBackdrop');
@@ -130,13 +133,60 @@
         });
     }
 
-    function showConflict() {
+    // Two different 409s land in the same block. A revision conflict means
+    // providers.json moved on and a plain reload fixes it; sources out of sync
+    // means the running process no longer matches the files on disk, and only
+    // a resync clears it — reloading would re-read the same stale snapshot.
+    const CONFLICT_COPY = {
+        revision: {
+            title: 'pricing:conflict.title',
+            message: 'pricing:conflict.message',
+            action: 'pricing:conflict.reload',
+        },
+        outOfSync: {
+            title: 'pricing:conflict.outOfSyncTitle',
+            message: 'pricing:conflict.outOfSyncMessage',
+            action: 'pricing:conflict.resync',
+        },
+    };
+
+    function applyConflictCopy(element, key) {
+        element.setAttribute('data-i18n', key);
+        element.textContent = i18n.t(key);
+    }
+
+    function showConflict(mode) {
+        conflictMode = CONFLICT_COPY[mode] ? mode : 'revision';
+        const copy = CONFLICT_COPY[conflictMode];
+        applyConflictCopy(conflictTitle, copy.title);
+        applyConflictCopy(conflictMessage, copy.message);
+        applyConflictCopy(reloadPricingBtn, copy.action);
         conflictState.hidden = false;
         conflictState.focus();
     }
 
     function clearConflict() {
         conflictState.hidden = true;
+    }
+
+    function conflictModeFor(payload) {
+        const code = payload && payload.detail ? payload.detail.code : null;
+        return code === 'config_sources_out_of_sync' ? 'outOfSync' : 'revision';
+    }
+
+    async function resyncConfig() {
+        try {
+            const resp = await apiFetch('/v1/config/resync', { method: 'POST' });
+            if (!resp.ok) {
+                await showResponseError(resp);
+                return false;
+            }
+            publishStatus({key: 'pricing:status.resynced'});
+            return true;
+        } catch (err) {
+            showNetworkError(err);
+            return false;
+        }
     }
 
     async function parsePricingResponse(response) {
@@ -405,7 +455,8 @@
                 body: JSON.stringify(payload),
             });
             if (resp.status === 409) {
-                showConflict();
+                const payload = await resp.json().catch(() => null);
+                showConflict(conflictModeFor(payload));
                 return;
             }
             if (!resp.ok) {
@@ -451,6 +502,9 @@
     });
 
     reloadPricingBtn.addEventListener('click', async () => {
+        if (conflictMode === 'outOfSync' && !(await resyncConfig())) {
+            return;
+        }
         await loadPricing();
     });
 

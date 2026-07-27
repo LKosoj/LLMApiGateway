@@ -38,7 +38,7 @@ from llm_gateway_core.config.loader import (
     ProviderDetails,
     SubscriptionQuotaConfig,
 )
-from llm_gateway_core.middleware.auth import ROLE_MASTER
+from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
 from llm_gateway_core.services.config_updates import (
     ConfigRevision,
     ConfigUpdateCoordinator,
@@ -1421,3 +1421,116 @@ def test_structured_provider_schema_preserves_quota_and_rejects_unknown_fields()
                 "unexpected": "must-not-be-ignored",
             }
         )
+
+
+def _resync_coordinator(
+    published_snapshot: RuntimeSnapshot | None = None,
+    *,
+    error: ConfigUpdateError | None = None,
+) -> ConfigUpdateCoordinator:
+    coordinator = object.__new__(ConfigUpdateCoordinator)
+    coordinator.resync = AsyncMock(  # type: ignore[method-assign]
+        side_effect=error,
+        return_value=(
+            None
+            if published_snapshot is None
+            else ConfigUpdateResult(
+                snapshot=published_snapshot,
+                cleanup_pending=False,
+            )
+        ),
+    )
+    return coordinator
+
+
+def test_resync_endpoint_publishes_the_disk_generation(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        base_snapshot = make_runtime_snapshot(
+            generation=4,
+            config_loader=_loader(tmp_path / "captured"),
+        )
+        published_snapshot = make_runtime_snapshot(
+            generation=5,
+            config_loader=_loader(tmp_path / "disk"),
+        )
+        coordinator = _resync_coordinator(published_snapshot)
+        _app, client = _client(
+            base_snapshot=base_snapshot,
+            coordinator=coordinator,
+        )
+
+        response = await client.post("/v1/config/resync")
+
+        assert response.status_code == 200
+        assert response.json()["generation"] == 5
+        assert response.headers["x-config-generation"] == "5"
+        assert response.headers["cache-control"] == "no-store"
+        assert coordinator.resync.await_args == call(base_snapshot=base_snapshot)
+        await client.aclose()
+
+    run_async(scenario())
+
+
+def test_resync_endpoint_maps_a_rejected_disk_state_to_its_status(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        base_snapshot = make_runtime_snapshot(
+            generation=4,
+            config_loader=_loader(tmp_path / "captured"),
+        )
+        coordinator = _resync_coordinator(
+            error=ConfigUpdateError(
+                ConfigUpdateErrorCode.VALIDATION_FAILED,
+                errors=({"type": "rule_validation", "loc": [], "msg": "bad"},),
+            )
+        )
+        _app, client = _client(
+            base_snapshot=base_snapshot,
+            coordinator=coordinator,
+        )
+
+        response = await client.post("/v1/config/resync")
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert detail["code"] == ConfigUpdateErrorCode.VALIDATION_FAILED.value
+        assert detail["errors"] == [
+            {"type": "rule_validation", "loc": [], "msg": "bad"}
+        ]
+        await client.aclose()
+
+    run_async(scenario())
+
+
+def test_resync_endpoint_is_reserved_for_the_master_key(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        base_snapshot = make_runtime_snapshot(
+            generation=4,
+            config_loader=_loader(tmp_path / "captured"),
+        )
+        coordinator = _resync_coordinator(base_snapshot)
+        app = FastAPI()
+        app.state.services = make_app_services(
+            config_update_coordinator=coordinator,
+        )
+
+        @app.middleware("http")
+        async def bind_runtime(request, call_next):
+            request.state.api_key_role = ROLE_USER
+            request.state.runtime_snapshot = base_snapshot
+            return await call_next(request)
+
+        app.include_router(editor_router, prefix="/v1")
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        )
+
+        response = await client.post("/v1/config/resync")
+
+        assert response.status_code == 403
+        coordinator.resync.assert_not_awaited()
+        await client.aclose()
+
+    run_async(scenario())

@@ -38,6 +38,10 @@ EXPECTED_CONFIG_UPDATE_ROUTES = {
     ): ("llm_gateway_core/api/v1/rules_editor.py", "save_providers_config"),
     (
         "POST",
+        "/v1/config/resync",
+    ): ("llm_gateway_core/api/v1/rules_editor.py", "resync_config_from_disk"),
+    (
+        "POST",
         "/v1/config/providers/structured",
     ): ("llm_gateway_core/api/v1/rules_editor.py", "save_providers_structured"),
     (

@@ -372,7 +372,12 @@
   "conflict": {
     "title": "This configuration changed elsewhere",
     "message": "Your edits are still here. Reload the latest version before trying again.",
-    "reload": "Reload and discard my edits"
+    "reload": "Reload and discard my edits",
+    "outOfSyncTitle": "Configuration on disk changed",
+    "outOfSyncMessage": "The configuration files changed outside this editor, so saving is blocked. Reload the configuration from disk — unsaved edits will be lost.",
+    "resync": "Reload configuration from disk",
+    "resynced": "Configuration reloaded from disk",
+    "resyncFailed": "Could not reload the configuration from disk"
   },
   "capability": {
     "unknown": "Unknown",

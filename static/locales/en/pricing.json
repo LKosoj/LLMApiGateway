@@ -50,7 +50,8 @@
   "status": {
     "mustLoad": "Pricing must be loaded before it can be saved",
     "saved": "Pricing saved successfully",
-    "selectModel": "Please select a model"
+    "selectModel": "Please select a model",
+    "resynced": "Configuration reloaded from disk"
   },
   "contract": {
     "missingEtag": "Pricing response omitted ETag",
@@ -59,7 +60,10 @@
   "conflict": {
     "title": "Pricing changed on the server",
     "message": "Your local edits were kept. Reload the latest pricing only when you are ready to discard those edits.",
-    "reload": "Reload and discard local edits"
+    "reload": "Reload and discard local edits",
+      "outOfSyncTitle": "Configuration on disk changed",
+      "outOfSyncMessage": "The configuration files changed outside this UI, so saving is blocked. Reload the configuration from disk — unsaved edits will be lost.",
+      "resync": "Reload configuration from disk"
   },
   "detail": {
     "heading": "Row details",

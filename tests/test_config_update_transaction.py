@@ -661,7 +661,7 @@ def test_comments_backup_drift_is_rejected_before_backup_or_transaction(
                     candidate_bytes=_model_rules("candidate"),
                     comments_backup=True,
                 ),
-                ConfigUpdateErrorCode.REVISION_CONFLICT,
+                ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC,
             )
             begin.assert_not_called()
             assert target.read_bytes() == external
@@ -764,7 +764,7 @@ def test_out_of_band_drift_is_rejected_and_external_bytes_survive(
                     candidate_bytes=_model_rules("candidate"),
                     expected_revision=expected_revision,
                 ),
-                ConfigUpdateErrorCode.REVISION_CONFLICT,
+                ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC,
             )
 
             assert target.read_bytes() == external_bytes

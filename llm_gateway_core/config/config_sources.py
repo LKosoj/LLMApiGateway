@@ -244,6 +244,22 @@ class ConfigSourceBundle:
     def __getitem__(self, config_file: ConfigFile) -> ConfigDocument:
         return self.documents[config_file]
 
+    def content_digests(self) -> Mapping[ConfigFile, str | None]:
+        """Return only the content identity of all six sources.
+
+        Equality on the bundle itself also covers filesystem metadata
+        (inode, mtime, ctime, mode, owner), so a plain ``chmod`` or an
+        atomic replacement with identical bytes reads as a change. Writers
+        that only need "are these the bytes we validated against" compare
+        these digests instead; ``None`` means the optional source is absent.
+        """
+        return MappingProxyType(
+            {
+                config_file: document.digest
+                for config_file, document in self.documents.items()
+            }
+        )
+
     def recapture(self) -> Self:
         """Recapture the exact six configured paths without changing identities."""
         return type(self).capture(

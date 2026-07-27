@@ -3,6 +3,8 @@ const messageArea = document.getElementById('messageArea');
 const rawDetailElement = document.getElementById('messageRawDetail');
 const saveButton = document.getElementById('saveButton');
 const conflictState = document.getElementById('editorConflictState');
+const conflictTitle = document.getElementById('editorConflictTitle');
+const conflictMessage = document.getElementById('editorConflictMessage');
 const reloadEditorDocumentButton = document.getElementById('reloadEditorDocumentButton');
 const addRuleButton = document.getElementById('addRuleButton');
 const previewRulesButton = document.getElementById('previewRulesButton');
@@ -81,6 +83,8 @@ const modelRulesRawInput = document.getElementById('modelRulesRawInput');
         rawDetailElement,
         saveButton,
         conflictState,
+        conflictTitle,
+        conflictMessage,
         reloadEditorDocumentButton,
         addRuleButton,
         previewRulesButton,
@@ -534,8 +538,43 @@ export function registerCore(ctx) {
         }
     }
 
-    function showConflict(documentName) {
+    // Two different 409s land in the same notice. A revision conflict means the
+    // document moved on and reloading it is enough; sources out of sync means
+    // the running process no longer matches the files on disk, and only a
+    // resync clears it — a reload would re-read the same stale snapshot.
+    const CONFLICT_COPY = {
+        revision: {
+            title: 'editor:conflict.title',
+            message: 'editor:conflict.message',
+            action: 'editor:conflict.reload',
+        },
+        outOfSync: {
+            title: 'editor:conflict.outOfSyncTitle',
+            message: 'editor:conflict.outOfSyncMessage',
+            action: 'editor:conflict.resync',
+        },
+    };
+
+    function applyConflictCopy(element, key) {
+        element.setAttribute('data-i18n', key);
+        element.textContent = t(key);
+    }
+
+    function conflictModeFor(body) {
+        const detail = body && typeof body === 'object' ? body.detail : null;
+        return detail && detail.code === 'config_sources_out_of_sync'
+            ? 'outOfSync'
+            : 'revision';
+    }
+
+    function showConflict(documentName, mode = 'revision') {
+        const resolvedMode = CONFLICT_COPY[mode] ? mode : 'revision';
+        const copy = CONFLICT_COPY[resolvedMode];
         ctx.elements.conflictState.dataset.document = documentName;
+        ctx.elements.conflictState.dataset.mode = resolvedMode;
+        applyConflictCopy(ctx.elements.conflictTitle, copy.title);
+        applyConflictCopy(ctx.elements.conflictMessage, copy.message);
+        applyConflictCopy(ctx.elements.reloadEditorDocumentButton, copy.action);
         ctx.elements.conflictState.hidden = false;
         ctx.elements.conflictState.focus();
     }
@@ -543,6 +582,43 @@ export function registerCore(ctx) {
     function clearConflict() {
         ctx.elements.conflictState.hidden = true;
         delete ctx.elements.conflictState.dataset.document;
+        delete ctx.elements.conflictState.dataset.mode;
+    }
+
+    async function resyncConfigSources() {
+        try {
+            const response = await ctx.apiFetch('/v1/config/resync', {method: 'POST'});
+            if (!response.ok) {
+                const body = await readJsonBody(response).catch(() => ({}));
+                showLocalizedMessage(
+                    'error',
+                    'editor:conflict.resyncFailed',
+                    {},
+                    safeResponseError(response, body),
+                );
+                return false;
+            }
+        } catch (error) {
+            showLocalizedMessage(
+                'error',
+                'editor:conflict.resyncFailed',
+                {},
+                safeClientError(error),
+            );
+            return false;
+        }
+        showLocalizedMessage('success', 'editor:conflict.resynced');
+        return true;
+    }
+
+    async function reloadAfterConflict() {
+        if (
+            ctx.elements.conflictState.dataset.mode === 'outOfSync'
+            && !(await resyncConfigSources())
+        ) {
+            return false;
+        }
+        return reloadActiveDocument();
     }
 
     function currentDocumentName() {
@@ -690,7 +766,7 @@ export function registerCore(ctx) {
         });
         const body = await readJsonBody(response).catch(() => ({}));
         if (response.status === 409) {
-            showConflict(documentName);
+            showConflict(documentName, conflictModeFor(body));
             return null;
         }
         if (!response.ok) {
@@ -1949,6 +2025,8 @@ export function registerCore(ctx) {
         readJsonBody,
         showConflict,
         clearConflict,
+        resyncConfigSources,
+        reloadAfterConflict,
         currentDocumentName,
         isInteractionLocked,
         syncInteractionLock,

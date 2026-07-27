@@ -36,6 +36,7 @@ _ERROR_HTTP_STATUS = {
     ConfigUpdateErrorCode.VALIDATION_FAILED: 400,
     ConfigUpdateErrorCode.GENERATION_STALE: 409,
     ConfigUpdateErrorCode.REVISION_CONFLICT: 409,
+    ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC: 409,
     ConfigUpdateErrorCode.GENERATION_BUSY: 409,
     ConfigUpdateErrorCode.COMMIT_FAILED: 500,
     ConfigUpdateErrorCode.UPDATE_UNAVAILABLE: 503,
@@ -48,6 +49,9 @@ _ERROR_MESSAGES = {
     ),
     ConfigUpdateErrorCode.REVISION_CONFLICT: (
         "The configuration revision changed."
+    ),
+    ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC: (
+        "The loaded configuration no longer matches the files on disk."
     ),
     ConfigUpdateErrorCode.GENERATION_BUSY: (
         "The previous runtime generation is still retiring."
