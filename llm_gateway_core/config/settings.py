@@ -104,6 +104,10 @@ class Settings(BaseSettings):
         "WRITE_BATCHER_QUEUE_MAXSIZE",
         4096,
     )
+    deep_research_max_children: int = _get_positive_int_env(
+        "DEEP_RESEARCH_MAX_CHILDREN",
+        1024,
+    )
     stream_observation_buffer_max_bytes: int = _get_positive_int_env(
         "STREAM_OBSERVATION_BUFFER_MAX_BYTES",
         32 * 1024 * 1024,

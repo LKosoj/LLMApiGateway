@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -44,6 +46,7 @@ from ...services.active_requests import (
 )
 from ...services.deep_research_accounting import (
     DeepResearchAuthIdentity,
+    DeepResearchChildAdmission,
     DeepResearchChildSeal,
     DeepResearchParentHandle,
     build_deep_research_rollup_event,
@@ -57,6 +60,19 @@ from ...utils.usage_tracking import ModelCostRates
 
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
+
+# `admission_closed` is the one transient reason a child reservation fails: the
+# accounting service blocks admission on a single failed source write and
+# reopens as soon as the projector settles the event, which is usually well
+# under a second. Child callbacks have no transport-level retry — the child's
+# IPC client latches the first reported failure and every later search/read
+# fails without reaching the gateway — so one blip would otherwise kill a
+# research run that takes minutes. Every other AccountingError (budget, rate
+# limit, child cap) is a real verdict and must stay terminal.
+_CHILD_ADMISSION_ATTEMPTS = 3
+_CHILD_ADMISSION_BACKOFF_SECONDS = 0.3
 
 
 class _OwnerState(StrEnum):
@@ -154,6 +170,39 @@ class DeepResearchTerminalOwner:
         except BaseException:
             pass
 
+    async def _reserve_child(
+        self,
+        *,
+        request_id: str,
+        route_template: str,
+    ) -> DeepResearchChildAdmission:
+        # Retrying the same request_id is safe: reserve_deep_research_child()
+        # aborts the prepared slot before it propagates the failure, so no
+        # child slot leaks into the per-run cap.
+        attempt = 1
+        while True:
+            try:
+                return await self._accounting_service.reserve_deep_research_child(
+                    self.token,
+                    request_id=request_id,
+                    estimate_usd=self._estimate_usd,
+                )
+            except AccountingError as exc:
+                if (
+                    exc.code is not AccountingErrorCode.ADMISSION_CLOSED
+                    or attempt >= _CHILD_ADMISSION_ATTEMPTS
+                ):
+                    raise
+                logger.warning(
+                    "Deep research child admission for %s is closed; "
+                    "retrying (%s/%s).",
+                    route_template,
+                    attempt,
+                    _CHILD_ADMISSION_ATTEMPTS - 1,
+                )
+                await asyncio.sleep(_CHILD_ADMISSION_BACKOFF_SECONDS * attempt)
+                attempt += 1
+
     async def run_flat_operation_child(
         self,
         *,
@@ -167,10 +216,9 @@ class DeepResearchTerminalOwner:
         if policy is None or policy.operation not in {"web_search", "web_read"}:
             raise AccountingValidationError
         request_id = str(uuid.uuid4())
-        admission = await self._accounting_service.reserve_deep_research_child(
-            self.token,
+        admission = await self._reserve_child(
             request_id=request_id,
-            estimate_usd=self._estimate_usd,
+            route_template=route_template,
         )
         context = AccountingRequestContext(
             method="POST",

@@ -309,6 +309,118 @@ def test_in_process_operation_child_commits_parent_linked_charge() -> None:
     service.release.assert_not_awaited()
 
 
+def test_transient_admission_block_retries_the_child_reservation() -> None:
+    owner, service, _auth_identity, handle, token, _codec = _owner_setup()
+    child_request_id = "00000000-0000-4000-8000-000000000011"
+    child_reservation = AccountingReservation(
+        reservation_id="child-reservation",
+        request_id=child_request_id,
+        api_key_id=7,
+        reserved_usd=0.25,
+    )
+    service.reserve_deep_research_child.side_effect = [
+        AccountingError(AccountingErrorCode.ADMISSION_CLOSED),
+        DeepResearchChildAdmission(
+            reservation=child_reservation,
+            parent_event_id=handle.rollup_event_id,
+            ordinal=0,
+        ),
+    ]
+    _install_successful_commit(service)
+    owner.begin(PARENT_MODEL)
+    sleeps = AsyncMock()
+
+    with (
+        patch(
+            "llm_gateway_core.api.v1.deep_research_accounting.uuid.uuid4",
+            return_value=UUID(child_request_id),
+        ),
+        patch(
+            "llm_gateway_core.api.v1.deep_research_accounting.asyncio.sleep",
+            sleeps,
+        ),
+    ):
+        result = run_async(
+            owner.run_flat_operation_child(
+                route_template="/v1/web/search",
+                gateway_model=CHILD_MODEL,
+                work=AsyncMock(return_value={"items": ["result"]}),
+            )
+        )
+
+    assert result == {"items": ["result"]}
+    assert service.reserve_deep_research_child.await_count == 2
+    assert service.reserve_deep_research_child.await_args_list[0].args == (token,)
+    sleeps.assert_awaited_once_with(0.3)
+    service.commit.assert_awaited_once()
+
+
+def test_persistent_admission_block_stops_after_the_bounded_retries() -> None:
+    owner, service, _auth_identity, _handle, _token, _codec = _owner_setup()
+    child_request_id = "00000000-0000-4000-8000-000000000012"
+    service.reserve_deep_research_child.side_effect = AccountingError(
+        AccountingErrorCode.ADMISSION_CLOSED
+    )
+    owner.begin(PARENT_MODEL)
+
+    with (
+        patch(
+            "llm_gateway_core.api.v1.deep_research_accounting.uuid.uuid4",
+            return_value=UUID(child_request_id),
+        ),
+        patch(
+            "llm_gateway_core.api.v1.deep_research_accounting.asyncio.sleep",
+            AsyncMock(),
+        ),
+        pytest.raises(AccountingError) as blocked,
+    ):
+        run_async(
+            owner.run_flat_operation_child(
+                route_template="/v1/web/search",
+                gateway_model=CHILD_MODEL,
+                work=AsyncMock(),
+            )
+        )
+
+    assert blocked.value.code is AccountingErrorCode.ADMISSION_CLOSED
+    assert service.reserve_deep_research_child.await_count == 3
+    service.commit.assert_not_awaited()
+    service.release.assert_not_awaited()
+
+
+def test_budget_exhausted_child_admission_is_not_retried() -> None:
+    owner, service, _auth_identity, _handle, _token, _codec = _owner_setup()
+    child_request_id = "00000000-0000-4000-8000-000000000013"
+    service.reserve_deep_research_child.side_effect = AccountingError(
+        AccountingErrorCode.BUDGET_EXHAUSTED
+    )
+    owner.begin(PARENT_MODEL)
+    sleeps = AsyncMock()
+
+    with (
+        patch(
+            "llm_gateway_core.api.v1.deep_research_accounting.uuid.uuid4",
+            return_value=UUID(child_request_id),
+        ),
+        patch(
+            "llm_gateway_core.api.v1.deep_research_accounting.asyncio.sleep",
+            sleeps,
+        ),
+        pytest.raises(AccountingError) as exhausted,
+    ):
+        run_async(
+            owner.run_flat_operation_child(
+                route_template="/v1/web/search",
+                gateway_model=CHILD_MODEL,
+                work=AsyncMock(),
+            )
+        )
+
+    assert exhausted.value.code is AccountingErrorCode.BUDGET_EXHAUSTED
+    assert service.reserve_deep_research_child.await_count == 1
+    sleeps.assert_not_awaited()
+
+
 def test_in_process_operation_work_failure_releases_child() -> None:
     owner, service, _auth_identity, handle, _token, _codec = _owner_setup()
     child_request_id = "00000000-0000-4000-8000-000000000002"

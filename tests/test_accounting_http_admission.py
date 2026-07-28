@@ -266,6 +266,7 @@ def test_accounting_error_mapping_is_complete_and_safe(code: AccountingErrorCode
             503,
             "budget_reset_in_progress",
         ),
+        AccountingErrorCode.ACTIVE_SESSION_LIMIT: (503, "active_session_limit"),
     }
     admin_expected = {
         AccountingErrorCode.ACCOUNTING_IN_FLIGHT: (409, "accounting_in_flight"),

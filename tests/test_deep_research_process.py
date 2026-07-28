@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import socket
 import subprocess
@@ -12,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 import llm_gateway_core.agents.deep_research_adapter as adapter_module
 import llm_gateway_core.services.deep_research_process as process_module
@@ -646,6 +648,36 @@ def test_mixed_callback_error_does_not_poison_delayed_matching_response() -> Non
         assert error.value.code == "callback_failed"
         assert completed == ["message-2"]
         assert runner.active_process_count == 0
+
+    run_async(scenario())
+
+
+def test_callback_failure_reason_stays_in_the_parent_log(caplog) -> None:
+    async def scenario() -> None:
+        async def fail(_request: DeepResearchCallbackRequest):
+            raise HTTPException(
+                status_code=503,
+                detail="Web read 'llmgateway/web-read' failed for 'https://example.com'.",
+            )
+
+        runner = DeepResearchProcessRunner(
+            _adapter_module=FIXTURE_ADAPTER,
+            admission_timeout_seconds=0.2,
+        )
+        await runner.start()
+        try:
+            with caplog.at_level(logging.ERROR, logger=process_module.__name__):
+                with pytest.raises(DeepResearchProcessError) as error:
+                    await runner.run(
+                        _job("callbacks"),
+                        callbacks=DeepResearchCallbacks(handle=fail),
+                    )
+        finally:
+            await runner.aclose()
+        assert error.value.code == "callback_failed"
+        assert "llmgateway/web-read" not in str(error.value)
+        assert "deep-research callback 'search' failed for job" in caplog.text
+        assert "Web read 'llmgateway/web-read' failed" in caplog.text
 
     run_async(scenario())
 

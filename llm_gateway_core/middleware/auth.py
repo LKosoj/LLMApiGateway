@@ -903,6 +903,8 @@ async def _prepare_api_key_auth(
                 reason=failure.detail,
                 category=category,
             )
+        else:
+            logging.warning(f"Accounting admission rejected the request: {exc.code}")
         return (
             accounting_error_response(
                 request,

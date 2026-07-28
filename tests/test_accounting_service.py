@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 import threading
 import time
@@ -2876,6 +2877,36 @@ def test_source_failure_retains_session_until_supervised_retry_accepts() -> None
     run_async(scenario())
 
 
+def test_transient_admission_block_logs_the_code_that_closed_it(caplog) -> None:
+    async def scenario() -> None:
+        source = FakeSource()
+        source.accept_error = AccountingError(AccountingErrorCode.SOURCE_WRITE_FAILED)
+        service = _service(source, FakeSink())
+        await service.start()
+        reservation = await _reserve(service, "request-blocked-log")
+        event = replace(_charge("event-blocked-log"), request_id=reservation.request_id)
+
+        with caplog.at_level(logging.WARNING, logger="llm_gateway_core.services.accounting_service"):
+            commit_task = asyncio.create_task(service.commit(reservation, event))
+            await _wait_until(
+                lambda: service.health_snapshot().state is AccountingHealthState.BLOCKED
+            )
+            source.accept_error = None
+            await asyncio.wait_for(commit_task, timeout=1)
+            await _wait_until(
+                lambda: service.health_snapshot().state is AccountingHealthState.RUNNING
+            )
+        await service.stop()
+
+        assert (
+            "Accounting admission closed: running -> blocked (error source_write_failed)"
+            in caplog.text
+        )
+        assert "Accounting admission reopened: blocked -> running" in caplog.text
+
+    run_async(scenario())
+
+
 def test_stop_closes_admission_and_waits_for_caller_to_release_session() -> None:
     async def scenario() -> None:
         service = _service(FakeSource(), FakeSink())
@@ -3448,6 +3479,50 @@ def test_deep_research_children_share_parent_budget_admission() -> None:
         rollup = build_deep_research_rollup_event(parent, sealed, occurred_at=NOW)
         assert await service.commit(parent_reservation, rollup) is not None
         assert service._budget_ledger.reserved_for(7) == 0.0
+        await service.stop()
+
+    run_async(scenario())
+
+
+def test_deep_research_child_budget_outlives_the_concurrency_limit() -> None:
+    async def scenario() -> None:
+        service = _service(
+            FakeSource(),
+            FakeSink(),
+            max_active_sessions=2,
+            max_deep_research_children=4,
+        )
+        await service.start()
+        parent_reservation = await _reserve(
+            service,
+            "deep-cap-parent",
+            spent_usd=0.0,
+        )
+        parent, token = service.begin_deep_research_parent(
+            parent_reservation,
+            gateway_model="gateway/deep-research",
+            auth_identity=DeepResearchAuthIdentity(api_key_id=7),
+        )
+
+        for ordinal in range(4):
+            child = await service.reserve_deep_research_child(
+                token,
+                request_id=f"deep-cap-child-{ordinal}",
+                estimate_usd=0.1,
+            )
+            assert await service.release(child.reservation) is True
+
+        with pytest.raises(AccountingError) as error:
+            await service.reserve_deep_research_child(
+                token,
+                request_id="deep-cap-child-4",
+                estimate_usd=0.1,
+            )
+
+        assert error.value.code is AccountingErrorCode.ACTIVE_SESSION_LIMIT
+        assert service.health_snapshot().active_sessions == 1
+        await service.cancel_deep_research_children(parent)
+        assert await service.release(parent_reservation) is True
         await service.stop()
 
     run_async(scenario())

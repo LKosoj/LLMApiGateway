@@ -778,6 +778,7 @@ async def lifespan(app: FastAPI):
             api_keys_db,
             budget_ledger=usd_budget_ledger,
             rate_limiter=rate_limiter,
+            max_deep_research_children=settings.deep_research_max_children,
         )
         # Deliberately not wrapped in _push_safe_cleanup: stop() raises when a
         # charge stayed unsettled (e.g. a projection the sink kept rejecting),

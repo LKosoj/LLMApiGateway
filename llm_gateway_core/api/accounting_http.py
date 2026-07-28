@@ -50,6 +50,11 @@ _ADMISSION_FAILURES = {
         "budget_reset_in_progress",
         "Accounting budget reset is in progress.",
     ),
+    AccountingErrorCode.ACTIVE_SESSION_LIMIT: AccountingHttpFailure(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "active_session_limit",
+        "Active session limit is exhausted.",
+    ),
 }
 _ADMIN_FAILURES = {
     AccountingErrorCode.ACCOUNTING_IN_FLIGHT: AccountingHttpFailure(

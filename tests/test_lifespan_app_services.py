@@ -174,6 +174,7 @@ def _lifespan_environment():
         *,
         budget_ledger: object,
         rate_limiter: object,
+        max_deep_research_children: int,
     ) -> Mock:
         service = Mock(name=f"accounting-{len(accounting_services) + 1}")
         service.start = AsyncMock(

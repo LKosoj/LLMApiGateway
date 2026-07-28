@@ -83,6 +83,15 @@ class _DeepResearchCallbackDrainError(DeepResearchProtocolError):
     pass
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _CallbackFailure:
+    """Reason one callback failed, carried back to the serve loop for logging."""
+
+    operation: str
+    message_id: str
+    reason: str
+
+
 class DeepResearchRunnerState(str, Enum):
     NEW = "new"
     RUNNING = "running"
@@ -399,7 +408,8 @@ async def _serve_job_callbacks(
     callback_timeout_seconds: float,
 ) -> DeepResearchResult:
     write_lock = asyncio.Lock()
-    callback_tasks: set[asyncio.Task[None]] = set()
+    callback_tasks: set[asyncio.Task[_CallbackFailure | None]] = set()
+    failures: list[_CallbackFailure] = []
     seen_message_ids: set[str] = set()
     receive_task = asyncio.create_task(
         _recv_async_frame(sock),
@@ -414,7 +424,7 @@ async def _serve_job_callbacks(
             completed_callbacks = done & callback_tasks
             callback_tasks.difference_update(completed_callbacks)
             for task in completed_callbacks:
-                task.result()
+                _collect_callback_failure(task.result(), failures)
 
             if receive_task not in done:
                 continue
@@ -448,7 +458,7 @@ async def _serve_job_callbacks(
             newly_completed = {task for task in callback_tasks if task.done()}
             callback_tasks.difference_update(newly_completed)
             for task in newly_completed:
-                task.result()
+                _collect_callback_failure(task.result(), failures)
             if callback_tasks:
                 raise _DeepResearchCallbackDrainError(
                     "terminal message arrived before callback drain"
@@ -464,6 +474,17 @@ async def _serve_job_callbacks(
             *callback_tasks,
             return_exceptions=True,
         )
+        # Logged only once the job is over: the wire carries just the exception
+        # type, so this is the only record of why a callback failed, and logging
+        # it while callbacks are still in flight trips the drain guard.
+        for failure in failures:
+            logger.error(
+                "deep-research callback '%s' failed for job %s (message %s): %s",
+                failure.operation,
+                job.job_id,
+                failure.message_id,
+                failure.reason,
+            )
 
 
 async def _handle_callback_request(
@@ -473,7 +494,8 @@ async def _handle_callback_request(
     callbacks: DeepResearchCallbacks | None,
     callback_timeout_seconds: float,
     write_lock: asyncio.Lock,
-) -> None:
+) -> _CallbackFailure | None:
+    failure: BaseException | None = None
     if callbacks is None:
         response = callback_error_message(
             request,
@@ -490,6 +512,7 @@ async def _handle_callback_request(
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
+            failure = exc
             response = callback_error_message(
                 request,
                 "callback_failed",
@@ -497,6 +520,24 @@ async def _handle_callback_request(
             )
     async with write_lock:
         await _send_async_frame(sock, response)
+    if failure is None:
+        return None
+    # Reported to the serve loop instead of logged here: the child may send its
+    # terminal message the moment it reads the failure, and a callback task that
+    # is still logging then trips the drain guard.
+    return _CallbackFailure(
+        operation=request.operation.value,
+        message_id=request.message_id,
+        reason=f"{_safe_exception_type(failure)}: {failure}",
+    )
+
+
+def _collect_callback_failure(
+    failure: _CallbackFailure | None,
+    failures: list[_CallbackFailure],
+) -> None:
+    if failure is not None:
+        failures.append(failure)
 
 
 def _safe_exception_type(exc: BaseException) -> str:

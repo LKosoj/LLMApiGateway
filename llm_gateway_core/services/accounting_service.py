@@ -238,6 +238,7 @@ class AccountingService:
         max_retained_events: int = 128,
         max_owner_tasks: int = 128,
         max_active_sessions: int = 128,
+        max_deep_research_children: int = 1024,
         projector_batch_size: int = 64,
         projector_backoff_seconds: float = 0.25,
         clock: Callable[[], datetime] | None = None,
@@ -249,14 +250,19 @@ class AccountingService:
         self._max_retained_events = _positive_int(max_retained_events)
         self._max_owner_tasks = _positive_int(max_owner_tasks)
         self._max_active_sessions = _positive_int(max_active_sessions)
+        self._max_deep_research_children = _positive_int(max_deep_research_children)
         self._projector_batch_size = _positive_int(projector_batch_size)
         self._projector_backoff_seconds = _positive_float(projector_backoff_seconds)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._budget_ledger = budget_ledger or UsdBudgetLedger()
         self._rate_limiter = rate_limiter or RateLimiter()
+        # max_children_per_context bounds every child session a research run
+        # ever opens, not the concurrent ones: the collector keeps terminal
+        # slots until seal() rolls their receipts up. Sharing the concurrency
+        # limit with it capped one run at 128 operations.
         self._deep_research_accounting = DeepResearchAccountingRegistry(
             max_contexts=self._max_active_sessions,
-            max_children_per_context=self._max_active_sessions,
+            max_children_per_context=self._max_deep_research_children,
             clock=self._now,
         )
 
@@ -379,6 +385,7 @@ class AccountingService:
         except BaseException:
             now = None
         with self._state_guard:
+            previous_state = self._state
             self._last_error_code = code
             self._last_error_at = now
             if code is AccountingErrorCode.FINGERPRINT_CONFLICT:
@@ -398,12 +405,26 @@ class AccountingService:
             }:
                 self._state = AccountingHealthState.BLOCKED
                 self._accepting = False
+            new_state = self._state
+            closed = new_state is not previous_state and not self._accepting
+        # Logged outside the guard: closing admission rejects every in-flight
+        # request with `admission_closed`, and the code that caused it is
+        # otherwise visible only in the health snapshot until it is overwritten.
+        if closed:
+            logger.error(
+                "Accounting admission closed: %s -> %s (error %s)",
+                previous_state.value,
+                new_state.value,
+                code.value,
+            )
 
     def _clear_transient_block(self) -> None:
         with self._state_guard:
-            self._clear_transient_block_locked()
+            cleared = self._clear_transient_block_locked()
+        if cleared:
+            self._log_admission_reopened()
 
-    def _clear_transient_block_locked(self) -> None:
+    def _clear_transient_block_locked(self) -> bool:
         if (
             self._state is AccountingHealthState.BLOCKED
             and self._fatal_error_code is None
@@ -411,6 +432,12 @@ class AccountingService:
         ):
             self._state = AccountingHealthState.RUNNING
             self._accepting = True
+            return True
+        return False
+
+    @staticmethod
+    def _log_admission_reopened() -> None:
+        logger.warning("Accounting admission reopened: blocked -> running")
 
     def _has_fatal_error(self) -> bool:
         with self._state_guard:
@@ -486,7 +513,9 @@ class AccountingService:
     def _clear_pending(self, stored: StoredAccountingEvent) -> None:
         with self._state_guard:
             self._pending_events.discard(self._pending_key(stored))
-            self._clear_transient_block_locked()
+            cleared = self._clear_transient_block_locked()
+        if cleared:
+            self._log_admission_reopened()
 
     def _accept_source_result(
         self,
@@ -504,7 +533,9 @@ class AccountingService:
                 self._pending_events.add(pending_key)
             else:
                 self._pending_events.discard(pending_key)
-            self._clear_transient_block_locked()
+            cleared = self._clear_transient_block_locked()
+        if cleared:
+            self._log_admission_reopened()
 
     def _release_source_owner_locked(self, key: _RetainedKey) -> None:
         owner_count = self._source_inflight[key]
