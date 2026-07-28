@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from ...agents.web_research import _extract_text_with_selectolax
 from ...config.settings import settings
+from ...utils.youtube_transcript import build_youtube_transcript_api
 from .web_content import (
     clean_read_url as _clean_read_url,
     content_with_images as _content_with_images,
@@ -59,28 +60,36 @@ async def _direct_http_fetch(url: str) -> dict[str, Any] | None:
 
     video_id = _extract_youtube_video_id(cleaned)
     if video_id:
+        # A YouTube URL is a request for its transcript: falling back to the video's
+        # HTML page would silently return navigation chrome instead of the content,
+        # so an unavailable transcript is reported as an error.
+        def _fetch() -> tuple[str, str]:
+            api = build_youtube_transcript_api()
+            transcripts = api.list(video_id)
+            try:
+                transcript = transcripts.find_transcript(["ru", "en", "zh-Hans", "zh-Hant"])
+            except Exception:
+                transcript = next(iter(transcripts))
+            segments = list(transcript.fetch())
+            parts = [(seg.get("text") if isinstance(seg, dict) else getattr(seg, "text", "")) for seg in segments]
+            text = " ".join(p.strip() for p in parts if p)
+            return text, f"YouTube: {video_id} ({getattr(transcript, 'language', '')})"
+
         try:
-            from youtube_transcript_api import YouTubeTranscriptApi
-
-            def _fetch() -> tuple[str, str]:
-                api = YouTubeTranscriptApi()
-                transcripts = api.list(video_id)
-                try:
-                    transcript = transcripts.find_transcript(["ru", "en", "zh-Hans", "zh-Hant"])
-                except Exception:
-                    transcript = next(iter(transcripts))
-                segments = list(transcript.fetch())
-                parts = [(seg.get("text") if isinstance(seg, dict) else getattr(seg, "text", "")) for seg in segments]
-                text = " ".join(p.strip() for p in parts if p)
-                return text, f"YouTube: {video_id} ({getattr(transcript, 'language', '')})"
-
             content, title = await asyncio.to_thread(_fetch)
-            if content.strip():
-                return {"url": cleaned, "title": title, "content": content}
-        except ImportError:
-            logger.debug("youtube_transcript_api not installed; skipping YouTube transcript for %s", cleaned)
         except Exception as exc:
             logger.warning("YouTube transcript failed for %s: %s", cleaned, exc)
+            raise HTTPException(
+                status_code=503,
+                detail=f"YouTube transcript is unavailable for '{cleaned}': {exc}",
+            ) from exc
+        if not content.strip():
+            logger.warning("YouTube transcript is empty for %s", cleaned)
+            raise HTTPException(
+                status_code=503,
+                detail=f"YouTube transcript is empty for '{cleaned}'.",
+            )
+        return {"url": cleaned, "title": title, "content": content}
 
     for fetch_url, response_url_override in _direct_fetch_url_candidates(cleaned):
         if fetch_url != cleaned:

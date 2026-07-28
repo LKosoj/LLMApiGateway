@@ -811,6 +811,11 @@ pyphen==0.17.2
     #   -c requirements-dev.txt
     #   gpt-researcher
     #   weasyprint
+pysocks==1.7.1
+    # via
+    #   -c requirements-dev.txt
+    #   -c requirements.txt
+    #   llmapigateway (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via
     #   -c requirements-dev.txt

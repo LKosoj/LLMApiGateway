@@ -27,6 +27,7 @@ dependencies = [
     "rs-trafilatura>=0.1.1",
     "trafilatura>=2.1.0",
     "youtube-transcript-api>=1.2.4",
+    "PySocks>=1.7.1",
     "selectolax>=0.4.9",
 ]
 

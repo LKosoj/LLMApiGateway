@@ -372,16 +372,10 @@ class WebResearchClient:
 
         video_id = _extract_youtube_video_id(url)
         if video_id:
-            try:
-                content, yt_title = await self._extract_youtube_transcript(video_id)
-                return {"url": url, "title": yt_title, "content": content}
-            except Exception as exc:
-                logger.warning("YouTube транскрипт недоступен для %s: %s", url, exc)
-                return {
-                    "url": url,
-                    "title": f"YouTube: {video_id}",
-                    "content": "YouTube-видео (субтитры недоступны)",
-                }
+            # Без субтитров у YouTube-ссылки нет пригодного текста: возвращать
+            # текст-заглушку значило бы отдать её агенту как настоящий контент.
+            content, yt_title = await self._extract_youtube_transcript(video_id)
+            return {"url": url, "title": yt_title, "content": content}
 
         title = ""
 
@@ -532,13 +526,14 @@ class WebResearchClient:
         return {"url": url, "title": title, "content": ""}
 
     async def _extract_youtube_transcript(self, video_id: str) -> tuple[str, str]:
-        from youtube_transcript_api import YouTubeTranscriptApi
         from youtube_transcript_api._errors import (
             NoTranscriptFound,
             TranscriptsDisabled,
         )
 
-        api = YouTubeTranscriptApi()
+        from ..utils.youtube_transcript import build_youtube_transcript_api
+
+        api = build_youtube_transcript_api()
 
         def _fetch() -> tuple[str, str]:
             transcript_list = api.list(video_id)

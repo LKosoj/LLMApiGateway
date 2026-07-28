@@ -119,6 +119,8 @@ pydantic-settings==2.14.2
     #   llmapigateway (pyproject.toml)
 pyee==13.0.1
     # via playwright
+pysocks==1.7.1
+    # via llmapigateway (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via
     #   dateparser

@@ -693,6 +693,10 @@ pyproject-hooks==1.2.0
     # via
     #   build
     #   pip-tools
+pysocks==1.7.1
+    # via
+    #   -c requirements.txt
+    #   llmapigateway (pyproject.toml)
 pytest==9.0.3
     # via
     #   llmapigateway (pyproject.toml)

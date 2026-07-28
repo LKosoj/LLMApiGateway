@@ -246,6 +246,11 @@ class Settings(BaseSettings):
     web_read_cloakbrowser_enabled: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_ENABLED", False)
     web_read_cloakbrowser_no_sandbox: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_NO_SANDBOX", False)
 
+    # Optional proxy for YouTube transcript downloads. YouTube blocks the caption
+    # endpoint for datacenter IPs, so transcripts are fetched through this proxy when
+    # it is set; when unset they are fetched directly.
+    youtube_proxy_url: str | None = os.getenv("YOUTUBE_PROXY_URL") or None
+
     # Free-tier LLM catalog (freellmapi.co): minimum monthly token budget floor
     # a model must clear to be shown on the /ui/free-models page, and a kill
     # switch for the periodic fetch (test environments disable the real HTTP call).
