@@ -152,6 +152,20 @@ class UpstreamRoutingState:
         # used to pick the escalation-ladder rung.
         self._exhaustion_windows: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
         self._observed_limits: dict[tuple[str, str, str], dict[ObservedLimitAxis, ObservedLimitEntry]] = {}
+        # (provider, model) pairs that answered a forced ``tool_choice`` with a
+        # rejection. Deliberately not keyed by upstream key: refusing to be told
+        # it must call a tool is a property of the model/endpoint, not of the
+        # credential used to reach it.
+        self._forced_tool_choice_unsupported: set[tuple[str, str]] = set()
+
+    def record_forced_tool_choice_unsupported(self, provider: str, model: str) -> None:
+        """Remember that this model rejects a forced ``tool_choice``."""
+        with self._lock:
+            self._forced_tool_choice_unsupported.add((provider, model))
+
+    def forced_tool_choice_unsupported(self, provider: str, model: str) -> bool:
+        with self._lock:
+            return (provider, model) in self._forced_tool_choice_unsupported
 
     def select_key(
         self,
@@ -564,6 +578,10 @@ class UpstreamRoutingState:
                         "tokens_last_day": self._tokens_since(self._token_windows[ref], now, 86400.0),
                         "cooldown_escalation_level": len(exhaustion_events) if exhaustion_events else 0,
                         "observed_limits": self._observed_limits_snapshot(ref, now),
+                        # Read directly: the lock is already held here and is
+                        # not reentrant, so the public getter would deadlock.
+                        "forced_tool_choice_unsupported": (provider, model)
+                        in self._forced_tool_choice_unsupported,
                     }
                 )
             return rows

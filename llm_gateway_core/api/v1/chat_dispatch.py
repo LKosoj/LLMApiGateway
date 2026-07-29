@@ -33,6 +33,9 @@ from ...services.error_classifier import (
     _is_context_overflow_error,
     _log_failed_attempt_warning,
     _normalize_provider_attempt_payload,
+    downgrade_forced_tool_choice,
+    has_forced_tool_choice,
+    is_forced_tool_choice_unsupported_error,
 )
 from ...services.chat_accounting import (
     ObservedChatResponse,
@@ -747,6 +750,16 @@ async def attempt_model_fallback_rule(
 
     if not is_anthropic_provider:
         _normalize_provider_attempt_payload(provider_payload_template, provider_model=provider_model)
+        if has_forced_tool_choice(provider_payload_template) and upstream_routing_state.forced_tool_choice_unsupported(
+            provider_name or "unknown", provider_model or "unknown"
+        ):
+            downgrade_forced_tool_choice(provider_payload_template)
+            logging.info(
+                "Model '%s' in provider '%s' is known to reject a forced tool_choice; "
+                "sending it as 'auto' without spending an attempt on the rejection.",
+                provider_model,
+                provider_name,
+            )
 
     last_error_detail = f"Model '{provider_model}' failed without an explicit provider error."
     stream_request_kwargs = (
@@ -839,6 +852,39 @@ async def attempt_model_fallback_rule(
     # available key candidates, so a chain cannot loop key-to-key forever.
     key_switch_budget = len(key_candidates)
     key_switches_used = 0
+
+    # Like a key switch, downgrading a rejected forced tool_choice retries the
+    # same target without consuming a retry -- and only ever once per rule, so
+    # an upstream that keeps blaming tool_choice cannot loop here.
+    tool_choice_downgrade_used = False
+
+    def _maybe_downgrade_forced_tool_choice(error_detail_val: object) -> bool:
+        """Learn a forced-``tool_choice`` rejection; report whether to retry.
+
+        The downgrade weakens the caller's request, so it is driven purely by
+        the upstream's own verdict: it happens only after that upstream
+        rejected the forced form, and what was learned is remembered per
+        (provider, model) so later requests skip the doomed attempt entirely.
+        """
+        nonlocal tool_choice_downgrade_used
+        if tool_choice_downgrade_used or is_anthropic_provider:
+            return False
+        if not is_forced_tool_choice_unsupported_error(error_detail_val):
+            return False
+        if not downgrade_forced_tool_choice(provider_payload_template):
+            return False
+        tool_choice_downgrade_used = True
+        upstream_routing_state.record_forced_tool_choice_unsupported(
+            provider_name or "unknown", provider_model or "unknown"
+        )
+        logging.warning(
+            "Model '%s' in provider '%s' rejected a forced tool_choice; retrying it as "
+            "'auto' without consuming a retry, and remembering the rejection for "
+            "subsequent requests.",
+            provider_model,
+            provider_name,
+        )
+        return True
 
     remaining_attempts = retry_count
     while remaining_attempts >= 0:
@@ -978,6 +1024,10 @@ async def attempt_model_fallback_rule(
             is_stop_worthy_context_overflow = (
                 stop_after_context_overflow and _is_context_overflow_error(error_detail)
             )
+            # Checked before the key switch: a rejected tool_choice is a
+            # property of the request, so another key would be refused too.
+            if _maybe_downgrade_forced_tool_choice(error_detail):
+                continue
             if (
                 key_blocking_failure
                 and not is_behavior_class_failure
@@ -1150,6 +1200,8 @@ async def attempt_model_fallback_rule(
                     is_stop_worthy_context_overflow = (
                         stop_after_context_overflow and _is_context_overflow_error(error_detail)
                     )
+                    if _maybe_downgrade_forced_tool_choice(error_detail):
+                        continue
                     if (
                         key_blocking_failure
                         and not is_behavior_class_failure

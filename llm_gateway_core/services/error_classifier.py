@@ -44,6 +44,21 @@ DOWNSTREAM_ERROR_PATTERN = re.compile(r"\bdownstream\s+error\s+(429|400|401|403|
 DAILY_QUOTA_DAY_MARKERS = ("daily", "per-day", "today", "24h")
 DAILY_QUOTA_QUOTA_MARKERS = ("allocation", "quota", "limit", "exhausted", "used up")
 
+# Wording differs per vendor ("does not support being set to required or
+# object in thinking mode", "tool_choice must be one of auto, none", ...), so a
+# signal only counts when it names the parameter *and* carries a rejection
+# marker. Matching the parameter name alone would also catch schema complaints
+# about the tools themselves, which a downgrade would not fix.
+FORCED_TOOL_CHOICE_PARAM_MARKER = "tool_choice"
+FORCED_TOOL_CHOICE_UNSUPPORTED_MARKERS = (
+    "not support",
+    "unsupported",
+    "not allowed",
+    "not available",
+    "must be one of",
+    "cannot be set",
+)
+
 LEARNED_LIMIT_VALUE_PATTERN = re.compile(r"\blimit[:\s]+([\d,]+)", re.IGNORECASE)
 # Checked in this order so a message naming multiple periods/units resolves to
 # the most specific axis: "day" before "minute", "tokens" before "requests".
@@ -127,6 +142,42 @@ def parse_learned_limit_from_error(error_detail: object) -> tuple[str, int] | No
             if axis_pattern.search(signal):
                 return axis, int(value_match.group(1).replace(",", ""))
     return None
+
+
+def is_forced_tool_choice_unsupported_error(error_detail: object) -> bool:
+    """Whether the upstream rejected the request *because* ``tool_choice`` was forced.
+
+    Some upstreams accept ``tools`` but refuse to be told they must call one:
+    alibaba's compatible-mode endpoint answers ``tool_choice`` set to
+    ``required`` (or to a named-function object) with a 400 whenever the model
+    runs in thinking mode, which it cannot be talked out of.
+    """
+    for signal in _extract_error_signal_candidates(error_detail):
+        if FORCED_TOOL_CHOICE_PARAM_MARKER not in signal:
+            continue
+        if any(marker in signal for marker in FORCED_TOOL_CHOICE_UNSUPPORTED_MARKERS):
+            return True
+    return False
+
+
+def has_forced_tool_choice(payload: dict) -> bool:
+    """Whether the payload demands a tool call (``"required"`` or a named function)."""
+    tool_choice = payload.get("tool_choice")
+    return tool_choice == "required" or isinstance(tool_choice, dict)
+
+
+def downgrade_forced_tool_choice(payload: dict) -> bool:
+    """Lower a forced ``tool_choice`` to ``"auto"``, returning whether it changed.
+
+    This weakens what the caller asked for -- "you must call a tool" becomes
+    "call one if you want" -- so it is only ever applied against an upstream
+    that has itself rejected the forced form, and every application is logged
+    and surfaced in the routing status rows.
+    """
+    if not has_forced_tool_choice(payload):
+        return False
+    payload["tool_choice"] = "auto"
+    return True
 
 
 def _format_fallback_error_summary_value(value: object) -> str:
@@ -251,10 +302,56 @@ def _provider_requires_single_system_message(provider_model: str | None) -> bool
     return isinstance(provider_model, str) and provider_model.startswith("mm.MiniMax-")
 
 
+def _drop_empty_text_content_blocks(provider_payload: dict) -> None:
+    """Drop ``{"type": "text", "text": ""}`` blocks that stricter providers reject.
+
+    Clients that normalize every message into OpenAI content parts turn a
+    message legitimately carrying no text (an assistant turn that is only tool
+    calls) into a single empty text block; api.kimi.com answers those with
+    ``400 text content is empty``. Only exactly-empty text is dropped:
+    whitespace-only text is accepted upstream and stays untouched.
+
+    A message left with no blocks keeps its original content unless it carries
+    ``tool_calls`` -- then the content key is removed, which is the shape such a
+    message has natively. Inventing content for an otherwise empty message would
+    hide a malformed request instead of letting the provider reject it.
+    """
+    messages = provider_payload.get("messages")
+    if not isinstance(messages, list):
+        return
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+
+        kept_blocks = [
+            block
+            for block in content
+            if not (
+                isinstance(block, dict)
+                and block.get("type") == "text"
+                and block.get("text") == ""
+            )
+        ]
+        if len(kept_blocks) == len(content):
+            continue
+
+        if kept_blocks:
+            message["content"] = kept_blocks
+        elif message.get("tool_calls"):
+            message.pop("content", None)
+
+
 def _normalize_provider_attempt_payload(provider_payload: dict, provider_model: str | None = None) -> None:
     """Normalize payload bits that stricter OpenAI-compatible providers reject."""
     if provider_payload.get("response_format") is None:
         provider_payload.pop("response_format", None)
+
+    _drop_empty_text_content_blocks(provider_payload)
 
     if _provider_requires_single_system_message(provider_model):
         messages = provider_payload.get("messages")
