@@ -94,7 +94,7 @@ def test_editor_js_exposes_provider_field_tooltips_and_upstream_limits_editor():
 def test_rules_editor_html_contains_model_rules_tab():
     content = Path("static/rules-editor.html").read_text(encoding="utf-8")
 
-    assert "tabModelRules" in content
+    assert 'data-entity-target="model-rules"' in content
     assert "editor-container-model-rules" in content
     assert "models_model_rules.json" in content
 
@@ -102,8 +102,7 @@ def test_rules_editor_html_contains_model_rules_tab():
 def test_rules_editor_html_contains_router_tab():
     content = Path("static/rules-editor.html").read_text(encoding="utf-8")
 
-    assert 'id="tabRouter"' in content
-    assert 'data-tab="router"' in content
+    assert 'data-entity-target="router"' in content
     assert 'id="editor-container-router"' in content
     assert 'id="addRouterButton"' in content
     assert 'id="routerList"' in content
@@ -124,8 +123,7 @@ def test_editor_css_includes_tooltip_and_upstream_limits_styles():
 def test_rules_editor_html_contains_openrouter_free_tab():
     content = Path("static/rules-editor.html").read_text(encoding="utf-8")
 
-    assert 'id="tabOpenRouterFree"' in content
-    assert 'data-tab="openrouter-free"' in content
+    assert 'data-entity-target="openrouter-free"' in content
     assert 'id="openRouterFreeModels"' in content
     assert 'class="openrouter-free-guide"' in content
     assert "OpenRouter Free Model Ranking" in content
@@ -167,8 +165,7 @@ def test_editor_js_renders_capability_autofill_badges_and_round_trips_ownership(
 def test_rules_editor_html_contains_fallback_eval_tab():
     content = Path("static/rules-editor.html").read_text(encoding="utf-8")
 
-    assert 'id="tabFallbackEval"' in content
-    assert 'data-tab="fallback-eval"' in content
+    assert 'data-entity-target="fallback-eval"' in content
     assert 'id="editor-container-fallback-eval"' in content
     assert 'id="runFallbackEvalButton"' in content
     assert 'id="fallbackEvalModels"' in content

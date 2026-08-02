@@ -64,7 +64,7 @@ def test_images_tab_is_visible(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    images_tab = page.locator("#tabImages")
+    images_tab = page.locator('[data-entity-target="images"]')
     expect(images_tab).to_be_visible()
     expect(images_tab).to_have_text("Images")
 
@@ -74,7 +74,7 @@ def test_create_and_save_image_generation_and_edit_routes(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabImages")
+    page.click('[data-entity-target="images"]')
     expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
 
     page.click("#addImageGenerationButton")
@@ -102,7 +102,7 @@ def test_create_and_save_image_generation_and_edit_routes(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabImages")
+    page.click('[data-entity-target="images"]')
     expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
 
     assert "collapsed" in (page.locator("#imageGenerationList .rule-card").first.get_attribute("class") or "")

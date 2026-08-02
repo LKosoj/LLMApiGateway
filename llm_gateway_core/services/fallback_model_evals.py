@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -36,21 +35,15 @@ from .openrouter_free_models import (
     LiteEvalTaskResult,
     _eval_payload,
     _extract_chat_content,
-    _extract_json_object,
-    _extract_python_code,
-    _first_int,
     _health_status_allows_lite_eval,
     _latency_score,
     _lite_eval_skip_reason,
-    _normalize_simple_answer,
     _not_evaluated_summary,
     _openrouter_metadata_key,
-    _python_code_safety_error,
     _rank_sort_key,
-    _run_sum_even_squares_tests,
     _score_metadata,
-    _symbolic_math_values,
     _utc_now_iso,
+    build_lite_eval_tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -599,25 +592,19 @@ class FallbackModelEvalService:
         http_client: httpx.AsyncClient,
     ) -> dict[str, Any]:
         tasks: list[LiteEvalTaskResult] = []
-        for task_id, max_points, runner in (
-            ("instruction_following_lite", 200, self._run_instruction_following_lite_task),
-            ("tool_call_lite", 200, self._run_tool_call_lite_task),
-            ("code_unit_lite", 200, self._run_code_unit_lite_task),
-            ("symbolic_math_lite", 100, self._run_symbolic_math_lite_task),
-            ("simpleqa_lite", 50, self._run_simpleqa_lite_task),
-        ):
+        seed = int(self._time_func()) // REFRESH_INTERVAL_SECONDS
+        for spec in build_lite_eval_tasks(seed):
             try:
-                tasks.append(await runner(model, target, provider_config, http_client))
-            except Exception as exc:
-                tasks.append(
-                    LiteEvalTaskResult(
-                        id=task_id,
-                        points=0,
-                        max_points=max_points,
-                        status="error",
-                        details={"error": exc.__class__.__name__},
-                    )
+                response = await self._chat_completion(
+                    target,
+                    provider_config,
+                    http_client,
+                    _eval_payload(model, spec.prompt, max_tokens=spec.max_tokens),
+                    timeout=LITE_EVAL_TIMEOUT_SECONDS,
                 )
+                tasks.append(await spec.grade(_extract_chat_content(response)))
+            except Exception as exc:
+                tasks.append(spec.error_result(exc))
         points = sum(task.points for task in tasks)
         max_points = sum(task.max_points for task in tasks)
         return {
@@ -630,153 +617,6 @@ class FallbackModelEvalService:
             "updatedAt": _utc_now_iso(self._time_func),
             "tasks": [task.to_dict() for task in tasks],
         }
-
-    async def _run_instruction_following_lite_task(
-        self,
-        model: ScoredFallbackModel,
-        target: FallbackEvalTarget,
-        provider_config: ProviderDetails,
-        http_client: httpx.AsyncClient,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Return exactly 4 lines.\n"
-            "Line 1 must be exactly: STATUS: READY\n"
-            "Line 2 must contain the word ROUTER exactly twice.\n"
-            "Line 3 must be valid JSON with exactly keys \"mode\" and \"count\"; "
-            "\"mode\" must be \"eval\" and \"count\" must be 3.\n"
-            "Line 4 must be exactly: DONE\n"
-            "No markdown and no extra text."
-        )
-        response = await self._chat_completion(target, provider_config, http_client, _eval_payload(model, prompt, max_tokens=120), timeout=LITE_EVAL_TIMEOUT_SECONDS)
-        content = _extract_chat_content(response).strip()
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        json_line = _extract_json_object(lines[2]) if len(lines) >= 3 else {}
-        details = {
-            "exactlyFourLines": len(lines) == 4,
-            "lineOneExact": len(lines) >= 1 and lines[0] == "STATUS: READY",
-            "routerTwice": len(lines) >= 2 and len(re.findall(r"\bROUTER\b", lines[1])) == 2,
-            "jsonLineValid": json_line == {"mode": "eval", "count": 3},
-            "lineFourExact": len(lines) >= 4 and lines[3] == "DONE",
-        }
-        points = round(200 * sum(1 for ok in details.values() if ok) / len(details))
-        return LiteEvalTaskResult("instruction_following_lite", points, 200, "passed" if points == 200 else "failed", details)
-
-    async def _run_tool_call_lite_task(
-        self,
-        model: ScoredFallbackModel,
-        target: FallbackEvalTarget,
-        provider_config: ProviderDetails,
-        http_client: httpx.AsyncClient,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Available tools:\n"
-            "create_ticket(title, priority, assignee, due_date)\n"
-            "send_email(to, subject, body)\n"
-            "search_docs(query)\n\n"
-            "User request: Create a high-priority bug ticket titled "
-            "\"Login fails after password reset\" assigned to Ana, due 2026-05-12. "
-            "Do not send email.\n"
-            "Return only JSON: {\"tool\":\"...\",\"arguments\":{...}}"
-        )
-        response = await self._chat_completion(target, provider_config, http_client, _eval_payload(model, prompt, max_tokens=220), timeout=LITE_EVAL_TIMEOUT_SECONDS)
-        parsed = _extract_json_object(_extract_chat_content(response))
-        arguments = parsed.get("arguments") if isinstance(parsed.get("arguments"), dict) else {}
-        title = str(arguments.get("title", ""))
-        details = {
-            "jsonObject": bool(parsed),
-            "toolCorrect": parsed.get("tool") == "create_ticket",
-            "priorityCorrect": str(arguments.get("priority", "")).lower() == "high",
-            "assigneeCorrect": arguments.get("assignee") == "Ana",
-            "dueDateCorrect": arguments.get("due_date") == "2026-05-12",
-            "titleCorrect": "login fails" in title.lower() and "password reset" in title.lower(),
-        }
-        points = round(200 * sum(1 for ok in details.values() if ok) / len(details))
-        return LiteEvalTaskResult("tool_call_lite", points, 200, "passed" if points == 200 else "failed", details)
-
-    async def _run_code_unit_lite_task(
-        self,
-        model: ScoredFallbackModel,
-        target: FallbackEvalTarget,
-        provider_config: ProviderDetails,
-        http_client: httpx.AsyncClient,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Return only JSON with one key \"code\". The value must be Python code defining:\n"
-            "def sum_even_squares(nums: list[int]) -> int:\n"
-            "It must return the sum of squares of even integers in nums. No imports."
-        )
-        response = await self._chat_completion(target, provider_config, http_client, _eval_payload(model, prompt, max_tokens=320), timeout=LITE_EVAL_TIMEOUT_SECONDS)
-        code = _extract_python_code(_extract_chat_content(response))
-        safety_error = _python_code_safety_error(code)
-        details: dict[str, Any] = {
-            "codePresent": bool(code.strip()),
-            "safeAst": safety_error is None,
-            "safetyError": safety_error,
-            "unitTestsPassed": False,
-            "stderr": "",
-        }
-        if safety_error is None:
-            passed, stderr = await _run_sum_even_squares_tests(code)
-            details["unitTestsPassed"] = passed
-            details["stderr"] = stderr[:240]
-        checks = (details["codePresent"], details["safeAst"], details["unitTestsPassed"])
-        points = round(200 * sum(1 for ok in checks if ok) / len(checks))
-        return LiteEvalTaskResult("code_unit_lite", points, 200, "passed" if points == 200 else "failed", details)
-
-    async def _run_symbolic_math_lite_task(
-        self,
-        model: ScoredFallbackModel,
-        target: FallbackEvalTarget,
-        provider_config: ProviderDetails,
-        http_client: httpx.AsyncClient,
-    ) -> LiteEvalTaskResult:
-        values = _symbolic_math_values(int(self._time_func()) // REFRESH_INTERVAL_SECONDS)
-        prompt = (
-            f"A notebook has {values['total_pages']} pages. Mira writes {values['weekday_pages']} pages every weekday "
-            f"for {values['weeks']} weeks and {values['weekend_pages']} pages on each weekend day. "
-            "How many pages remain? Return only the integer."
-        )
-        response = await self._chat_completion(target, provider_config, http_client, _eval_payload(model, prompt, max_tokens=80), timeout=LITE_EVAL_TIMEOUT_SECONDS)
-        answer = _extract_chat_content(response)
-        parsed_answer = _first_int(answer)
-        expected = values["remaining_pages"]
-        details = {"expected": expected, "received": answer[:80], "parsedAnswer": parsed_answer}
-        return LiteEvalTaskResult(
-            "symbolic_math_lite",
-            100 if parsed_answer == expected else 0,
-            100,
-            "passed" if parsed_answer == expected else "failed",
-            details,
-        )
-
-    async def _run_simpleqa_lite_task(
-        self,
-        model: ScoredFallbackModel,
-        target: FallbackEvalTarget,
-        provider_config: ProviderDetails,
-        http_client: httpx.AsyncClient,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Who wrote the novel \"The Left Hand of Darkness\"? "
-            "If unsure, answer UNKNOWN. Return only the answer."
-        )
-        response = await self._chat_completion(target, provider_config, http_client, _eval_payload(model, prompt, max_tokens=40), timeout=LITE_EVAL_TIMEOUT_SECONDS)
-        answer = _normalize_simple_answer(_extract_chat_content(response))
-        is_correct = answer in {"ursulakleguin", "ursulaleguin"}
-        is_unknown = answer == "unknown"
-        details = {
-            "expected": "Ursula K. Le Guin",
-            "normalizedAnswer": answer,
-            "correct": is_correct,
-            "unknown": is_unknown,
-        }
-        return LiteEvalTaskResult(
-            "simpleqa_lite",
-            50 if is_correct else 20 if is_unknown else 0,
-            50,
-            "passed" if is_correct else "not_attempted" if is_unknown else "failed",
-            details,
-        )
 
     async def _chat_completion(
         self,

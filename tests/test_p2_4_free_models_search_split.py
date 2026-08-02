@@ -273,3 +273,64 @@ def test_status_filter_radio_shows_only_configured_models(
         expect(page.locator(".free-models-model")).to_have_count(5)
     finally:
         context.close()
+
+
+def test_virtual_key_session_never_requests_master_only_provider_config(
+    browser: Browser,
+    free_models_server: str,
+) -> None:
+    """`/v1/config/*` is master-only: a virtual-key session must not ask for it.
+
+    The request would answer 403, which the browser reports as a console error
+    even though the page treats the unknown result as "render one unsplit list".
+    """
+    master_context = browser.new_context(locale="en-US")
+    try:
+        _login(master_context, free_models_server)
+        created = master_context.request.post(
+            f"{free_models_server}/v1/admin/api-keys",
+            data={"name": "p2-4-free-models-virtual"},
+        )
+        assert created.status == 201, created.text()
+        virtual_key = str(created.json()["api_key"])
+    finally:
+        master_context.close()
+
+    context = browser.new_context(locale="en-US")
+    try:
+        response = context.request.post(
+            f"{free_models_server}/auth/login",
+            data={"api_key": virtual_key, "next": "/v1/ui/free-models"},
+        )
+        assert response.status == 200
+
+        page = context.new_page()
+        console_errors: list[str] = []
+        page.on(
+            "console",
+            lambda message: console_errors.append(message.text)
+            if message.type == "error"
+            else None,
+        )
+        config_requests: list[str] = []
+        page.on(
+            "request",
+            lambda request: config_requests.append(request.url)
+            if "/v1/config/" in request.url
+            else None,
+        )
+        page.route("**/v1/api/free-models", lambda route: route.fulfill(json=FAKE_SNAPSHOT))
+
+        with page.expect_response(
+            lambda response: response.url.endswith("/v1/api/free-models")
+        ) as loaded:
+            page.goto(f"{free_models_server}/v1/ui/free-models")
+        assert loaded.value.status == 200
+
+        # Without the configured-model list the catalog renders unsplit.
+        expect(page.locator(".free-models-model")).to_have_count(5)
+        expect(page.locator('[data-free-models-section="configured"]')).to_have_count(0)
+        assert config_requests == []
+        assert console_errors == []
+    finally:
+        context.close()

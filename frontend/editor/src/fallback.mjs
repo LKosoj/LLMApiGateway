@@ -980,6 +980,8 @@ export function registerFallback(ctx) {
         ['Idle', 'editor:messages.statusIdle'],
         ['n/a', 'editor:messages.notApplicable'],
         ['passed', 'editor:eval.statePassed'],
+        ['failed', 'editor:eval.stateFailed'],
+        ['error', 'editor:eval.stateError'],
         ['imperfect', 'editor:eval.stateImperfect'],
         ['timeout', 'editor:eval.stateTimeout'],
         ['http_429', 'editor:eval.stateRateLimited'],
@@ -1037,6 +1039,147 @@ export function registerFallback(ctx) {
         parent.appendChild(metric);
     }
 
+    function buildEvalTaskSummary(models) {
+        const summary = new Map();
+        (models || []).forEach(model => {
+            const tasks = (model && model.evalSummary && model.evalSummary.tasks) || [];
+            tasks.forEach(task => {
+                if (!task || !task.id) {
+                    return;
+                }
+                let entry = summary.get(task.id);
+                if (!entry) {
+                    entry = {id: task.id, evaluated: 0, passed: 0, points: 0, maxPoints: 0, failedChecks: new Map()};
+                    summary.set(task.id, entry);
+                }
+                entry.evaluated += 1;
+                entry.points += Number(task.points) || 0;
+                entry.maxPoints += Number(task.maxPoints) || 0;
+                if (task.status === 'passed') {
+                    entry.passed += 1;
+                }
+                Object.entries(task.details || {}).forEach(([check, value]) => {
+                    if (value === false) {
+                        entry.failedChecks.set(check, (entry.failedChecks.get(check) || 0) + 1);
+                    }
+                });
+            });
+        });
+        return Array.from(summary.values());
+    }
+
+    function topFailedChecks(entry, limit = 3) {
+        return Array.from(entry.failedChecks.entries())
+            .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+            .slice(0, limit);
+    }
+
+    function renderEvalTaskSummary(container, models) {
+        const rows = buildEvalTaskSummary(models);
+        if (!rows.length) {
+            return;
+        }
+        const section = document.createElement('section');
+        section.className = 'eval-task-summary';
+        const heading = document.createElement('h3');
+        ctx.bindLocalizedText(heading, 'editor:eval.taskSummaryTitle');
+        section.appendChild(heading);
+        rows.forEach(row => {
+            const item = document.createElement('div');
+            item.className = 'eval-task-summary-row';
+
+            const name = document.createElement('code');
+            name.textContent = row.id;
+            item.appendChild(name);
+
+            const passed = document.createElement('span');
+            ctx.bindLocalizedText(passed, 'editor:eval.taskSummaryPassed', () => ({
+                passed: ctx.formatNumber(row.passed),
+                total: ctx.formatNumber(row.evaluated),
+            }));
+            item.appendChild(passed);
+
+            const score = document.createElement('span');
+            ctx.bindLocalizedText(score, 'editor:eval.taskSummaryScore', () => ({
+                percent: ctx.formatNumber(row.maxPoints ? Math.round((row.points / row.maxPoints) * 100) : 0),
+            }));
+            item.appendChild(score);
+
+            const failures = document.createElement('span');
+            failures.className = 'eval-task-summary-failures';
+            const failed = topFailedChecks(row);
+            if (failed.length) {
+                failures.textContent = failed.map(([check, count]) => `${check} ×${count}`).join(', ');
+                failures.setAttribute('lang', 'und');
+                failures.setAttribute('dir', 'auto');
+            } else {
+                ctx.bindLocalizedText(failures, 'editor:eval.taskSummaryNoFailures');
+            }
+            item.appendChild(failures);
+
+            section.appendChild(item);
+        });
+        container.appendChild(section);
+    }
+
+    function appendEvalTaskDetails(card, model) {
+        const tasks = (model && model.evalSummary && model.evalSummary.tasks) || [];
+        if (!tasks.length) {
+            return;
+        }
+        const wrapper = document.createElement('details');
+        wrapper.className = 'eval-task-details';
+        const summary = document.createElement('summary');
+        ctx.bindLocalizedText(summary, 'editor:eval.taskDetails');
+        wrapper.appendChild(summary);
+
+        tasks.forEach(task => {
+            const row = document.createElement('div');
+            row.className = 'eval-task-detail-row';
+
+            const head = document.createElement('div');
+            head.className = 'eval-task-detail-head';
+            const name = document.createElement('code');
+            name.textContent = task.id || '';
+            head.appendChild(name);
+            const points = document.createElement('span');
+            ctx.bindLocalizedValue(
+                points,
+                () => `${ctx.formatNumber(task.points || 0)} / ${ctx.formatNumber(task.maxPoints || 0)}`,
+            );
+            head.appendChild(points);
+            const status = document.createElement('span');
+            ctx.bindLocalizedValue(status, () => formatEvalValue(task.status || 'n/a'));
+            head.appendChild(status);
+            row.appendChild(head);
+
+            const failed = Object.entries(task.details || {})
+                .filter(([, value]) => value === false)
+                .map(([check]) => check);
+            if (failed.length) {
+                const checks = document.createElement('div');
+                checks.className = 'eval-task-detail-checks';
+                checks.textContent = failed.join(', ');
+                checks.setAttribute('lang', 'und');
+                checks.setAttribute('dir', 'auto');
+                row.appendChild(checks);
+            }
+
+            const rawOutput = task.details && task.details.rawOutput;
+            if (rawOutput) {
+                const output = document.createElement('pre');
+                output.className = 'eval-task-raw-output';
+                output.textContent = rawOutput;
+                output.setAttribute('lang', 'und');
+                output.setAttribute('dir', 'auto');
+                row.appendChild(output);
+            }
+
+            wrapper.appendChild(row);
+        });
+        card.appendChild(wrapper);
+    }
+
     function renderOpenRouterFreeModels(payload) {
         ctx.clearElement(ctx.elements.openRouterFreeStatus);
         ctx.clearElement(ctx.elements.openRouterFreeModels);
@@ -1066,6 +1209,8 @@ export function registerFallback(ctx) {
         if (payload.lastError) {
             appendOpenRouterMeta(ctx.elements.openRouterFreeStatus, 'Last error', payload.lastError, true);
         }
+
+        renderEvalTaskSummary(ctx.elements.openRouterFreeModels, snapshot.models);
 
         (snapshot.models || []).forEach(model => {
             const card = document.createElement('article');
@@ -1126,6 +1271,7 @@ export function registerFallback(ctx) {
                 appendEvalMetric(metrics, label, value);
             });
             card.appendChild(metrics);
+            appendEvalTaskDetails(card, model);
 
             ctx.elements.openRouterFreeModels.appendChild(card);
         });
@@ -1272,6 +1418,8 @@ export function registerFallback(ctx) {
             return;
         }
 
+        renderEvalTaskSummary(ctx.elements.fallbackEvalModels, snapshot.models);
+
         (snapshot.models || []).forEach(model => {
             const card = document.createElement('article');
             card.className = 'openrouter-free-card';
@@ -1347,6 +1495,7 @@ export function registerFallback(ctx) {
                 appendEvalMetric(metrics, label, value);
             });
             card.appendChild(metrics);
+            appendEvalTaskDetails(card, model);
 
             ctx.elements.fallbackEvalModels.appendChild(card);
         });
@@ -1523,6 +1672,9 @@ export function registerFallback(ctx) {
         formatEvalValue,
         appendOpenRouterMeta,
         appendEvalMetric,
+        buildEvalTaskSummary,
+        renderEvalTaskSummary,
+        appendEvalTaskDetails,
         renderOpenRouterFreeModels,
         stopOpenRouterFreePolling,
         isRulesTabContextCurrent,

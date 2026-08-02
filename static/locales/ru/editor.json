@@ -473,6 +473,13 @@
     "latencyMsDescription": "Измеренное время проверочного запроса в миллисекундах.",
     "contextDescription": "Размер контекстного окна модели в токенах.",
     "healthStatusDescription": "Необработанный результат проверки доступности.",
-    "uniqueTargetDescription": "Маршрут провайдер/модель, который оценивается один раз для всех моделей шлюза."
+    "uniqueTargetDescription": "Маршрут провайдер/модель, который оценивается один раз для всех моделей шлюза.",
+    "taskSummaryTitle": "Сводка по тестам",
+    "taskSummaryPassed": "прошли: {passed} из {total}",
+    "taskSummaryScore": "баллы: {percent}%",
+    "taskSummaryNoFailures": "провалов нет",
+    "taskDetails": "Ответы моделей по тестам",
+    "stateFailed": "провален",
+    "stateError": "ошибка"
   }
 }

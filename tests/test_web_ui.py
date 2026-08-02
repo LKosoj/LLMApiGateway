@@ -131,7 +131,7 @@ def test_web_tab_is_visible(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    web_tab = page.locator("#tabWeb")
+    web_tab = page.locator('[data-entity-target="web"]')
     expect(web_tab).to_be_visible()
     expect(web_tab).to_have_text("Web")
 
@@ -548,7 +548,7 @@ def test_create_and_save_web_services(page: Page, server):
     add_session(page, server)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabWeb")
+    page.click('[data-entity-target="web"]')
     expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
 
     page.click("#addWebSearchButton")
@@ -593,7 +593,7 @@ def test_create_and_save_web_services(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabWeb")
+    page.click('[data-entity-target="web"]')
     expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
 
     assert "collapsed" in (page.locator("#webSearchList .rule-card").first.get_attribute("class") or "")
@@ -625,7 +625,7 @@ def test_create_and_save_fusion_reserve_models(page: Page, server):
     add_session(page, server)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabFusion")
+    page.click('[data-entity-target="fusion"]')
     expect(page.locator("#messageArea")).to_contain_text("Fusion Models loaded successfully")
 
     page.click("#addFusionButton")
@@ -650,7 +650,7 @@ def test_create_and_save_fusion_reserve_models(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabFusion")
+    page.click('[data-entity-target="fusion"]')
     expect(page.locator("#messageArea")).to_contain_text("Fusion Models loaded successfully")
 
     expand_first_card(page, "#fusionList")
@@ -668,7 +668,7 @@ def test_create_and_save_fusion_reserve_models(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabFusion")
+    page.click('[data-entity-target="fusion"]')
     expand_first_card(page, "#fusionList")
     card = page.locator("#fusionList .fusion-card").first
     expect(card.locator(".fusion-reserve-list .fusion-member-row")).to_have_count(0)
@@ -680,7 +680,7 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     # Сначала через rules-editor заведём минимальные web-конфигурации, чтобы
     # /v1/ui/playground/models вернул непустые списки.
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabWeb")
+    page.click('[data-entity-target="web"]')
     expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
 
     page.click("#addWebSearchButton")
@@ -1076,7 +1076,7 @@ def test_fallback_row_capability_fields_save_and_reload(page: Page, server):
     add_session(page, server)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
 
     expand_first_card(page, "#rulesList")
@@ -1091,7 +1091,7 @@ def test_fallback_row_capability_fields_save_and_reload(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
 
     expand_first_card(page, "#rulesList")
@@ -1107,7 +1107,7 @@ def test_tool_call_rescue_checkbox_saves_and_reloads(page: Page, server):
     add_session(page, server)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
 
     expand_first_card(page, "#rulesList")
@@ -1120,7 +1120,7 @@ def test_tool_call_rescue_checkbox_saves_and_reloads(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
 
     expand_first_card(page, "#rulesList")

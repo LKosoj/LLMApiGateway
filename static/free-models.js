@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // the catalog renders as a single unsplit list, exactly as before this
     // feature existed.
     let configuredModelIds = null;
+    let masterSession = false;
     let searchQuery = '';
     let searchDebounceTimer = null;
     let statusFilter = 'all';
@@ -415,10 +416,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Best-effort lookup of the provider-config model ids ("configured").
-    // A 403 is the expected outcome for virtual-key sessions -- `/v1/config/*`
-    // is master-only -- and is treated the same as any other lookup failure:
-    // the split/search badges fall back to the unsplit list, never an error.
+    // `/v1/config/*` is master-only, so a virtual-key session skips the request
+    // outright: it would answer 403, which the browser reports as a console
+    // error even though the page handles it. Either way an unknown result is
+    // treated like any other lookup failure -- the split/search badges fall
+    // back to the unsplit list, never an error.
     async function fetchConfiguredModelIds() {
+        if (!masterSession) return null;
         try {
             const response = await apiFetch('/v1/config/providers/structured');
             if (response.status === 403) return null;
@@ -527,8 +531,9 @@ document.addEventListener('DOMContentLoaded', () => {
         unsubscribeLocale?.();
     });
 
-    Promise.all([bootstrapRoleUI(), i18n.ready]).then(() => {
+    Promise.all([bootstrapRoleUI(), i18n.ready]).then(([identity]) => {
         if (stopped) return;
+        masterSession = identity?.role === 'master';
         unsubscribeLocale = i18n.subscribe(rerenderLocale);
         render();
         void fetchFreeModels();

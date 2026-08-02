@@ -1,4 +1,3 @@
-import re
 import unittest
 from contextlib import asynccontextmanager
 
@@ -17,6 +16,7 @@ from llm_gateway_core.services.fallback_model_evals import (
     _collect_unique_fallback_targets,
 )
 from tests._async_compat import run_async
+from tests.lite_eval_support import perfect_lite_eval_answer
 from tests.runtime_test_support import (
     install_test_runtime_snapshot,
     make_app_services,
@@ -67,31 +67,8 @@ class FakeFallbackEvalClient:
             if self.health_status_code >= 400:
                 return FakeResponse({"error": {"message": "rate limited"}}, status_code=self.health_status_code)
             content = self.health_content
-        elif "Return exactly 4 lines" in prompt:
-            content = 'STATUS: READY\nROUTER and ROUTER\n{"mode":"eval","count":3}\nDONE'
-        elif "Available tools" in prompt and "create_ticket" in prompt:
-            content = (
-                '{"tool":"create_ticket","arguments":{'
-                '"title":"Login fails after password reset",'
-                '"priority":"high","assignee":"Ana","due_date":"2026-05-12"}}'
-            )
-        elif "sum_even_squares" in prompt:
-            content = (
-                '{"code":"def sum_even_squares(nums: list[int]) -> int:\\n'
-                '    total = 0\\n'
-                '    for value in nums:\\n'
-                '        if value % 2 == 0:\\n'
-                '            total += value * value\\n'
-                '    return total\\n"}'
-            )
-        elif "A notebook has" in prompt:
-            numbers = [int(value) for value in re.findall(r"\d+", prompt)]
-            total_pages, weekday_pages, weeks, weekend_pages = numbers[:4]
-            content = str(total_pages - weeks * 5 * weekday_pages - weeks * 2 * weekend_pages)
-        elif "The Left Hand of Darkness" in prompt:
-            content = "Ursula K. Le Guin"
         else:
-            content = ""
+            content = perfect_lite_eval_answer(prompt)
         if url.endswith("/v1/messages"):
             return FakeResponse({"content": [{"type": "text", "text": content}], "model": json.get("model")})
         return FakeResponse({"choices": [{"message": {"content": content}}]})

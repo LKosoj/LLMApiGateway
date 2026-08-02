@@ -159,7 +159,13 @@ class RulesEditorStructuredTests(unittest.TestCase):
             response.json()["detail"]["code"],
             "config_validation_failed",
         )
-        self.assertNotIn("provider-model", response.text)
+        # Preflight names the offending gateway model, fallback model and
+        # provider so the editor can point at the row that has to be fixed.
+        self.assertIn(
+            "Gateway model 'gateway-model': fallback model 'provider-model' "
+            "is not available from provider 'devbox'.",
+            response.json()["detail"]["errors"][0]["msg"],
+        )
         self.assertEqual(self.rules_path.read_text(encoding="utf-8"), original_file_content)
         self.assertEqual(
             self.config_loader.fallback_rules["gateway-model"]["fallback_models"][0]["model"],

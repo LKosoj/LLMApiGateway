@@ -23,6 +23,7 @@ from llm_gateway_core.api.v1 import web_extraction as web_extraction_owner
 from llm_gateway_core.api.v1 import web_research_orchestration as web_research_owner
 from llm_gateway_core.api.v1 import web_safe_fetch as web_safe_fetch_owner
 from llm_gateway_core.config.loader import ConfigLoader
+from llm_gateway_core.config.settings import settings
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from llm_gateway_core.middleware.accounting_admission import (
     take_accounting_request_context,
@@ -3145,11 +3146,19 @@ class WebApiTests(unittest.TestCase):
                 return _FakeTranscript()
 
         class _FakeYouTubeTranscriptApi:
+            # The gateway passes proxy_config when YOUTUBE_PROXY_URL is set, so
+            # the fake accepts kwargs and the proxy stays pinned off here.
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
             def list(self, video_id):
                 self.video_id = video_id
                 return _FakeTranscriptList()
 
-        with patch("youtube_transcript_api.YouTubeTranscriptApi", _FakeYouTubeTranscriptApi):
+        with (
+            patch("youtube_transcript_api.YouTubeTranscriptApi", _FakeYouTubeTranscriptApi),
+            patch.object(settings, "youtube_proxy_url", None),
+        ):
             result = run_async(web_api._direct_http_fetch("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
 
         self.assertEqual(

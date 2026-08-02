@@ -1,7 +1,6 @@
 import asyncio
 import inspect
 import os
-import re
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -22,11 +21,12 @@ from llm_gateway_core.services.openrouter_free_models import (
     OpenRouterFreeModelsStopError,
     ScoredOpenRouterModel,
     _catalog_fingerprint,
-    _run_sum_even_squares_tests,
+    _run_code_unit_tests,
     _is_eligible_free_text_model,
     _score_metadata,
     parse_capability_metadata,
 )
+from tests.lite_eval_support import perfect_lite_eval_answer
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
 
@@ -65,31 +65,8 @@ class FakeOpenRouterClient:
             if self.health_status_code >= 400:
                 return FakeResponse({"error": {"message": "rate limited"}}, status_code=self.health_status_code)
             content = "OK"
-        elif "Return exactly 4 lines" in prompt:
-            content = 'STATUS: READY\nROUTER and ROUTER\n{"mode":"eval","count":3}\nDONE'
-        elif "Available tools" in prompt and "create_ticket" in prompt:
-            content = (
-                '{"tool":"create_ticket","arguments":{'
-                '"title":"Login fails after password reset",'
-                '"priority":"high","assignee":"Ana","due_date":"2026-05-12"}}'
-            )
-        elif "sum_even_squares" in prompt:
-            content = (
-                '{"code":"def sum_even_squares(nums: list[int]) -> int:\\n'
-                '    total = 0\\n'
-                '    for value in nums:\\n'
-                '        if value % 2 == 0:\\n'
-                '            total += value * value\\n'
-                '    return total\\n"}'
-            )
-        elif "A notebook has" in prompt:
-            numbers = [int(value) for value in re.findall(r"\d+", prompt)]
-            total_pages, weekday_pages, weeks, weekend_pages = numbers[:4]
-            content = str(total_pages - weeks * 5 * weekday_pages - weeks * 2 * weekend_pages)
-        elif "The Left Hand of Darkness" in prompt:
-            content = "Ursula K. Le Guin"
         else:
-            content = ""
+            content = perfect_lite_eval_answer(prompt)
         return FakeResponse({"choices": [{"message": {"content": content}}]})
 
 
@@ -127,7 +104,7 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
             "llm_gateway_core.services.openrouter_free_models.asyncio.create_subprocess_exec",
             side_effect=fake_create_subprocess_exec,
         ):
-            passed, stderr = run_async(_run_sum_even_squares_tests("def sum_even_squares(nums):\n    return 0\n"))
+            passed, stderr = run_async(_run_code_unit_tests("def sum_even_squares(nums):\n    return 0\n", "sum_even_squares", [([], 0)]))
 
         self.assertTrue(passed)
         self.assertEqual(stderr, "")
@@ -142,7 +119,7 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
     def test_code_eval_rlimit_rejects_large_memory_allocation(self):
         code = "def sum_even_squares(nums):\n    waste = [0] * (10**12)\n    return len(waste)\n"
 
-        passed, stderr = run_async(_run_sum_even_squares_tests(code))
+        passed, stderr = run_async(_run_code_unit_tests(code, "sum_even_squares", [([1, 2], 4)]))
 
         self.assertFalse(passed)
         self.assertIn("MemoryError", stderr)
@@ -199,7 +176,7 @@ class OpenRouterFreeModelsServiceTests(unittest.TestCase):
                 "tool_call_lite",
                 "code_unit_lite",
                 "symbolic_math_lite",
-                "simpleqa_lite",
+                "grounded_qa_lite",
             ],
         )
 

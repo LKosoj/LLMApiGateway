@@ -1,6 +1,5 @@
 import asyncio
 import inspect
-import re
 import unittest
 
 from llm_gateway_core.config.loader import ConfigLoader, ProviderDetails
@@ -10,6 +9,7 @@ from llm_gateway_core.services.openrouter_free_models import (
 )
 from llm_gateway_core.services.runtime_config import RuntimeGenerationManager
 from tests._async_compat import run_async
+from tests.lite_eval_support import perfect_lite_eval_answer
 from tests.runtime_test_support import (
     install_test_runtime_snapshot,
     make_runtime_snapshot,
@@ -67,31 +67,10 @@ class _RuntimeClient:
         prompt = messages[0]["content"]
         if "Reply with exactly OK" in prompt:
             content = "OK"
-        elif "Return exactly 4 lines" in prompt:
-            content = 'STATUS: READY\nROUTER and ROUTER\n{"mode":"eval","count":3}\nDONE'
-        elif "Available tools" in prompt:
-            content = (
-                '{"tool":"create_ticket","arguments":{'
-                '"title":"Login fails after password reset",'
-                '"priority":"high","assignee":"Ana","due_date":"2026-05-12"}}'
-            )
-        elif "sum_even_squares" in prompt:
-            content = (
-                '{"code":"def sum_even_squares(nums: list[int]) -> int:\\n'
-                '    return sum(value * value for value in nums if value % 2 == 0)\\n"}'
-            )
-        elif "A notebook has" in prompt:
-            numbers = [int(value) for value in re.findall(r"\d+", prompt)]
-            total_pages, weekday_pages, weeks, weekend_pages = numbers[:4]
-            content = str(
-                total_pages
-                - weeks * 5 * weekday_pages
-                - weeks * 2 * weekend_pages
-            )
-        elif "The Left Hand of Darkness" in prompt:
-            content = "Ursula K. Le Guin"
         else:
-            raise AssertionError(f"unexpected OpenRouter prompt: {prompt!r}")
+            content = perfect_lite_eval_answer(prompt)
+            if not content:
+                raise AssertionError(f"unexpected OpenRouter prompt: {prompt!r}")
         return _Response({"choices": [{"message": {"content": content}}]})
 
     async def aclose(self) -> None:

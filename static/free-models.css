@@ -238,7 +238,9 @@ h1 {
     min-height: 32px;
     padding: 6px 14px;
     border-radius: var(--radius-md);
-    color: var(--text-muted);
+    /* --text-muted on --bg-sunken is 4.13:1 in the light theme, below the 4.5:1
+       floor for 13px text; the selected option still stands out by its fill. */
+    color: var(--text);
     font-size: 13px;
     font-weight: 600;
     white-space: nowrap;

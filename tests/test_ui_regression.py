@@ -394,13 +394,13 @@ def test_rules_editor_tabs_display_and_product_version_states(page: Page, server
     expect(version).to_have_text(f"(v{__version__})")
     expect(version).to_have_attribute("data-product-version-state", "ready")
     
-    expect(page.locator("#tabRules")).to_be_visible()
-    expect(page.locator("#tabEmbeddings")).to_be_visible()
-    expect(page.locator("#tabRerank")).to_be_visible()
-    expect(page.locator("#tabImages")).to_be_visible()
-    expect(page.locator("#tabAudio")).to_be_visible()
-    expect(page.locator("#tabRouter")).to_be_visible()
-    expect(page.locator("#tabProviders")).to_be_visible()
+    expect(page.locator('[data-entity-target="rules"]')).to_be_visible()
+    expect(page.locator('[data-entity-target="embeddings"]')).to_be_visible()
+    expect(page.locator('[data-entity-target="rerank"]')).to_be_visible()
+    expect(page.locator('[data-entity-target="images"]')).to_be_visible()
+    expect(page.locator('[data-entity-target="audio"]')).to_be_visible()
+    expect(page.locator('[data-entity-target="router"]')).to_be_visible()
+    expect(page.locator('[data-entity-target="providers"]')).to_be_visible()
     assert console_errors == []
 
     page.route(
@@ -454,7 +454,7 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
 
     expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
     expect(page.locator("#providersList .provider-card")).to_have_count(1)
@@ -495,7 +495,7 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
     expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
     expect(page.locator("#providersList .provider-card")).to_have_count(2)
     saved_provider = page.locator("#providersList .provider-card").nth(1)
@@ -552,7 +552,7 @@ def test_providers_editor_load_failure_disables_save_and_add_until_retry(page: P
     page.route("**/v1/config/providers/structured", handle_structured_providers)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
 
     expect(page.locator("#messageArea")).to_contain_text("Error loading Providers")
     expect(page.locator("#saveButton")).to_be_disabled()
@@ -572,7 +572,7 @@ def test_providers_editor_load_failure_disables_save_and_add_until_retry(page: P
     )
     expect(page.locator("#providersList .provider-card")).to_have_count(0)
 
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
 
     expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
     expect(page.locator("#saveButton")).to_be_enabled()
@@ -598,10 +598,10 @@ def test_async_providers_load_locks_navigation_until_response(page: Page, server
 
     page.goto(f"{server}/v1/ui/rules-editor")
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
     expect(page.locator("#saveButton")).to_be_disabled()
-    expect(page.locator("#tabRules")).to_be_disabled()
-    expect(page.locator("#tabProviders")).to_be_disabled()
+    expect(page.locator('[data-entity-target="rules"]')).to_be_disabled()
+    expect(page.locator('[data-entity-target="providers"]')).to_be_disabled()
 
     delayed_provider_route["route"].fulfill(
         json={
@@ -617,11 +617,11 @@ def test_async_providers_load_locks_navigation_until_response(page: Page, server
         headers={"ETag": PROVIDERS_ETAG},
     )
     expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
-    expect(page.locator("#tabRules")).to_be_enabled()
-    expect(page.locator("#tabProviders")).to_be_enabled()
+    expect(page.locator('[data-entity-target="rules"]')).to_be_enabled()
+    expect(page.locator('[data-entity-target="providers"]')).to_be_enabled()
     expect(page.locator("#saveButton")).to_be_enabled()
 
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
     expect(page.locator("#saveButton")).to_be_enabled()
 
@@ -643,10 +643,10 @@ def test_providers_editor_serializes_explicit_loads(page: Page, server):
     page.goto(f"{server}/v1/ui/rules-editor")
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
 
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
     expect(page.locator("#saveButton")).to_be_disabled()
-    expect(page.locator("#tabProviders")).to_be_disabled()
-    expect(page.locator("#tabRules")).to_be_disabled()
+    expect(page.locator('[data-entity-target="providers"]')).to_be_disabled()
+    expect(page.locator('[data-entity-target="rules"]')).to_be_disabled()
     page.wait_for_timeout(100)
     assert len(provider_get_routes) == 1
 
@@ -668,9 +668,9 @@ def test_providers_editor_serializes_explicit_loads(page: Page, server):
     expect(page.locator("#saveButton")).to_be_enabled()
     expect(page.locator("#addProviderButton")).to_be_enabled()
 
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
     expect(page.locator("#saveButton")).to_be_disabled()
     assert len(provider_get_routes) == 2
     provider_get_routes[1].fulfill(
@@ -1364,8 +1364,12 @@ def test_api_keys_slow_edit_then_create_does_not_leak_selection(page: Page, serv
         if route.request.method == "PATCH":
             saved_payloads.append(route.request.post_data_json)
             route.fulfill(status=200, json=record)
-        else:
+        elif route.request.url.rstrip("/").endswith("/v1/admin/api-keys"):
             route.fulfill(status=200, json={"keys": [record]})
+        else:
+            # GET single record (revealFullApiKey), carries the ETag used as
+            # If-Match on save.
+            route.fulfill(status=200, json=record, headers={"ETag": '"etag-12"'})
 
     page.route(f"{server}/v1/admin/api-keys**", api_keys_response)
 
@@ -1518,7 +1522,7 @@ def test_editor_save_and_reload(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     # 2. Router
-    page.click("#tabRouter")
+    page.click('[data-entity-target="router"]')
     expect(page.locator("#messageArea")).to_contain_text("Router Models loaded successfully")
     page.click("#addRouterButton")
     page.fill("#editor-container-router .gateway-model-input", "model-router")
@@ -1529,7 +1533,7 @@ def test_editor_save_and_reload(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     # 3. Embeddings
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
     page.click("#addEmbeddingButton")
     page.fill("#editor-container-embeddings .gateway-model-input", "model-emb")
@@ -1539,7 +1543,7 @@ def test_editor_save_and_reload(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     # 4. Rerank
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
     page.click("#addRerankButton")
     page.fill("#editor-container-rerank .gateway-model-input", "model-rerank")
@@ -1549,7 +1553,7 @@ def test_editor_save_and_reload(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     # 5. Images
-    page.click("#tabImages")
+    page.click('[data-entity-target="images"]')
     expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
     page.click("#addImageGenerationButton")
     page.fill("#imageGenerationList .gateway-model-input", "model-image-gen")
@@ -1563,7 +1567,7 @@ def test_editor_save_and_reload(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     # 6. Providers
-    page.click("#tabProviders")
+    page.click('[data-entity-target="providers"]')
     expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
     
     # Reload and check all
@@ -1573,21 +1577,21 @@ def test_editor_save_and_reload(page: Page, server):
     expect(page.locator("#editor-container-rules .gateway-model-input")).to_have_value("model-chat")
 
     # Check Router
-    page.click("#tabRouter")
+    page.click('[data-entity-target="router"]')
     expect(page.locator("#editor-container-router .gateway-model-input")).to_have_value("model-router")
     expect(page.locator("#editor-container-router .router-selector-model-select")).to_have_value("model-chat")
     expect(page.locator("#editor-container-router .router-gateway-target-select")).to_have_value("model-chat")
     
     # Check Embeddings
-    page.click("#tabEmbeddings")
+    page.click('[data-entity-target="embeddings"]')
     expect(page.locator("#editor-container-embeddings .gateway-model-input")).to_have_value("model-emb")
     
     # Check Rerank
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     expect(page.locator("#editor-container-rerank .gateway-model-input")).to_have_value("model-rerank")
 
     # Check Images
-    page.click("#tabImages")
+    page.click('[data-entity-target="images"]')
     expect(page.locator("#imageGenerationList .gateway-model-input")).to_have_value("model-image-gen")
     expect(page.locator("#imageEditList .gateway-model-input")).to_have_value("model-image-edit")
 

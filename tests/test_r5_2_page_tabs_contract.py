@@ -17,7 +17,11 @@ def test_docs_tabs_use_the_shared_manual_controller() -> None:
     assert 'activation: "manual"' in source
     assert "onActivate: activateDocsTab" in source
     assert "onReselect: activateDocsTab" in source
-    assert 'button.addEventListener("click"' not in source
+    # The tabs are driven by the shared controller only: the page's single
+    # manual click handler belongs to the code-copy buttons.
+    tabs_section, _, copy_section = source.partition("function setupCopyButtons()")
+    assert 'addEventListener("click"' not in tabs_section
+    assert copy_section.count('addEventListener("click"') == 1
     assert "activationContext.signal.aborted || !activationContext.isCurrent()" in source
 
 

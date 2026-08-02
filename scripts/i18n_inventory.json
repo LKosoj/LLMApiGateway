@@ -3349,7 +3349,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 221,
+      "line": 244,
       "column": 141,
       "text": "/v1/web/search",
       "classification": "protocol"
@@ -3358,7 +3358,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 222,
+      "line": 245,
       "column": 268,
       "text": ".env",
       "classification": "protocol"
@@ -3367,7 +3367,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 222,
+      "line": 245,
       "column": 287,
       "text": "PROXY_URL",
       "classification": "protocol"
@@ -3376,7 +3376,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 222,
+      "line": 245,
       "column": 312,
       "text": "TAVILY_API_KEY",
       "classification": "protocol"
@@ -3385,7 +3385,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 222,
+      "line": 245,
       "column": 342,
       "text": "JINA_API_KEY",
       "classification": "protocol"
@@ -3394,7 +3394,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 222,
+      "line": 245,
       "column": 370,
       "text": "ZAI_API_KEY",
       "classification": "protocol"
@@ -3403,7 +3403,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 236,
+      "line": 259,
       "column": 139,
       "text": "/v1/web/read",
       "classification": "protocol"
@@ -3412,7 +3412,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 237,
+      "line": 260,
       "column": 306,
       "text": "PROXY_URL",
       "classification": "protocol"
@@ -3421,7 +3421,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 237,
+      "line": 260,
       "column": 331,
       "text": "TAVILY_API_KEY",
       "classification": "protocol"
@@ -3430,7 +3430,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 237,
+      "line": 260,
       "column": 361,
       "text": "JINA_API_KEY",
       "classification": "protocol"
@@ -3439,7 +3439,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 237,
+      "line": 260,
       "column": 389,
       "text": "ZAI_API_KEY",
       "classification": "protocol"
@@ -3448,7 +3448,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 237,
+      "line": 260,
       "column": 480,
       "text": ".env",
       "classification": "protocol"
@@ -3457,7 +3457,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 250,
+      "line": 273,
       "column": 135,
       "text": "/v1/web/research",
       "classification": "protocol"
@@ -3466,7 +3466,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 263,
+      "line": 286,
       "column": 144,
       "text": "/v1/web/deep-research",
       "classification": "protocol"
@@ -3475,7 +3475,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 264,
+      "line": 287,
       "column": 220,
       "text": "image_generation: true",
       "classification": "sample"
@@ -3484,7 +3484,7 @@
       "page": "rules-editor",
       "file": "static/rules-editor.html",
       "kind": "html-code",
-      "line": 386,
+      "line": 409,
       "column": 231,
       "text": "${VAR_NAME}",
       "classification": "sample"

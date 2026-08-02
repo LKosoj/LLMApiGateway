@@ -11,7 +11,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -40,6 +40,9 @@ EVAL_SCORE_WEIGHT = 1.6
 HEALTH_PROBE_TIMEOUT_SECONDS = 30.0
 HEALTH_PROBE_MAX_TOKENS = 16
 LITE_EVAL_TIMEOUT_SECONDS = 45.0
+# Сырой ответ модели сохраняется в details, чтобы провал теста можно было
+# разобрать без повторного платного прогона.
+LITE_EVAL_RAW_OUTPUT_LIMIT = 500
 CODE_EVAL_TIMEOUT_SECONDS = 2.0
 CODE_EVAL_CPU_LIMIT_SECONDS = 2
 CODE_EVAL_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
@@ -115,6 +118,26 @@ class LiteEvalTaskResult:
             "status": self.status,
             "details": self.details,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class LiteEvalTaskSpec:
+    """Один тест lite eval: промпт и способ оценить ответ модели."""
+
+    id: str
+    max_points: int
+    prompt: str
+    max_tokens: int
+    grade: Callable[[str], Awaitable[LiteEvalTaskResult]] = field(repr=False)
+
+    def error_result(self, exc: BaseException) -> LiteEvalTaskResult:
+        return LiteEvalTaskResult(
+            id=self.id,
+            points=0,
+            max_points=self.max_points,
+            status="error",
+            details={"error": _safe_exception_type(exc)},
+        )
 
 
 @dataclass
@@ -1192,27 +1215,17 @@ class OpenRouterFreeModelsService:
         *,
         context: _OpenRouterRefreshContext | None = None,
     ) -> dict[str, Any]:
-        task_runners = (
-            ("instruction_following_lite", 200, self._run_instruction_following_lite_task),
-            ("tool_call_lite", 200, self._run_tool_call_lite_task),
-            ("code_unit_lite", 200, self._run_code_unit_lite_task),
-            ("symbolic_math_lite", 100, self._run_symbolic_math_lite_task),
-            ("simpleqa_lite", 50, self._run_simpleqa_lite_task),
-        )
         tasks: list[LiteEvalTaskResult] = []
-        for task_id, max_points, runner in task_runners:
+        for spec in build_lite_eval_tasks(self._lite_eval_seed()):
             try:
-                tasks.append(await runner(model, context=context))
-            except Exception as exc:
-                tasks.append(
-                    LiteEvalTaskResult(
-                        id=task_id,
-                        points=0,
-                        max_points=max_points,
-                        status="error",
-                        details={"error": _safe_exception_type(exc)},
-                    )
+                response = await self._chat_completion(
+                    _eval_payload(model, spec.prompt, max_tokens=spec.max_tokens),
+                    context=context,
+                    timeout=LITE_EVAL_TIMEOUT_SECONDS,
                 )
+                tasks.append(await spec.grade(_extract_chat_content(response)))
+            except Exception as exc:
+                tasks.append(spec.error_result(exc))
         points = sum(task.points for task in tasks)
         max_points = sum(task.max_points for task in tasks)
         return {
@@ -1226,199 +1239,8 @@ class OpenRouterFreeModelsService:
             "tasks": [task.to_dict() for task in tasks],
         }
 
-    async def _run_instruction_following_lite_task(
-        self,
-        model: ScoredOpenRouterModel,
-        *,
-        context: _OpenRouterRefreshContext | None = None,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Return exactly 4 lines.\n"
-            "Line 1 must be exactly: STATUS: READY\n"
-            "Line 2 must contain the word ROUTER exactly twice.\n"
-            "Line 3 must be valid JSON with exactly keys \"mode\" and \"count\"; "
-            "\"mode\" must be \"eval\" and \"count\" must be 3.\n"
-            "Line 4 must be exactly: DONE\n"
-            "No markdown and no extra text."
-        )
-        response = await self._chat_completion(
-            _eval_payload(model, prompt, max_tokens=120),
-            context=context,
-            timeout=LITE_EVAL_TIMEOUT_SECONDS,
-        )
-        content = _extract_chat_content(response).strip()
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        json_line = _extract_json_object(lines[2]) if len(lines) >= 3 else {}
-        details = {
-            "exactlyFourLines": len(lines) == 4,
-            "lineOneExact": len(lines) >= 1 and lines[0] == "STATUS: READY",
-            "routerTwice": len(lines) >= 2 and len(re.findall(r"\bROUTER\b", lines[1])) == 2,
-            "jsonLineValid": json_line == {"mode": "eval", "count": 3},
-            "lineFourExact": len(lines) >= 4 and lines[3] == "DONE",
-        }
-        score = sum(1 for ok in details.values() if ok)
-        points = round(200 * score / len(details))
-        return LiteEvalTaskResult(
-            id="instruction_following_lite",
-            points=points,
-            max_points=200,
-            status="passed" if points == 200 else "failed",
-            details=details,
-        )
-
-    async def _run_tool_call_lite_task(
-        self,
-        model: ScoredOpenRouterModel,
-        *,
-        context: _OpenRouterRefreshContext | None = None,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Available tools:\n"
-            "create_ticket(title, priority, assignee, due_date)\n"
-            "send_email(to, subject, body)\n"
-            "search_docs(query)\n\n"
-            "User request: Create a high-priority bug ticket titled "
-            "\"Login fails after password reset\" assigned to Ana, due 2026-05-12. "
-            "Do not send email.\n"
-            "Return only JSON: {\"tool\":\"...\",\"arguments\":{...}}"
-        )
-        response = await self._chat_completion(
-            _eval_payload(model, prompt, max_tokens=220),
-            context=context,
-            timeout=LITE_EVAL_TIMEOUT_SECONDS,
-        )
-        parsed = _extract_json_object(_extract_chat_content(response))
-        arguments = parsed.get("arguments") if isinstance(parsed.get("arguments"), dict) else {}
-        title = str(arguments.get("title", ""))
-        details = {
-            "jsonObject": bool(parsed),
-            "toolCorrect": parsed.get("tool") == "create_ticket",
-            "priorityCorrect": str(arguments.get("priority", "")).lower() == "high",
-            "assigneeCorrect": arguments.get("assignee") == "Ana",
-            "dueDateCorrect": arguments.get("due_date") == "2026-05-12",
-            "titleCorrect": "login fails" in title.lower() and "password reset" in title.lower(),
-        }
-        score = sum(1 for ok in details.values() if ok)
-        points = round(200 * score / len(details))
-        return LiteEvalTaskResult(
-            id="tool_call_lite",
-            points=points,
-            max_points=200,
-            status="passed" if points == 200 else "failed",
-            details=details,
-        )
-
-    async def _run_code_unit_lite_task(
-        self,
-        model: ScoredOpenRouterModel,
-        *,
-        context: _OpenRouterRefreshContext | None = None,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Return only JSON with one key \"code\". The value must be Python code defining:\n"
-            "def sum_even_squares(nums: list[int]) -> int:\n"
-            "It must return the sum of squares of even integers in nums. No imports."
-        )
-        response = await self._chat_completion(
-            _eval_payload(model, prompt, max_tokens=320),
-            context=context,
-            timeout=LITE_EVAL_TIMEOUT_SECONDS,
-        )
-        code = _extract_python_code(_extract_chat_content(response))
-        safety_error = _python_code_safety_error(code)
-        details: dict[str, Any] = {
-            "codePresent": bool(code.strip()),
-            "safeAst": safety_error is None,
-            "safetyError": safety_error,
-            "unitTestsPassed": False,
-            "stderr": "",
-        }
-        if safety_error is None:
-            passed, stderr = await _run_sum_even_squares_tests(code)
-            details["unitTestsPassed"] = passed
-            details["stderr"] = stderr[:240]
-
-        scored_checks = {
-            "codePresent": details["codePresent"],
-            "safeAst": details["safeAst"],
-            "unitTestsPassed": details["unitTestsPassed"],
-        }
-        score = sum(1 for ok in scored_checks.values() if ok)
-        points = round(200 * score / len(scored_checks))
-        return LiteEvalTaskResult(
-            id="code_unit_lite",
-            points=points,
-            max_points=200,
-            status="passed" if points == 200 else "failed",
-            details=details,
-        )
-
-    async def _run_symbolic_math_lite_task(
-        self,
-        model: ScoredOpenRouterModel,
-        *,
-        context: _OpenRouterRefreshContext | None = None,
-    ) -> LiteEvalTaskResult:
-        values = _symbolic_math_values(int(self._time_func()) // REFRESH_INTERVAL_SECONDS)
-        prompt = (
-            f"A notebook has {values['total_pages']} pages. Mira writes {values['weekday_pages']} pages every weekday "
-            f"for {values['weeks']} weeks and {values['weekend_pages']} pages on each weekend day. "
-            "How many pages remain? Return only the integer."
-        )
-        response = await self._chat_completion(
-            _eval_payload(model, prompt, max_tokens=80),
-            context=context,
-            timeout=LITE_EVAL_TIMEOUT_SECONDS,
-        )
-        answer = _extract_chat_content(response)
-        parsed_answer = _first_int(answer)
-        expected = values["remaining_pages"]
-        details = {
-            "expected": expected,
-            "received": answer[:80],
-            "parsedAnswer": parsed_answer,
-        }
-        return LiteEvalTaskResult(
-            id="symbolic_math_lite",
-            points=100 if parsed_answer == expected else 0,
-            max_points=100,
-            status="passed" if parsed_answer == expected else "failed",
-            details=details,
-        )
-
-    async def _run_simpleqa_lite_task(
-        self,
-        model: ScoredOpenRouterModel,
-        *,
-        context: _OpenRouterRefreshContext | None = None,
-    ) -> LiteEvalTaskResult:
-        prompt = (
-            "Who wrote the novel \"The Left Hand of Darkness\"? "
-            "If unsure, answer UNKNOWN. Return only the answer."
-        )
-        response = await self._chat_completion(
-            _eval_payload(model, prompt, max_tokens=40),
-            context=context,
-            timeout=LITE_EVAL_TIMEOUT_SECONDS,
-        )
-        answer = _normalize_simple_answer(_extract_chat_content(response))
-        correct_aliases = {"ursulakleguin", "ursulaleguin"}
-        is_correct = answer in correct_aliases
-        is_unknown = answer == "unknown"
-        details = {
-            "expected": "Ursula K. Le Guin",
-            "normalizedAnswer": answer,
-            "correct": is_correct,
-            "unknown": is_unknown,
-        }
-        points = 50 if is_correct else 20 if is_unknown else 0
-        return LiteEvalTaskResult(
-            id="simpleqa_lite",
-            points=points,
-            max_points=50,
-            status="passed" if is_correct else "not_attempted" if is_unknown else "failed",
-            details=details,
-        )
+    def _lite_eval_seed(self) -> int:
+        return int(self._time_func()) // REFRESH_INTERVAL_SECONDS
 
     async def _chat_completion(
         self,
@@ -1855,10 +1677,15 @@ def _code_eval_preexec_fn() -> Callable[[], None] | None:
     return set_resource_limits
 
 
-async def _run_sum_even_squares_tests(code: str) -> tuple[bool, str]:
+async def _run_code_unit_tests(
+    code: str,
+    function_name: str,
+    cases: Sequence[tuple[list[int], int]],
+) -> tuple[bool, str]:
     harness = """
+import json
 import sys
-code = sys.stdin.read()
+payload = json.loads(sys.stdin.read())
 safe_builtins = {
     "abs": abs,
     "bool": bool,
@@ -1872,17 +1699,11 @@ safe_builtins = {
     "sum": sum,
 }
 namespace = {}
-exec(compile(code, "<model_code>", "exec"), {"__builtins__": safe_builtins}, namespace)
-fn = namespace.get("sum_even_squares")
+exec(compile(payload["code"], "<model_code>", "exec"), {"__builtins__": safe_builtins}, namespace)
+fn = namespace.get(payload["function"])
 if not callable(fn):
-    raise AssertionError("missing sum_even_squares")
-tests = [
-    ([1, 2, 3, 4], 20),
-    ([-2, -1, 0, 5], 4),
-    ([], 0),
-    ([6], 36),
-]
-for values, expected in tests:
+    raise AssertionError("missing " + payload["function"])
+for values, expected in payload["tests"]:
     actual = fn(values)
     if actual != expected:
         raise AssertionError(f"{values}: {actual} != {expected}")
@@ -1904,9 +1725,14 @@ for values, expected in tests:
         harness,
         **subprocess_kwargs,
     )
+    request = json.dumps({
+        "code": code,
+        "function": function_name,
+        "tests": [[values, expected] for values, expected in cases],
+    })
     try:
         _stdout, stderr = await asyncio.wait_for(
-            process.communicate(code.encode("utf-8")),
+            process.communicate(request.encode("utf-8")),
             timeout=CODE_EVAL_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -1939,6 +1765,323 @@ def _first_int(text: str) -> int | None:
 
 def _normalize_simple_answer(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _task_digest(seed: int, task_id: str) -> bytes:
+    return hashlib.sha256(f"{seed}:{task_id}".encode("utf-8")).digest()
+
+
+def _pick(options: Sequence[Any], digest: bytes, index: int) -> Any:
+    return options[digest[index] % len(options)]
+
+
+def _raw_output(content: str) -> str:
+    return content.strip()[:LITE_EVAL_RAW_OUTPUT_LIMIT]
+
+
+def _points_from_checks(max_points: int, checks: dict[str, bool]) -> int:
+    return round(max_points * sum(1 for passed in checks.values() if passed) / len(checks))
+
+
+def build_lite_eval_tasks(seed: int) -> tuple[LiteEvalTaskSpec, ...]:
+    """Тесты lite eval; данные заданий выводятся из seed, чтобы их нельзя было заучить."""
+    return (
+        _build_instruction_following_task(seed),
+        _build_tool_call_task(seed),
+        _build_code_unit_task(seed),
+        _build_symbolic_math_task(seed),
+        _build_grounded_qa_task(seed),
+    )
+
+
+def _build_instruction_following_task(seed: int) -> LiteEvalTaskSpec:
+    digest = _task_digest(seed, "instruction_following_lite")
+    status_word = _pick(("READY", "ARMED", "PRIMED", "STANDBY"), digest, 0)
+    marker = _pick(("ROUTER", "GATEWAY", "PROXY", "RELAY"), digest, 1)
+    repeats = 2 + digest[2] % 2
+    mode = _pick(("eval", "probe", "audit", "check"), digest, 3)
+    count = 2 + digest[4] % 8
+    closing = _pick(("DONE", "END", "COMPLETE", "FINISHED"), digest, 5)
+    prompt = (
+        "Return exactly 4 lines.\n"
+        f"Line 1 must be exactly: STATUS: {status_word}\n"
+        f"Line 2 must contain the word {marker} exactly {repeats} times.\n"
+        "Line 3 must be valid JSON with exactly keys \"mode\" and \"count\"; "
+        f"\"mode\" must be \"{mode}\" and \"count\" must be {count}.\n"
+        f"Line 4 must be exactly: {closing}\n"
+        "No markdown and no extra text."
+    )
+
+    async def grade(content: str) -> LiteEvalTaskResult:
+        lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
+        json_line = _extract_json_object(lines[2]) if len(lines) >= 3 else {}
+        checks = {
+            "exactlyFourLines": len(lines) == 4,
+            "lineOneExact": len(lines) >= 1 and lines[0] == f"STATUS: {status_word}",
+            "markerRepeats": (
+                len(lines) >= 2
+                and len(re.findall(rf"\b{re.escape(marker)}\b", lines[1])) == repeats
+            ),
+            "jsonLineValid": json_line == {"mode": mode, "count": count},
+            "lineFourExact": len(lines) >= 4 and lines[3] == closing,
+        }
+        points = _points_from_checks(200, checks)
+        return LiteEvalTaskResult(
+            id="instruction_following_lite",
+            points=points,
+            max_points=200,
+            status="passed" if points == 200 else "failed",
+            details={
+                **checks,
+                "marker": marker,
+                "expectedRepeats": repeats,
+                "rawOutput": _raw_output(content),
+            },
+        )
+
+    return LiteEvalTaskSpec(
+        id="instruction_following_lite",
+        max_points=200,
+        prompt=prompt,
+        max_tokens=120,
+        grade=grade,
+    )
+
+
+def _build_tool_call_task(seed: int) -> LiteEvalTaskSpec:
+    digest = _task_digest(seed, "tool_call_lite")
+    assignee = _pick(("Ana", "Bruno", "Chen", "Dara", "Elif", "Farid"), digest, 0)
+    priority = _pick(("high", "low", "critical"), digest, 1)
+    component = _pick(("Login", "Checkout", "Export", "Search", "Upload"), digest, 2)
+    trigger = _pick(
+        ("password reset", "session refresh", "plan upgrade", "cache purge"),
+        digest,
+        3,
+    )
+    due_date = f"{2026 + digest[4] % 2}-{1 + digest[5] % 12:02d}-{1 + digest[6] % 28:02d}"
+    title = f"{component} fails after {trigger}"
+    tools = (
+        "create_ticket(title, priority, assignee, due_date)",
+        "send_email(to, subject, body)",
+        "search_docs(query)",
+    )
+    offset = digest[7] % len(tools)
+    prompt = (
+        "Available tools:\n"
+        + "\n".join(tools[offset:] + tools[:offset])
+        + "\n\n"
+        + f"User request: Create a {priority}-priority bug ticket titled "
+        + f"\"{title}\" assigned to {assignee}, due {due_date}. "
+        + "Do not send email.\n"
+        + "Return only JSON: {\"tool\":\"...\",\"arguments\":{...}}"
+    )
+
+    async def grade(content: str) -> LiteEvalTaskResult:
+        parsed = _extract_json_object(content)
+        arguments = parsed.get("arguments") if isinstance(parsed.get("arguments"), dict) else {}
+        received_title = str(arguments.get("title", ""))
+        checks = {
+            "jsonObject": bool(parsed),
+            "toolCorrect": parsed.get("tool") == "create_ticket",
+            "priorityCorrect": str(arguments.get("priority", "")).lower() == priority,
+            "assigneeCorrect": arguments.get("assignee") == assignee,
+            "dueDateCorrect": arguments.get("due_date") == due_date,
+            "titleCorrect": (
+                component.lower() in received_title.lower()
+                and trigger in received_title.lower()
+            ),
+        }
+        points = _points_from_checks(200, checks)
+        return LiteEvalTaskResult(
+            id="tool_call_lite",
+            points=points,
+            max_points=200,
+            status="passed" if points == 200 else "failed",
+            details={
+                **checks,
+                "expectedTitle": title,
+                "expectedAssignee": assignee,
+                "expectedDueDate": due_date,
+                "rawOutput": _raw_output(content),
+            },
+        )
+
+    return LiteEvalTaskSpec(
+        id="tool_call_lite",
+        max_points=200,
+        prompt=prompt,
+        max_tokens=220,
+        grade=grade,
+    )
+
+
+_CODE_UNIT_FILTERS = (
+    ("even", "even integers", lambda value: value % 2 == 0),
+    ("odd", "odd integers", lambda value: value % 2 != 0),
+    ("positive", "positive integers", lambda value: value > 0),
+)
+_CODE_UNIT_TRANSFORMS = (
+    ("squares", "squares", lambda value: value * value),
+    ("cubes", "cubes", lambda value: value ** 3),
+)
+
+
+def _build_code_unit_task(seed: int) -> LiteEvalTaskSpec:
+    digest = _task_digest(seed, "code_unit_lite")
+    filter_name, filter_label, keep = _pick(_CODE_UNIT_FILTERS, digest, 0)
+    transform_name, transform_label, transform = _pick(_CODE_UNIT_TRANSFORMS, digest, 1)
+    function_name = f"sum_{filter_name}_{transform_name}"
+    example = [digest[index] % 21 - 10 for index in range(2, 7)]
+    cases = [
+        (values, sum(transform(value) for value in values if keep(value)))
+        for values in ([1, 2, 3, 4], [-2, -1, 0, 5], [], [6], example)
+    ]
+    example_result = cases[-1][1]
+    prompt = (
+        "Return only JSON with one key \"code\". The value must be Python code defining:\n"
+        f"def {function_name}(nums: list[int]) -> int:\n"
+        f"It must return the sum of {transform_label} of {filter_label} in nums. No imports.\n"
+        f"Example: {function_name}({example}) must return {example_result}."
+    )
+
+    async def grade(content: str) -> LiteEvalTaskResult:
+        code = _extract_python_code(content)
+        safety_error = _python_code_safety_error(code)
+        details: dict[str, Any] = {
+            "function": function_name,
+            "codePresent": bool(code.strip()),
+            "safeAst": safety_error is None,
+            "safetyError": safety_error,
+            "unitTestsPassed": False,
+            "stderr": "",
+            "rawOutput": _raw_output(content),
+        }
+        if safety_error is None:
+            passed, stderr = await _run_code_unit_tests(code, function_name, cases)
+            details["unitTestsPassed"] = passed
+            details["stderr"] = stderr[:240]
+
+        checks = {
+            "codePresent": details["codePresent"],
+            "safeAst": details["safeAst"],
+            "unitTestsPassed": details["unitTestsPassed"],
+        }
+        points = _points_from_checks(200, checks)
+        return LiteEvalTaskResult(
+            id="code_unit_lite",
+            points=points,
+            max_points=200,
+            status="passed" if points == 200 else "failed",
+            details=details,
+        )
+
+    return LiteEvalTaskSpec(
+        id="code_unit_lite",
+        max_points=200,
+        prompt=prompt,
+        max_tokens=320,
+        grade=grade,
+    )
+
+
+def _build_symbolic_math_task(seed: int) -> LiteEvalTaskSpec:
+    values = _symbolic_math_values(seed)
+    expected = values["remaining_pages"]
+    prompt = (
+        f"A notebook has {values['total_pages']} pages. Mira writes {values['weekday_pages']} pages every weekday "
+        f"for {values['weeks']} weeks and {values['weekend_pages']} pages on each weekend day. "
+        "How many pages remain? Return only the integer."
+    )
+
+    async def grade(content: str) -> LiteEvalTaskResult:
+        parsed_answer = _first_int(content)
+        return LiteEvalTaskResult(
+            id="symbolic_math_lite",
+            points=100 if parsed_answer == expected else 0,
+            max_points=100,
+            status="passed" if parsed_answer == expected else "failed",
+            details={
+                "expected": expected,
+                "parsedAnswer": parsed_answer,
+                "rawOutput": _raw_output(content),
+            },
+        )
+
+    return LiteEvalTaskSpec(
+        id="symbolic_math_lite",
+        max_points=100,
+        prompt=prompt,
+        max_tokens=80,
+        grade=grade,
+    )
+
+
+def _build_grounded_qa_task(seed: int) -> LiteEvalTaskSpec:
+    digest = _task_digest(seed, "grounded_qa_lite")
+    prefix = _pick(("KRT", "NVL", "ZPH", "MRD", "TVS"), digest, 0)
+    base = 10 + digest[1] % 60
+    numbers = [
+        base,
+        base + 3 + digest[2] % 4,
+        base + 11 + digest[3] % 5,
+        base + 21 + digest[4] % 6,
+    ]
+    missing_index = digest[5] % len(numbers)
+    missing_code = f"{prefix}-{numbers[missing_index]}"
+    fact_codes = [
+        f"{prefix}-{number}"
+        for index, number in enumerate(numbers)
+        if index != missing_index
+    ]
+    pallets = [11 + digest[6] % 40, 61 + digest[7] % 40, 111 + digest[8] % 40]
+    month = 1 + digest[9] % 12
+    days = [1 + digest[10] % 9, 10 + digest[11] % 9, 19 + digest[12] % 9]
+    asked_index = digest[13] % len(fact_codes)
+    asked_code = fact_codes[asked_index]
+    expected_pallets = pallets[asked_index]
+    facts = "\n".join(
+        f"- Warehouse {code} shipped {count} pallets on 2026-{month:02d}-{day:02d}."
+        for code, count, day in zip(fact_codes, pallets, days, strict=True)
+    )
+    prompt = (
+        "Facts:\n"
+        f"{facts}\n\n"
+        "Use only the facts above. Return exactly two lines and nothing else.\n"
+        f"Line 1: how many pallets did warehouse {asked_code} ship? Answer with the integer only.\n"
+        f"Line 2: how many pallets did warehouse {missing_code} ship? "
+        "If the facts above do not contain the answer, reply exactly UNKNOWN."
+    )
+
+    async def grade(content: str) -> LiteEvalTaskResult:
+        lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
+        grounded_line = lines[0] if lines else ""
+        refusal_line = lines[1] if len(lines) >= 2 else ""
+        checks = {
+            "groundedCorrect": _first_int(grounded_line) == expected_pallets,
+            "refusedUnknown": _normalize_simple_answer(refusal_line) == "unknown",
+        }
+        points = _points_from_checks(50, checks)
+        return LiteEvalTaskResult(
+            id="grounded_qa_lite",
+            points=points,
+            max_points=50,
+            status="passed" if points == 50 else "failed",
+            details={
+                **checks,
+                "expectedPallets": expected_pallets,
+                "missingWarehouse": missing_code,
+                "hallucinatedPallets": _first_int(refusal_line),
+                "rawOutput": _raw_output(content),
+            },
+        )
+
+    return LiteEvalTaskSpec(
+        id="grounded_qa_lite",
+        max_points=50,
+        prompt=prompt,
+        max_tokens=60,
+        grade=grade,
+    )
 
 
 def _not_evaluated_summary(reason: str) -> dict[str, Any]:

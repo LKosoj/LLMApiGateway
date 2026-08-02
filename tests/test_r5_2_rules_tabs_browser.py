@@ -59,11 +59,11 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
         "Fallback Rules loaded successfully"
     )
     assert initial_rules_request_count == 1
-    expect(page.locator("#tabOpenRouterFree")).to_be_visible()
+    expect(page.locator('[data-entity-target="openrouter-free"]')).to_be_visible()
 
-    page.click("#tabOpenRouterFree")
+    page.click('[data-entity-target="openrouter-free"]')
     _wait_for_routes(page, openrouter_requests, 1)
-    page.click("#tabOpenRouterFree")
+    page.click('[data-entity-target="openrouter-free"]')
     _wait_for_routes(page, openrouter_requests, 2)
     openrouter_requests[0].fulfill(
         json={
@@ -84,7 +84,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
 
     page.click("#runOpenRouterFreeEvalButton")
     _wait_for_routes(page, openrouter_run_requests, 1)
-    page.click("#tabOpenRouterFree")
+    page.click('[data-entity-target="openrouter-free"]')
     openrouter_run_requests[0].fulfill(
         json={
             "configured": True,
@@ -105,7 +105,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
 
     page.click("#runOpenRouterFreeEvalButton")
     _wait_for_routes(page, openrouter_run_requests, 2)
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text(
         "Fallback Rules loaded successfully"
     )
@@ -125,7 +125,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
     expect(page.locator("#openRouterFreeModels")).not_to_contain_text(
         "stale-leave-openrouter"
     )
-    page.click("#tabOpenRouterFree")
+    page.click('[data-entity-target="openrouter-free"]')
     _wait_for_routes(page, openrouter_requests, 4)
     openrouter_requests[3].fulfill(
         json={
@@ -137,9 +137,9 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
     expect(page.locator("#openRouterFreeModels")).to_contain_text("recovered-openrouter")
     expect(page.locator("#runOpenRouterFreeEvalButton")).to_be_enabled()
 
-    page.click("#tabFallbackEval")
+    page.click('[data-entity-target="fallback-eval"]')
     _wait_for_routes(page, fallback_requests, 1)
-    page.click("#tabFallbackEval")
+    page.click('[data-entity-target="fallback-eval"]')
     _wait_for_routes(page, fallback_requests, 2)
     fallback_requests[0].fulfill(
         json={"lastCheckedAt": None, "lastError": "stale-error", "running": False, "snapshot": None}
@@ -152,7 +152,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
 
     page.click("#runFallbackEvalButton")
     _wait_for_routes(page, fallback_run_requests, 1)
-    page.click("#tabFallbackEval")
+    page.click('[data-entity-target="fallback-eval"]')
     fallback_run_requests[0].fulfill(
         json={"lastCheckedAt": None, "lastError": None, "running": True, "snapshot": None}
     )
@@ -170,7 +170,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
 
     page.click("#runFallbackEvalButton")
     _wait_for_routes(page, fallback_run_requests, 2)
-    page.click("#tabRules")
+    page.click('[data-entity-target="rules"]')
     expect(page.locator("#messageArea")).to_contain_text(
         "Fallback Rules loaded successfully"
     )
@@ -191,7 +191,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
     expect(page.locator("#fallbackEvalStatus")).not_to_contain_text(
         "stale-leave-fallback"
     )
-    page.click("#tabFallbackEval")
+    page.click('[data-entity-target="fallback-eval"]')
     _wait_for_routes(page, fallback_requests, 4)
     fallback_requests[3].fulfill(
         json={

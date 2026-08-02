@@ -63,7 +63,7 @@ def test_rerank_tab_is_visible(page: Page, server):
     page.goto(f"{server}/v1/ui/rules-editor")
     
     # Check if Rerank tab exists
-    rerank_tab = page.locator("#tabRerank")
+    rerank_tab = page.locator('[data-entity-target="rerank"]')
     expect(rerank_tab).to_be_visible()
     expect(rerank_tab).to_have_text("Rerank")
 
@@ -72,7 +72,7 @@ def test_create_and_save_rerank_route(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
     
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     
     # Wait for loading to finish
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
@@ -103,7 +103,7 @@ def test_create_and_save_rerank_route(page: Page, server):
     
     # Reload page and check if data persists
     page.reload()
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     assert "collapsed" in (page.locator("#editor-container-rerank .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#editor-container-rerank")
     expect(page.locator("#editor-container-rerank .gateway-model-input")).to_have_value("my-rerank-model")
@@ -114,7 +114,7 @@ def test_create_and_save_rerank_route_with_absolute_target_url(page: Page, serve
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
 
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
 
@@ -135,7 +135,7 @@ def test_create_and_save_rerank_route_with_absolute_target_url(page: Page, serve
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     assert "collapsed" in (page.locator("#editor-container-rerank .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#editor-container-rerank")
     expect(page.locator("#editor-container-rerank .gateway-model-input")).to_have_value("my-absolute-rerank-model")
@@ -151,7 +151,7 @@ def test_rerank_validation_error_invalid_target_path(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
     
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     
     # Wait for loading to finish
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
@@ -178,7 +178,7 @@ def test_rerank_validation_error_invalid_target_path(page: Page, server):
 
     # Invalid route must not persist after reload
     page.reload()
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     expect(page.locator("#rerankList .rule-card")).to_have_count(0)
 
 
@@ -187,7 +187,7 @@ def test_create_and_save_rerank_route_with_retry_settings(page: Page, server):
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
 
     page.click("#addRerankButton")
@@ -203,7 +203,7 @@ def test_create_and_save_rerank_route_with_retry_settings(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     assert "collapsed" in (page.locator("#editor-container-rerank .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#editor-container-rerank")
     page.locator("#editor-container-rerank details.advanced-options summary").click()
@@ -216,7 +216,7 @@ def test_create_and_save_rerank_route_with_jina_output_format(page: Page, server
     page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
 
     page.click("#addRerankButton")
@@ -231,7 +231,7 @@ def test_create_and_save_rerank_route_with_jina_output_format(page: Page, server
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabRerank")
+    page.click('[data-entity-target="rerank"]')
     assert "collapsed" in (page.locator("#editor-container-rerank .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#editor-container-rerank")
     page.locator("#editor-container-rerank details.advanced-options summary").click()

@@ -453,6 +453,90 @@ div[style*="position:relative"] {
     font-variant-numeric: tabular-nums;
 }
 
+.eval-task-summary {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px;
+    background: var(--bg-elevated);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.eval-task-summary h3 {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.eval-task-summary-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 0.8rem;
+}
+
+.eval-task-summary-row code {
+    font-family: var(--font-mono);
+    color: var(--text);
+}
+
+.eval-task-summary-failures {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.eval-task-details {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+    font-size: 0.8rem;
+}
+
+.eval-task-details summary {
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.eval-task-detail-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.eval-task-detail-row:last-child {
+    border-bottom: none;
+}
+
+.eval-task-detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: baseline;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.eval-task-detail-checks {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.eval-task-raw-output {
+    margin: 0;
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-sunken);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
 .rule-card {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);

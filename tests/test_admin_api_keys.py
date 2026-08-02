@@ -19,6 +19,7 @@ from starlette.requests import Request
 from llm_gateway_core.api.auth_ui import auth_router
 from llm_gateway_core.api.v1.admin_api_keys import (
     ApiKeyUpdatePayload,
+    _apply_update,
     admin_api_keys_router,
     delete_api_key,
     update_api_key,
@@ -640,7 +641,13 @@ class AdminApiKeysHttpTests(unittest.TestCase):
         self.assertIs(raised.exception, primary)
 
     def test_admin_mutation_handlers_have_no_direct_storage_or_cache_owner(self):
-        source = inspect.getsource(update_api_key) + inspect.getsource(delete_api_key)
+        # PATCH only does the If-Match precondition itself and hands the
+        # mutation to _apply_update, so the contract covers that helper too.
+        source = (
+            inspect.getsource(update_api_key)
+            + inspect.getsource(_apply_update)
+            + inspect.getsource(delete_api_key)
+        )
 
         self.assertNotIn("api_keys_db", source)
         self.assertNotIn("rate_limiter", source)

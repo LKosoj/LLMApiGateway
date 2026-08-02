@@ -85,14 +85,14 @@
         ]
       },
       {
-        "provider": "openrouter",
-        "model": "google/gemma-4-31b-it:free",
+        "provider": "alibaba",
+        "model": "qwen3.6-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 262144,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -164,7 +164,7 @@
       },
       {
         "provider": "aitunnel",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-v4-flash-0731",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -400,7 +400,7 @@
       },
       {
         "provider": "aitunnel",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-v4-flash-0731",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -627,13 +627,28 @@
       },
       {
         "provider": "openai_codex",
-        "model": "gpt-5.5",
+        "model": "gpt-5.6-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
         "context_window": 1050000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
+        "provider": "minimax",
+        "model": "MiniMax-M3",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -649,32 +664,6 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         },
-        "supports_vision": false,
-        "supports_tools": true,
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "context_window": 262144,
-        "capabilities_autofilled": [
-          "context_window"
-        ]
-      },
-      {
-        "provider": "nvidia",
-        "model": "z-ai/glm-5.2",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
         "supports_vision": false,
         "supports_tools": true,
         "context_window": 1048576,
@@ -743,20 +732,6 @@
     "gateway_model_name": "llmgateway/free",
     "fallback_models": [
       {
-        "provider": "kimicode",
-        "model": "kimi-for-coding",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {
-          "User-Agent": "Kimi Claw Plugin",
-          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
-        },
-        "context_window": 262144,
-        "capabilities_autofilled": [
-          "context_window"
-        ]
-      },
-      {
         "provider": "z.ai",
         "model": "glm-5.2",
         "use_provider_order_as_fallback": false,
@@ -769,6 +744,20 @@
           "context_window",
           "supports_tools",
           "supports_vision"
+        ]
+      },
+      {
+        "provider": "kimicode",
+        "model": "k3-256k",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {
+          "User-Agent": "Kimi Claw Plugin",
+          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
+        },
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window"
         ]
       },
       {
@@ -805,7 +794,7 @@
       },
       {
         "provider": "aitunnel",
-        "model": "deepseek-v4-pro",
+        "model": "deepseek-v4-flash-0731",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -860,7 +849,7 @@
       },
       {
         "provider": "kimicode",
-        "model": "kimi-for-coding",
+        "model": "k3-256k",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -914,7 +903,22 @@
     "fallback_models": [
       {
         "provider": "cerebras",
-        "model": "gpt-oss-120b",
+        "model": "gemma-4-31b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 131072,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
+        "provider": "z.ai",
+        "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -956,23 +960,23 @@
           "supports_tools",
           "supports_vision"
         ]
-      },
-      {
-        "provider": "openrouter",
-        "model": "openai/gpt-oss-20b:free",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": false,
-        "supports_tools": true,
-        "context_window": 131072,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
       }
     ],
+    "context_overflow_fallback": {
+      "provider": "minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "use_provider_order_as_fallback": false,
+      "custom_body_params": {},
+      "custom_headers": {},
+      "supports_vision": true,
+      "supports_tools": true,
+      "context_window": 1050000,
+      "capabilities_autofilled": [
+        "context_window",
+        "supports_tools",
+        "supports_vision"
+      ]
+    },
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,

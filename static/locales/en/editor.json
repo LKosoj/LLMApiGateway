@@ -473,6 +473,13 @@
     "latencyMsDescription": "Measured health probe response time in milliseconds.",
     "contextDescription": "Model context window size in tokens.",
     "healthStatusDescription": "Raw health probe result.",
-    "uniqueTargetDescription": "A provider/model fallback route evaluated once for all referencing gateway models."
+    "uniqueTargetDescription": "A provider/model fallback route evaluated once for all referencing gateway models.",
+    "taskSummaryTitle": "Task summary",
+    "taskSummaryPassed": "passed: {passed} of {total}",
+    "taskSummaryScore": "score: {percent}%",
+    "taskSummaryNoFailures": "no failed checks",
+    "taskDetails": "Model answers per task",
+    "stateFailed": "failed",
+    "stateError": "error"
   }
 }

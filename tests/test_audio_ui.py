@@ -71,7 +71,7 @@ def test_audio_tab_is_visible(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    audio_tab = page.locator("#tabAudio")
+    audio_tab = page.locator('[data-entity-target="audio"]')
     expect(audio_tab).to_be_visible()
     expect(audio_tab).to_have_text("Audio")
 
@@ -93,7 +93,7 @@ def test_create_and_save_audio_speech_route(page: Page, server):
     )
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabAudio")
+    page.click('[data-entity-target="audio"]')
     expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
 
     page.click("#addAudioSpeechButton")
@@ -113,7 +113,7 @@ def test_create_and_save_audio_speech_route(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabAudio")
+    page.click('[data-entity-target="audio"]')
     expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
 
     assert "collapsed" in (page.locator("#audioSpeechList .rule-card").first.get_attribute("class") or "")
@@ -146,7 +146,7 @@ def test_create_and_save_audio_transcription_route(page: Page, server):
     )
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabAudio")
+    page.click('[data-entity-target="audio"]')
     expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
 
     page.click("#addAudioTranscriptionButton")
@@ -167,7 +167,7 @@ def test_create_and_save_audio_transcription_route(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabAudio")
+    page.click('[data-entity-target="audio"]')
     expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
 
     assert "collapsed" in (page.locator("#audioTranscriptionsList .rule-card").first.get_attribute("class") or "")
@@ -204,7 +204,7 @@ def test_create_and_save_nvidia_audio_transcription_route(page: Page, server):
     )
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    page.click("#tabAudio")
+    page.click('[data-entity-target="audio"]')
     expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
 
     page.click("#addAudioTranscriptionButton")
@@ -220,7 +220,7 @@ def test_create_and_save_nvidia_audio_transcription_route(page: Page, server):
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    page.click("#tabAudio")
+    page.click('[data-entity-target="audio"]')
     expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
 
     expand_first_card(page, "#audioTranscriptionsList")

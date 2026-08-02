@@ -56,7 +56,7 @@ def test_rules_locale_change_preserves_editor_and_eval_state_without_requests(
     expect(page.locator("#rulesPreviewArea strong")).to_have_text(
         "Fallback Rules Preview"
     )
-    page.locator("#tabImages").click()
+    page.locator('[data-entity-target="images"]').click()
     expect(page.locator("#messageArea")).to_contain_text(
         "Images Routes loaded successfully"
     )
@@ -86,9 +86,9 @@ def test_rules_locale_change_preserves_editor_and_eval_state_without_requests(
 
     page.evaluate("() => window.gatewayI18n.changeLanguage('ru')")
     expect(page.locator("html")).to_have_attribute("lang", "ru")
-    expect(page.locator("#tabImages")).to_have_text("Изображения")
+    expect(page.locator('[data-entity-target="images"]')).to_have_text("Изображения")
     expect(page.locator("#saveButton")).to_contain_text("Сохранить")
-    expect(page.locator("#tabImages")).to_have_attribute("aria-selected", "true")
+    expect(page.locator('[data-entity-target="images"]')).to_have_attribute("aria-current", "true")
     expect(page.locator("#saveButton")).to_have_attribute(
         "data-editor-dirty", "true"
     )
@@ -180,7 +180,7 @@ def test_rules_locale_change_preserves_editor_and_eval_state_without_requests(
 
     eval_page.route("**/v1/fallback-model-evals", serve_eval)
     eval_page.goto(f"{server_url}/v1/ui/rules-editor")
-    eval_page.locator("#tabFallbackEval").click()
+    eval_page.locator('[data-entity-target="fallback-eval"]').click()
     expect(eval_page.locator("#fallbackEvalModels .openrouter-free-card")).to_have_count(1)
     eval_card = eval_page.locator("#fallbackEvalModels .openrouter-free-card")
     eval_card.evaluate("element => { element.dataset.identityMarker = 'eval-card'; }")
@@ -231,8 +231,8 @@ def test_rules_locale_change_preserves_editor_and_eval_state_without_requests(
 
     openrouter_page.route("**/v1/openrouter/free-models", serve_openrouter)
     openrouter_page.goto(f"{server_url}/v1/ui/rules-editor")
-    expect(openrouter_page.locator("#tabOpenRouterFree")).to_be_visible()
-    openrouter_page.locator("#tabOpenRouterFree").click()
+    expect(openrouter_page.locator('[data-entity-target="openrouter-free"]')).to_be_visible()
+    openrouter_page.locator('[data-entity-target="openrouter-free"]').click()
     openrouter_card = openrouter_page.locator(
         "#openRouterFreeModels .openrouter-free-card"
     )
