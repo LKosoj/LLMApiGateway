@@ -1143,6 +1143,57 @@ def _format_request_error_detail(target_url: str, error: httpx.RequestError) -> 
     return f"{error_type} connecting to {target_url}"
 
 
+def _clip_terminal_trailing(data: bytes, trailing_bytes: int) -> bytes:
+    """Drop the bytes an upstream appended after the terminal SSE event.
+
+    ``trailing_bytes`` is the growth of ``SSEFramer.terminal_trailing_bytes``
+    across one ``feed()``. The framer stops extracting at the terminal event and
+    counts everything behind it, so that slice always sits at the end of the
+    chunk that carried the terminal.
+    """
+    if trailing_bytes <= 0:
+        return data
+    if trailing_bytes >= len(data):
+        return b""
+    return data[:-trailing_bytes]
+
+
+def _clip_trailing_and_log(
+    data: bytes,
+    trailing_bytes: int,
+    request_id: str | None,
+) -> bytes:
+    """Drop post-terminal bytes and record that the upstream sent them.
+
+    An OpenAI-compatible SSE stream ends at `data: [DONE]`; anything after it is
+    upstream noise (anymodel repeats the marker verbatim, for one). Forwarded
+    as-is it reaches `SSEFramer` downstream as `terminal_trailing_bytes`, and
+    the response observer rejects the whole response with a 502
+    `upstream_protocol_error` — after the client already received the answer.
+    """
+    logging.warning(
+        "Upstream sent %d byte(s) after the terminal SSE event; "
+        "dropping them from the client stream. request_id=%s",
+        trailing_bytes,
+        _safe_stream_request_id(request_id),
+    )
+    return _clip_terminal_trailing(data, trailing_bytes)
+
+
+def _stream_chunk_has_finish_reason(chunk_json: object) -> bool:
+    """Report whether an OpenAI-shaped chunk carries a terminal finish_reason."""
+    if not isinstance(chunk_json, dict):
+        return False
+
+    choices = chunk_json.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if isinstance(choice, dict) and choice.get("finish_reason"):
+            return True
+    return False
+
+
 def _stream_chunk_has_response_content(chunk_json: object) -> bool:
     if not isinstance(chunk_json, dict):
         return False
@@ -1207,12 +1258,14 @@ async def _make_streaming_request(
     error_detail = None
     tokens_usage = None
     upstream_done = False
+    saw_finish_reason = False
     framer = SSEFramer(max_event_bytes=stream_event_max_bytes)
     framer_retention = _StreamObservationRetention(stream_observation_capacity)
 
     def inspect_events(events: tuple[SSEEvent, ...]) -> bool:
         nonlocal error_detail, error_in_stream, saw_real_data_chunk
         nonlocal tokens_usage, upstream_done, first_content_at
+        nonlocal saw_finish_reason
 
         for event in events:
             try:
@@ -1254,6 +1307,8 @@ async def _make_streaming_request(
 
             if isinstance(chunk_json, dict) and "usage" in chunk_json:
                 tokens_usage = chunk_json.get("usage")
+            if _stream_chunk_has_finish_reason(chunk_json):
+                saw_finish_reason = True
             if _stream_chunk_has_response_content(chunk_json):
                 saw_real_data_chunk = True
                 if first_content_at is None:
@@ -1329,6 +1384,7 @@ async def _make_streaming_request(
         prefetched_bytes = 0
         saw_real_data_chunk = False
         first_content_at: float | None = None
+        terminal_clip_bytes = 0
 
         if response.status_code >= 400:
             error_body_length = 0
@@ -1438,7 +1494,11 @@ async def _make_streaming_request(
                     return None, "Stream priming exceeded maximum buffered bytes before content."
 
                 prefetched_bytes += len(decoded.data)
+                trailing_before = framer.terminal_trailing_bytes
                 batch = framer.feed(decoded.data)
+                terminal_clip_bytes = (
+                    framer.terminal_trailing_bytes - trailing_before
+                )
                 framer_retention.consume(batch.consumed_bytes)
                 inspect_events(batch.events)
                 if not error_in_stream:
@@ -1467,12 +1527,22 @@ async def _make_streaming_request(
 
         async def combined_generator():
             nonlocal error_in_stream, error_detail, tokens_usage, saw_real_data_chunk
-            nonlocal upstream_done
+            nonlocal upstream_done, terminal_clip_bytes
             try:
                 while prefetched_chunks:
                     prefetched_chunk = prefetched_chunks.popleft()
                     try:
-                        yield prefetched_chunk.data
+                        # The terminal can only land in the last primed chunk:
+                        # priming stops as soon as `upstream_done` is set.
+                        payload = prefetched_chunk.data
+                        if not prefetched_chunks and terminal_clip_bytes:
+                            payload = _clip_trailing_and_log(
+                                payload,
+                                terminal_clip_bytes,
+                                stream_request_id,
+                            )
+                        if payload:
+                            yield payload
                     finally:
                         prefetched_chunk.lease.release_all()
 
@@ -1488,8 +1558,13 @@ async def _make_streaming_request(
                         break
                     should_stop = False
                     try:
+                        payload = decoded.data
                         try:
+                            trailing_before = framer.terminal_trailing_bytes
                             batch = framer.feed(decoded.data)
+                            terminal_clip_bytes = (
+                                framer.terminal_trailing_bytes - trailing_before
+                            )
                             framer_retention.consume(batch.consumed_bytes)
                         except SSEFramingError as exc:
                             _log_stream_inspection_failure(
@@ -1503,8 +1578,15 @@ async def _make_streaming_request(
                             should_stop = True
                         else:
                             should_stop = inspect_events(batch.events)
+                            if terminal_clip_bytes:
+                                payload = _clip_trailing_and_log(
+                                    payload,
+                                    terminal_clip_bytes,
+                                    stream_request_id,
+                                )
 
-                        yield decoded.data
+                        if payload:
+                            yield payload
                     finally:
                         decoded.lease.release_all()
 
@@ -1526,6 +1608,24 @@ async def _make_streaming_request(
                     else:
                         framer_retention.consume(tail.consumed_bytes)
                         inspect_events(tail.events)
+
+                # Some OpenAI-compatible upstreams (MiniMax, for one) close the
+                # body right after the terminal finish_reason chunk and never
+                # send `data: [DONE]`. Everything downstream — the SSE
+                # converters and the accounting observer — reads a missing
+                # terminal as an empty/protocol failure and aborts the response
+                # mid-body, so the client loses an answer the upstream had
+                # already delivered in full. Synthesize the marker only when the
+                # upstream really did finish: without a finish_reason the stream
+                # still fails, so a genuinely truncated response is never masked
+                # as a complete one.
+                if not error_in_stream and not upstream_done and saw_finish_reason:
+                    logging.warning(
+                        "Upstream stream ended after a terminal finish_reason "
+                        "chunk without sending [DONE]; synthesizing the marker."
+                    )
+                    upstream_done = True
+                    yield b"data: [DONE]\n\n"
                 logging.info("Finished upstream stream observation.")
             finally:
                 await stream_owner.close()
