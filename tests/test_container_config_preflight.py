@@ -6,6 +6,7 @@ import stat
 import traceback
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -561,6 +562,7 @@ def test_optional_post_publish_failure_is_uncertain_closes_fds_and_keeps_publica
     root = tmp_path / "config"
     root.mkdir()
     _write_mandatory(root)
+    monkeypatch.setattr(preflight, "os", SimpleNamespace(**vars(preflight.os)))
     original_rename = preflight._rename_noreplace
     original_open = preflight.os.open
     original_close = preflight.os.close

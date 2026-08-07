@@ -1948,6 +1948,7 @@
     const conflictTitle = document.getElementById("editorConflictTitle");
     const conflictMessage = document.getElementById("editorConflictMessage");
     const reloadEditorDocumentButton = document.getElementById("reloadEditorDocumentButton");
+    const cancelBusyRetryButton = document.getElementById("cancelBusyRetryButton");
     const addRuleButton = document.getElementById("addRuleButton");
     const previewRulesButton = document.getElementById("previewRulesButton");
     const suggestEvalOrderButton = document.getElementById("suggestEvalOrderButton");
@@ -2023,6 +2024,7 @@
       conflictTitle,
       conflictMessage,
       reloadEditorDocumentButton,
+      cancelBusyRetryButton,
       addRuleButton,
       previewRulesButton,
       suggestEvalOrderButton,
@@ -2409,6 +2411,14 @@
         title: "editor:conflict.outOfSyncTitle",
         message: "editor:conflict.outOfSyncMessage",
         action: "editor:conflict.resync"
+      },
+      // No action key on purpose: reloading a busy generation re-reads the
+      // very same bytes and throws the edits away for nothing. The only way
+      // out is to save again once the long-running requests finish.
+      busy: {
+        title: "editor:conflict.busyTitle",
+        message: "editor:conflict.busyExhausted",
+        waitingMessage: "editor:conflict.busyMessage"
       }
     };
     function applyConflictCopy(element, key) {
@@ -2417,23 +2427,42 @@
     }
     function conflictModeFor(body) {
       const detail = body && typeof body === "object" ? body.detail : null;
-      return detail && detail.code === "config_sources_out_of_sync" ? "outOfSync" : "revision";
+      const code = detail && typeof detail === "object" ? detail.code : null;
+      if (code === "config_sources_out_of_sync") {
+        return "outOfSync";
+      }
+      if (code === "config_generation_busy") {
+        return "busy";
+      }
+      return "revision";
     }
-    function showConflict(documentName, mode = "revision") {
+    function showConflict(documentName, mode = "revision", { waiting = false } = {}) {
       const resolvedMode = CONFLICT_COPY[mode] ? mode : "revision";
       const copy = CONFLICT_COPY[resolvedMode];
+      const waitingForRetry = waiting && Boolean(copy.waitingMessage);
       ctx.elements.conflictState.dataset.document = documentName;
       ctx.elements.conflictState.dataset.mode = resolvedMode;
+      ctx.elements.conflictState.dataset.waiting = waitingForRetry ? "true" : "false";
       applyConflictCopy(ctx.elements.conflictTitle, copy.title);
-      applyConflictCopy(ctx.elements.conflictMessage, copy.message);
-      applyConflictCopy(ctx.elements.reloadEditorDocumentButton, copy.action);
+      applyConflictCopy(
+        ctx.elements.conflictMessage,
+        waitingForRetry ? copy.waitingMessage : copy.message
+      );
+      if (copy.action) {
+        applyConflictCopy(ctx.elements.reloadEditorDocumentButton, copy.action);
+      }
+      ctx.elements.reloadEditorDocumentButton.hidden = waitingForRetry || !copy.action;
+      ctx.elements.cancelBusyRetryButton.hidden = !waitingForRetry;
       ctx.elements.conflictState.hidden = false;
       ctx.elements.conflictState.focus();
     }
     function clearConflict() {
       ctx.elements.conflictState.hidden = true;
+      ctx.elements.reloadEditorDocumentButton.hidden = false;
+      ctx.elements.cancelBusyRetryButton.hidden = true;
       delete ctx.elements.conflictState.dataset.document;
       delete ctx.elements.conflictState.dataset.mode;
+      delete ctx.elements.conflictState.dataset.waiting;
     }
     async function resyncConfigSources() {
       try {
@@ -2465,6 +2494,25 @@
         return false;
       }
       return reloadActiveDocument();
+    }
+    function waitForBusyRetry() {
+      return new Promise((resolve) => {
+        const settle = (proceed) => {
+          if (ctx.state.busyRetryCancel === null) {
+            return;
+          }
+          window.clearTimeout(timer);
+          ctx.state.busyRetryCancel = null;
+          resolve(proceed);
+        };
+        const timer = window.setTimeout(() => settle(true), ctx.constants.BUSY_RETRY_DELAY_MS);
+        ctx.state.busyRetryCancel = () => settle(false);
+      });
+    }
+    function cancelBusyRetry() {
+      if (typeof ctx.state.busyRetryCancel === "function") {
+        ctx.state.busyRetryCancel();
+      }
     }
     function currentDocumentName() {
       if (["embeddings", "rerank", "images", "audio", "web"].includes(ctx.state.activeEditor)) {
@@ -2583,18 +2631,35 @@
         return null;
       }
       const submittedMutationVersion = ctx.state.editorMutationVersion;
-      const response = await ctx.apiFetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": options.contentType || "application/json",
-          "If-Match": base.etag
-        },
-        body: options.body === void 0 ? JSON.stringify(payload) : options.body
-      });
-      const body = await readJsonBody(response).catch(() => ({}));
-      if (response.status === 409) {
-        showConflict(documentName, conflictModeFor(body));
-        return null;
+      let response;
+      let body;
+      for (let busyAttempts = 0; ; busyAttempts += 1) {
+        response = await ctx.apiFetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": options.contentType || "application/json",
+            "If-Match": base.etag
+          },
+          body: options.body === void 0 ? JSON.stringify(payload) : options.body
+        });
+        body = await readJsonBody(response).catch(() => ({}));
+        if (response.status !== 409) {
+          break;
+        }
+        const mode = conflictModeFor(body);
+        if (mode !== "busy" || busyAttempts >= ctx.constants.BUSY_RETRY_ATTEMPTS) {
+          showConflict(documentName, mode);
+          return null;
+        }
+        showConflict(documentName, "busy", { waiting: true });
+        showLocalizedMessage("info", "editor:conflict.busyRetry", {
+          attempt: busyAttempts + 1,
+          total: ctx.constants.BUSY_RETRY_ATTEMPTS
+        });
+        if (!await waitForBusyRetry()) {
+          showConflict(documentName, "busy");
+          return null;
+        }
       }
       if (!response.ok) {
         showLocalizedError(options.errorTitle, safeResponseError(response, body));
@@ -3708,6 +3773,7 @@
       clearConflict,
       resyncConfigSources,
       reloadAfterConflict,
+      cancelBusyRetry,
       currentDocumentName,
       isInteractionLocked,
       syncInteractionLock,
@@ -6922,6 +6988,8 @@
     IMAGE_RESPONSE_FORMAT_OPTIONS: Object.freeze(["openai_images", "nvidia_artifacts"]),
     AUDIO_REQUEST_FORMAT_OPTIONS: Object.freeze(["nvidia_riva_grpc"]),
     MAX_SAFE_ERROR_LENGTH: 240,
+    BUSY_RETRY_ATTEMPTS: 5,
+    BUSY_RETRY_DELAY_MS: 15 * 1e3,
     STRONG_ETAG_PATTERN: /^"[\x21\x23-\x7E\x80-\xFF]+"$/
   });
   function createEditorState() {
@@ -6983,6 +7051,7 @@
       providersLoadState: "loading",
       providersLoadRequestId: 0,
       saveInFlight: false,
+      busyRetryCancel: null,
       editorMutationVersion: 0,
       fallbackEvalPollTimer: null,
       openRouterFreePollTimer: null,
@@ -7120,6 +7189,9 @@
     }
     ctx.elements.reloadEditorDocumentButton.addEventListener("click", () => {
       void ctx.reloadAfterConflict();
+    });
+    ctx.elements.cancelBusyRetryButton.addEventListener("click", () => {
+      ctx.cancelBusyRetry();
     });
     const editorRoot = document.querySelector(".container");
     ["input", "change"].forEach((eventName) => {

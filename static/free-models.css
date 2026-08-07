@@ -102,7 +102,7 @@ body {
     border: 1px solid var(--border);
     box-sizing: border-box;
     overflow: hidden;
-    transition: background-color var(--transition-base), box-shadow var(--transition-base);
+    transition: box-shadow var(--transition-base);
 }
 
 h1 {

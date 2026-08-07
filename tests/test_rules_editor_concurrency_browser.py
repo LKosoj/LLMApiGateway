@@ -788,3 +788,126 @@ def test_delayed_save_blocks_drag_and_completed_drag_marks_dirty(
         assert not _beforeunload_is_blocked(page)
     finally:
         context.close()
+
+
+# The retry pause is 15 s in production. Shrinking only the long timers keeps
+# the real code path (window.setTimeout) under test without waiting for it.
+_FAST_RETRY_TIMERS = """
+const originalSetTimeout = window.setTimeout.bind(window);
+window.setTimeout = (handler, delay, ...args) =>
+    originalSetTimeout(handler, Number(delay) >= 5000 ? 20 : delay, ...args);
+"""
+
+_BUSY_BODY = {
+    "detail": {
+        "code": "config_generation_busy",
+        "message": "The previous runtime generation is still retiring.",
+    }
+}
+
+
+def _serve_busy_saves(page: Page, busy_saves: int) -> None:
+    """Answer the first `busy_saves` POSTs with 409 config_generation_busy."""
+    served = {"count": 0}
+
+    def handle(route) -> None:
+        if route.request.method != "POST":
+            route.continue_()
+            return
+        if busy_saves < 0 or served["count"] < busy_saves:
+            served["count"] += 1
+            route.fulfill(status=409, json=_BUSY_BODY)
+            return
+        route.continue_()
+
+    page.route(f"**{OPERATION_PATH}", handle)
+
+
+def test_busy_generation_retries_the_save_with_the_same_if_match(
+    browser: Browser,
+    editor_server: str,
+) -> None:
+    context = browser.new_context(locale="en-US")
+    context.add_init_script(_FAST_RETRY_TIMERS)
+    try:
+        _login(context, editor_server)
+        page, requests, base_etag = _open_editor(context, editor_server, "embeddings")
+        _serve_busy_saves(page, busy_saves=2)
+
+        _expand_first_card(page, "embeddings")
+        _gateway_name(page, "embeddings").fill("embed-after-busy")
+        save_start = len(requests)
+        with page.expect_response(
+            lambda response: response.url.endswith(OPERATION_PATH)
+            and response.request.method == "POST"
+            and response.status == 200
+        ) as saved_response:
+            page.locator("#saveButton").click()
+
+        assert saved_response.value.headers["etag"] != base_etag
+        # Every replay carries the base revision: a busy generation never
+        # invalidates the candidate the operator already validated against.
+        assert requests[save_start:] == [("POST", base_etag)] * 3
+        conflict = page.locator("#editorConflictState")
+        expect(conflict).to_be_hidden()
+        expect(_gateway_name(page, "embeddings")).to_have_value("embed-after-busy")
+        expect(page.locator("#saveButton")).to_have_attribute(
+            "data-editor-dirty", "false"
+        )
+        assert not _beforeunload_is_blocked(page)
+
+        saved_payload = context.request.get(f"{editor_server}{OPERATION_PATH}").json()
+        assert (
+            saved_payload["embeddings"][0]["gateway_model_name"]
+            == "embed-after-busy"
+        )
+    finally:
+        context.close()
+
+
+def test_busy_retry_can_be_cancelled_and_keeps_local_edits(
+    browser: Browser,
+    editor_server: str,
+) -> None:
+    context = browser.new_context(locale="en-US")
+    try:
+        _login(context, editor_server)
+        page, requests, base_etag = _open_editor(context, editor_server, "embeddings")
+        _serve_busy_saves(page, busy_saves=-1)
+
+        _expand_first_card(page, "embeddings")
+        _gateway_name(page, "embeddings").fill("embed-cancelled-wait")
+        save_start = len(requests)
+        page.locator("#saveButton").click()
+
+        conflict = page.locator("#editorConflictState")
+        cancel_button = page.locator("#cancelBusyRetryButton")
+        reload_button = page.locator("#reloadEditorDocumentButton")
+        expect(conflict).to_be_visible()
+        expect(conflict).to_have_attribute("data-mode", "busy")
+        expect(conflict).to_have_attribute("data-waiting", "true")
+        expect(conflict).to_contain_text("still serving requests")
+        expect(cancel_button).to_be_visible()
+        expect(reload_button).to_be_hidden()
+        expect(page.locator("#messageArea")).to_contain_text("retrying the save")
+
+        cancel_button.click()
+        expect(conflict).to_have_attribute("data-waiting", "false")
+        expect(conflict).to_contain_text("Automatic retries did not help")
+        expect(cancel_button).to_be_hidden()
+        # A busy generation offers no reload: re-reading the untouched document
+        # would only cost the operator their edits.
+        expect(reload_button).to_be_hidden()
+
+        # Cancelling stops the loop dead: no further save leaves the browser.
+        assert requests[save_start:] == [("POST", base_etag)]
+        expect(_gateway_name(page, "embeddings")).to_have_value(
+            "embed-cancelled-wait"
+        )
+        expect(page.locator("#saveButton")).to_have_attribute(
+            "data-editor-dirty", "true"
+        )
+        expect(page.locator("#saveButton")).to_be_enabled()
+        assert _beforeunload_is_blocked(page)
+    finally:
+        context.close()

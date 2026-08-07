@@ -84,6 +84,7 @@ def test_editor_conflict_panel_uses_strict_paired_i18n_catalogs() -> None:
     assert 'role="alert"' in html
     assert 'tabindex="-1"' in html
     assert 'id="reloadEditorDocumentButton"' in html
+    assert 'id="cancelBusyRetryButton"' in html
 
     catalogs = {
         locale: json.loads(
@@ -104,6 +105,11 @@ def test_editor_conflict_panel_uses_strict_paired_i18n_catalogs() -> None:
         "resync",
         "resynced",
         "resyncFailed",
+        "busyTitle",
+        "busyMessage",
+        "busyExhausted",
+        "busyRetry",
+        "busyCancel",
     }
     assert catalogs["en"]["catalog"].keys() == catalogs["ru"]["catalog"].keys()
     assert set(catalogs["en"]["catalog"]) == {
@@ -117,6 +123,50 @@ def test_editor_conflict_panel_uses_strict_paired_i18n_catalogs() -> None:
         "selected",
         "unavailable",
     }
+
+
+def test_busy_generation_retries_the_same_request_instead_of_reloading() -> None:
+    source = _editor_source()
+
+    mode_source = source.split("function conflictModeFor(body)", 1)[1].split(
+        "\n    }",
+        1,
+    )[0]
+    assert "'config_sources_out_of_sync'" in mode_source
+    assert "'config_generation_busy'" in mode_source
+    assert "return 'busy';" in mode_source
+    assert "return 'revision';" in mode_source
+
+    save_source = source.split("async function saveConfigDocument", 1)[1].split(
+        "\n    }",
+        1,
+    )[0]
+    # The replay must reuse the base captured before the loop: a busy generation
+    # is not a content conflict, so re-reading the base would silently widen the
+    # compare-and-swap window.
+    assert "getDocumentBase(documentName)" not in save_source.split(
+        "for (let busyAttempts = 0",
+        1,
+    )[1]
+    assert "'If-Match': base.etag" in save_source
+    assert "busyAttempts >= ctx.constants.BUSY_RETRY_ATTEMPTS" in save_source
+    assert "await waitForBusyRetry()" in save_source
+
+    # Cancelling the wait needs its own control: the reload button is disabled
+    # by syncInteractionLock for the whole save, so it can never serve as one.
+    lock_source = source.split("function syncInteractionLock()", 1)[1].split(
+        "\n    }",
+        1,
+    )[0]
+    assert "#reloadEditorDocumentButton" in lock_source
+    assert "cancelBusyRetryButton" not in lock_source
+    assert "ctx.cancelBusyRetry();" in source
+
+    # The busy notice must not offer a reload: the document on disk never
+    # changed, so reloading it only discards the operator's edits.
+    busy_copy = source.split("        busy: {", 1)[1].split("        },", 1)[0]
+    assert "action:" not in busy_copy
+    assert "reloadEditorDocumentButton.hidden = waitingForRetry || !copy.action" in source
 
 
 def test_editor_errors_are_bounded_and_never_insert_raw_html() -> None:

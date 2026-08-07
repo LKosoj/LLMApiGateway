@@ -133,6 +133,10 @@ function startEditor(ctx) {
         void ctx.reloadAfterConflict();
     });
 
+    ctx.elements.cancelBusyRetryButton.addEventListener('click', () => {
+        ctx.cancelBusyRetry();
+    });
+
     const editorRoot = document.querySelector('.container');
     ['input', 'change'].forEach(eventName => {
         editorRoot.addEventListener(eventName, () => {

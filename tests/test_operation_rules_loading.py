@@ -54,6 +54,12 @@ VALID_PROVIDERS_TEXT = """
     }
   },
   {
+    "anymodel": {
+      "baseUrl": "https://anymodel.org/v1",
+      "apikey": "DIRECT-KEY"
+    }
+  },
+  {
     "llm_ai": {
       "baseUrl": "http://94.143.43.118:18080/v1/",
       "apikey": "DIRECT-KEY"

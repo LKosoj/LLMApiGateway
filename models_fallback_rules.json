@@ -37,10 +37,18 @@
       },
       {
         "provider": "alibaba",
-        "model": "qwen3.8-max-preview",
+        "model": "qwen3.8-max",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1000000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       }
     ],
     "context_overflow_fallback": {
@@ -70,14 +78,14 @@
     "gateway_model_name": "llmgateway/light_model",
     "fallback_models": [
       {
-        "provider": "gem",
-        "model": "gemini-3.5-flash",
+        "provider": "anymodel",
+        "model": "cx/gpt-5.6-luna",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1050000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -85,38 +93,8 @@
         ]
       },
       {
-        "provider": "alibaba",
-        "model": "qwen3.6-flash",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 1000000,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "nvidia",
-        "model": "nvidia/nemotron-4-340b-instruct",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 262144,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "openrouter",
-        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "provider": "z.ai",
+        "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
@@ -133,29 +111,14 @@
         ]
       },
       {
-        "provider": "groq",
-        "model": "openai/gpt-oss-120b",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": false,
-        "supports_tools": true,
-        "context_window": 131072,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "freemodel",
-        "model": "gpt-5.6-luna",
+        "provider": "gem",
+        "model": "gemini-3.6-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1050000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -163,7 +126,7 @@
         ]
       },
       {
-        "provider": "aitunnel",
+        "provider": "alibaba",
         "model": "deepseek-v4-flash-0731",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
@@ -279,27 +242,19 @@
     "gateway_model_name": "llmgateway/qwen3.5",
     "fallback_models": [
       {
-        "provider": "kimicode",
-        "model": "k3",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {
-          "temperature": 1
-        },
-        "custom_headers": {},
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window"
-        ]
-      },
-      {
-        "provider": "alibaba",
-        "model": "qwen3.8-max-preview",
+        "provider": "minimax",
+        "model": "MiniMax-M3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1000000
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "z.ai",
@@ -320,19 +275,27 @@
         ]
       },
       {
-        "provider": "minimax",
-        "model": "MiniMax-M3",
+        "provider": "kimicode",
+        "model": "k3",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {
+          "temperature": 1
+        },
+        "custom_headers": {},
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
+      },
+      {
+        "provider": "alibaba",
+        "model": "qwen3.8-max",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
+        "context_window": 1000000
       },
       {
         "provider": "gem",
@@ -399,7 +362,7 @@
         ]
       },
       {
-        "provider": "aitunnel",
+        "provider": "alibaba",
         "model": "deepseek-v4-flash-0731",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
@@ -457,7 +420,7 @@
       },
       {
         "provider": "alibaba",
-        "model": "qwen3.8-max-preview",
+        "model": "qwen3.8-max",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -467,6 +430,21 @@
         "capabilities_autofilled": [
           "context_window",
           "supports_tools"
+        ]
+      },
+      {
+        "provider": "minimax",
+        "model": "MiniMax-M3",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
         ]
       },
       {
@@ -481,21 +459,6 @@
           "Referer": "https://openclaw.ai"
         },
         "supports_vision": false,
-        "supports_tools": true,
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "minimax",
-        "model": "MiniMax-M3",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -921,6 +884,21 @@
         ]
       },
       {
+        "provider": "openai_codex",
+        "model": "gpt-5.3-codex-spark",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 262144,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
         "provider": "z.ai",
         "model": "glm-5-turbo",
         "use_provider_order_as_fallback": false,
@@ -929,21 +907,6 @@
         "supports_vision": false,
         "supports_tools": true,
         "context_window": 202752,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "openrouter",
-        "model": "google/gemma-4-26b-a4b-it:free",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 262144,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

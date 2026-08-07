@@ -248,10 +248,9 @@
     display: flex;
     align-items: stretch;
     justify-content: flex-start;
-    background: rgba(15, 23, 42, 0.45);
-    opacity: 0;
+    background: rgba(15, 23, 42, 0);
     visibility: hidden;
-    transition: opacity var(--transition-base, 250ms ease), visibility var(--transition-base, 250ms ease);
+    transition: background-color var(--transition-base, 250ms ease), visibility 0s linear 250ms;
 }
 
 /* Keep the overlay in the render/a11y tree while [hidden] so the drawer can
@@ -261,8 +260,9 @@
 }
 
 .gateway-nav-overlay:not([hidden]) {
-    opacity: 1;
+    background: rgba(15, 23, 42, 0.45);
     visibility: visible;
+    transition-delay: 0s;
 }
 
 .gateway-sidebar {

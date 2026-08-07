@@ -377,7 +377,12 @@
     "outOfSyncMessage": "The configuration files changed outside this editor, so saving is blocked. Reload the configuration from disk — unsaved edits will be lost.",
     "resync": "Reload configuration from disk",
     "resynced": "Configuration reloaded from disk",
-    "resyncFailed": "Could not reload the configuration from disk"
+    "resyncFailed": "Could not reload the configuration from disk",
+    "busyTitle": "The gateway is still serving requests on the previous configuration",
+    "busyMessage": "Nothing changed on disk and your edits are safe. The save is retried automatically until the gateway can publish.",
+    "busyExhausted": "Automatic retries did not help: the gateway is still busy with long-running requests. Your edits are safe — save again later.",
+    "busyRetry": "Gateway busy, retrying the save ({attempt} of {total})…",
+    "busyCancel": "Stop retrying"
   },
   "capability": {
     "unknown": "Unknown",

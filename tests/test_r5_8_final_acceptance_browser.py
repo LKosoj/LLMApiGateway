@@ -206,6 +206,44 @@ def test_r5_8_desktop_pairwise_strings_accessibility_and_console_are_clean(
     )
 
 
+def test_free_models_theme_switch_updates_status_surface_without_color_transition(
+    browser: Browser,
+    r5_2_server: str,
+) -> None:
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        _login(context, r5_2_server, MASTER_KEY)
+        page = context.new_page()
+        page.goto(f"{r5_2_server}/v1/ui/free-models")
+        page.evaluate("() => window.gatewayI18n.ready")
+        expect(page.locator("#free-models-status")).not_to_be_empty()
+
+        page.evaluate("Theme.set('light')")
+        page.wait_for_timeout(300)
+        colors = page.evaluate(
+            """
+            () => {
+                Theme.set('dark');
+                const container = document.querySelector('.container');
+                const probe = document.createElement('div');
+                probe.style.backgroundColor = 'var(--bg-elevated)';
+                probe.style.position = 'fixed';
+                probe.style.visibility = 'hidden';
+                document.body.appendChild(probe);
+                const result = {
+                    actual: getComputedStyle(container).backgroundColor,
+                    expected: getComputedStyle(probe).backgroundColor,
+                };
+                probe.remove();
+                return result;
+            }
+            """
+        )
+        assert colors["actual"] == colors["expected"]
+    finally:
+        context.close()
+
+
 def test_r5_8_mobile_pairwise_strings_accessibility_and_console_are_clean(
     browser: Browser,
     r5_2_server: str,

@@ -63,6 +63,13 @@
       "gateway_model_name": "llmgateway/flux.image-generation",
       "routes": [
         {
+          "provider": "openai_codex",
+          "model": "gpt-image-2",
+          "target_path": "/images/generations",
+          "custom_headers": {},
+          "custom_body_params": {}
+        },
+        {
           "provider": "aitunnel",
           "model": "gpt-image-2",
           "target_path": "/images/generations",
@@ -95,7 +102,7 @@
       "routes": [
         {
           "provider": "nvidia",
-          "model": "black-forest-labs/flux.2-klein-4b",
+          "model": "01-ai/yi-large",
           "target_path": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
           "custom_headers": {},
           "custom_body_params": {
@@ -130,7 +137,7 @@
       "routes": [
         {
           "provider": "nvidia",
-          "model": "qwen-image",
+          "model": "01-ai/yi-large",
           "target_path": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
           "custom_headers": {},
           "custom_body_params": {
@@ -184,7 +191,7 @@
       "routes": [
         {
           "provider": "aitunnel",
-          "model": "gemini-3.1-flash-image-preview",
+          "model": "gemini-3.1-flash-image",
           "target_path": "/images/generations",
           "custom_headers": {},
           "custom_body_params": {}
@@ -285,7 +292,7 @@
       "routes": [
         {
           "provider": "aitunnel",
-          "model": "gemini-3.1-flash-image-preview",
+          "model": "gemini-3.1-flash-image",
           "target_path": "/images/edits",
           "custom_headers": {},
           "custom_body_params": {},
@@ -375,6 +382,13 @@
       "gateway_model_name": "llmgateway/whisper-large-v3",
       "routes": [
         {
+          "provider": "anymodel",
+          "model": "dg/nova-3",
+          "target_path": "/audio/transcriptions",
+          "custom_headers": {},
+          "custom_body_params": {}
+        },
+        {
           "provider": "llm_ai",
           "model": "Qwen/Qwen3-ASR-1.7B",
           "target_path": "/audio/transcriptions",
@@ -434,7 +448,7 @@
       "search_model": "llmgateway/web-search",
       "read_model": "llmgateway/web-read",
       "fast_model": "llmgateway/light_model",
-      "smart_model": "llmgateway/high",
+      "smart_model": "llmgateway/light_model",
       "strategic_model": "llmgateway/high",
       "embedding_model": "llmgateway/embedding",
       "image_generation_model": "llmgateway/gpt-image-2",

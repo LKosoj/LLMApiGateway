@@ -4,6 +4,8 @@ export const EDITOR_CONSTANTS = Object.freeze({
     IMAGE_RESPONSE_FORMAT_OPTIONS: Object.freeze(['openai_images', 'nvidia_artifacts']),
     AUDIO_REQUEST_FORMAT_OPTIONS: Object.freeze(['nvidia_riva_grpc']),
     MAX_SAFE_ERROR_LENGTH: 240,
+    BUSY_RETRY_ATTEMPTS: 5,
+    BUSY_RETRY_DELAY_MS: 15 * 1000,
     STRONG_ETAG_PATTERN: /^"[\x21\x23-\x7E\x80-\xFF]+"$/,
 });
 
@@ -66,6 +68,7 @@ export function createEditorState() {
         providersLoadState: 'loading',
         providersLoadRequestId: 0,
         saveInFlight: false,
+        busyRetryCancel: null,
         editorMutationVersion: 0,
         fallbackEvalPollTimer: null,
         openRouterFreePollTimer: null,
