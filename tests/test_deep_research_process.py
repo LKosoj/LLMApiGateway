@@ -402,6 +402,131 @@ def test_adapter_checks_sticky_ipc_failure_before_success(
     run_async(scenario())
 
 
+def test_installed_browse_urls_drops_refused_sources_and_keeps_the_rest() -> None:
+    import gpt_researcher.agent as agent_module
+
+    refused = DeepResearchCallbackReportedError("callback_failed", "HTTPException")
+
+    class Ipc:
+        async def read(self, url: str):
+            if url == "https://blocked.example":
+                raise refused
+            return {"url": url, "title": "Readable", "content": "body"}
+
+    added: list[list[dict[str, object]]] = []
+    researcher = SimpleNamespace(add_research_sources=added.append)
+
+    async def scenario() -> None:
+        with adapter_module._gateway_research_tools(Ipc()):  # type: ignore[arg-type]
+            manager = agent_module.BrowserManager(researcher)
+            pages = await manager.browse_urls(
+                ["https://blocked.example", "https://readable.example"]
+            )
+        assert [page["url"] for page in pages] == ["https://readable.example"]
+        assert added == [pages]
+
+    run_async(scenario())
+
+
+def test_installed_browse_urls_still_fails_on_a_broken_callback_channel() -> None:
+    import gpt_researcher.agent as agent_module
+
+    broken = DeepResearchProtocolError("callback response has an unknown message id")
+
+    class Ipc:
+        async def read(self, url: str):
+            if url == "https://broken.example":
+                raise broken
+            return {"url": url, "title": "Readable", "content": "body"}
+
+    researcher = SimpleNamespace(add_research_sources=lambda _sources: None)
+
+    async def scenario() -> None:
+        with adapter_module._gateway_research_tools(Ipc()):  # type: ignore[arg-type]
+            manager = agent_module.BrowserManager(researcher)
+            with pytest.raises(DeepResearchProtocolError) as error:
+                await manager.browse_urls(
+                    ["https://broken.example", "https://readable.example"]
+                )
+        assert error.value is broken
+
+    run_async(scenario())
+
+
+def test_refused_read_is_not_sticky_while_search_failure_still_is() -> None:
+    async def scenario() -> None:
+        parent, child = socket.socketpair()
+        try:
+            child.setblocking(False)
+            ipc = adapter_module.DeepResearchIpcClient(child, job_id=_job().job_id)
+            await ipc.start()
+
+            async def refuse_next_request() -> None:
+                request = parse_callback_request(await _recv_async_frame(parent))
+                await asyncio.get_running_loop().sock_sendall(
+                    parent,
+                    encode_frame(
+                        callback_error_message(
+                            request,
+                            "callback_failed",
+                            "HTTPException",
+                        )
+                    ),
+                )
+
+            try:
+                parent.setblocking(False)
+                read_call = asyncio.create_task(ipc.read("https://blocked.example"))
+                await refuse_next_request()
+                with pytest.raises(DeepResearchCallbackReportedError):
+                    await read_call
+                # The refused read left no sticky failure, so the next call
+                # goes out on the wire instead of raising locally.
+                ipc.raise_if_failed()
+
+                search_call = asyncio.create_task(ipc.search("still usable", 1))
+                await refuse_next_request()
+                with pytest.raises(DeepResearchCallbackReportedError):
+                    await search_call
+                with pytest.raises(DeepResearchCallbackReportedError):
+                    ipc.raise_if_failed()
+            finally:
+                await ipc.aclose()
+        finally:
+            parent.close()
+            child.close()
+
+    run_async(scenario())
+
+
+def test_spawn_runner_survives_a_refused_read_and_returns_the_report() -> None:
+    async def scenario() -> None:
+        async def handle(request: DeepResearchCallbackRequest):
+            if request.operation is DeepResearchCallbackOperation.READ:
+                raise HTTPException(
+                    status_code=503,
+                    detail="YouTube transcript is unavailable for 'https://blocked'.",
+                )
+            return [{"url": "https://example.com", "title": "T", "snippet": "S"}]
+
+        runner = DeepResearchProcessRunner(
+            _adapter_module=FIXTURE_ADAPTER,
+            admission_timeout_seconds=0.2,
+        )
+        await runner.start()
+        try:
+            result = await runner.run(
+                _job("read-failure"),
+                callbacks=DeepResearchCallbacks(handle=handle),
+            )
+        finally:
+            await runner.aclose()
+        assert result.report == "report after failed read"
+        assert runner.active_process_count == 0
+
+    run_async(scenario())
+
+
 def test_installed_nested_research_search_uses_parent_ipc_and_restores_method() -> None:
     from gpt_researcher.skills.researcher import ResearchConductor
 

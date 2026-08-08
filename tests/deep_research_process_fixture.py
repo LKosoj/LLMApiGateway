@@ -80,6 +80,35 @@ async def _run_swallowed_callback_fixture(
         sock.setblocking(True)
 
 
+async def _run_read_failure_fixture(
+    job: DeepResearchJob,
+    sock: socket.socket,
+) -> DeepResearchResult:
+    ipc = DeepResearchIpcClient(sock, job_id=job.job_id)
+    await ipc.start()
+    try:
+        try:
+            await ipc.read("https://example.com/unreadable")
+        except Exception:
+            pass
+        # A refused read leaves the client usable: it must not poison the run,
+        # and the operations after it must still reach the parent.
+        ipc.raise_if_failed()
+        search = await ipc.search("after failed read", 1)
+    finally:
+        await ipc.aclose()
+        sock.setblocking(True)
+    return DeepResearchResult(
+        query=job.query,
+        report="report after failed read",
+        research_result={"search": search},
+        sources=({"title": "recovered"},),
+        source_urls=("https://example.com",),
+        context=("recovered context",),
+        costs=0.5,
+    )
+
+
 async def _run_mixed_callback_fixture(
     job: DeepResearchJob,
     sock: socket.socket,
@@ -111,6 +140,8 @@ def run_deep_research_job(
         return asyncio.run(_run_swallowed_callback_fixture(job, _sock))
     if job.query == "mixed-callback":
         return asyncio.run(_run_mixed_callback_fixture(job, _sock))
+    if job.query == "read-failure":
+        return asyncio.run(_run_read_failure_fixture(job, _sock))
     if job.query == "terminal-before-callback":
         request = DeepResearchCallbackRequest(
             job_id=job.job_id,

@@ -103,7 +103,7 @@
         },
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 256000,
+        "context_window": 202752,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

@@ -156,7 +156,16 @@ class DeepResearchIpcClient:
                 try:
                     result = parse_callback_response(message, request=request)
                 except DeepResearchCallbackReportedError as exc:
-                    if self._failure is None:
+                    # A read the upstream refused is not a broken run: that one
+                    # source is unavailable (paywall, dead link, blocked
+                    # transcript) and the batch continues without it. Search and
+                    # image failures stay sticky — those really do end the run,
+                    # and the parent logs every failed callback either way.
+                    if (
+                        self._failure is None
+                        and request.operation
+                        is not DeepResearchCallbackOperation.READ
+                    ):
                         self._failure = exc
                     if not future.done():
                         future.set_exception(exc)
@@ -253,7 +262,23 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
             self.researcher = researcher
 
         async def browse_urls(self, urls: list[str]) -> list[dict[str, Any]]:
-            articles = await asyncio.gather(*(ipc.read(url) for url in urls))
+            articles = await asyncio.gather(
+                *(ipc.read(url) for url in urls),
+                return_exceptions=True,
+            )
+            for url, article in zip(urls, articles, strict=True):
+                # Only an upstream-reported refusal is survivable. A broken
+                # socket or a protocol violation means the child can no longer
+                # talk to the gateway at all, and swallowing that would turn a
+                # dead run into a silently empty report.
+                if isinstance(article, BaseException):
+                    if not isinstance(article, DeepResearchCallbackReportedError):
+                        raise article
+                    logger.warning(
+                        "deep-research skipped unreadable source %s: %s",
+                        url,
+                        article,
+                    )
             scraped_content = [
                 {
                     "url": article.get("url") or url,
@@ -262,7 +287,8 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
                     "title": article.get("title") or "",
                 }
                 for url, article in zip(urls, articles, strict=True)
-                if (article.get("content") or "").strip()
+                if isinstance(article, dict)
+                and (article.get("content") or "").strip()
             ]
             self.researcher.add_research_sources(scraped_content)
             return scraped_content
