@@ -531,11 +531,15 @@ class WebResearchClient:
             TranscriptsDisabled,
         )
 
-        from ..utils.youtube_transcript import build_youtube_transcript_api
-
-        api = build_youtube_transcript_api()
+        from ..utils.youtube_transcript import (
+            build_youtube_transcript_api,
+            run_queued_transcript_call,
+        )
 
         def _fetch() -> tuple[str, str]:
+            # Built inside the queued call so the proxy/direct alternation advances
+            # once per actual download rather than once per queued caller.
+            api = build_youtube_transcript_api()
             transcript_list = api.list(video_id)
 
             lang_priority = ["ru", "en", "zh-Hans", "zh-Hant"]
@@ -557,7 +561,7 @@ class WebResearchClient:
             return content, video_title
 
         try:
-            content, video_title = await asyncio.to_thread(_fetch)
+            content, video_title = await run_queued_transcript_call(_fetch)
             if content.strip():
                 logger.info("Успешно извлечён транскрипт YouTube %s (%s символов)", video_id, len(content))
                 return content, video_title

@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -68,6 +71,91 @@ class BuildYouTubeTranscriptApiTests(unittest.TestCase):
             api = youtube_transcript_owner.build_youtube_transcript_api()
 
         self.assertEqual(api.kwargs, {})
+
+    def test_calls_alternate_between_the_proxy_and_the_gateway_address(self):
+        with (
+            patch("youtube_transcript_api.YouTubeTranscriptApi", _RecordingYouTubeTranscriptApi),
+            patch.object(settings, "youtube_proxy_url", "socks5h://user:pass@proxy.example:1080"),
+        ):
+            first = youtube_transcript_owner.build_youtube_transcript_api()
+            second = youtube_transcript_owner.build_youtube_transcript_api()
+            third = youtube_transcript_owner.build_youtube_transcript_api()
+
+        self.assertIn("proxy_config", first.kwargs)
+        self.assertEqual(second.kwargs, {})
+        self.assertIn("proxy_config", third.kwargs)
+
+    def test_every_call_goes_out_directly_when_no_proxy_is_configured(self):
+        with (
+            patch("youtube_transcript_api.YouTubeTranscriptApi", _RecordingYouTubeTranscriptApi),
+            patch.object(settings, "youtube_proxy_url", None),
+        ):
+            first = youtube_transcript_owner.build_youtube_transcript_api()
+            second = youtube_transcript_owner.build_youtube_transcript_api()
+
+        self.assertEqual(first.kwargs, {})
+        self.assertEqual(second.kwargs, {})
+
+
+class TranscriptQueueTests(unittest.TestCase):
+    def test_queued_calls_never_overlap(self):
+        active = 0
+        peak_active = 0
+        counter_guard = threading.Lock()
+
+        def _fetch() -> str:
+            nonlocal active, peak_active
+            with counter_guard:
+                active += 1
+                peak_active = max(peak_active, active)
+            time.sleep(0.05)
+            with counter_guard:
+                active -= 1
+            return "transcript"
+
+        async def _fetch_four_at_once():
+            return await asyncio.gather(
+                *(youtube_transcript_owner.run_queued_transcript_call(_fetch) for _ in range(4))
+            )
+
+        with patch.object(settings, "youtube_fetch_interval_seconds", 0.0):
+            results = run_async(_fetch_four_at_once())
+
+        self.assertEqual(results, ["transcript"] * 4)
+        self.assertEqual(peak_active, 1)
+
+    def test_queue_keeps_the_configured_pause_between_calls(self):
+        started_at: list[float] = []
+
+        def _fetch() -> str:
+            started_at.append(time.monotonic())
+            return "transcript"
+
+        async def _fetch_twice():
+            await youtube_transcript_owner.run_queued_transcript_call(_fetch)
+            await youtube_transcript_owner.run_queued_transcript_call(_fetch)
+
+        with patch.object(settings, "youtube_fetch_interval_seconds", 0.2):
+            run_async(_fetch_twice())
+
+        self.assertGreaterEqual(started_at[1] - started_at[0], 0.2)
+
+    def test_a_failed_call_still_paces_the_next_one(self):
+        started_at: list[float] = []
+
+        def _failing_fetch() -> str:
+            started_at.append(time.monotonic())
+            raise RuntimeError("YouTube is blocking requests from your IP")
+
+        async def _fetch_twice():
+            for _ in range(2):
+                with self.assertRaises(RuntimeError):
+                    await youtube_transcript_owner.run_queued_transcript_call(_failing_fetch)
+
+        with patch.object(settings, "youtube_fetch_interval_seconds", 0.2):
+            run_async(_fetch_twice())
+
+        self.assertGreaterEqual(started_at[1] - started_at[0], 0.2)
 
 
 class DirectFetchTranscriptErrorTests(unittest.TestCase):

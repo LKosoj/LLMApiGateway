@@ -10,7 +10,10 @@ from fastapi import HTTPException
 
 from ...agents.web_research import _extract_text_with_selectolax
 from ...config.settings import settings
-from ...utils.youtube_transcript import build_youtube_transcript_api
+from ...utils.youtube_transcript import (
+    build_youtube_transcript_api,
+    run_queued_transcript_call,
+)
 from .web_content import (
     clean_read_url as _clean_read_url,
     content_with_images as _content_with_images,
@@ -76,7 +79,7 @@ async def _direct_http_fetch(url: str) -> dict[str, Any] | None:
             return text, f"YouTube: {video_id} ({getattr(transcript, 'language', '')})"
 
         try:
-            content, title = await asyncio.to_thread(_fetch)
+            content, title = await run_queued_transcript_call(_fetch)
         except Exception as exc:
             logger.warning("YouTube transcript failed for %s: %s", cleaned, exc)
             raise HTTPException(

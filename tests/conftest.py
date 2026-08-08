@@ -70,6 +70,19 @@ def _keep_tests_out_of_the_deployment_state_dir(
 
 
 @pytest.fixture(autouse=True)
+def _reset_youtube_transcript_queue():
+    """Start every test with an idle transcript queue.
+
+    The queue keeps a multi-second pause between downloads, and its timer is
+    process-wide, so without this a test that fetches a transcript would make the
+    next one wait out that pause for no reason.
+    """
+    from llm_gateway_core.utils.youtube_transcript import reset_transcript_queue
+
+    reset_transcript_queue()
+
+
+@pytest.fixture(autouse=True)
 def _main_lifespan_storage_isolation():
     """Verify the session owner without importing ``main`` eagerly."""
     controller = get_main_import_isolation()

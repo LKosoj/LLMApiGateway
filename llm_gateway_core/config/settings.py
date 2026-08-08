@@ -248,8 +248,13 @@ class Settings(BaseSettings):
 
     # Optional proxy for YouTube transcript downloads. YouTube blocks the caption
     # endpoint for datacenter IPs, so transcripts are fetched through this proxy when
-    # it is set; when unset they are fetched directly.
+    # it is set; when unset they are fetched directly. With the proxy set, calls
+    # alternate between it and the gateway's own address to spread the per-IP quota,
+    # and the pause below spaces out the shared queue that serialises them.
     youtube_proxy_url: str | None = os.getenv("YOUTUBE_PROXY_URL") or None
+    youtube_fetch_interval_seconds: float = _get_positive_float_env(
+        "YOUTUBE_FETCH_INTERVAL_SECONDS", 5.0
+    )
 
     # Free-tier LLM catalog (freellmapi.co): minimum monthly token budget floor
     # a model must clear to be shown on the /ui/free-models page, and a kill
