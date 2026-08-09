@@ -63,6 +63,24 @@ class _ServerError(str):
         return super().__new__(cls, "internal server error, please retry")
 
 
+class _AccessDeniedError(str):
+    """A permanent access denial (revoked key, model not on the plan)."""
+
+    status_code = 403
+
+    def __new__(cls) -> "_AccessDeniedError":
+        return super().__new__(cls, "Upstream request failed with HTTP status 403.")
+
+
+class _BadRequestError(str):
+    """A permanent non-access failure: must not schedule a cooldown."""
+
+    status_code = 400
+
+    def __new__(cls) -> "_BadRequestError":
+        return super().__new__(cls, "Upstream request failed with HTTP status 400.")
+
+
 class _OrderingProbeState(UpstreamRoutingState):
     def __init__(self) -> None:
         super().__init__()
@@ -698,6 +716,81 @@ class UpstreamRoutingStateTests(unittest.TestCase):
         )
 
         self.assertFalse(result)
+
+    def test_access_denied_failure_sets_default_cooldown_and_blocks_the_key(self):
+        # 401/403 arrives as temporary=False, but leaving it without a cooldown
+        # means the refused target keeps being re-attempted on every request.
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-access-denied-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        result = state.record_failure(
+            "kimicode",
+            "provider-model",
+            fingerprint,
+            _AccessDeniedError(),
+            temporary=False,
+            apply_penalty=False,
+        )
+
+        self.assertFalse(result)
+        remaining = state.cooldown_remaining_seconds("kimicode", "provider-model", fingerprint)
+        self.assertAlmostEqual(remaining, DEFAULT_COOLDOWN_SECONDS)
+
+        blocked = state.select_key("kimicode", "provider-model", [key])
+        self.assertFalse(blocked.available)
+        self.assertIn("cooldown", blocked.blocked_reason)
+        self.assertEqual(state.get_status_rows()[0]["health_status"], "invalid")
+
+        clock.value += DEFAULT_COOLDOWN_SECONDS + 1
+        self.assertTrue(state.select_key("kimicode", "provider-model", [key]).available)
+
+    def test_success_after_access_denied_clears_the_cooldown_immediately(self):
+        # A local retry keeps the same upstream key, so it runs even while the
+        # cooldown scheduled by the previous 403 is active. If it succeeds, the
+        # target is demonstrably serving again and must not stay benched.
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        key = "sk-access-denied-then-ok-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "kimicode",
+            "provider-model",
+            fingerprint,
+            _AccessDeniedError(),
+            temporary=False,
+            apply_penalty=False,
+        )
+        self.assertFalse(state.select_key("kimicode", "provider-model", [key]).available)
+
+        state.record_success("kimicode", "provider-model", fingerprint)
+
+        self.assertIsNone(
+            state.cooldown_remaining_seconds("kimicode", "provider-model", fingerprint)
+        )
+        self.assertTrue(state.select_key("kimicode", "provider-model", [key]).available)
+        self.assertEqual(state.get_status_rows()[0]["health_status"], "healthy")
+
+    def test_permanent_non_access_failure_still_schedules_no_cooldown(self):
+        state = UpstreamRoutingState()
+        key = "sk-bad-request-secret"
+        fingerprint = fingerprint_api_key(key)
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _BadRequestError(),
+            temporary=False,
+            apply_penalty=False,
+        )
+
+        self.assertIsNone(
+            state.cooldown_remaining_seconds("openrouter", "provider-model", fingerprint)
+        )
+        self.assertTrue(state.select_key("openrouter", "provider-model", [key]).available)
 
     def test_learn_limit_from_error_body_parses_axis_and_value(self):
         state = UpstreamRoutingState()

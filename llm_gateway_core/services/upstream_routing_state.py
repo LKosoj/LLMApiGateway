@@ -40,6 +40,12 @@ RATE_LIMIT_EXHAUSTION_WINDOW_SECONDS = 86400.0
 DAILY_QUOTA_MIN_COOLDOWN_SECONDS = 60.0
 COOLDOWN_CEILING_SECONDS = 86400.0
 
+# 401/403 is an access problem (revoked key, model not on the plan), not a
+# transient upstream hiccup, so it is not classified as a temporary failure.
+# It still gets a cooldown: without one the same rejected target stays first
+# in the fallback chain and is re-attempted on every single request.
+ACCESS_DENIED_STATUS_CODES = frozenset({401, 403})
+
 ObservedLimitAxis = Literal["rpm", "rpd", "tpm", "tpd"]
 ObservedLimitSource = Literal["header", "error_body"]
 
@@ -344,10 +350,16 @@ class UpstreamRoutingState:
         signaling that the caller should switch upstream keys immediately for
         the *current* request. It returns ``False`` for any other outcome,
         including ``temporary=False``.
+
+        A 401/403 arrives with ``temporary=False`` -- access denial is not a
+        transient upstream fault -- yet it also gets the default cooldown, so
+        a target the upstream refuses to serve stops being re-attempted on
+        every request until the cooldown expires.
         """
         now = self._monotonic_func()
         status_code = getattr(error_detail, "status_code", None)
-        health_status = "invalid" if status_code in {401, 403} else "error"
+        access_denied = status_code in ACCESS_DENIED_STATUS_CODES
+        health_status = "invalid" if access_denied else "error"
         rate_limited = False
         with self._lock:
             ref = (provider, model, key_fingerprint)
@@ -381,6 +393,8 @@ class UpstreamRoutingState:
                 state.cooldown_until = now + cooldown_seconds
                 if rate_limited:
                     self._maybe_learn_limit_from_error(ref, error_detail)
+            elif access_denied:
+                state.cooldown_until = now + DEFAULT_COOLDOWN_SECONDS
             if apply_penalty and temporary:
                 state.penalty_score = min(100.0, self._decayed_penalty(state, now) + 25.0)
                 state.penalty_updated_at = now

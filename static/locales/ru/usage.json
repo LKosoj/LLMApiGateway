@@ -122,7 +122,8 @@
     "runningLabel": "Выполняется",
     "inProgressLabel": "В процессе",
     "unknownLabel": "Неизвестно",
-    "virtualKey": "Виртуальный ключ №{id}"
+    "virtualKey": "Виртуальный ключ №{id}",
+    "accessDeniedChain": "Доступ запрещён — модель в кулдауне: {targets}"
   },
   "pagination": {
     "page": "Страница {current} из {total}"

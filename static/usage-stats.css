@@ -563,6 +563,16 @@ body.dark-mode .error-badge-overflow {
     color: #a78bfa;
 }
 
+.error-badge-access {
+    background-color: #ffedd5;
+    color: #9a3412;
+}
+
+body.dark-mode .error-badge-access {
+    background-color: rgba(249, 115, 22, 0.15);
+    color: #fb923c;
+}
+
 .error-badge-default {
     background-color: var(--bg-sunken);
     color: var(--text-muted);
@@ -651,6 +661,20 @@ body.dark-mode .error-badge-overflow {
 .chain-failure {
     color: var(--error);
     background-color: var(--error-soft);
+}
+
+.chain-access-denied {
+    font-weight: 600;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background-color: #ffedd5;
+    color: #9a3412;
+}
+
+body.dark-mode .chain-access-denied {
+    background-color: rgba(249, 115, 22, 0.15);
+    color: #fb923c;
 }
 
 .chain-toggle {

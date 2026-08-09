@@ -1484,6 +1484,109 @@ def test_fallback_chains_show_detailed_error_message(page: Page, server):
         "max_tokens=4000"
     )
 
+def test_fallback_chains_flag_access_denied_attempts(page: Page, server):
+    """A 401/403 upstream puts the target on cooldown, so the chain must say so
+    on the collapsed card instead of hiding it behind an expand click."""
+    session = create_authenticated_session(server, "test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    _route_empty_analytics_dashboard(page, server)
+    page.route(
+        f"{server}/v1/api/fallback-stats/*",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps([]),
+        ),
+    )
+    page.route(
+        f"{server}/v1/api/fallback-records*",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "records": [
+                        {
+                            "request_id": "req-denied",
+                            "timestamp": "2026-08-09T12:05:39",
+                            "gateway_model": "llmgateway/high",
+                            "total_attempts": 2,
+                            "total_duration_ms": 1500,
+                            "success": True,
+                            "final_provider": "alibaba",
+                            "final_model": "qwen3.8-max",
+                            "x_title": "tgBot",
+                            "attempts": [
+                                {
+                                    "attempt_number": 1,
+                                    "provider": "kimicode",
+                                    "model": "k3",
+                                    "success": False,
+                                    "error_type": "http_403",
+                                    "error_message": (
+                                        "Upstream request failed with HTTP status 403."
+                                    ),
+                                    "duration_ms": 700,
+                                },
+                                {
+                                    "attempt_number": 2,
+                                    "provider": "alibaba",
+                                    "model": "qwen3.8-max",
+                                    "success": True,
+                                    "error_type": None,
+                                    "error_message": None,
+                                    "duration_ms": 800,
+                                },
+                            ],
+                        },
+                        {
+                            "request_id": "req-plain",
+                            "timestamp": "2026-08-09T12:06:03",
+                            "gateway_model": "llmgateway/high",
+                            "total_attempts": 1,
+                            "total_duration_ms": 400,
+                            "success": True,
+                            "final_provider": "alibaba",
+                            "final_model": "qwen3.8-max",
+                            "x_title": "tgBot",
+                            "attempts": [
+                                {
+                                    "attempt_number": 1,
+                                    "provider": "alibaba",
+                                    "model": "qwen3.8-max",
+                                    "success": True,
+                                    "error_type": None,
+                                    "error_message": None,
+                                    "duration_ms": 400,
+                                },
+                            ],
+                        },
+                    ],
+                    "total_records": 2,
+                }
+            ),
+        ),
+    )
+
+    page.goto(f"{server}/v1/ui/usage-stats")
+    page.click('button[data-tab="fallback"]')
+    page.click('button[data-subtab="chains"]')
+
+    cards = page.locator("#fallbackChainsArea .chain-card")
+    expect(cards).to_have_count(2)
+
+    # Collapsed card already names the refused target.
+    denied = cards.nth(0).locator(".chain-access-denied")
+    expect(denied).to_be_visible()
+    expect(denied).to_contain_text("kimicode/k3")
+    expect(cards.nth(1).locator(".chain-access-denied")).to_have_count(0)
+
+    page.click("#fallbackChainsArea .chain-card:first-child .chain-header")
+    expect(page.locator("#fallbackChainsArea .error-badge-access")).to_contain_text(
+        "403 Forbidden"
+    )
+
+
 def test_auth_login_flow(page: Page, server):
     _route_empty_analytics_dashboard(page, server)
 

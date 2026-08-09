@@ -657,10 +657,29 @@ function initializeUsagePage() {
 
     const ERROR_TYPE_CLASSES = {
         'http_429': 'error-badge-rate-limit',
+        'http_401': 'error-badge-access',
+        'http_403': 'error-badge-access',
         'read_timeout': 'error-badge-timeout',
         'connect_timeout': 'error-badge-timeout',
         'connect_error': 'error-badge-connect',
         'context_overflow': 'error-badge-overflow',
+    };
+
+    // The gateway puts an upstream that answers 401/403 on cooldown, so the
+    // target silently disappears from the chain for the next few minutes.
+    // Surface it on the collapsed card: the operator has to fix the key or
+    // the plan, and nothing else in the UI says so.
+    const ACCESS_DENIED_ERROR_TYPES = Object.freeze(['http_401', 'http_403']);
+
+    const accessDeniedTargets = (attempts) => {
+        if (!Array.isArray(attempts)) return [];
+        const targets = [];
+        attempts.forEach((attempt) => {
+            if (!ACCESS_DENIED_ERROR_TYPES.includes(attempt?.error_type)) return;
+            const target = `${attempt.provider}/${attempt.model}`;
+            if (!targets.includes(target)) targets.push(target);
+        });
+        return targets;
     };
 
     const getErrorBadgeClass = (errorType) => {
@@ -871,6 +890,17 @@ function initializeUsagePage() {
                 ? gatewayI18n.t('usage:values.successLabel')
                 : gatewayI18n.t('usage:values.failedLabel');
             summary.appendChild(resSpan);
+
+            const deniedTargets = accessDeniedTargets(record.attempts);
+            if (deniedTargets.length > 0) {
+                const deniedSpan = document.createElement('span');
+                deniedSpan.className = 'chain-access-denied';
+                deniedSpan.textContent = gatewayI18n.t('usage:values.accessDeniedChain', {
+                    targets: deniedTargets.join(', '),
+                });
+                deniedSpan.setAttribute('dir', 'auto');
+                summary.appendChild(deniedSpan);
+            }
 
             header.appendChild(summary);
 

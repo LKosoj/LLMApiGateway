@@ -122,7 +122,8 @@
     "runningLabel": "Running",
     "inProgressLabel": "In progress",
     "unknownLabel": "Unknown",
-    "virtualKey": "Virtual key #{id}"
+    "virtualKey": "Virtual key #{id}",
+    "accessDeniedChain": "Access denied — on cooldown: {targets}"
   },
   "pagination": {
     "page": "Page {current} of {total}"
