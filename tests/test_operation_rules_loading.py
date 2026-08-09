@@ -1,6 +1,8 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, Iterable
 from unittest.mock import patch
 
 import json5
@@ -150,6 +152,50 @@ EMPTY_OPERATION_RULES = {
     "pdf_conversions": {},
 }
 
+# Поля секций, которые ссылаются на chat-модель из models_fallback_rules.json.
+CHAT_MODEL_REFERENCE_FIELDS = {
+    "web_search": ("query_model",),
+    "web_research": ("analysis_model",),
+    "web_deep_research": ("fast_model", "smart_model", "strategic_model"),
+}
+
+
+def _read_json5(path: Path) -> Any:
+    return json5.loads(path.read_text(encoding="utf-8"))
+
+
+def _operation_rules_providers(raw_operation_rules: Any) -> set[str]:
+    providers: set[str] = set()
+    for section_rules in raw_operation_rules.values():
+        if not isinstance(section_rules, list):
+            continue
+        for rule in section_rules:
+            for route in rule.get("routes") or []:
+                provider = route.get("provider")
+                if isinstance(provider, str):
+                    providers.add(provider)
+    return providers
+
+
+def _fallback_rules_providers(raw_fallback_rules: Any) -> set[str]:
+    providers: set[str] = set()
+    for rule in raw_fallback_rules:
+        for fallback_model in rule.get("fallback_models") or []:
+            provider = fallback_model.get("provider")
+            if isinstance(provider, str):
+                providers.add(provider)
+    return providers
+
+
+def _providers_payload(provider_names: Iterable[str]) -> str:
+    """Синтетический providers.json: тесту важны только имена провайдеров, не их адреса и ключи."""
+    return json.dumps(
+        [
+            {name: {"baseUrl": f"https://{index}.provider.example", "apikey": "DIRECT-KEY"}}
+            for index, name in enumerate(sorted(provider_names))
+        ]
+    )
+
 
 class OperationRulesLoadingTests(unittest.TestCase):
     def setUp(self):
@@ -210,24 +256,24 @@ class OperationRulesLoadingTests(unittest.TestCase):
 
         self.assertIn("Invalid provider 'missing-provider'", "\n".join(captured_logs.output))
 
-    def test_project_root_models_operation_rules_example_loads_successfully(self):
+    def _load_project_root_operation_rules(self) -> tuple[ConfigLoader, dict]:
+        """Загружает боевые models_operation_rules.json + models_fallback_rules.json.
+
+        providers.json синтезируется из имён провайдеров, реально использованных в обоих
+        файлах: тест проверяет согласованность конфигов между собой, а не то, какой именно
+        провайдер настроен в деплое сегодня.
+        """
         self.assertTrue(PROJECT_ROOT_OPERATION_RULES_PATH.exists())
         self.assertTrue(PROJECT_ROOT_FALLBACK_RULES_PATH.exists())
+        raw_operation_rules = _read_json5(PROJECT_ROOT_OPERATION_RULES_PATH)
+        raw_fallback_rules = _read_json5(PROJECT_ROOT_FALLBACK_RULES_PATH)
+
+        provider_names = {main.settings.fallback_provider}
+        provider_names.update(_operation_rules_providers(raw_operation_rules))
+        provider_names.update(_fallback_rules_providers(raw_fallback_rules))
+        self.providers_path.write_text(_providers_payload(provider_names), encoding="utf-8")
         self.fallback_rules_path.write_text(
-            """
-[
-  {
-    "gateway_model_name": "llmgateway/light_model",
-    "fallback_models": [{"provider": "openrouter", "model": "gpt-4o-mini"}],
-    "rotate_models": false
-  },
-  {
-    "gateway_model_name": "llmgateway/high",
-    "fallback_models": [{"provider": "openrouter", "model": "gpt-4o"}],
-    "rotate_models": false
-  }
-]
-""".strip(),
+            PROJECT_ROOT_FALLBACK_RULES_PATH.read_text(encoding="utf-8"),
             encoding="utf-8",
         )
 
@@ -239,154 +285,38 @@ class OperationRulesLoadingTests(unittest.TestCase):
         config_loader.load_providers()
         config_loader.load_fallback_rules()
 
-        operation_rules = config_loader.load_operation_rules()
-        project_fallback_rules = json5.loads(
-            PROJECT_ROOT_FALLBACK_RULES_PATH.read_text(encoding="utf-8")
-        )
-        project_gateway_models = {
+        return config_loader, config_loader.load_operation_rules()
+
+    def test_project_root_operation_rules_load_against_project_root_fallback_rules(self):
+        _config_loader, operation_rules = self._load_project_root_operation_rules()
+
+        self.assertEqual(set(operation_rules), set(EMPTY_OPERATION_RULES))
+        configured_models = [name for section in operation_rules.values() for name in section]
+        self.assertTrue(configured_models, "боевые operation rules не должны быть пустыми")
+
+    def test_project_root_operation_rules_reference_project_root_chat_models(self):
+        _config_loader, operation_rules = self._load_project_root_operation_rules()
+        chat_models = {
             rule["gateway_model_name"]
-            for rule in project_fallback_rules
+            for rule in _read_json5(PROJECT_ROOT_FALLBACK_RULES_PATH)
             if isinstance(rule, dict) and isinstance(rule.get("gateway_model_name"), str)
         }
 
-        self.assertIn("llmgateway/embedding", operation_rules["embeddings"])
-        self.assertIn("llmgateway/rerank", operation_rules["rerank"])
-        self.assertIn("llmgateway/flux.image-generation", operation_rules["images_generations"])
-        self.assertIn("llmgateway/flux.image-edit", operation_rules["images_edits"])
-        self.assertIn("llmgateway/silero-tts", operation_rules["audio_speech"])
-        self.assertIn("llmgateway/silero-en-tts", operation_rules["audio_speech"])
-        self.assertIn("llmgateway/cosyvoice-tts", operation_rules["audio_speech"])
-        self.assertIn("llmgateway/pdf-converter", operation_rules["pdf_conversions"])
-        self.assertEqual(
-            operation_rules["embeddings"]["llmgateway/embedding"]["routes"][0]["provider"],
-            "cloudru",
-        )
-        self.assertEqual(
-            operation_rules["embeddings"]["llmgateway/embedding"]["routes"][0]["model"],
-            "Qwen/Qwen3-Embedding-0.6B",
-        )
-        self.assertEqual(
-            operation_rules["embeddings"]["llmgateway/embedding"]["routes"][0]["custom_body_params"],
-            {},
-        )
-        self.assertEqual(
-            operation_rules["rerank"]["llmgateway/rerank"]["routes"][0]["provider"],
-            "cloudru",
-        )
-        self.assertEqual(
-            operation_rules["rerank"]["llmgateway/rerank"]["routes"][0]["target_path"],
-            "https://foundation-models.api.cloud.ru/score",
-        )
-        self.assertEqual(
-            operation_rules["rerank"]["llmgateway/rerank"]["routes"][1]["provider"],
-            "llm_ai",
-        )
-        self.assertEqual(
-            operation_rules["rerank"]["llmgateway/rerank"]["routes"][1]["target_path"],
-            "http://94.143.43.118:18080/score",
-        )
-        self.assertNotIn("request_format", operation_rules["rerank"]["llmgateway/rerank"]["routes"][0])
-        self.assertNotIn("response_format", operation_rules["rerank"]["llmgateway/rerank"]["routes"][0])
-        self.assertEqual(
-            operation_rules["embeddings"]["llmgateway/embedding"]["routes"][1]["retry_count"],
-            3,
-        )
-        self.assertEqual(
-            operation_rules["rerank"]["llmgateway/rerank"]["routes"][1]["retry_count"],
-            3,
-        )
-        self.assertEqual(
-            operation_rules["images_generations"]["llmgateway/flux.image-generation"]["routes"][0]["provider"],
-            "aitunnel",
-        )
-        self.assertEqual(
-            operation_rules["images_generations"]["llmgateway/flux.image-generation"]["routes"][0]["model"],
-            "gpt-image-2",
-        )
-        flux_edit_route = operation_rules["images_edits"]["llmgateway/flux.image-edit"]["routes"][0]
-        self.assertIn(flux_edit_route["provider"], config_loader.providers_config)
-        self.assertEqual(flux_edit_route["model"], "gpt-image-2")
-        self.assertEqual(flux_edit_route["target_path"], "/images/edits")
-        self.assertEqual(
-            operation_rules["audio_speech"]["llmgateway/silero-tts"]["routes"][0]["target_path"],
-            "/silero/audio/speech",
-        )
-        self.assertEqual(
-            operation_rules["audio_speech"]["llmgateway/silero-tts"]["routes"][0]["voices_target_path"],
-            "/voices",
-        )
-        self.assertEqual(
-            operation_rules["audio_speech"]["llmgateway/silero-en-tts"]["routes"][0]["model"],
-            "silero-v3_en",
-        )
-        self.assertEqual(
-            operation_rules["audio_speech"]["llmgateway/silero-en-tts"]["routes"][0]["voices_target_path"],
-            "/voices",
-        )
-        self.assertEqual(
-            operation_rules["audio_speech"]["llmgateway/cosyvoice-tts"]["routes"][0]["model"],
-            "cosyvoice",
-        )
-        self.assertEqual(
-            operation_rules["audio_speech"]["llmgateway/cosyvoice-tts"]["routes"][0]["voices_target_path"],
-            "/voices",
-        )
-        self.assertEqual(
-            operation_rules["pdf_conversions"]["llmgateway/pdf-converter"]["routes"][0]["target_path"],
-            "http://94.143.43.118:18080/pdf/api",
-        )
-        klein_generation_mapping = operation_rules["images_generations"]["llmgateway/flux.2-klein-4b-generation"][
-            "routes"
-        ][0]["request_mapping"]
-        self.assertNotIn("allowed_client_fields", klein_generation_mapping)
-        self.assertEqual(klein_generation_mapping.get("fields", {}).get(""), "n")
-        self.assertEqual(klein_generation_mapping.get("constants", {}), {})
-        self.assertEqual(
-            operation_rules["images_edits"]["llmgateway/ai-klein-edit"]["routes"][0]
-            .get("request_mapping", {})
-            .get("constants", {}),
-            {},
-        )
-        self.assertIn(
-            operation_rules["web_search"]["llmgateway/web-search"]["query_model"],
-            project_gateway_models,
-        )
-        self.assertEqual(
-            operation_rules["web_research"]["llmgateway/web-research"]["search_model"],
-            "llmgateway/web-search",
-        )
-        self.assertEqual(
-            operation_rules["web_research"]["llmgateway/web-research"]["read_model"],
-            "llmgateway/web-read",
-        )
-        self.assertEqual(
-            operation_rules["web_research"]["llmgateway/web-research"]["rerank_model"],
-            "llmgateway/rerank",
-        )
-        self.assertEqual(
-            operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["search_model"],
-            "llmgateway/web-search",
-        )
-        self.assertEqual(
-            operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["read_model"],
-            "llmgateway/web-read",
-        )
-        self.assertEqual(
-            operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["fast_model"],
-            "llmgateway/light_model",
-        )
-        self.assertEqual(
-            operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["embedding_model"],
-            "llmgateway/embedding",
-        )
-        self.assertEqual(
-            operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["image_generation_model"],
-            "llmgateway/gpt-image-2",
-        )
-        self.assertEqual(
-            operation_rules["web_deep_research"]["llmgateway/web-deep-research"]["image_generation_size"],
-            "1024x1024",
-        )
+        checked_references = 0
+        for section_name, field_names in CHAT_MODEL_REFERENCE_FIELDS.items():
+            for gateway_model_name, config in operation_rules[section_name].items():
+                for field_name in field_names:
+                    referenced_model = config.get(field_name)
+                    if referenced_model is None:
+                        continue
+                    checked_references += 1
+                    self.assertIn(
+                        referenced_model,
+                        chat_models,
+                        f"{section_name}.{gateway_model_name}.{field_name}",
+                    )
+
+        self.assertTrue(checked_references, "боевые operation rules должны ссылаться на chat-модели")
 
 
 if __name__ == "__main__":

@@ -402,6 +402,121 @@ def test_adapter_checks_sticky_ipc_failure_before_success(
     run_async(scenario())
 
 
+class _HealthyIpcClient:
+    def __init__(self, _sock, *, job_id):
+        assert job_id == _job().job_id
+
+    async def start(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+    def raise_if_failed(self) -> None:
+        return None
+
+
+def _researcher_writing_report(write_report):
+    class Researcher:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def conduct_research(self):
+            return {"ok": True}
+
+        async def write_report(self):
+            return await write_report()
+
+        def get_research_sources(self):
+            return []
+
+        def get_source_urls(self):
+            return []
+
+        def get_research_context(self):
+            return []
+
+        def get_costs(self):
+            return 0.0
+
+    return Researcher
+
+
+@contextmanager
+def _adapter_with_researcher(researcher):
+    @contextmanager
+    def gateway_tools(_ipc):
+        yield
+
+    with (
+        patch.object(adapter_module, "DeepResearchIpcClient", _HealthyIpcClient),
+        patch.object(adapter_module, "get_gpt_researcher_factory", return_value=researcher),
+        patch.object(adapter_module, "_gateway_research_tools", gateway_tools),
+    ):
+        yield
+
+
+def test_adapter_retries_report_writing_after_transient_failure() -> None:
+    calls = {"count": 0}
+
+    async def write_report():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("upstream hiccup")
+        return "report"
+
+    async def scenario() -> None:
+        with _adapter_with_researcher(_researcher_writing_report(write_report)):
+            result = await adapter_module.conduct_deep_research_job(
+                _job(),
+                object(),  # type: ignore[arg-type]
+            )
+        assert result.report == "report"
+        assert calls["count"] == 2
+
+    run_async(scenario())
+
+
+def test_adapter_raises_report_failure_after_exhausting_attempts() -> None:
+    calls = {"count": 0}
+
+    async def write_report():
+        calls["count"] += 1
+        raise RuntimeError("upstream is down")
+
+    async def scenario() -> None:
+        with _adapter_with_researcher(_researcher_writing_report(write_report)):
+            with pytest.raises(RuntimeError, match="upstream is down"):
+                await adapter_module.conduct_deep_research_job(
+                    _job(),
+                    object(),  # type: ignore[arg-type]
+                )
+        assert calls["count"] == adapter_module.DEEP_RESEARCH_REPORT_MAX_ATTEMPTS
+
+    run_async(scenario())
+
+
+def test_adapter_does_not_retry_report_writing_on_protocol_errors() -> None:
+    calls = {"count": 0}
+    failure = DeepResearchCallbackReportedError("callback_failed", "HTTPException")
+
+    async def write_report():
+        calls["count"] += 1
+        raise failure
+
+    async def scenario() -> None:
+        with _adapter_with_researcher(_researcher_writing_report(write_report)):
+            with pytest.raises(DeepResearchCallbackReportedError) as error:
+                await adapter_module.conduct_deep_research_job(
+                    _job(),
+                    object(),  # type: ignore[arg-type]
+                )
+        assert error.value is failure
+        assert calls["count"] == 1
+
+    run_async(scenario())
+
+
 def test_installed_browse_urls_drops_refused_sources_and_keeps_the_rest() -> None:
     import gpt_researcher.agent as agent_module
 

@@ -29,6 +29,7 @@ from ..services.deep_research_protocol import (
 
 
 GPT_RESEARCHER_REQUIRED_VERSION = "0.14.8"
+DEEP_RESEARCH_REPORT_MAX_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
 
 
@@ -503,6 +504,27 @@ def collect_public_result(
     )
 
 
+async def _write_report_with_retries(researcher: Any, ipc: DeepResearchIpcClient) -> object:
+    """Retry report writing so one upstream hiccup does not discard the finished research."""
+    attempt = 1
+    while True:
+        try:
+            return await researcher.write_report()
+        except DeepResearchProtocolError:
+            raise
+        except Exception as exc:
+            ipc.raise_if_failed()
+            if attempt >= DEEP_RESEARCH_REPORT_MAX_ATTEMPTS:
+                raise
+            logger.warning(
+                "Deep research report writing failed on attempt %d/%d: %s; retrying.",
+                attempt,
+                DEEP_RESEARCH_REPORT_MAX_ATTEMPTS,
+                exc,
+            )
+            attempt += 1
+
+
 async def conduct_deep_research_job(
     job: DeepResearchJob,
     sock: socket.socket,
@@ -528,7 +550,7 @@ async def conduct_deep_research_job(
                     ipc=ipc,
                     job=job,
                 )
-            report = await researcher.write_report()
+            report = await _write_report_with_retries(researcher, ipc)
             ipc.raise_if_failed()
         result = collect_public_result(
             researcher,

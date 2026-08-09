@@ -116,6 +116,39 @@ def jsonlib_dumps(obj) -> str:
 
 _json_dumps = json.dumps
 
+_APPLIED_EVIDENCE_PLAN = {
+    "mode": "applied",
+    "task_type": "vendor_selection",
+    "candidate_type": "design studio",
+    "requirements": [
+        {
+            "id": "specialization",
+            "label": "Specialization",
+            "description": "Candidate has relevant specialization",
+            "required": True,
+            "min_sources": 1,
+        }
+    ],
+}
+
+_STUDIO_A_EVIDENCE = {
+    "candidates": [
+        {
+            "name": "Studio A",
+            "aliases": ["A"],
+            "evidence": [
+                {
+                    "criterion_id": "specialization",
+                    "status": "supports",
+                    "claim": "Studio A designs offices.",
+                    "quote": "Studio A designs offices.",
+                    "confidence": 0.9,
+                }
+            ],
+        }
+    ]
+}
+
 
 VALID_PROVIDERS_TEXT = """
 [
@@ -2228,6 +2261,376 @@ class WebApiTests(unittest.TestCase):
             if "text_2" in call.kwargs.get("json", {})
         ]
         self.assertEqual(rerank_payloads, [])
+
+    def test_web_research_evidence_matrix_planning_retries_invalid_structure(self):
+        plan_prompts = []
+
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                plan_prompts.append(prompt)
+                if len(plan_prompts) == 1:
+                    return _json_dumps(
+                        {
+                            "mode": "applied",
+                            "task_type": "vendor_selection",
+                            "candidate_type": 123,
+                            "requirements": [],
+                        }
+                    )
+                return _json_dumps(_APPLIED_EVIDENCE_PLAN)
+            if "Извлеки evidence matrix" in prompt:
+                return _json_dumps(_STUDIO_A_EVIDENCE)
+            if "Собери итоговый исследовательский ответ строго по evidence matrix" in prompt:
+                return "Studio A is supported."
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/studio-a", "title": "Studio A", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(
+            return_value={
+                "url": "https://example.com/studio-a",
+                "title": "Studio A",
+                "content": "Studio A designs offices.",
+            }
+        )
+
+        with (
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["output"], "Studio A is supported.")
+        self.assertEqual(payload["evidence_matrix"]["passed_candidates"], ["Studio A"])
+        self.assertEqual(len(plan_prompts), 2)
+        self.assertIn("Предыдущий ответ отклонён валидатором", plan_prompts[1])
+
+    def test_web_research_evidence_matrix_extraction_retries_invalid_structure(self):
+        extraction_prompts = []
+
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(_APPLIED_EVIDENCE_PLAN)
+            if "Извлеки evidence matrix" in prompt:
+                extraction_prompts.append(prompt)
+                if len(extraction_prompts) == 1:
+                    return _json_dumps(
+                        {"candidates": [{"name": "Studio A", "aliases": [], "evidence": "not a list"}]}
+                    )
+                return _json_dumps(_STUDIO_A_EVIDENCE)
+            if "Собери итоговый исследовательский ответ строго по evidence matrix" in prompt:
+                return "Studio A is supported."
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/studio-a", "title": "Studio A", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(
+            return_value={
+                "url": "https://example.com/studio-a",
+                "title": "Studio A",
+                "content": "Studio A designs offices.",
+            }
+        )
+
+        with (
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["output"], "Studio A is supported.")
+        self.assertEqual(payload["evidence_matrix"]["passed_candidates"], ["Studio A"])
+        self.assertEqual(len(extraction_prompts), 2)
+        self.assertIn("Предыдущий ответ отклонён валидатором", extraction_prompts[1])
+
+    def test_web_research_evidence_matrix_skips_source_with_permanently_invalid_extraction(self):
+        extraction_urls = []
+
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(_APPLIED_EVIDENCE_PLAN)
+            if "Извлеки evidence matrix" in prompt:
+                if "studio-b" in prompt:
+                    extraction_urls.append("studio-b")
+                    return _json_dumps(
+                        {"candidates": [{"name": "Studio B", "aliases": [], "evidence": "not a list"}]}
+                    )
+                extraction_urls.append("studio-a")
+                return _json_dumps(_STUDIO_A_EVIDENCE)
+            if "Собери итоговый исследовательский ответ строго по evidence matrix" in prompt:
+                return "Studio A is supported."
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/studio-a", "title": "Studio A", "snippet": "s"},
+                {"url": "https://example.com/studio-b", "title": "Studio B", "snippet": "s"},
+            ]
+        )
+
+        async def fake_read(_client, url: str):
+            return {
+                "url": url,
+                "title": url.rsplit("/", 1)[-1],
+                "content": "Studio A designs offices.",
+            }
+
+        with (
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
+            self._client(search_adapter=search_adapter, read_adapter=AsyncMock(side_effect=fake_read)) as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 2,
+                    "max_articles": 2,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["output"], "Studio A is supported.")
+        self.assertEqual(payload["evidence_matrix"]["passed_candidates"], ["Studio A"])
+        self.assertEqual([item["url"] for item in payload["articles"]], ["https://example.com/studio-a"])
+        self.assertEqual(
+            extraction_urls.count("studio-b"),
+            web_research_owner.EVIDENCE_EXTRACTION_MAX_ATTEMPTS,
+        )
+        self.assertEqual(extraction_urls.count("studio-a"), 1)
+
+    def test_web_research_evidence_matrix_answer_retries_after_upstream_failure(self):
+        synthesis_calls = []
+
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(_APPLIED_EVIDENCE_PLAN)
+            if "Извлеки evidence matrix" in prompt:
+                return _json_dumps(_STUDIO_A_EVIDENCE)
+            if "Собери итоговый исследовательский ответ строго по evidence matrix" in prompt:
+                synthesis_calls.append(prompt)
+                if len(synthesis_calls) == 1:
+                    raise HTTPException(status_code=503, detail="Internal gateway model failed: upstream down")
+                return "Studio A is supported."
+            return ""
+
+        search_adapter = AsyncMock(
+            return_value=[
+                {"url": "https://example.com/studio-a", "title": "Studio A", "snippet": "s"},
+            ]
+        )
+        read_adapter = AsyncMock(
+            return_value={
+                "url": "https://example.com/studio-a",
+                "title": "Studio A",
+                "content": "Studio A designs offices.",
+            }
+        )
+
+        with (
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
+            self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "choose an office design studio",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["output"], "Studio A is supported.")
+        self.assertEqual(len(synthesis_calls), 2)
+
+    def test_web_research_answer_retries_after_upstream_failure(self):
+        synthesis_calls = []
+
+        async def fake_call_internal_text_model(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            usage_accumulator,
+        ):
+            prompt = messages[-1]["content"]
+            if "Определи, нужно ли включать evidence matrix" in prompt:
+                return _json_dumps(
+                    {
+                        "mode": "not_applicable",
+                        "task_type": "general_research",
+                        "candidate_type": "",
+                        "requirements": [],
+                    }
+                )
+            if "Проанализируй источник" in prompt:
+                return "- Relevant fact with source"
+            if "Собери единый связный исследовательский ответ" in prompt:
+                synthesis_calls.append(prompt)
+                if len(synthesis_calls) == 1:
+                    raise HTTPException(status_code=503, detail="Internal gateway model failed: upstream down")
+                return "Synthesized answer."
+            return ""
+
+        with (
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", AsyncMock(return_value=["topic"])),
+            patch(
+                "llm_gateway_core.api.v1.web_research_orchestration._call_internal_text_model",
+                side_effect=fake_call_internal_text_model,
+            ),
+            self._client() as (
+                client,
+                _fake_http_client,
+                _search_adapter,
+                _read_adapter,
+            ),
+        ):
+            response = client.post(
+                "/v1/web/research",
+                json={
+                    "model": "llmgateway/web-research",
+                    "query": "what happened",
+                    "max_results": 1,
+                    "max_articles": 1,
+                    "num_queries": 1,
+                    "language": "en",
+                    "output_language": "en",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["output"], "Synthesized answer.")
+        self.assertEqual(len(synthesis_calls), 2)
 
     def test_web_research_evidence_matrix_checks_quotes_against_original_article_content(self):
         original_content = "Studio A designs offices. " + ("x" * web_api.ARTICLE_RELEVANCE_THRESHOLD_CHARS)
