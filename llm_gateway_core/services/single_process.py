@@ -37,6 +37,7 @@ _GUNICORN_SOURCE = "GUNICORN_CMD_ARGS"
 _GUNICORN_CONFIG_OPTION = "--config"
 _GUNICORN_CONFIG_MIN_UNIQUE_PREFIX = "--co"
 _LOCK_FILENAME = ".llmgateway-single-process.lock"
+_LOCK_FILE_MODE = 0o600
 
 _SAFE_ERROR_SOURCES = frozenset(
     {
@@ -190,6 +191,21 @@ class SingleProcessLease:
         locked = False
         try:
             lock_descriptor = _open_lock_file(directory_descriptor)
+            if _lock_file_needs_mode_repair(lock_descriptor):
+                # Take the lock before touching the entry: an owner that is still
+                # alive on this inode must win the contention check, not lose its
+                # name to a replacement.
+                _acquire_descriptor_lock(lock_descriptor)
+                locked = True
+                _replace_unsafe_lock_file(
+                    directory_descriptor,
+                    lock_descriptor,
+                    display_path=lock_file_path,
+                )
+                _release_descriptor_quietly(lock_descriptor, locked=True)
+                lock_descriptor = None
+                locked = False
+                lock_descriptor = _open_lock_file(directory_descriptor)
             _validate_lock_file(lock_descriptor, display_path=lock_file_path)
             _acquire_descriptor_lock(lock_descriptor)
             locked = True
@@ -276,10 +292,11 @@ def _require_supported_platform() -> None:
             and all(isinstance(getattr(os, name, None), int) for name in required_os_flags)
             and all(
                 callable(getattr(os, name, None))
-                for name in ("close", "fstat", "open", "set_inheritable", "stat")
+                for name in ("close", "fstat", "open", "set_inheritable", "stat", "unlink")
             )
             and os.open in os.supports_dir_fd
             and os.stat in os.supports_dir_fd
+            and os.unlink in os.supports_dir_fd
             and os.stat in os.supports_follow_symlinks
         )
     except Exception:
@@ -336,7 +353,7 @@ def _open_lock_file(directory_descriptor: int) -> int:
         descriptor = os.open(
             _LOCK_FILENAME,
             flags,
-            0o600,
+            _LOCK_FILE_MODE,
             dir_fd=directory_descriptor,
         )
         os.set_inheritable(descriptor, False)
@@ -351,6 +368,70 @@ def _open_lock_file(directory_descriptor: int) -> int:
         raise SingleProcessInvariantError("lock-file", "lock-open-failed") from None
 
 
+def _lock_file_needs_mode_repair(descriptor: int) -> bool:
+    """Report a lock file that is safe in every respect except its mode bits."""
+    try:
+        file_stat = os.fstat(descriptor)
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(file_stat.st_mode)
+        and file_stat.st_size == 0
+        and file_stat.st_nlink == 1
+        and stat.S_IMODE(file_stat.st_mode) != _LOCK_FILE_MODE
+    )
+
+
+def _replace_unsafe_lock_file(
+    directory_descriptor: int,
+    lock_descriptor: int,
+    *,
+    display_path: Path,
+) -> None:
+    """Unlink the exclusively held lock entry so the next open recreates it at 0600."""
+    try:
+        descriptor_stat = os.fstat(lock_descriptor)
+        named_stat = os.stat(
+            _LOCK_FILENAME,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+    except NotImplementedError:
+        raise SingleProcessInvariantError("platform", "unsupported-platform") from None
+    except OSError as exc:
+        logger.error(
+            "Single-process lock file replacement failed: path=%s errno=%s.",
+            display_path,
+            exc.errno,
+        )
+        raise SingleProcessInvariantError("lock-file", "unsafe-lock-file") from None
+    if (
+        named_stat.st_dev != descriptor_stat.st_dev
+        or named_stat.st_ino != descriptor_stat.st_ino
+    ):
+        logger.error(
+            "Single-process lock file changed before replacement: path=%s.",
+            display_path,
+        )
+        raise SingleProcessInvariantError("lock-file", "unsafe-lock-file")
+    try:
+        os.unlink(_LOCK_FILENAME, dir_fd=directory_descriptor)
+    except NotImplementedError:
+        raise SingleProcessInvariantError("platform", "unsupported-platform") from None
+    except OSError as exc:
+        logger.error(
+            "Single-process lock file replacement failed: path=%s errno=%s.",
+            display_path,
+            exc.errno,
+        )
+        raise SingleProcessInvariantError("lock-file", "unsafe-lock-file") from None
+    logger.warning(
+        "Replaced single-process lock file with unsafe mode: path=%s mode=%o.",
+        display_path,
+        stat.S_IMODE(descriptor_stat.st_mode),
+    )
+
+
 def _validate_lock_file(descriptor: int, *, display_path: Path) -> os.stat_result:
     try:
         file_stat = os.fstat(descriptor)
@@ -363,7 +444,7 @@ def _validate_lock_file(descriptor: int, *, display_path: Path) -> os.stat_resul
         raise SingleProcessInvariantError("lock-file", "unsafe-lock-file") from None
     if (
         not stat.S_ISREG(file_stat.st_mode)
-        or stat.S_IMODE(file_stat.st_mode) != 0o600
+        or stat.S_IMODE(file_stat.st_mode) != _LOCK_FILE_MODE
         or file_stat.st_size != 0
         or file_stat.st_nlink != 1
     ):
@@ -415,7 +496,7 @@ def _validate_named_lock(
         raise SingleProcessInvariantError("lock-file", "unsafe-lock-file") from None
     if (
         not stat.S_ISREG(named_stat.st_mode)
-        or stat.S_IMODE(named_stat.st_mode) != 0o600
+        or stat.S_IMODE(named_stat.st_mode) != _LOCK_FILE_MODE
         or named_stat.st_size != 0
         or named_stat.st_nlink != 1
         or named_stat.st_dev != descriptor_stat.st_dev

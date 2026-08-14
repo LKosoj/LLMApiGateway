@@ -11,6 +11,7 @@ from llm_gateway_core.services.runtime_config import (
     RUNTIME_CLEANUP_DIAGNOSTIC_LIMIT,
     RUNTIME_CLEANUP_MAX_ATTEMPTS,
     RUNTIME_GENERATION_HISTORY_LIMIT,
+    RUNTIME_MAX_RETIRING_GENERATIONS,
     RuntimeGenerationConflictError,
     RuntimeGenerationManager,
     RuntimeGenerationStatus,
@@ -398,34 +399,35 @@ class RuntimeGenerationManagerTests(unittest.TestCase):
 
         run_async(scenario())
 
-    def test_validate_publish_matches_publish_while_cleanup_is_busy(self) -> None:
+    def test_validate_publish_matches_publish_once_the_retiring_limit_is_reached(self) -> None:
         async def scenario() -> None:
-            close_started = asyncio.Event()
-            allow_close = asyncio.Event()
-
-            async def close_old_client() -> None:
-                close_started.set()
-                await allow_close.wait()
-
-            old_client = Mock()
-            old_client.aclose = AsyncMock(side_effect=close_old_client)
             candidate_client = Mock()
             candidate_client.aclose = AsyncMock()
             manager = RuntimeGenerationManager()
-            install_test_runtime_snapshot(manager, _snapshot(1, clients={"old": old_client}))
-            publish_test_runtime_snapshot(manager, _snapshot(2), expected_generation=1)
-            await close_started.wait()
+            install_test_runtime_snapshot(manager, _snapshot(1))
+            held_leases = [manager.acquire_current()]
+            for generation in range(2, RUNTIME_MAX_RETIRING_GENERATIONS + 2):
+                publish_test_runtime_snapshot(
+                    manager,
+                    _snapshot(generation),
+                    expected_generation=generation - 1,
+                )
+                held_leases.append(manager.acquire_current())
 
-            candidate = _snapshot(3, clients={"candidate": candidate_client})
+            over_limit_generation = RUNTIME_MAX_RETIRING_GENERATIONS + 2
+            candidate = _snapshot(
+                over_limit_generation,
+                clients={"candidate": candidate_client},
+            )
             self._assert_publish_rejection_parity(
                 manager,
                 candidate,
-                expected_generation=2,
+                expected_generation=over_limit_generation - 1,
                 caller_owned_clients=(candidate_client,),
             )
 
-            allow_close.set()
-            await _wait_for_status(manager, 1, RuntimeGenerationStatus.CLOSED)
+            for lease in held_leases:
+                lease.release()
             await manager.shutdown()
             candidate_client.aclose.assert_not_awaited()
 
@@ -778,17 +780,17 @@ class RuntimeGenerationManagerTests(unittest.TestCase):
 
         run_async(scenario())
 
-    def test_publish_burst_keeps_only_one_retired_generation_and_candidates_owned(
+    def test_publish_burst_is_bounded_by_the_retiring_limit_and_candidates_owned(
         self,
     ) -> None:
         async def scenario() -> None:
             manager = RuntimeGenerationManager()
             install_test_runtime_snapshot(manager, _snapshot(1))
-            long_lease = manager.acquire_current()
-            publish_test_runtime_snapshot(manager, _snapshot(2), expected_generation=1)
+            held_leases = [manager.acquire_current()]
 
             stale_client = Mock()
             stale_client.aclose = AsyncMock()
+            publish_test_runtime_snapshot(manager, _snapshot(2), expected_generation=1)
             with self.assertRaises(RuntimeGenerationConflictError):
                 publish_test_runtime_snapshot(manager,
                     _snapshot(3, clients={"stale": stale_client}),
@@ -796,39 +798,53 @@ class RuntimeGenerationManagerTests(unittest.TestCase):
                 )
             stale_client.aclose.assert_not_awaited()
 
-            rejected_candidates: list[tuple[RuntimeSnapshot, Mock]] = []
-            for index in range(100):
-                candidate_client = Mock()
-                candidate_client.aclose = AsyncMock()
-                candidate = _snapshot(
-                    3,
-                    clients={f"candidate-{index}": candidate_client},
+            # One live request per generation keeps every predecessor retiring.
+            for generation in range(3, RUNTIME_MAX_RETIRING_GENERATIONS + 2):
+                held_leases.append(manager.acquire_current())
+                publish_test_runtime_snapshot(
+                    manager,
+                    _snapshot(generation),
+                    expected_generation=generation - 1,
                 )
-                with self.assertRaises(RuntimeManagerStateError):
-                    publish_test_runtime_snapshot(manager, candidate, expected_generation=2)
-                rejected_candidates.append((candidate, candidate_client))
 
-            self.assertEqual(set(manager._generations), {1, 2})  # noqa: SLF001
-            self.assertEqual(manager.cleanup_task_count, 0)
-            self.assertEqual(manager.current_generation, 2)
-            for _candidate, candidate_client in rejected_candidates:
-                candidate_client.aclose.assert_not_awaited()
+            retiring = set(manager._generations) - {manager.current_generation}  # noqa: SLF001
+            self.assertEqual(len(retiring), RUNTIME_MAX_RETIRING_GENERATIONS)
+            self.assertEqual(manager.current_generation, RUNTIME_MAX_RETIRING_GENERATIONS + 1)
 
-            long_lease.release()
+            over_limit_client = Mock()
+            over_limit_client.aclose = AsyncMock()
+            over_limit = _snapshot(
+                RUNTIME_MAX_RETIRING_GENERATIONS + 2,
+                clients={"over-limit": over_limit_client},
+            )
+            held_leases.append(manager.acquire_current())
+            with self.assertRaises(RuntimeManagerStateError):
+                publish_test_runtime_snapshot(
+                    manager,
+                    over_limit,
+                    expected_generation=RUNTIME_MAX_RETIRING_GENERATIONS + 1,
+                )
+            over_limit_client.aclose.assert_not_awaited()
+            self.assertEqual(manager.current_generation, RUNTIME_MAX_RETIRING_GENERATIONS + 1)
+
+            # Releasing the oldest request frees exactly one slot.
+            held_leases.pop(0).release()
             await _wait_for_status(manager, 1, RuntimeGenerationStatus.CLOSED)
-            accepted_candidate, accepted_client = rejected_candidates[-1]
-            publish_test_runtime_snapshot(manager, accepted_candidate, expected_generation=2)
-            await _wait_for_status(manager, 2, RuntimeGenerationStatus.CLOSED)
-            self.assertEqual(set(manager._generations), {3})  # noqa: SLF001
+            publish_test_runtime_snapshot(
+                manager,
+                over_limit,
+                expected_generation=RUNTIME_MAX_RETIRING_GENERATIONS + 1,
+            )
+            self.assertEqual(manager.current_generation, RUNTIME_MAX_RETIRING_GENERATIONS + 2)
 
+            for lease in held_leases:
+                lease.release()
             await manager.shutdown()
-            accepted_client.aclose.assert_awaited_once()
-            for _candidate, candidate_client in rejected_candidates[:-1]:
-                candidate_client.aclose.assert_not_awaited()
+            over_limit_client.aclose.assert_awaited_once()
 
         run_async(scenario())
 
-    def test_publish_waits_for_in_progress_cleanup_without_mutating_candidate(self) -> None:
+    def test_publish_proceeds_while_the_previous_cleanup_is_still_running(self) -> None:
         async def scenario() -> None:
             close_started = asyncio.Event()
             allow_close = asyncio.Event()
@@ -847,19 +863,44 @@ class RuntimeGenerationManagerTests(unittest.TestCase):
             publish_test_runtime_snapshot(manager, _snapshot(2), expected_generation=1)
             await close_started.wait()
 
-            with self.assertRaises(RuntimeManagerStateError):
-                publish_test_runtime_snapshot(manager, candidate, expected_generation=2)
-            self.assertEqual(manager.current_generation, 2)
-            self.assertEqual(set(manager._generations), {1, 2})  # noqa: SLF001
-            self.assertEqual(manager.cleanup_task_count, 1)
+            publish_test_runtime_snapshot(manager, candidate, expected_generation=2)
+            self.assertEqual(manager.current_generation, 3)
+            self.assertEqual(manager.cleanup_task_count, 2)
             candidate_client.aclose.assert_not_awaited()
 
             allow_close.set()
             await _wait_for_status(manager, 1, RuntimeGenerationStatus.CLOSED)
-            publish_test_runtime_snapshot(manager, candidate, expected_generation=2)
             await _wait_for_status(manager, 2, RuntimeGenerationStatus.CLOSED)
             await manager.shutdown()
             candidate_client.aclose.assert_awaited_once()
+
+        run_async(scenario())
+
+    def test_a_candidate_may_not_reuse_a_retiring_generation_client(self) -> None:
+        async def scenario() -> None:
+            shared_client = Mock()
+            shared_client.aclose = AsyncMock()
+            manager = RuntimeGenerationManager()
+            install_test_runtime_snapshot(
+                manager,
+                _snapshot(1, clients={"shared": shared_client}),
+            )
+            long_lease = manager.acquire_current()
+            publish_test_runtime_snapshot(manager, _snapshot(2), expected_generation=1)
+
+            with self.assertRaises(RuntimeGenerationConflictError):
+                publish_test_runtime_snapshot(
+                    manager,
+                    _snapshot(3, clients={"shared": shared_client}),
+                    expected_generation=2,
+                )
+
+            self.assertEqual(manager.current_generation, 2)
+            shared_client.aclose.assert_not_awaited()
+            long_lease.release()
+            await _wait_for_status(manager, 1, RuntimeGenerationStatus.CLOSED)
+            shared_client.aclose.assert_awaited_once()
+            await manager.shutdown()
 
         run_async(scenario())
 

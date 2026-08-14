@@ -151,6 +151,7 @@
         }
       },
       "available_models": [
+        "glm-5.3",
         "glm-5.2",
         "glm-5-turbo"
       ],

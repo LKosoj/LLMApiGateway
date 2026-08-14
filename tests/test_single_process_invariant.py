@@ -471,7 +471,7 @@ def test_close_rethrows_terminal_cleanup_failure_only_after_close_attempt(
 
 @pytest.mark.parametrize(
     "unsafe_kind",
-    ["symlink", "fifo", "directory", "nonempty", "hardlink", "wrong-mode"],
+    ["symlink", "fifo", "directory", "nonempty", "hardlink"],
 )
 def test_lease_rejects_unsafe_lock_entries_without_blocking(
     tmp_path: Path,
@@ -488,12 +488,10 @@ def test_lease_rejects_unsafe_lock_entries_without_blocking(
         lock_path.mkdir()
     elif unsafe_kind == "nonempty":
         lock_path.write_text("do-not-touch", encoding="utf-8")
-    elif unsafe_kind == "hardlink":
+    else:
         target = tmp_path / "hardlink-target"
         target.touch()
         lock_path.hardlink_to(target)
-    else:
-        lock_path.touch(mode=0o644)
 
     with pytest.raises(SingleProcessInvariantError) as raised:
         SingleProcessLease.acquire(tmp_path)
@@ -501,6 +499,74 @@ def test_lease_rejects_unsafe_lock_entries_without_blocking(
     assert raised.value.source == "lock-file"
     assert raised.value.reason_code in {"lock-open-failed", "unsafe-lock-file"}
     assert str(tmp_path) not in str(raised.value)
+    if unsafe_kind != "symlink":
+        assert lock_path.exists()
+
+
+@pytest.mark.parametrize("unsafe_mode", [0o660, 0o644, 0o777])
+def test_lease_replaces_unowned_lock_file_with_unsafe_mode(
+    tmp_path: Path,
+    unsafe_mode: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    lock_path = tmp_path / LOCK_FILENAME
+    lock_path.touch(mode=unsafe_mode)
+
+    with caplog.at_level("WARNING", logger=single_process.logger.name):
+        lease = SingleProcessLease.acquire(tmp_path)
+
+    assert [record.levelname for record in caplog.records] == ["WARNING"]
+    assert "Replaced single-process lock file" in caplog.records[0].getMessage()
+    lock_stat = lock_path.stat()
+    assert stat.S_IMODE(lock_stat.st_mode) == 0o600
+    assert lock_stat.st_size == 0
+    assert lock_stat.st_nlink == 1
+    assert _run_lease_probe(tmp_path).stdout.strip() == "lock-file:lease-contended"
+
+    run_async(lease.close())
+    assert _run_lease_probe(tmp_path).stdout.strip() == "acquired"
+
+
+def test_lease_never_replaces_a_lock_file_held_by_a_live_owner(tmp_path: Path) -> None:
+    lock_path = tmp_path / LOCK_FILENAME
+    lease = SingleProcessLease.acquire(tmp_path)
+    lock_path.chmod(0o660)
+    owned_inode = lock_path.stat().st_ino
+
+    contended = _run_lease_probe(tmp_path)
+
+    assert contended.returncode == 3
+    assert contended.stdout.strip() == "lock-file:lease-contended"
+    assert lock_path.stat().st_ino == owned_inode
+    assert stat.S_IMODE(lock_path.stat().st_mode) == 0o660
+    run_async(lease.close())
+
+
+def test_lock_file_replacement_failure_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / LOCK_FILENAME
+    lock_path.touch(mode=0o660)
+    secret = "unlink-secret-sentinel"
+
+    def denied_unlink(path: str, *args: object, **kwargs: object) -> None:
+        raise PermissionError(secret)
+
+    monkeypatch.setattr(single_process.os, "unlink", denied_unlink)
+    monkeypatch.setattr(
+        single_process.os,
+        "supports_dir_fd",
+        frozenset({*single_process.os.supports_dir_fd, denied_unlink}),
+    )
+    with pytest.raises(SingleProcessInvariantError) as raised:
+        SingleProcessLease.acquire(tmp_path)
+
+    assert raised.value.source == "lock-file"
+    assert raised.value.reason_code == "unsafe-lock-file"
+    assert secret not in str(raised.value)
+    assert lock_path.exists()
+    assert stat.S_IMODE(lock_path.stat().st_mode) == 0o660
 
 
 def test_lease_rejects_symlinked_parent_and_noncanonical_directory(tmp_path: Path) -> None:

@@ -68,7 +68,11 @@ from .chat_dialects import (
     _anthropic_response_to_openai,
     _openai_request_to_anthropic_payload,
 )
-from .chat_model_behavior import ModelBehaviorFailureDetail, detect_degenerate_non_stream_response
+from .chat_model_behavior import (
+    ModelBehaviorFailureDetail,
+    describe_degenerate_response,
+    detect_degenerate_non_stream_response,
+)
 from .chat_sanitizers import (
     expects_json_object_response as _expects_json_object_response,
     response_format_type as _response_format_type,
@@ -953,10 +957,15 @@ async def attempt_model_fallback_rule(
                 )
                 if behavior_detail is not None:
                     logging.warning(
-                        "Detected degenerate response (%s) from model '%s' via provider '%s'.",
+                        "Detected degenerate response (%s) from model '%s' via provider '%s'. %s",
                         behavior_detail.behavior_class,
                         provider_model,
                         provider_name,
+                        describe_degenerate_response(
+                            response_data,
+                            is_anthropic_provider=is_anthropic_provider,
+                            include_full_text=settings.log_fallback_full_messages,
+                        ),
                     )
                     error_detail = behavior_detail
                     response_data = None
@@ -1130,11 +1139,16 @@ async def attempt_model_fallback_rule(
                         )
                         if behavior_detail is not None:
                             logging.warning(
-                                "Detected degenerate response (%s) from model '%s' via provider '%s' sub-provider '%s'.",
+                                "Detected degenerate response (%s) from model '%s' via provider '%s' sub-provider '%s'. %s",
                                 behavior_detail.behavior_class,
                                 provider_model,
                                 provider_name,
                                 sub_provider,
+                                describe_degenerate_response(
+                                    response_data,
+                                    is_anthropic_provider=is_anthropic_provider,
+                                    include_full_text=settings.log_fallback_full_messages,
+                                ),
                             )
                             error_detail = behavior_detail
                             response_data = None

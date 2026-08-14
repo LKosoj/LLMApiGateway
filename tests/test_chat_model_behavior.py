@@ -1,7 +1,9 @@
 import unittest
 
 from llm_gateway_core.api.v1.chat_model_behavior import (
+    DEGENERATE_PREVIEW_CHARS,
     ModelBehaviorFailureDetail,
+    describe_degenerate_response,
     detect_degenerate_non_stream_response,
 )
 
@@ -347,6 +349,142 @@ class AnthropicDegenerateCompletionTests(unittest.TestCase):
 
         self.assertIsInstance(result, ModelBehaviorFailureDetail)
         self.assertEqual(result.behavior_class, "empty_completion")
+
+
+class DegenerateResponseDescriptionTests(unittest.TestCase):
+    """The diagnostic that tells truncation apart from format-ignoring."""
+
+    def test_openai_truncated_json_reports_length_stop_and_tail(self):
+        truncated_json = '{"proposals": [{"proposal_type": "new_binding", "key": "abc'
+        response_data = {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"role": "assistant", "content": truncated_json},
+                }
+            ],
+            "usage": {"completion_tokens": 4096},
+        }
+
+        description = describe_degenerate_response(
+            response_data, is_anthropic_provider=False
+        )
+
+        self.assertIn("stop_reason='length'", description)
+        self.assertIn("completion_tokens=4096", description)
+        self.assertIn(f"content_chars={len(truncated_json)}", description)
+        self.assertIn('key\\": \\"abc', description)
+
+    def test_openai_prose_response_is_shown_verbatim(self):
+        response_data = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "I'm not going to provide that, sorry.",
+                    },
+                }
+            ]
+        }
+
+        description = describe_degenerate_response(
+            response_data, is_anthropic_provider=False
+        )
+
+        self.assertIn("stop_reason='stop'", description)
+        self.assertIn("I'm not going to provide that, sorry.", description)
+        self.assertNotIn("chars omitted", description)
+
+    def test_long_content_keeps_head_and_tail_and_drops_the_middle(self):
+        head = "H" * DEGENERATE_PREVIEW_CHARS
+        middle = "M" * 50
+        tail = "T" * DEGENERATE_PREVIEW_CHARS
+        response_data = {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"role": "assistant", "content": head + middle + tail},
+                }
+            ]
+        }
+
+        description = describe_degenerate_response(
+            response_data, is_anthropic_provider=False
+        )
+
+        self.assertIn(head, description)
+        self.assertIn(tail, description)
+        self.assertNotIn(middle, description)
+        self.assertIn("...[50 chars omitted]...", description)
+
+    def test_include_full_text_disables_truncation(self):
+        content = "X" * (DEGENERATE_PREVIEW_CHARS * 2 + 100)
+        response_data = {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"role": "assistant", "content": content},
+                }
+            ]
+        }
+
+        description = describe_degenerate_response(
+            response_data, is_anthropic_provider=False, include_full_text=True
+        )
+
+        self.assertIn(content, description)
+        self.assertNotIn("chars omitted", description)
+
+    def test_openai_reasoning_only_response_reports_reasoning_chars(self):
+        response_data = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "Thinking hard about the schema...",
+                    },
+                }
+            ]
+        }
+
+        description = describe_degenerate_response(
+            response_data, is_anthropic_provider=False
+        )
+
+        self.assertIn("content_chars=0", description)
+        self.assertIn("reasoning_chars=33", description)
+
+    def test_anthropic_shape_uses_stop_reason_and_output_tokens(self):
+        response_data = {
+            "content": [
+                {"type": "thinking", "thinking": "hmm"},
+                {"type": "text", "text": "Here is the answer, in prose."},
+            ],
+            "stop_reason": "max_tokens",
+            "usage": {"output_tokens": 512},
+        }
+
+        description = describe_degenerate_response(
+            response_data, is_anthropic_provider=True
+        )
+
+        self.assertIn("stop_reason='max_tokens'", description)
+        self.assertIn("completion_tokens=512", description)
+        self.assertIn("reasoning_chars=3", description)
+        self.assertIn("Here is the answer, in prose.", description)
+
+    def test_missing_fields_do_not_raise(self):
+        for response_data in ({}, {"choices": []}, {"choices": [None]}, "not-a-dict"):
+            with self.subTest(response_data=response_data):
+                description = describe_degenerate_response(
+                    response_data, is_anthropic_provider=False
+                )
+
+                self.assertIsInstance(description, str)
+                self.assertTrue(description)
 
 
 class ModelBehaviorFailureDetailTests(unittest.TestCase):

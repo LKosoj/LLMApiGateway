@@ -13,6 +13,7 @@ request/DB/FastAPI state.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from .chat_sanitizers import (
@@ -21,6 +22,13 @@ from .chat_sanitizers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Head/tail budget (in characters, each side) for the response-body preview
+# logged alongside a detected failure. The failure class alone cannot tell
+# "model wrote prose instead of JSON" (visible in the head) from "output was
+# cut off mid-JSON by max_tokens" (visible in the tail), and dumping a full
+# completion on every failed attempt would bloat the log.
+DEGENERATE_PREVIEW_CHARS = 400
 
 # Single registry of model-behavior failure classes. ``unparsed_tool_call_dialect``
 # is a placeholder for the upcoming tool-call-rescue package (Package E) and is
@@ -132,6 +140,15 @@ def _detect_degenerate_openai_completion(
     return None
 
 
+def _extract_anthropic_block_text(content_blocks: list, block_type: str, text_key: str) -> str:
+    text_parts = [
+        block.get(text_key, "")
+        for block in content_blocks
+        if isinstance(block, dict) and block.get("type") == block_type
+    ]
+    return "".join(part for part in text_parts if isinstance(part, str))
+
+
 def _detect_degenerate_anthropic_completion(
     response_data: dict,
     request_body_json: dict,
@@ -150,23 +167,14 @@ def _detect_degenerate_anthropic_completion(
     if has_tool_use or stop_reason == "tool_use":
         return None
 
-    text_parts = [
-        block.get("text", "")
-        for block in content_blocks
-        if isinstance(block, dict) and block.get("type") == "text"
-    ]
-    text_content = "".join(part for part in text_parts if isinstance(part, str)).strip()
+    text_content = _extract_anthropic_block_text(content_blocks, "text", "text").strip()
     if not text_content:
         # Mirrors the OpenAI-shape reasoning_content exception: extended
         # thinking blocks (type=="thinking") are real model output, but the
         # client only ever sees text blocks, so thinking must not mask a
         # JSON-mode request that produced no JSON text.
-        has_thinking = any(
-            isinstance(block, dict)
-            and block.get("type") == "thinking"
-            and isinstance(block.get("thinking"), str)
-            and block.get("thinking").strip()
-            for block in content_blocks
+        has_thinking = bool(
+            _extract_anthropic_block_text(content_blocks, "thinking", "thinking").strip()
         )
         if has_thinking and not expects_json_object_response(request_body_json):
             return None
@@ -182,6 +190,67 @@ def _detect_degenerate_anthropic_completion(
         )
 
     return None
+
+
+def _format_text_preview(text: str, preview_chars: int | None) -> str:
+    if preview_chars is None or len(text) <= preview_chars * 2:
+        return json.dumps(text, ensure_ascii=False)
+
+    head = json.dumps(text[:preview_chars], ensure_ascii=False)
+    tail = json.dumps(text[-preview_chars:], ensure_ascii=False)
+    omitted = len(text) - preview_chars * 2
+    return f"{head} ...[{omitted} chars omitted]... {tail}"
+
+
+def describe_degenerate_response(
+    response_data: object,
+    *,
+    is_anthropic_provider: bool,
+    include_full_text: bool = False,
+) -> str:
+    """Summarize a degenerate response body for the failure log line.
+
+    The failure class says *that* the response was unusable, not *why*. This
+    adds the stop reason, the completion-token count and a head/tail preview
+    of the text the model actually produced, which is what separates "wrote
+    prose instead of JSON" from "got truncated mid-JSON by max_tokens".
+    ``include_full_text`` (driven by ``LOG_FALLBACK_FULL_MESSAGES``) drops the
+    preview truncation, matching how the rest of the fallback logging gates
+    full message bodies.
+    """
+    if not isinstance(response_data, dict):
+        return "body=<non-dict>"
+
+    preview_chars = None if include_full_text else DEGENERATE_PREVIEW_CHARS
+    usage = response_data.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+
+    if is_anthropic_provider:
+        content_blocks = response_data.get("content")
+        content_blocks = content_blocks if isinstance(content_blocks, list) else []
+        text_content = _extract_anthropic_block_text(content_blocks, "text", "text")
+        reasoning_content = _extract_anthropic_block_text(content_blocks, "thinking", "thinking")
+        stop_reason = response_data.get("stop_reason")
+        completion_tokens = usage.get("output_tokens")
+    else:
+        choices = response_data.get("choices")
+        first_choice = choices[0] if isinstance(choices, list) and choices else None
+        first_choice = first_choice if isinstance(first_choice, dict) else {}
+        message = first_choice.get("message")
+        message = message if isinstance(message, dict) else {}
+        text_content = _extract_openai_message_text(message.get("content"))
+        raw_reasoning = message.get("reasoning_content")
+        reasoning_content = raw_reasoning if isinstance(raw_reasoning, str) else ""
+        stop_reason = first_choice.get("finish_reason")
+        completion_tokens = usage.get("completion_tokens")
+
+    return (
+        f"stop_reason={stop_reason!r}, "
+        f"completion_tokens={completion_tokens!r}, "
+        f"content_chars={len(text_content)}, "
+        f"reasoning_chars={len(reasoning_content)}, "
+        f"content={_format_text_preview(text_content, preview_chars)}"
+    )
 
 
 def detect_degenerate_non_stream_response(

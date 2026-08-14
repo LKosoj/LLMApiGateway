@@ -1,5 +1,6 @@
 import json
 import copy
+import logging
 import unittest
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -2115,6 +2116,74 @@ class ModelBehaviorFailoverTests(unittest.TestCase):
             call.args[3]["model"] for call in make_llm_request_mock.await_args_list
         ]
         self.assertEqual(attempted_models, ["first-model", "second-model"])
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_degenerate_response_warning_logs_the_response_body_diagnostics(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        # Without the body in the log there is no way to tell a model that
+        # answered in prose from one whose JSON got truncated by max_tokens.
+        fake_config_loader = self._two_model_config_loader()
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.side_effect = [
+            (
+                {
+                    "id": "truncated-json",
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"proposals": [{"proposal_key": "czk_fil',
+                            },
+                        }
+                    ],
+                    "usage": {"completion_tokens": 4096},
+                },
+                None,
+            ),
+            (_valid_completion_response("json-ok", '{"ok": true}'), None),
+        ]
+
+        request_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "response_format": {"type": "json_object"},
+        }
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with self.assertLogs(level=logging.WARNING) as captured_logs:
+                    response = client.post(
+                        "/v1/chat/completions",
+                        json=request_payload,
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        degenerate_warnings = [
+            record.getMessage()
+            for record in captured_logs.records
+            if "Detected degenerate response" in record.getMessage()
+        ]
+        self.assertEqual(len(degenerate_warnings), 1)
+        warning_message = degenerate_warnings[0]
+        self.assertIn("format_ignored", warning_message)
+        self.assertIn("stop_reason='length'", warning_message)
+        self.assertIn("completion_tokens=4096", warning_message)
+        self.assertIn("czk_fil", warning_message)
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")

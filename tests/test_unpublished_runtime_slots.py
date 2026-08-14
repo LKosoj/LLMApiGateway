@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 from llm_gateway_core.services.runtime_config import (
     RUNTIME_CLEANUP_MAX_ATTEMPTS,
+    RUNTIME_MAX_RETIRING_GENERATIONS,
     RuntimeGenerationConflictError,
     RuntimeGenerationManager,
     RuntimeManagerStateError,
@@ -315,39 +316,40 @@ class RuntimeUnpublishedSlotTests(unittest.TestCase):
 
     def test_publish_candidate_busy_rejection_keeps_slot_owned(self) -> None:
         async def scenario() -> None:
-            close_started = asyncio.Event()
-            allow_close = asyncio.Event()
-
-            async def close_old_client() -> None:
-                close_started.set()
-                await allow_close.wait()
-
-            old_client = Mock()
-            old_client.aclose = AsyncMock(side_effect=close_old_client)
             candidate_client = Mock()
             candidate_client.aclose = AsyncMock()
             manager = RuntimeGenerationManager()
-            install_test_runtime_snapshot(manager, _snapshot(1, clients={"old": old_client}))
-            current = _snapshot(2)
-            publish_test_runtime_snapshot(manager, current, expected_generation=1)
-            await close_started.wait()
-            slot = manager.open_unpublished_slot(3)
+            install_test_runtime_snapshot(manager, _snapshot(1))
+            held_leases = [manager.acquire_current()]
+            current = _snapshot(1)
+            for generation in range(2, RUNTIME_MAX_RETIRING_GENERATIONS + 2):
+                current = _snapshot(generation)
+                publish_test_runtime_snapshot(
+                    manager,
+                    current,
+                    expected_generation=generation - 1,
+                )
+                held_leases.append(manager.acquire_current())
+
+            busy_generation = RUNTIME_MAX_RETIRING_GENERATIONS + 2
+            slot = manager.open_unpublished_slot(busy_generation)
             slot.register_http_client("candidate", candidate_client)
-            candidate = _snapshot(3, clients={"candidate": candidate_client})
+            candidate = _snapshot(busy_generation, clients={"candidate": candidate_client})
 
             with self.assertRaisesRegex(RuntimeManagerStateError, "still retiring"):
                 manager.publish_candidate(
                     candidate,
-                    expected_generation=2,
+                    expected_generation=busy_generation - 1,
                     slot=slot,
                 )
 
             self.assert_current_snapshot(manager, current)
-            self.assertEqual(manager.pending_unpublished_generations, (3,))
+            self.assertEqual(manager.pending_unpublished_generations, (busy_generation,))
             candidate_client.aclose.assert_not_awaited()
             self.assertTrue(await slot.close_unpublished())
             candidate_client.aclose.assert_awaited_once()
-            allow_close.set()
+            for lease in held_leases:
+                lease.release()
             await manager.shutdown()
 
         run_async(scenario())

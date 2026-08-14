@@ -68,7 +68,7 @@ _ERROR_MESSAGES = {
     ConfigUpdateErrorCode.SOURCES_OUT_OF_SYNC: (
         "The loaded configuration no longer matches the files on disk."
     ),
-    ConfigUpdateErrorCode.GENERATION_BUSY: "The previous runtime generation is still retiring.",
+    ConfigUpdateErrorCode.GENERATION_BUSY: "Too many runtime generations are still retiring.",
     ConfigUpdateErrorCode.COMMIT_FAILED: "The configuration update could not be committed.",
     ConfigUpdateErrorCode.UPDATE_UNAVAILABLE: "Configuration updates are unavailable.",
     ConfigUpdateErrorCode.UPDATE_BROKEN: "Configuration update integrity is not proven.",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import OrderedDict, deque
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -51,6 +51,11 @@ from .upload_admission import UploadAdmission
 RUNTIME_CLEANUP_MAX_ATTEMPTS = 3
 RUNTIME_GENERATION_HISTORY_LIMIT = 64
 RUNTIME_CLEANUP_DIAGNOSTIC_LIMIT = 128
+# A retiring generation only keeps its own proxy HTTP clients alive until the
+# last request holding its lease finishes, so a few may overlap. The cap exists
+# to bound that overlap, not to serialize configuration writes behind long
+# requests: publishing waits for nobody below it.
+RUNTIME_MAX_RETIRING_GENERATIONS = 4
 
 _CONFIG_GRAPH_ATTRIBUTES = (
     "providers_config",
@@ -556,21 +561,20 @@ class RuntimeGenerationManager:
             raise RuntimeManagerStateError(
                 "Unresolved unpublished runtime cleanup must be recovered before publishing."
             )
-        if self._cleanup_tasks or any(
-            generation != current_generation
+        retiring = sum(
+            1
+            for generation, record in self._generations.items()
+            if generation != current_generation
             and record.status
             in {RuntimeGenerationStatus.RETIRED, RuntimeGenerationStatus.CLOSING}
-            for generation, record in self._generations.items()
-        ):
+        )
+        if retiring >= RUNTIME_MAX_RETIRING_GENERATIONS:
             raise RuntimeManagerStateError(
-                "The previous runtime generation is still retiring."
+                "Too many runtime generations are still retiring."
             )
 
         assert current_generation is not None
-        current = self._generations[current_generation]
-        current_snapshot = current.snapshot
-        assert current_snapshot is not None
-        self._reject_shared_generation_resources(current_snapshot, candidate)
+        self._reject_shared_generation_resources(candidate)
 
     async def retry_failed_cleanup(self) -> bool:
         """Retry unresolved client cleanup and report whether every client closed."""
@@ -835,42 +839,58 @@ class RuntimeGenerationManager:
             )
         return not self._unpublished_slots
 
-    @staticmethod
-    def _reject_shared_generation_resources(
-        current: RuntimeSnapshot,
-        candidate: RuntimeSnapshot,
-    ) -> None:
-        generation_owned_resources = (
-            (current.config_loader, candidate.config_loader),
-            (current.operation_dispatcher, candidate.operation_dispatcher),
-            (current.fusion_service, candidate.fusion_service),
-            (current.router_model_service, candidate.router_model_service),
-            (current.provider_models_service, candidate.provider_models_service),
-        )
-        if any(old is new for old, new in generation_owned_resources):
-            raise RuntimeGenerationConflictError(
-                "Runtime candidate shares a generation-owned service with the active generation."
-            )
+    def _reject_shared_generation_resources(self, candidate: RuntimeSnapshot) -> None:
+        """Reject a candidate that reuses anything a live generation still owns.
 
-        current_mutable_ids: set[int] = set()
+        Every generation still present in ``_generations`` counts, not just the
+        active one: a retiring generation keeps serving the requests that hold
+        its lease, and its clients are closed the moment the last lease drops.
+        A candidate that shared one of them would lose it under load.
+        """
         candidate_mutable_ids: set[int] = set()
         for attribute in _CONFIG_GRAPH_ATTRIBUTES:
-            current_mutable_ids.update(
-                _mutable_graph_ids(_config_graph_value(current.config_loader, attribute))
-            )
             candidate_mutable_ids.update(
                 _mutable_graph_ids(_config_graph_value(candidate.config_loader, attribute))
             )
-        if current_mutable_ids & candidate_mutable_ids:
-            raise RuntimeGenerationConflictError(
-                "Runtime candidate shares mutable configuration with the active generation."
-            )
+        candidate_client_ids = {
+            id(client) for client in candidate.proxy_http_clients.values()
+        }
 
-        current_client_ids = {id(client) for client in current.proxy_http_clients.values()}
-        if any(id(client) in current_client_ids for client in candidate.proxy_http_clients.values()):
-            raise RuntimeGenerationConflictError(
-                "Runtime candidate shares a proxy HTTP client with the active generation."
-            )
+        for record in self._generations.values():
+            snapshot = record.snapshot
+            if snapshot is None:
+                live_clients: Iterable[httpx.AsyncClient] = record.cleanup_clients.values()
+            else:
+                generation_owned_resources = (
+                    (snapshot.config_loader, candidate.config_loader),
+                    (snapshot.operation_dispatcher, candidate.operation_dispatcher),
+                    (snapshot.fusion_service, candidate.fusion_service),
+                    (snapshot.router_model_service, candidate.router_model_service),
+                    (snapshot.provider_models_service, candidate.provider_models_service),
+                )
+                if any(old is new for old, new in generation_owned_resources):
+                    raise RuntimeGenerationConflictError(
+                        "Runtime candidate shares a generation-owned service with a live "
+                        "generation."
+                    )
+
+                live_mutable_ids: set[int] = set()
+                for attribute in _CONFIG_GRAPH_ATTRIBUTES:
+                    live_mutable_ids.update(
+                        _mutable_graph_ids(
+                            _config_graph_value(snapshot.config_loader, attribute)
+                        )
+                    )
+                if live_mutable_ids & candidate_mutable_ids:
+                    raise RuntimeGenerationConflictError(
+                        "Runtime candidate shares mutable configuration with a live generation."
+                    )
+                live_clients = snapshot.proxy_http_clients.values()
+
+            if any(id(client) in candidate_client_ids for client in live_clients):
+                raise RuntimeGenerationConflictError(
+                    "Runtime candidate shares a proxy HTTP client with a live generation."
+                )
 
     def _schedule_cleanup(self, record: _GenerationRecord) -> None:
         if record.cleanup_task is not None:
