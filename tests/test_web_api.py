@@ -954,6 +954,8 @@ class WebApiTests(unittest.TestCase):
         search_adapter.assert_awaited()
         # The query-expansion chat call went through the fake http client.
         self.assertGreaterEqual(fake_http_client.post.await_count, 1)
+        searched = [call.args[1] for call in search_adapter.await_args_list]
+        self.assertEqual(searched, ["topic", "optimized search query"])
 
     def test_web_search_include_raw_content_uses_read_pipeline(self):
         with self._client() as (client, _fake_http_client, _search_adapter, read_adapter):
@@ -1146,7 +1148,8 @@ class WebApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(fake_http_client.post.await_count, 2)
-        search_adapter.assert_awaited_once_with(ANY, "fallback optimized query", 3, include_images=False)
+        searched = [call.args[1] for call in search_adapter.await_args_list]
+        self.assertEqual(searched, ["topic", "fallback optimized query"])
 
     def test_web_search_reports_internal_query_model_error_when_fallbacks_return_empty_text(self):
         self.generated_query_text = ""
@@ -1330,6 +1333,114 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(article_languages.count("ru"), 8)
         self.assertEqual(article_languages.count("en"), 8)
         self.assertEqual(article_languages.count("zh"), 8)
+
+    def test_search_result_url_key_normalizes_host_scheme_slash_and_fragment(self):
+        key = web_adapters_owner._search_result_url_key
+        self.assertEqual(key("https://Example.com/path/?q=1#frag"), key("http://example.com/path?q=1"))
+        self.assertEqual(key("https://example.com/path/"), key("https://example.com/path"))
+        self.assertEqual(key("https://example.com:443/a"), key("https://example.com/a"))
+        self.assertNotEqual(key("https://example.com/a"), key("https://example.com/b"))
+
+    def test_dedupe_search_results_keeps_first_language(self):
+        deduped = web_adapters_owner._dedupe_search_results(
+            [
+                {"url": "https://Example.com/same/", "language": "ru", "title": "RU"},
+                {"url": "https://unique.ru/a", "language": "ru", "title": "RU2"},
+                {"url": "http://example.com/same", "language": "en", "title": "EN"},
+                {"url": "https://unique.en/a", "language": "en", "title": "EN2"},
+                {"url": "   ", "language": "zh", "title": "empty"},
+            ]
+        )
+        self.assertEqual(
+            [(item["url"], item["language"]) for item in deduped],
+            [
+                ("https://Example.com/same/", "ru"),
+                ("https://unique.ru/a", "ru"),
+                ("https://unique.en/a", "en"),
+            ],
+        )
+
+    def test_with_original_search_query_prepends_and_dedupes(self):
+        self.assertEqual(
+            web_adapters_owner._with_original_search_query("Topic", ["topic", "  other  ", "OTHER", "third"]),
+            ["Topic", "other", "third"],
+        )
+        self.assertEqual(web_adapters_owner._with_original_search_query("topic", []), ["topic"])
+
+    def test_web_research_dedupes_same_url_across_languages(self):
+        async def fake_generate_queries(
+            _request,
+            _config_loader,
+            _http_client,
+            *,
+            query_model,
+            query,
+            language,
+            num_queries,
+            usage_accumulator,
+        ):
+            return [f"{language}-query"]
+
+        async def fake_search(_client, query: str, max_results: int, *, include_images: bool = False):
+            language = query.split("-", 1)[0]
+            return [
+                {"url": "https://Example.com/shared/", "title": "Shared", "snippet": "s"},
+                {"url": f"https://{language}.example/{query}", "title": f"{language} unique", "snippet": "s"},
+            ]
+
+        async def fake_read(_client, url: str):
+            return {"url": url, "title": "title", "content": f"content for {url}"}
+
+        search_adapter = AsyncMock(side_effect=fake_search)
+        read_adapter = AsyncMock(side_effect=fake_read)
+        with (
+            patch("llm_gateway_core.api.v1.web_adapters._generate_queries", side_effect=fake_generate_queries),
+            patch(
+                "llm_gateway_core.api.v1.web_safe_fetch._resolve_fetch_host",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ),
+            patch("llm_gateway_core.api.v1.web_adapters._direct_http_fetch", new_callable=AsyncMock, return_value=None),
+            patch(
+                "llm_gateway_core.api.v1.web_adapters._cloakbrowser_fetch", new_callable=AsyncMock, return_value=None
+            ),
+        ):
+            with self._client(search_adapter=search_adapter, read_adapter=read_adapter) as (
+                client,
+                _fake_http_client,
+                _,
+                _,
+            ):
+                response = client.post(
+                    "/v1/web/research",
+                    json={
+                        "model": "llmgateway/web-research",
+                        "query": "topic",
+                        "max_results": 5,
+                        "max_articles": 5,
+                        "num_queries": 1,
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(read_adapter.await_count, 4)
+        source_urls = [item["url"] for item in payload["sources"]]
+        self.assertEqual(len(source_urls), 4)
+        self.assertEqual(
+            [web_adapters_owner._search_result_url_key(url) for url in source_urls].count(
+                web_adapters_owner._search_result_url_key("https://example.com/shared")
+            ),
+            1,
+        )
+        shared_sources = [
+            item
+            for item in payload["sources"]
+            if web_adapters_owner._search_result_url_key(item["url"])
+            == web_adapters_owner._search_result_url_key("https://example.com/shared")
+        ]
+        self.assertEqual(shared_sources[0]["language"], "ru")
 
     def test_web_research_rerank_document_truncates_content_to_max_chars_and_omits_url(self):
         max_chars = web_api.ARTICLE_RERANK_DOCUMENT_MAX_CHARS

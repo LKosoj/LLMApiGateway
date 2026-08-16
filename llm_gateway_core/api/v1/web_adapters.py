@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import HTTPException, Request
@@ -363,6 +363,58 @@ async def _call_internal_text_model(
     )
 
 
+def _search_result_url_key(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlsplit(raw)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return raw.split("#", 1)[0].rstrip("/")
+    scheme = (parsed.scheme or "https").lower()
+    if scheme == "http":
+        scheme = "https"
+    path = parsed.path or "/"
+    if path != "/" and path.endswith("/"):
+        path = path[:-1]
+    netloc = host
+    if parsed.port and parsed.port not in {80, 443}:
+        netloc = f"{host}:{parsed.port}"
+    return urlunsplit((scheme, netloc, path, parsed.query, ""))
+
+
+def _dedupe_search_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for item in results:
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        key = _search_result_url_key(url)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def _with_original_search_query(original: str, generated: list[str]) -> list[str]:
+    original_query = original.strip()
+    queries: list[str] = []
+    seen: set[str] = set()
+    if original_query:
+        queries.append(original_query)
+        seen.add(original_query.casefold())
+    for item in generated:
+        text = item.strip()
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        queries.append(text)
+    return queries
+
+
 async def _generate_queries(
     request: Request,
     config_loader: ConfigLoader,
@@ -417,7 +469,7 @@ async def _generate_queries(
     queries = await client.generate_search_queries(query, language, num_queries)
     if not queries:
         raise HTTPException(status_code=503, detail=f"Internal query model '{query_model}' returned no search queries.")
-    return queries
+    return _with_original_search_query(query, queries)
 
 
 def _normalize_search_item(
@@ -820,9 +872,10 @@ async def _search_with_model(
                 search_query,
             )
         for result in query_results:
-            if result["url"] in seen:
+            url_key = _search_result_url_key(result["url"])
+            if not url_key or url_key in seen:
                 continue
-            seen.add(result["url"])
+            seen.add(url_key)
             collected.append(result)
             if len(collected) >= max_results:
                 return collected

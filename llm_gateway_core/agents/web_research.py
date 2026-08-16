@@ -32,20 +32,21 @@ LANG_QUERIES_PROMPTS = {
     "ru": {
         "prompt": (
             "Сформулируй {n} коротких поисковых запроса (ключевые фразы, не длиннее 5-6 слов) "
-            "на русском языке по теме: {query}. Не используй номера, не добавляй лишних слов, "
-            "только сами поисковые фразы."
+            "на русском языке по теме: {query}. Не повторяй исходный запрос дословно — дай другие формулировки. "
+            "Не используй номера, не добавляй лишних слов, только сами поисковые фразы."
         ),
         "system": "Ты — эксперт по поисковым системам. Отвечай только списком поисковых фраз на русском языке.",
     },
     "en": {
         "prompt": (
             "Generate {n} short search queries (keywords, no more than 5-6 words each) "
-            "in English for the topic: {query}. No numbering, just the queries."
+            "in English for the topic: {query}. Do not repeat the original query unchanged; "
+            "give alternative phrasings. No numbering, just the queries."
         ),
         "system": "You are a search engine expert. Reply with a list of short search queries in English only.",
     },
     "zh": {
-        "prompt": "请用中文为主题\"{query}\"生成{n}个简短的搜索引擎关键词（每个不超过6个字），不要编号，只列出关键词。",
+        "prompt": "请用中文为主题\"{query}\"生成{n}个简短的搜索引擎关键词（每个不超过6个字），不要原样重复原查询，给出其他表述，不要编号，只列出关键词。",
         "system": "你是一名搜索引擎专家。只用中文列出搜索关键词，每行一个。",
     },
 }

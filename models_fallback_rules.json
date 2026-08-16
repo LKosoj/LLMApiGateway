@@ -43,7 +43,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -402,6 +402,21 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
+        "provider": "agentrouter",
+        "model": "gpt-5.6-sol",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1050000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
         "provider": "kimicode",
         "model": "k3",
         "use_provider_order_as_fallback": false,
@@ -461,23 +476,6 @@
         "supports_vision": false,
         "supports_tools": true,
         "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "freemodel",
-        "model": "gpt-5.6-sol",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {
-          "reasoning_effort": "high"
-        },
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 1050000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

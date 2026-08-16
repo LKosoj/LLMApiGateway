@@ -65,6 +65,7 @@ from .web_adapters import (
     WEB_SEARCH_SECTION,
     _UsageAccumulator,
     _clamp_int,
+    _dedupe_search_results,
     _filter_search_results,
     _get_model_config,
     _get_operation_runtime,
@@ -770,6 +771,7 @@ async def web_research(request: Request):
                 first_search_error = result
             continue
         search_candidates.extend({**item, "language": language} for item in result)
+    search_candidates = _dedupe_search_results(search_candidates)
     if not search_candidates and first_search_error is not None:
         if isinstance(first_search_error, HTTPException):
             raise first_search_error
