@@ -29,6 +29,7 @@ def _write_config(root: Path) -> None:
                         "baseUrl": "https://primary.invalid/v1",
                         "apikey": "test-only-key",
                         "models": {"upstream-chat": {}},
+                        "custom_headers": {"User-Agent": "Cline/1.0"},
                     }
                 }
             ]
@@ -183,5 +184,46 @@ def test_entity_footer_validation_reflects_dirty_state(
 
     expect(page.locator("#saveButton")).to_have_attribute("data-editor-dirty", "true")
     expect(page.locator("#editorFooterValidation")).to_have_text("Unsaved changes")
+
+    page.context.close()
+
+
+def test_provider_custom_headers_load_and_save(
+    browser: Browser,
+    editor_server: str,
+) -> None:
+    page = _open_editor(browser, editor_server)
+    page.locator('.editor-entity-item[data-entity-target="providers"]').click()
+
+    card = page.locator("#providersList .provider-card").first
+    expect(card).to_be_visible()
+    if "collapsed" in (card.get_attribute("class") or "").split():
+        card.locator(".accordion-toggle").click()
+
+    details = card.locator("details.advanced-options")
+    if not details.evaluate("element => element.open"):
+        details.locator("summary").click()
+
+    textarea = card.locator(".provider-custom-headers-input")
+    expect(textarea).to_be_visible()
+    expect(textarea).to_have_value(re.compile(r"Cline/1\.0"))
+
+    textarea.fill('{"User-Agent": "Cline/1.0", "X-Title": "LLMGateway"}')
+    with page.expect_response(
+        lambda response: (
+            response.url.endswith("/v1/config/providers/structured")
+            and response.request.method == "POST"
+        )
+    ) as saved:
+        page.locator("#saveButton").click()
+    assert saved.value.status == 200
+
+    listed = page.request.get(f"{editor_server}/v1/config/providers/structured")
+    assert listed.status == 200
+    providers = {item["name"]: item for item in listed.json()["providers"]}
+    assert providers["primary"]["custom_headers"] == {
+        "User-Agent": "Cline/1.0",
+        "X-Title": "LLMGateway",
+    }
 
     page.context.close()

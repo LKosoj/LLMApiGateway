@@ -381,6 +381,7 @@ export function registerProviders(ctx) {
         proxy: 'editor:tooltips.proxy',
         modelsMetadata: 'editor:tooltips.modelsMetadata',
         availableModels: 'editor:tooltips.availableModels',
+        customHeaders: 'editor:tooltips.providerCustomHeaders',
         routing: 'editor:tooltips.routing',
         upstreamKeyPools: 'editor:tooltips.upstreamKeyPools',
         upstreamLimits: 'editor:tooltips.upstreamLimits',
@@ -617,6 +618,14 @@ export function registerProviders(ctx) {
         if (availableModels.length > 0) {
             providerPayload.available_models = availableModels;
         }
+        const customHeadersInput = providerCard.querySelector('.provider-custom-headers-input');
+        const customHeaders = ctx.parseObjectTextarea(
+            customHeadersInput ? customHeadersInput.value : '',
+            'Custom headers',
+        );
+        if (Object.keys(customHeaders).length > 0) {
+            providerPayload.custom_headers = customHeaders;
+        }
         return providerPayload;
     }
 
@@ -748,6 +757,16 @@ export function registerProviders(ctx) {
         ctx.attachFieldTooltip(availableModelsField, PROVIDER_FIELD_TOOLTIPS.availableModels);
         ctx.appendFieldHint(availableModelsField, 'editor:hints.providerAvailableModels');
         advancedGrid.appendChild(availableModelsField);
+
+        const customHeadersInput = ctx.createTextarea(
+            'provider-custom-headers-input',
+            '{"User-Agent": "Cline/1.0"}',
+        );
+        customHeadersInput.value = ctx.normalizeObjectTextarea(initialData.custom_headers);
+        const customHeadersField = ctx.createFieldGroup('Custom Headers', customHeadersInput, 'textarea-group');
+        ctx.attachFieldTooltip(customHeadersField, PROVIDER_FIELD_TOOLTIPS.customHeaders);
+        ctx.appendFieldHint(customHeadersField, 'editor:hints.providerCustomHeaders');
+        advancedGrid.appendChild(customHeadersField);
 
         const routingInput = ctx.createTextarea(
             'provider-routing-input',

@@ -141,6 +141,11 @@ class ProviderDetails(BaseModel):
     # gateway uses it instead of querying the upstream ``/models`` endpoint.
     # ``models`` stays reserved for per-model metadata (``upstream_limits`` etc.).
     available_models: list[str] | None = None
+    # Optional outbound headers for every upstream call to this provider
+    # (chat, playground direct, operations, /models). Same denylist as
+    # fallback/operation custom_headers: Authorization/Cookie/X-Api-Key
+    # cannot be injected here.
+    custom_headers: Dict[str, Any] | None = None
     subscription_quota: Optional[SubscriptionQuotaConfig] = None
     routing: UpstreamRoutingConfig = Field(default_factory=UpstreamRoutingConfig)
     upstream_key_pools: Dict[str, UpstreamKeyPoolConfig] = Field(default_factory=dict)
@@ -181,6 +186,13 @@ class ProviderDetails(BaseModel):
             raise ValueError(placeholder_secret_error("provider apikey", value))
 
         return value
+
+    @field_validator("custom_headers")
+    @classmethod
+    def validate_custom_headers(cls, value: Dict[str, Any] | None) -> Dict[str, Any] | None:
+        if value is None:
+            return None
+        return _validate_custom_headers(value)
 
     @field_validator("upstream_key_pools")
     @classmethod

@@ -85,7 +85,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1050000,
+        "context_window": 272000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -702,7 +702,7 @@
         "custom_headers": {},
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -720,7 +720,7 @@
         },
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 512000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

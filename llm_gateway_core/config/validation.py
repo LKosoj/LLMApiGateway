@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .placeholder_secrets import is_placeholder_secret, placeholder_secret_error
 from .schema_validation import (
+    SECURITY_HEADERS,
     empty_operation_rules as _empty_operation_rules,
     validate_provider_name_list as _validate_provider_name_list,
 )
@@ -122,11 +123,26 @@ def resolve_provider_config_api_keys(provider_config: object) -> list[str]:
 
 def resolve_provider_config_auth_headers(provider_config: object, api_key: str | None = None) -> dict[str, str]:
     resolved_api_key = api_key or resolve_provider_config_api_key(provider_config)
-    if not resolved_api_key:
-        return {}
-    if getattr(provider_config, "type", "openai") == "anthropic":
-        return {"x-api-key": resolved_api_key}
-    return {"Authorization": f"Bearer {resolved_api_key}"}
+    headers: dict[str, str] = {}
+    if resolved_api_key:
+        if getattr(provider_config, "type", "openai") == "anthropic":
+            headers["x-api-key"] = resolved_api_key
+        else:
+            headers["Authorization"] = f"Bearer {resolved_api_key}"
+    _apply_provider_custom_headers(headers, provider_config)
+    return headers
+
+
+def _apply_provider_custom_headers(headers: dict[str, str], provider_config: object) -> None:
+    raw_headers = getattr(provider_config, "custom_headers", None)
+    if not isinstance(raw_headers, Mapping):
+        return
+    for header_name, header_value in raw_headers.items():
+        if not isinstance(header_name, str) or header_name.lower() in SECURITY_HEADERS:
+            continue
+        if header_value is None:
+            continue
+        headers[header_name] = str(header_value)
 
 
 def resolve_provider_api_key_value(api_key_reference_or_literal: str | None) -> str | None:

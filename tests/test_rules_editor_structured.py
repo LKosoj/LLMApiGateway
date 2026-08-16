@@ -677,6 +677,64 @@ class RulesEditorStructuredTests(unittest.TestCase):
         # The explicit list short-circuits the upstream /models call.
         self.assertEqual(models_response.json()["models"], [{"id": "alpha"}, {"id": "beta"}])
 
+    def test_structured_save_persists_provider_custom_headers(self):
+        payload = {
+            "providers": [
+                {"name": "openrouter", "baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY"},
+                {"name": "devbox", "baseUrl": "https://devbox.example", "apikey": "DIRECT-KEY"},
+                {
+                    "name": "agentrouter",
+                    "baseUrl": "https://agentrouter.example/v1",
+                    "apikey": "DIRECT-KEY",
+                    "custom_headers": {"User-Agent": "Cline/1.0"},
+                },
+            ]
+        }
+
+        with self._client() as (client, _):
+            save_response = client.post(
+                "/v1/config/providers/structured",
+                json=payload,
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            get_response = client.get(
+                "/v1/config/providers/structured",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(save_response.status_code, 200, save_response.text)
+        persisted = self.providers_path.read_text(encoding="utf-8")
+        self.assertIn('"User-Agent": "Cline/1.0"', persisted)
+        saved_providers = {
+            item["name"]: item for item in get_response.json()["providers"]
+        }
+        self.assertEqual(
+            saved_providers["agentrouter"]["custom_headers"],
+            {"User-Agent": "Cline/1.0"},
+        )
+
+    def test_structured_save_rejects_provider_authorization_custom_header(self):
+        payload = {
+            "providers": [
+                {"name": "openrouter", "baseUrl": "https://openrouter.example", "apikey": "DIRECT-KEY"},
+                {
+                    "name": "agentrouter",
+                    "baseUrl": "https://agentrouter.example/v1",
+                    "apikey": "DIRECT-KEY",
+                    "custom_headers": {"Authorization": "Bearer leak"},
+                },
+            ]
+        }
+
+        with self._client() as (client, _):
+            save_response = client.post(
+                "/v1/config/providers/structured",
+                json=payload,
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(save_response.status_code, 400)
+
     def test_structured_save_persists_provider_routing_and_upstream_key_pools(self):
         payload = {
             "providers": [

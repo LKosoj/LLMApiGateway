@@ -21,6 +21,7 @@ from ...config.loader import (
     RouterModelConfig,
     SubscriptionQuotaConfig,
 )
+from ...config.schema_validation import validate_custom_headers
 from ...config.config_store import ConfigFile, ConfigSourceBundle
 from ...services.fallback_model_evals import FallbackModelEvalAlreadyRunning
 from ...services.openrouter_free_models import OpenRouterFreeModelsNotConfigured
@@ -110,6 +111,7 @@ class StructuredProviderItem(BaseModel):
     proxy: str | None = None
     models: Any | None = None
     available_models: list[str] | None = None
+    custom_headers: dict[str, Any] | None = None
     subscription_quota: SubscriptionQuotaConfig | None = None
     routing: dict[str, Any] | None = None
     upstream_key_pools: dict[str, Any] | None = None
@@ -136,6 +138,13 @@ class StructuredProviderItem(BaseModel):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("custom_headers")
+    @classmethod
+    def validate_custom_headers_field(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return validate_custom_headers(value)
 
 
 class StructuredProvidersPayload(BaseModel):
@@ -307,6 +316,8 @@ def _serialize_structured_providers(providers: list[StructuredProviderItem]) -> 
             provider_payload["models"] = provider.models
         if provider.available_models is not None:
             provider_payload["available_models"] = provider.available_models
+        if provider.custom_headers:
+            provider_payload["custom_headers"] = provider.custom_headers
         if provider.subscription_quota is not None:
             provider_payload["subscription_quota"] = (
                 provider.subscription_quota.model_dump()

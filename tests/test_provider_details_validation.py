@@ -24,6 +24,23 @@ class ProviderDetailsValidationTests(unittest.TestCase):
         self.assertEqual(details.baseUrl, "https://provider.example")
         self.assertEqual(details.apikey, "DIRECT-KEY")
 
+    def test_custom_headers_user_agent_is_accepted(self):
+        details = ProviderDetails(
+            baseUrl="https://provider.example",
+            apikey="DIRECT-KEY",
+            custom_headers={"User-Agent": "Cline/1.0"},
+        )
+
+        self.assertEqual(details.custom_headers, {"User-Agent": "Cline/1.0"})
+
+    def test_custom_headers_authorization_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            ProviderDetails(
+                baseUrl="https://provider.example",
+                apikey="DIRECT-KEY",
+                custom_headers={"Authorization": "Bearer leak"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

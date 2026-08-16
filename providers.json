@@ -409,5 +409,25 @@
       },
       "upstream_key_pools": {}
     }
+  },
+  {
+    "agentrouter": {
+      "baseUrl": "https://agentrouter.org/v1",
+      "apikey": "${APIKEY_AGENTROUTER}",
+      "available_models": [
+        "claude-opus-5",
+        "gpt-5.6-sol"
+      ],
+      "custom_headers": {
+        "User-Agent": "Cline/1.0"
+      },
+      "routing": {
+        "strategy": "round-robin",
+        "session_affinity": false,
+        "session_affinity_header": "X-Session-Id",
+        "session_affinity_ttl_seconds": 3600
+      },
+      "upstream_key_pools": {}
+    }
   }
 ]
