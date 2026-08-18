@@ -1171,6 +1171,36 @@ class MakeStreamingRequestTests(unittest.TestCase):
         self.assertIn("sha256=", joined_logs)
         self.assertEqual(capacity.snapshot.active_bytes, 0)
 
+    def test_null_sse_data_event_is_skipped_and_stream_continues(self):
+        chunks = [
+            b'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n',
+            b"data: null\n\n",
+            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+            b"data: [DONE]\n\n",
+        ]
+        fake_client = _FakeStreamingClient(chunks)
+        capacity = StreamObservationCapacity(max_items=4, max_bytes=4096)
+
+        async def scenario():
+            response, error_detail = await _make_streaming_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=1024,
+            )
+            self.assertIsNotNone(response)
+            body = b"".join([chunk async for chunk in response.body_iterator])
+            return body, error_detail
+
+        body, error_detail = run_async(scenario())
+
+        self.assertIsNone(error_detail)
+        self.assertEqual(body, b"".join(chunks))
+        self.assertTrue(fake_client.context.closed)
+        self.assertEqual(capacity.snapshot.active_bytes, 0)
+
     def test_prefetched_bytes_release_exactly_as_replay_advances(self):
         chunks = [
             b": keepalive\n\n",

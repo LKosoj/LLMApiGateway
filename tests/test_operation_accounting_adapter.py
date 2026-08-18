@@ -205,6 +205,31 @@ def test_invalid_or_missing_actual_token_buckets_fail_closed(
         _parse_token({"usage": usage})
 
 
+def test_zero_anthropic_aliases_do_not_override_openai_token_buckets() -> None:
+    """Wrappers that emit both schemas often leave input_tokens/output_tokens at 0.
+
+    A real conflicting Anthropic count still fails closed (see the 2-vs-3 case
+    above). Dummy zeros next to populated OpenAI fields must not 502 a stream
+    that already succeeded upstream.
+    """
+    observation = _parse_token(
+        {
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "input_tokens_details": None,
+            }
+        }
+    )
+
+    assert observation.usage.prompt_tokens == 10
+    assert observation.usage.completion_tokens == 8
+    assert observation.usage.total_tokens == 18
+
+
 def test_total_tokens_mismatch_is_tolerated_using_derived_total() -> None:
     """A ``total_tokens`` that disagrees with prompt+completion is no longer
     fatal: the upstream call already succeeded, so the response is accepted

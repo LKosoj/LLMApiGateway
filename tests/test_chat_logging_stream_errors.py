@@ -670,6 +670,37 @@ class ChatLoggingStreamErrorsTests(unittest.TestCase):
                 self.assertEqual(snapshot.active_items, 0)
                 self.assertEqual(snapshot.active_bytes, 0)
 
+    def test_canonical_null_sse_data_is_ignored(self):
+        async def scenario():
+            capacity = StreamObservationCapacity(max_items=4, max_bytes=1024)
+            processor = chat_logging.ChunkProcessor(
+                {},
+                "{}",
+                True,
+                services=make_app_services(
+                    stream_observation_capacity=capacity,
+                    stream_event_max_bytes=256,
+                ),
+                config_loader=_CONFIG_LOADER,
+                cost_rate_registry=_COST_RATE_REGISTRY,
+            )
+            with patch.object(chat_logging, "record_chat_observability"):
+                processor.start()
+                await processor.enqueue_chunk(
+                    b'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n'
+                    b"data: null\n\n"
+                    b"data: [DONE]\n\n"
+                )
+                await processor.finish()
+                self.assertTrue(await processor.wait(timeout=0.5))
+            return processor, capacity.snapshot
+
+        processor, snapshot = run_async(scenario())
+        self.assertFalse(processor._observation_failed)
+        self.assertIn("OK", processor.llm_response_accum)
+        self.assertEqual(snapshot.active_items, 0)
+        self.assertEqual(snapshot.active_bytes, 0)
+
     def test_event_at_capacity_limit_fails_observation_without_deadlock(self):
         async def scenario():
             event_limit = 32

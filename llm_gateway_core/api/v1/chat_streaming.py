@@ -774,6 +774,8 @@ class _DirectChatStreamObservationBuilder:
                 payload = parse_sse_json(event)
             except (TypeError, ValueError, RecursionError):
                 raise AccountingValidationError from None
+            if payload is None:
+                return None
             if not isinstance(payload, Mapping):
                 raise AccountingValidationError
         if self._dialect is ChatStreamDialect.OPENAI:

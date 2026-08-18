@@ -240,7 +240,17 @@ def _strict_token_usage(
     aliased_prompt_present = input_present or cache_creation_present or cache_read_present
     aliased_prompt = input_tokens + cache_creation + cache_read
     if prompt_present and aliased_prompt_present and canonical_prompt != aliased_prompt:
-        raise AccountingValidationError
+        # OpenAI-compatible wrappers (AgentRouter Claude, for one) emit both
+        # families and leave the Anthropic aliases at zero. That is a dummy
+        # second schema, not a second measurement: reject only when the
+        # aliases carry a real conflicting count.
+        if aliased_prompt != 0:
+            raise AccountingValidationError
+        logger.warning(
+            "Upstream Anthropic prompt aliases are zero while prompt_tokens=%s; "
+            "accepting the response and using prompt_tokens.",
+            canonical_prompt,
+        )
     prompt = canonical_prompt if prompt_present else aliased_prompt
 
     completion_present, canonical_completion = _consistent_alias(
@@ -249,7 +259,13 @@ def _strict_token_usage(
     )
     output_present, output_tokens = _consistent_alias(usage, ("output_tokens",))
     if completion_present and output_present and canonical_completion != output_tokens:
-        raise AccountingValidationError
+        if output_tokens != 0:
+            raise AccountingValidationError
+        logger.warning(
+            "Upstream output_tokens is zero while completion_tokens=%s; "
+            "accepting the response and using completion_tokens.",
+            canonical_completion,
+        )
     completion = canonical_completion if completion_present else output_tokens
 
     total_present, total = _consistent_alias(usage, ("total_tokens",))

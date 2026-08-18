@@ -1094,6 +1094,45 @@ def test_response_observation_holds_openai_terminal_until_commit() -> None:
     run_async(scenario())
 
 
+def test_response_observation_ignores_openai_null_keepalive() -> None:
+    async def scenario() -> None:
+        app, service, _events = _app()
+
+        @app.post("/v1/chat/completions")
+        async def endpoint(request: Request) -> StreamingResponse:
+            await request.body()
+            publish_chat_terminal_observation(request, _observation())
+
+            async def body() -> AsyncIterator[bytes]:
+                yield b'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n'
+                yield b"data: null\n\n"
+                yield b"data: [DONE]\n\n"
+
+            return StreamingResponse(body(), media_type="text/event-stream")
+
+        sent = await _run_app(
+            app,
+            request_payload={"model": "gateway-model", "stream": True},
+        )
+        body = b"".join(
+            message.get("body", b"")
+            for message in sent
+            if message["type"] == "http.response.body"
+        )
+        assert b"data: null" in body
+        assert body.endswith(b"data: [DONE]\n\n")
+        statuses = [
+            message.get("status")
+            for message in sent
+            if message["type"] == "http.response.start"
+        ]
+        assert statuses == [200]
+        service.commit.assert_awaited_once()
+        service.release.assert_not_awaited()
+
+    run_async(scenario())
+
+
 def test_response_observation_releases_before_openai_error_event_send() -> None:
     async def scenario() -> None:
         app, service, events = _app()

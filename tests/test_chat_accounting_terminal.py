@@ -291,6 +291,27 @@ def test_canonical_sse_dialects_commit_only_on_terminal_event(
     run_async(scenario())
 
 
+def test_openai_sse_null_keepalive_is_ignored() -> None:
+    async def scenario() -> None:
+        _, services, _, _, handoff, observation = _build_observation(
+            route_template="/v1/chat/completions",
+            streaming=True,
+            dialect=ChatStreamDialect.OPENAI,
+        )
+        handoff.publish(_terminal_observation())
+        start = _start(200, WireMode.SSE)
+
+        assert observation.classify_sse(start, SSEEvent("null")) is None
+        assert (
+            observation.classify_sse(start, SSEEvent("[DONE]", done=True))
+            is TerminalReason.COMPLETE
+        )
+        services.accounting_service.commit.assert_not_awaited()
+        services.accounting_service.release.assert_not_awaited()
+
+    run_async(scenario())
+
+
 @pytest.mark.parametrize(
     ("dialect", "route_template", "events"),
     [

@@ -986,6 +986,10 @@ def _parse_sse_event_json(event: SSEEvent):
         parsed = sanitize_payload(parse_sse_json(event))
     except (TypeError, ValueError, RecursionError) as exc:
         raise StreamPayloadError("invalid_json") from exc
+    # Some OpenAI-compatible proxies insert `data: null` keepalives between
+    # real chunks. Treat them like an empty event, not a broken stream.
+    if parsed is None:
+        return None
     if not isinstance(parsed, dict):
         raise StreamPayloadError("json_not_object")
     return parsed

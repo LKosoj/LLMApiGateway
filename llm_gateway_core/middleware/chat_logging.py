@@ -1027,6 +1027,8 @@ class ChunkProcessor:
                     continue
 
                 chunk_json = json.loads(decoded_chunk)
+                if chunk_json is None:
+                    continue
                 if not isinstance(chunk_json, dict):
                     if canonical_events:
                         raise ValueError("canonical SSE data payload is not an object")

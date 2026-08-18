@@ -628,6 +628,57 @@ def test_direct_stream_builder_ignores_null_usage_before_terminal() -> None:
     assert observation.usage.completion_tokens > 0
 
 
+def test_direct_stream_builder_accepts_openai_usage_with_zero_anthropic_aliases() -> None:
+    """AgentRouter Claude's include_usage chunk mixes both token schemas.
+
+    `prompt_tokens`/`completion_tokens` are real; `input_tokens`/`output_tokens`
+    are dummy zeros. Building the terminal observation used to raise, and the
+    response observer turned that into a 502 protocol error after a valid
+    stream.
+    """
+    builder = _DirectChatStreamObservationBuilder(
+        dialect=ChatStreamDialect.OPENAI,
+        provider="agentrouter",
+        model="claude-opus-5",
+        cost_rate_registry={("agentrouter", "claude-opus-5"): ModelCostRates(1.0, 2.0)},
+        estimated_prompt_tokens=10,
+    )
+    assert (
+        builder.observe(
+            SSEEvent('{"choices":[{"delta":{"content":"Hi"}}],"usage":null}')
+        )
+        is None
+    )
+    assert builder.observe(SSEEvent("null")) is None
+    assert (
+        builder.observe(
+            SSEEvent(
+                json.dumps(
+                    {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 8,
+                            "total_tokens": 18,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "input_tokens_details": None,
+                        },
+                    }
+                )
+            )
+        )
+        is None
+    )
+    observation = builder.observe(SSEEvent("[DONE]", done=True))
+
+    assert observation is not None
+    assert observation.usage.is_estimated is False
+    assert observation.usage.prompt_tokens == 10
+    assert observation.usage.completion_tokens == 8
+    assert observation.usage.total_tokens == 18
+
+
 # --- Task 1b: take_partial() must be covered by the same release-on-failure -
 #              guard as take()/commit(), otherwise a raising partial builder -
 #              leaks the reservation on client disconnect. -------------------

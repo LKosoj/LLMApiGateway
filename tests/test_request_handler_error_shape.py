@@ -41,6 +41,15 @@ class RequestHandlerErrorShapeTests(unittest.TestCase):
             "overloaded",
         )
 
+    def test_null_sse_data_event_is_ignored(self):
+        self.assertIsNone(_parse_stream_chunk_json("data: null", max_event_bytes=1024))
+        self.assertIsNone(_parse_stream_chunk_json("data:  null  ", max_event_bytes=1024))
+
+    def test_non_object_sse_data_event_still_fails(self):
+        with self.assertRaises(Exception) as raised:
+            _parse_stream_chunk_json("data: []", max_event_bytes=1024)
+        self.assertIn("json_not_object", str(raised.exception))
+
     def test_make_json_request_preserves_dict_error_message(self):
         fake_client = SimpleNamespace(
             post=AsyncMock(return_value=_JsonResponse({"error": {"message": "bad request"}}))

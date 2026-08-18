@@ -215,6 +215,8 @@ def _is_terminal_sse_event(
         payload = parse_sse_json(event)
     except (TypeError, ValueError, RecursionError):
         raise AccountingValidationError from None
+    if payload is None:
+        return False
     if not isinstance(payload, dict):
         raise AccountingValidationError
     if dialect is ChatStreamDialect.OPENAI:
@@ -248,6 +250,8 @@ def _is_error_sse_event(
         payload = parse_sse_json(event)
     except (TypeError, ValueError, RecursionError):
         raise AccountingValidationError from None
+    if payload is None:
+        return False
     if not isinstance(payload, dict):
         raise AccountingValidationError
     if dialect is ChatStreamDialect.OPENAI:
