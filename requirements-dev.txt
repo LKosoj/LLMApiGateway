@@ -226,7 +226,7 @@ fsspec==2026.4.0
     # via
     #   gpt-researcher
     #   huggingface-hub
-gpt-researcher==0.14.8
+gpt-researcher==0.15.1
     # via llmapigateway (pyproject.toml)
 greenlet==3.5.1
     # via

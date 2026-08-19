@@ -13,6 +13,7 @@ from pathlib import Path
 
 from llm_gateway_core.agents.deep_research_adapter import DeepResearchIpcClient
 from llm_gateway_core.services.deep_research_protocol import (
+    DEEP_RESEARCH_FRAME_MAX_BYTES,
     DeepResearchCallbackOperation,
     DeepResearchCallbackRequest,
     DeepResearchJob,
@@ -172,6 +173,25 @@ def run_deep_research_job(
         time.sleep(30)
     if job.query == "invalid-result":
         return {"invalid": True}  # type: ignore[return-value]
+    if job.query == "oversized-result":
+        # Ten of these outgrow any frame limit, so the shedding path always runs.
+        body = "x" * (DEEP_RESEARCH_FRAME_MAX_BYTES // 8)
+        return DeepResearchResult(
+            query=job.query,
+            report="oversized report",
+            research_result={"note": "kept"},
+            sources=tuple(
+                {
+                    "url": f"https://example.com/{index}",
+                    "title": "Example",
+                    "raw_content": body,
+                }
+                for index in range(10)
+            ),
+            source_urls=("https://example.com/0",),
+            context=("oversized context",),
+            costs=1.25,
+        )
     research_result = dict(_IMPORT_ENV)
     if grandchild_pid is not None:
         research_result["grandchild_pid"] = grandchild_pid

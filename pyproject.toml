@@ -33,7 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 research = [
-    "gpt-researcher>=0.14.8,<0.15.0",
+    "gpt-researcher>=0.15.1,<0.16.0",
     "sse-starlette<3.1.0",
 ]
 dev = [
@@ -46,7 +46,7 @@ dev = [
     "packaging>=26.0",
     "pip-audit>=2.9.0",
     "pip-tools>=7.5.3",
-    "gpt-researcher>=0.14.8,<0.15.0",
+    "gpt-researcher>=0.15.1,<0.16.0",
     "sse-starlette<3.1.0",
 ]
 
@@ -62,7 +62,7 @@ filterwarnings = [
 [[tool.llmgateway.upstream-warning-policy]]
 id = "gpt-researcher-langchain-community"
 package = "gpt-researcher"
-package_version = "0.14.8"
+package_version = "0.15.1"
 expires = 2026-10-11
 filter = 'ignore:^`langchain-community` is being sunset and is no longer actively maintained\. See https\x3a//github\.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages\.$:DeprecationWarning:^gpt_researcher\.scraper\.arxiv\.arxiv$'
 reason = "gpt-researcher still imports ArxivRetriever from the sunset langchain-community package"

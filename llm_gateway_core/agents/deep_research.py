@@ -590,7 +590,7 @@ class DeepResearchManager:
                         )
                     ):
                         raise ValueError(
-                            "GPT Researcher 0.14.8 public result getters are unavailable."
+                            "GPT Researcher 0.15.1 public result getters are unavailable."
                         )
 
                     return {

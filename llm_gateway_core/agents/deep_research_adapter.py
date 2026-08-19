@@ -28,7 +28,7 @@ from ..services.deep_research_protocol import (
 )
 
 
-GPT_RESEARCHER_REQUIRED_VERSION = "0.14.8"
+GPT_RESEARCHER_REQUIRED_VERSION = "0.15.1"
 DEEP_RESEARCH_REPORT_MAX_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,7 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
         conductor: Any,
         query: str,
         query_domains: list[str] | None = None,
-    ) -> list[str]:
+    ) -> tuple[list[str], list[dict[str, str]]]:
         del query_domains
         max_results = int(
             getattr(conductor.researcher.cfg, "max_search_results_per_query", 5)
@@ -308,7 +308,10 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
             [item["url"] for item in results if item.get("url")]
         )
         random.shuffle(new_urls)
-        return new_urls
+        # 0.15.1 unpacks this into (urls to scrape, sources the retriever already
+        # fetched). The gateway retriever only returns snippets, so nothing is
+        # pre-fetched and every url still goes through the read callback.
+        return new_urls, []
 
     original_values = (
         agent_module.get_retrievers,
@@ -471,7 +474,7 @@ def collect_public_result(
     research_result: object,
     generated_images: tuple[dict[str, str], ...] = (),
 ) -> DeepResearchResult:
-    """Read only the public 0.14.8 result getters and validate their schema."""
+    """Read only the public 0.15.1 result getters and validate their schema."""
     sources = _call_public_getter(researcher, "get_research_sources")
     source_urls = _call_public_getter(researcher, "get_source_urls")
     context = _call_public_getter(researcher, "get_research_context")
@@ -578,5 +581,5 @@ def run_deep_research_job(
 def _call_public_getter(researcher: object, name: str) -> object:
     getter = getattr(researcher, name, None)
     if not callable(getter):
-        raise ValueError(f"GPT Researcher 0.14.8 public method {name}() is unavailable.")
+        raise ValueError(f"GPT Researcher 0.15.1 public method {name}() is unavailable.")
     return getter()

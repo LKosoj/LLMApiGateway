@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
+import logging
 import os
 import socket
 
 from .deep_research_protocol import (
+    DEEP_RESEARCH_FRAME_MAX_BYTES,
     DeepResearchCallbackReportedError,
     DeepResearchProtocolError,
     DeepResearchResult,
@@ -17,6 +20,9 @@ from .deep_research_protocol import (
     recv_frame,
     result_message,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 _SYSTEM_ENV_ALLOWLIST = (
@@ -64,7 +70,7 @@ def child_main(sock: socket.socket, adapter_module: str) -> None:
         if not isinstance(result, DeepResearchResult):
             raise ValueError("adapter returned an invalid result type")
         validated = DeepResearchResult.from_wire(result.to_wire())
-        sock.sendall(encode_frame(result_message(job_id, validated)))
+        sock.sendall(_result_frame(job_id, validated))
     except BaseException as exc:
         code = _error_code(exc)
         exception_type = type(exc).__name__
@@ -78,6 +84,60 @@ def child_main(sock: socket.socket, adapter_module: str) -> None:
             pass
     finally:
         sock.close()
+
+
+def _drop_source_bodies(result: DeepResearchResult) -> DeepResearchResult:
+    return dataclasses.replace(
+        result,
+        sources=tuple(
+            {
+                key: value
+                for key, value in source.items()
+                if key in {"url", "title"} and isinstance(value, str)
+            }
+            for source in result.sources
+        ),
+    )
+
+
+def _drop_context(result: DeepResearchResult) -> DeepResearchResult:
+    return dataclasses.replace(result, context=())
+
+
+def _drop_research_result(result: DeepResearchResult) -> DeepResearchResult:
+    return dataclasses.replace(result, research_result=None)
+
+
+# Evidence the parent can live without, heaviest first. The report itself, the
+# source urls and the costs are never shed: they are the answer the caller paid for.
+_RESULT_REDUCTIONS = (
+    ("scraped source bodies", _drop_source_bodies),
+    ("research context", _drop_context),
+    ("research tree", _drop_research_result),
+)
+
+
+def _result_frame(job_id: str, result: DeepResearchResult) -> bytes:
+    """Never trade a finished report for an error: shed evidence until the frame fits."""
+    try:
+        return encode_frame(result_message(job_id, result))
+    except DeepResearchProtocolError as exc:
+        rejected = exc
+    dropped: list[str] = []
+    for name, reduce in _RESULT_REDUCTIONS:
+        result = reduce(result)
+        dropped.append(name)
+        try:
+            frame = encode_frame(result_message(job_id, result))
+        except DeepResearchProtocolError:
+            continue
+        logger.warning(
+            "deep-research result did not fit the %d byte frame; dropped %s to deliver the report",
+            DEEP_RESEARCH_FRAME_MAX_BYTES,
+            ", ".join(dropped),
+        )
+        return frame
+    raise rejected
 
 
 def _error_code(exc: BaseException) -> str:

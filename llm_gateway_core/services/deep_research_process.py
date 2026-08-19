@@ -261,7 +261,13 @@ class DeepResearchProcessRunner:
                 code = "child_crashed" if exit_code else "protocol_error"
                 raise DeepResearchProcessError(code, exit_code=exit_code) from exc
 
-            await owner.finish()
+            try:
+                await owner.finish()
+            except Exception:
+                # The report is already in hand, so a child that refuses to die is a
+                # cleanup problem, not a failed run. The finally block below logs it
+                # and keeps reaping.
+                pass
             return result
         except asyncio.CancelledError:
             if owner is not None:

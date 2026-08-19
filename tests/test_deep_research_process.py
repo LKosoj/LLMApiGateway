@@ -101,6 +101,14 @@ def test_protocol_round_trip_is_strict_and_job_repr_hides_credentials() -> None:
         )
 
 
+def test_frame_limit_carries_results_larger_than_eight_mib() -> None:
+    assert DEEP_RESEARCH_FRAME_MAX_BYTES == 16 * 1024 * 1024
+    payload = "x" * (12 * 1024 * 1024)
+    frame = encode_frame({"payload": payload})
+    assert len(frame) - 4 <= DEEP_RESEARCH_FRAME_MAX_BYTES
+    assert decode_payload(frame[4:]) == {"payload": payload}
+
+
 def test_callback_protocol_has_exact_job_message_and_operation_identity() -> None:
     request = DeepResearchCallbackRequest(
         job_id="job-1",
@@ -182,9 +190,9 @@ def test_image_metadata_allows_path_word_but_rejects_local_filesystem_urls() -> 
             )
 
 
-def test_version_pinned_adapter_uses_real_0148_public_api() -> None:
+def test_version_pinned_adapter_uses_real_0151_public_api() -> None:
     factory = get_gpt_researcher_factory()
-    assert GPT_RESEARCHER_REQUIRED_VERSION == "0.14.8"
+    assert GPT_RESEARCHER_REQUIRED_VERSION == "0.15.1"
     assert factory.__name__ == "GPTResearcher"
     for getter in (
         "get_research_sources",
@@ -197,9 +205,9 @@ def test_version_pinned_adapter_uses_real_0148_public_api() -> None:
     with (
         patch(
             "llm_gateway_core.agents.deep_research_adapter.metadata.version",
-            return_value="0.14.9",
+            return_value="0.15.2",
         ),
-        pytest.raises(DeepResearchUnavailableError, match="required 0.14.8"),
+        pytest.raises(DeepResearchUnavailableError, match="required 0.15.1"),
     ):
         get_gpt_researcher_factory()
 
@@ -543,6 +551,47 @@ def test_installed_browse_urls_drops_refused_sources_and_keeps_the_rest() -> Non
     run_async(scenario())
 
 
+def test_installed_search_relevant_source_urls_returns_the_pair_the_package_unpacks() -> None:
+    """0.15.1 unpacks the override into (urls, prefetched); a bare list feeds browse_urls a string."""
+    read_urls: list[str] = []
+
+    class Ipc:
+        async def search(self, query: str, max_results: int):
+            return [
+                {"url": f"https://example.com/{index}", "title": "T", "snippet": "S"}
+                for index in range(max_results)
+            ]
+
+        async def read(self, url: str):
+            read_urls.append(url)
+            return {"url": url, "title": "T", "content": "body " * 40}
+
+    async def scenario() -> None:
+        environment = {
+            "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+            "OPENAI_API_KEY": "test",
+        }
+        with (
+            patch.dict(os.environ, environment),
+            adapter_module._gateway_research_tools(Ipc()),  # type: ignore[arg-type]
+        ):
+            researcher = get_gpt_researcher_factory()(
+                query="q",
+                report_type="research_report",
+                verbose=False,
+            )
+            scraped = await researcher.research_conductor._scrape_data_by_urls("q")
+        expected = [
+            f"https://example.com/{index}"
+            for index in range(researcher.cfg.max_search_results_per_query)
+        ]
+        assert sorted(read_urls) == expected
+        assert sorted(page["url"] for page in scraped) == expected
+        assert sorted(source["url"] for source in researcher.get_research_sources()) == expected
+
+    run_async(scenario())
+
+
 def test_installed_browse_urls_still_fails_on_a_broken_callback_channel() -> None:
     import gpt_researcher.agent as agent_module
 
@@ -666,11 +715,12 @@ def test_installed_nested_research_search_uses_parent_ipc_and_restores_method() 
 
     async def scenario() -> None:
         with adapter_module._gateway_research_tools(Ipc()):  # type: ignore[arg-type]
-            urls = await conductor._search_relevant_source_urls(
+            urls, prefetched = await conductor._search_relevant_source_urls(
                 "nested query",
                 ["example.com"],
             )
             assert urls == ["https://new.example"]
+            assert prefetched == []
         assert ResearchConductor._search_relevant_source_urls is original
 
     run_async(scenario())
@@ -1147,6 +1197,29 @@ def test_invalid_result_truncated_frame_and_active_shutdown_fail_closed() -> Non
     run_async(scenario())
 
 
+def test_oversized_result_reaches_the_parent_without_source_bodies() -> None:
+    async def scenario() -> None:
+        runner = DeepResearchProcessRunner(
+            _adapter_module=FIXTURE_ADAPTER,
+            admission_timeout_seconds=0.2,
+        )
+        await runner.start()
+        try:
+            result = await runner.run(_job("oversized-result"))
+        finally:
+            await runner.aclose()
+        assert result.report == "oversized report"
+        assert result.source_urls == ("https://example.com/0",)
+        assert result.costs == 1.25
+        assert result.context == ("oversized context",)
+        assert result.sources == tuple(
+            {"url": f"https://example.com/{index}", "title": "Example"}
+            for index in range(10)
+        )
+
+    run_async(scenario())
+
+
 def test_shutdown_closes_post_admission_race_without_spawning() -> None:
     async def scenario() -> None:
         runner = DeepResearchProcessRunner(
@@ -1284,7 +1357,7 @@ def test_parent_import_graph_and_runner_source_have_no_thread_fallback() -> None
         assert forbidden not in source
 
 
-def test_cleanup_failure_after_success_still_releases_slot_and_bookkeeping(
+def test_cleanup_failure_after_success_returns_report_and_releases_slot(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def scenario() -> None:
@@ -1308,9 +1381,8 @@ def test_cleanup_failure_after_success_still_releases_slot_and_bookkeeping(
                 "_finish_child",
                 new=reap_timeout_after_real_cleanup,
             ):
-                with pytest.raises(DeepResearchProcessError) as error:
-                    await runner.run(_job())
-            assert error.value.code == "reap_timeout"
+                result = await runner.run(_job())
+            assert result.report == "fixture report"
             assert runner.active_process_count == 0
             assert runner._owners == set()
             assert runner._active_runs == 0

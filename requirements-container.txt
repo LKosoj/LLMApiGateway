@@ -1196,9 +1196,9 @@ fsspec==2026.4.0 \
     #   -c requirements-research.txt
     #   gpt-researcher
     #   huggingface-hub
-gpt-researcher==0.14.8 \
-    --hash=sha256:04023a78cf63eb5666fa9fe298231d68b6920a230605a4bd8c86c00fcba23ad1 \
-    --hash=sha256:e90d18b6da851324c5487c30f50f65d8e64127a7689b7d9ce625db3322cdc44f
+gpt-researcher==0.15.1 \
+    --hash=sha256:ca405d398c994374697253eccfa6214c636dee84a4f0e0e5b2b2114c832fc86c \
+    --hash=sha256:d75cee841f3d0f524e7da23ba091bd013492711d859f5dc2023207ccaec7a482
     # via
     #   -c requirements-research.txt
     #   llmapigateway (pyproject.toml)

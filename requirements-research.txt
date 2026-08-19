@@ -267,7 +267,7 @@ fsspec==2026.4.0
     #   -c requirements-dev.txt
     #   gpt-researcher
     #   huggingface-hub
-gpt-researcher==0.14.8
+gpt-researcher==0.15.1
     # via
     #   -c requirements-dev.txt
     #   llmapigateway (pyproject.toml)

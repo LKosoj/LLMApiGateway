@@ -16,7 +16,9 @@ from urllib.parse import urlsplit
 
 
 DEEP_RESEARCH_PROTOCOL_VERSION = 1
-DEEP_RESEARCH_FRAME_MAX_BYTES = 8 * 1024 * 1024
+# One result frame carries the full raw text of every scraped source, so a wide
+# deep-research run outgrew the previous 8 MiB ceiling and died at the last step.
+DEEP_RESEARCH_FRAME_MAX_BYTES = 16 * 1024 * 1024
 _FRAME_HEADER = struct.Struct("!I")
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _MESSAGE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
