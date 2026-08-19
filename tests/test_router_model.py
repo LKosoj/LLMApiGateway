@@ -12,7 +12,10 @@ from llm_gateway_core.services.accounting import (
     AccountingErrorCode,
     CostSource,
 )
-from llm_gateway_core.services.router_model import RouterModelService
+from llm_gateway_core.services.router_model import (
+    _SELECTOR_SYSTEM_PROMPT,
+    RouterModelService,
+)
 from llm_gateway_core.utils.usage_tracking import (
     build_model_cost_rate_registry,
 )
@@ -142,8 +145,85 @@ class RouterConfigValidationTests(unittest.TestCase):
             )
 
 
+    def test_router_rules_accept_routing_policy_and_target_hints(self):
+        loader = ConfigLoader()
+        payload = json.dumps(
+            [
+                {
+                    "gateway_model_name": "gateway/router",
+                    "selector_model": "gateway/selector",
+                    "routing_policy": "Prefer the cheapest candidate that can answer well.",
+                    "targets": [
+                        {
+                            "type": "gateway_model",
+                            "model": "gateway/high",
+                            "description": "Code, long context and tool calls",
+                            "cost_hint": "premium",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        rules = loader.parse_and_validate_router_rules_payload(
+            payload,
+            fallback_rules=self._fallback_rules(),
+            fusion_rules={},
+        )
+
+        rule = rules["gateway/router"]
+        self.assertEqual(
+            rule["routing_policy"],
+            "Prefer the cheapest candidate that can answer well.",
+        )
+        target = rule["targets"][0]
+        self.assertEqual(target["description"], "Code, long context and tool calls")
+        self.assertEqual(target["cost_hint"], "premium")
+
+    def test_router_rules_reject_unknown_cost_hint(self):
+        loader = ConfigLoader()
+        payload = json.dumps(
+            [
+                {
+                    "gateway_model_name": "gateway/router",
+                    "selector_model": "gateway/selector",
+                    "targets": [
+                        {"type": "gateway_model", "model": "gateway/high", "cost_hint": "cheapest"}
+                    ],
+                }
+            ]
+        )
+
+        with self.assertRaises(ValueError):
+            loader.parse_and_validate_router_rules_payload(
+                payload,
+                fallback_rules=self._fallback_rules(),
+                fusion_rules={},
+            )
+
+    def test_router_rules_reject_blank_routing_policy(self):
+        loader = ConfigLoader()
+        payload = json.dumps(
+            [
+                {
+                    "gateway_model_name": "gateway/router",
+                    "selector_model": "gateway/selector",
+                    "routing_policy": "   ",
+                    "targets": [{"type": "gateway_model", "model": "gateway/high"}],
+                }
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "routing_policy"):
+            loader.parse_and_validate_router_rules_payload(
+                payload,
+                fallback_rules=self._fallback_rules(),
+                fusion_rules={},
+            )
+
+
 class RouterDispatchTests(unittest.TestCase):
-    def _config_loader(self, router_targets):
+    def _config_loader(self, router_targets, routing_policy=None):
         loader = SimpleNamespace()
         loader.providers_config = {
             "p1": ProviderDetails(baseUrl="https://p1.example/v1", apikey="KEY"),
@@ -164,12 +244,13 @@ class RouterDispatchTests(unittest.TestCase):
         }
         loader.fusion_rules = {}
         loader.operation_rules = {}
-        loader.router_rules = {
-            "gateway/router": {
-                "selector_model": "gateway/selector",
-                "targets": router_targets,
-            }
+        router_config = {
+            "selector_model": "gateway/selector",
+            "targets": router_targets,
         }
+        if routing_policy is not None:
+            router_config["routing_policy"] = routing_policy
+        loader.router_rules = {"gateway/router": router_config}
         loader.model_rules = {}
         return loader
 
@@ -267,6 +348,68 @@ class RouterDispatchTests(unittest.TestCase):
         self.assertEqual(seen_models, ["selector-upstream", "model-a", "model-b"])
         self.assertEqual(response["choices"][0]["message"]["content"], "final from model-b")
         self.assertEqual(response["router"]["selected_candidate_id"], "gateway:gateway/high")
+
+    def test_routing_policy_and_target_hints_reach_the_selector(self):
+        config_loader = self._config_loader(
+            [
+                {
+                    "type": "gateway_model",
+                    "model": "gateway/high",
+                    "description": "Code, long context and tool calls",
+                    "cost_hint": "premium",
+                }
+            ],
+            routing_policy="Prefer the cheapest candidate that can answer well.",
+        )
+        request = self._request(config_loader)
+        selector_payloads = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
+            if payload["model"] == "selector-upstream":
+                selector_payloads.append(payload)
+                return _openai_response(json.dumps({"candidate_id": "gateway:gateway/high"}))
+            return _openai_response("final")
+
+        with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
+            run_async(
+                _dispatch_chat_request(
+                    request,
+                    {"model": "gateway/router", "messages": [{"role": "user", "content": "hi"}]},
+                )
+            )
+
+        self.assertEqual(len(selector_payloads), 1)
+        system_prompt = selector_payloads[0]["messages"][0]["content"]
+        self.assertIn("Prefer the cheapest candidate that can answer well.", system_prompt)
+        candidate = json.loads(selector_payloads[0]["messages"][1]["content"])["candidates"][0]
+        self.assertEqual(candidate["description"], "Code, long context and tool calls")
+        self.assertEqual(candidate["cost_hint"], "premium")
+
+    def test_selector_prompt_stays_unchanged_without_policy_and_hints(self):
+        config_loader = self._config_loader(
+            [{"type": "gateway_model", "model": "gateway/high"}]
+        )
+        request = self._request(config_loader)
+        selector_payloads = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
+            if payload["model"] == "selector-upstream":
+                selector_payloads.append(payload)
+                return _openai_response(json.dumps({"candidate_id": "gateway:gateway/high"}))
+            return _openai_response("final")
+
+        with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
+            run_async(
+                _dispatch_chat_request(
+                    request,
+                    {"model": "gateway/router", "messages": [{"role": "user", "content": "hi"}]},
+                )
+            )
+
+        self.assertEqual(selector_payloads[0]["messages"][0]["content"], _SELECTOR_SYSTEM_PROMPT)
+        candidate = json.loads(selector_payloads[0]["messages"][1]["content"])["candidates"][0]
+        self.assertNotIn("description", candidate)
+        self.assertNotIn("cost_hint", candidate)
 
     def test_selector_upstream_cost_does_not_mask_delegate_local_cost(self):
         config_loader = self._config_loader(

@@ -601,6 +601,17 @@ class RouterTargetConfig(BaseModel):
     model: str | None = None
     gateway_model: str | None = None
     index: int | None = None
+    description: str | None = None
+    cost_hint: Literal["free", "cheap", "standard", "premium"] | None = None
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _validate_description(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("'description' must be a non-empty string when provided.")
+        return value.strip()
 
     @field_validator("model", "gateway_model", mode="before")
     @classmethod
@@ -646,7 +657,17 @@ class RouterModelConfig(BaseModel):
 
     gateway_model_name: str
     selector_model: str
+    routing_policy: str | None = None
     targets: List[RouterTargetConfig]
+
+    @field_validator("routing_policy", mode="before")
+    @classmethod
+    def _validate_routing_policy(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("'routing_policy' must be a non-empty string when provided.")
+        return value.strip()
 
     @field_validator("gateway_model_name", "selector_model", mode="before")
     @classmethod

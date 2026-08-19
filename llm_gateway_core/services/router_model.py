@@ -32,6 +32,15 @@ _SELECTOR_SYSTEM_PROMPT = (
 )
 
 
+def _selector_system_prompt(routing_policy: str | None) -> str:
+    if not routing_policy:
+        return _SELECTOR_SYSTEM_PROMPT
+    return (
+        f"{_SELECTOR_SYSTEM_PROMPT}\n\nRouting policy configured by the gateway operator. "
+        f"Follow it when comparing candidates:\n{routing_policy}"
+    )
+
+
 def _extract_text(openai_response: dict[str, Any]) -> str:
     choices = openai_response.get("choices") or []
     if not choices:
@@ -119,6 +128,16 @@ def _fallback_chain_items(
     return items
 
 
+def _target_hints(target: dict[str, Any]) -> dict[str, Any]:
+    """Operator-authored hints that tell the selector what a target is for."""
+    hints: dict[str, Any] = {}
+    for key in ("description", "cost_hint"):
+        value = target.get(key)
+        if value:
+            hints[key] = value
+    return hints
+
+
 def _candidate_id(target: dict[str, Any]) -> str:
     if target.get("type") == "gateway_model":
         return f"gateway:{target.get('model')}"
@@ -144,6 +163,7 @@ def build_router_candidates(
                     "id": candidate_id,
                     "type": "gateway_model",
                     "gateway_model": gateway_model,
+                    **_target_hints(target),
                     "fallback_chain": _fallback_chain_items(
                         gateway_model=gateway_model,
                         fallback_models=fallback_models,
@@ -164,6 +184,7 @@ def build_router_candidates(
                 "type": "fallback_entry",
                 "gateway_model": gateway_model,
                 "index": index,
+                **_target_hints(target),
                 "provider": selected_entry.get("provider"),
                 "model": selected_entry.get("model"),
                 "remaining_fallback_chain": _fallback_chain_items(
@@ -281,6 +302,7 @@ class RouterModelService:
         selector_response = await self._call_selector(
             request=request,
             selector_model=router_config["selector_model"],
+            routing_policy=router_config.get("routing_policy"),
             candidates=candidates,
             request_body=request_body,
         )
@@ -368,6 +390,7 @@ class RouterModelService:
         *,
         request: Request,
         selector_model: str,
+        routing_policy: str | None,
         candidates: list[dict[str, Any]],
         request_body: dict[str, Any],
     ) -> dict[str, Any]:
@@ -378,7 +401,7 @@ class RouterModelService:
             "stream": False,
             "temperature": 0,
             "messages": [
-                {"role": "system", "content": _SELECTOR_SYSTEM_PROMPT},
+                {"role": "system", "content": _selector_system_prompt(routing_policy)},
                 {
                     "role": "user",
                     "content": json.dumps(

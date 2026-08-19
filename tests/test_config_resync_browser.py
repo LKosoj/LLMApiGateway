@@ -302,3 +302,59 @@ def test_editor_out_of_sync_notice_resyncs_and_then_saves(
         assert saved.value.status == 200
     finally:
         context.close()
+
+
+def test_editor_refused_resync_names_the_file_the_process_cannot_parse(
+    browser: Browser,
+    resync_server: tuple[str, Path, Path],
+) -> None:
+    """A resync the disk cannot satisfy has to say which file it choked on.
+
+    This is the deadlock a schema change causes when it reaches disk before the
+    service restarts: the file is written in a shape the running code rejects,
+    so the save is blocked as out of sync and the resync that would clear it
+    fails too. Without the file name the operator is left with a generic
+    "validation failed" and nowhere to look.
+    """
+    base_url, _providers_path, _fallback_path = resync_server
+    model_rules_path = _fallback_path.parent / "models_model_rules.json"
+    context = browser.new_context(locale="en-US")
+    try:
+        _login(context, base_url, "/v1/ui/rules-editor")
+        page = context.new_page()
+        page.goto(f"{base_url}/v1/ui/rules-editor")
+        page.locator('[data-entity-target="providers"]').click()
+        expect(page.locator("#providersList .provider-card")).to_have_count(1)
+
+        # A field only a newer build knows: extra="forbid" makes this a plain
+        # Pydantic rejection, which is exactly what an operator sees after
+        # pulling a schema change without restarting the service.
+        model_rules_path.write_text(
+            json.dumps({"field_only_a_newer_build_knows": "value"}),
+            encoding="utf-8",
+        )
+
+        with page.expect_response(
+            lambda response: (
+                response.url.endswith("/v1/config/providers/structured")
+                and response.request.method == "POST"
+            )
+        ) as blocked_save:
+            page.locator("#saveButton").click()
+        assert blocked_save.value.status == 409
+
+        with page.expect_response(
+            lambda response: response.url.endswith("/v1/config/resync")
+        ) as resync_response:
+            page.locator("#reloadEditorDocumentButton").click()
+        assert resync_response.value.status == 400
+
+        raw_detail = page.locator("#messageRawDetail")
+        expect(raw_detail).to_be_visible()
+        expect(raw_detail).to_contain_text("model_rules")
+        # The Pydantic report quotes raw input, so it must not reach the page.
+        expect(raw_detail).not_to_contain_text("field_only_a_newer_build_knows")
+        # The disk was refused, so the conflict block stays up and unresolved.
+        expect(page.locator("#editorConflictState")).to_be_visible()
+    finally:
+        context.close()

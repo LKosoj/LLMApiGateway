@@ -34,7 +34,15 @@ class ConfigError(RuntimeError):
     Replaces direct ``sys.exit(1)`` so callers (lifespan, tests) can decide
     how to react — tests can assert on the message, and the process still
     aborts at startup because the exception propagates out of the lifespan.
+
+    ``config_file`` names the source that failed, when a raise site knows it.
+    The message already interpolates that name, but parsing it back out is not
+    something an HTTP boundary should do: only the attribute is contractual.
     """
+
+    def __init__(self, *args: object, config_file: Any | None = None) -> None:
+        super().__init__(*args)
+        self.config_file = config_file
 
 
 class RuleValidationError(ValueError):

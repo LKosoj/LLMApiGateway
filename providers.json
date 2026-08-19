@@ -148,6 +148,10 @@
         "glm-5.2": {
           "input_rate": 1.2,
           "output_rate": 4.1
+        },
+        "glm-5.3": {
+          "input_rate": 1.19,
+          "output_rate": 3.74
         }
       },
       "available_models": [
@@ -198,6 +202,10 @@
         "kimi-for-coding": {
           "input_rate": 0.74,
           "output_rate": 3.5
+        },
+        "k3": {
+          "input_rate": 3.0,
+          "output_rate": 15.0
         }
       },
       "routing": {
@@ -229,6 +237,10 @@
         "qwen3-235b-a22b-2507": {
           "input_rate": 0.09,
           "output_rate": 0.1
+        },
+        "deepseek-v4-flash-0731": {
+          "input_rate": 0.14,
+          "output_rate": 0.28
         }
       },
       "routing": {
@@ -275,6 +287,18 @@
         "qwen3.7-max": {
           "input_rate": 1.25,
           "output_rate": 3.75
+        },
+        "deepseek-v4-flash-0731": {
+          "input_rate": 0.14,
+          "output_rate": 0.28
+        },
+        "qwen3.6-flash": {
+          "input_rate": 0.1875,
+          "output_rate": 1.125
+        },
+        "qwen3.8-max": {
+          "input_rate": 2.0,
+          "output_rate": 6.0
         }
       },
       "routing": {
@@ -335,6 +359,10 @@
         "gemini-3.5-flash-thinking": {
           "input_rate": 1.5,
           "output_rate": 9
+        },
+        "gemini-3.6-flash": {
+          "input_rate": 0.75,
+          "output_rate": 3.75
         }
       },
       "routing": {
@@ -388,6 +416,12 @@
     "cerebras": {
       "baseUrl": "https://api.cerebras.ai/v1",
       "apikey": "${APIKEY_CEREBRAS}",
+      "models": {
+        "gemma-4-31b": {
+          "input_rate": 0.1,
+          "output_rate": 0.34
+        }
+      },
       "routing": {
         "strategy": "round-robin",
         "session_affinity": false,
@@ -401,6 +435,20 @@
     "anymodel": {
       "baseUrl": "https://anymodel.org/v1",
       "apikey": "${APIKEY_ANYMODEL}",
+      "models": {
+        "cx/gpt-5.6-luna": {
+          "input_rate": 0.2,
+          "output_rate": 1.2
+        },
+        "am/deepseek-v4-flash": {
+          "input_rate": 0.0798,
+          "output_rate": 0.1596
+        },
+        "am/minimax-m3": {
+          "input_rate": 0.3,
+          "output_rate": 1.2
+        }
+      },
       "routing": {
         "strategy": "round-robin",
         "session_affinity": false,
@@ -414,6 +462,12 @@
     "agentrouter": {
       "baseUrl": "https://agentrouter.org/v1",
       "apikey": "${APIKEY_AGENTROUTER}",
+      "models": {
+        "gpt-5.6-sol": {
+          "input_rate": 2.5,
+          "output_rate": 15.0
+        }
+      },
       "available_models": [
         "claude-opus-5",
         "gpt-5.6-sol"

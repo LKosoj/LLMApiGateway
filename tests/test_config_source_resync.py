@@ -356,6 +356,107 @@ def test_resync_refuses_an_invalid_disk_state_and_keeps_the_generation(
     run_async(scenario())
 
 
+def test_resync_names_the_source_whose_shape_this_process_cannot_parse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused disk state names its file without quoting the file.
+
+    Reproduces the deadlock an operator hits when a schema change reaches disk
+    before the service restarts: the extra field is valid for the newer build
+    and ``extra_forbidden`` for the running one, so saving is blocked as out of
+    sync and the resync that would clear it refuses the disk. The frozen
+    generic message leaves nothing to act on, and the Pydantic report quotes
+    raw input, so the file name is the one safe thing to hand back.
+    """
+
+    async def scenario() -> None:
+        harness = await _make_harness(tmp_path, monkeypatch)
+        try:
+            (tmp_path / FILENAMES[ConfigFile.ROUTER_RULES]).write_text(
+                json.dumps(
+                    [
+                        {
+                            "gateway_model_name": "gateway/router",
+                            "selector_model": "gateway/chat",
+                            "targets": [
+                                {"type": "gateway_model", "model": "gateway/chat"}
+                            ],
+                            "field_only_a_newer_build_knows": "SECRET-LOOKING-VALUE",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            error = await _expect_update_error(
+                harness.coordinator.resync(
+                    base_snapshot=harness.initial_snapshot
+                ),
+                ConfigUpdateErrorCode.VALIDATION_FAILED,
+            )
+
+            assert error.errors is not None
+            assert len(error.errors) == 1
+            reported = error.errors[0]
+            assert reported["type"] == "source_invalid"
+            assert reported["loc"] == [ConfigFile.ROUTER_RULES.value]
+            assert ConfigFile.ROUTER_RULES.value in reported["msg"]
+            assert "SECRET-LOOKING-VALUE" not in reported["msg"]
+            assert "field_only_a_newer_build_knows" not in reported["msg"]
+
+            assert harness.manager.current_generation == 1
+        finally:
+            await harness.shutdown()
+
+    run_async(scenario())
+
+
+def test_resync_keeps_the_cross_validation_message_when_there_is_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Naming the file must not displace a message that names the rule.
+
+    A cross-validation failure already says which rule pointed at what, which
+    is strictly more actionable than the file name, so it stays the reported
+    error rather than being replaced by the coarser one.
+    """
+
+    async def scenario() -> None:
+        harness = await _make_harness(tmp_path, monkeypatch)
+        try:
+            (tmp_path / FILENAMES[ConfigFile.ROUTER_RULES]).write_text(
+                json.dumps(
+                    [
+                        {
+                            "gateway_model_name": "gateway/router",
+                            "selector_model": "gateway/not-configured",
+                            "targets": [
+                                {"type": "gateway_model", "model": "gateway/chat"}
+                            ],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            error = await _expect_update_error(
+                harness.coordinator.resync(
+                    base_snapshot=harness.initial_snapshot
+                ),
+                ConfigUpdateErrorCode.VALIDATION_FAILED,
+            )
+
+            assert error.errors is not None
+            assert [entry["type"] for entry in error.errors] == ["rule_validation"]
+            assert "gateway/not-configured" in error.errors[0]["msg"]
+        finally:
+            await harness.shutdown()
+
+    run_async(scenario())
+
+
 def test_resync_rejects_a_stale_base_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -273,6 +273,49 @@ class RulesEditorSaveTests(unittest.TestCase):
         self.assertIn('"gateway_model_name": "gateway/router"', saved_text)
         self.assertIn('"type": "fallback_entry"', saved_text)
 
+    def test_save_router_rules_structured_persists_policy_and_target_hints(self):
+        payload = {
+            "rules": [
+                {
+                    "gateway_model_name": "gateway/router",
+                    "selector_model": "gateway-model",
+                    "routing_policy": "Prefer the cheapest candidate that can answer well.",
+                    "targets": [
+                        {
+                            "type": "gateway_model",
+                            "model": "gateway-model",
+                            "description": "Code, long context and tool calls",
+                            "cost_hint": "premium",
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with self._client() as (client, runtime):
+            response = client.post(
+                "/v1/config/router-rules/structured",
+                json=payload,
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            client.get("/_test/runtime-generation")
+            published = runtime.observed_snapshot
+
+        self.assertEqual(response.status_code, 200)
+        published_rule = published.config_loader.router_rules["gateway/router"]
+        self.assertEqual(
+            published_rule["routing_policy"],
+            "Prefer the cheapest candidate that can answer well.",
+        )
+        published_target = published_rule["targets"][0]
+        self.assertEqual(published_target["description"], "Code, long context and tool calls")
+        self.assertEqual(published_target["cost_hint"], "premium")
+        saved_text = self.router_rules_path.read_text(encoding="utf-8")
+        self.assertIn('"routing_policy"', saved_text)
+        self.assertIn('"cost_hint": "premium"', saved_text)
+        returned_rule = response.json()["rules"][0]
+        self.assertEqual(returned_rule["targets"][0]["cost_hint"], "premium")
+
     def test_save_router_rules_structured_rejects_unknown_selector(self):
         original_file_content = self.router_rules_path.read_text(encoding="utf-8")
         payload = {

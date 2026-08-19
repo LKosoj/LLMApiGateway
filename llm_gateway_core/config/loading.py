@@ -270,7 +270,10 @@ class _ConfigLoaderCore(_ConfigValidationMixin):
             )
             return parser(payload)
         except Exception as exc:
-            raise ConfigError(f"Invalid '{config_file.value}' configuration.") from exc
+            raise ConfigError(
+                f"Invalid '{config_file.value}' configuration.",
+                config_file=config_file,
+            ) from exc
 
     @staticmethod
     def _decode_complete_document(

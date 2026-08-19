@@ -360,16 +360,19 @@ export function registerCore(ctx) {
     }
 
     function ruleValidationMessages(detail) {
-        // rule_validation and preflight both carry self-contained sentences —
-        // the loader names which gateway model rejected which target, and the
-        // preflight names the (provider, model) pair that /models did not list.
-        // Every other entry needs its loc path to make sense, so it stays
-        // behind detail.message.
+        // rule_validation, preflight and source_invalid all carry
+        // self-contained sentences — the loader names which gateway model
+        // rejected which target, the preflight names the (provider, model)
+        // pair that /models did not list, and source_invalid names the file a
+        // resync refused. Every other entry needs its loc path to make sense,
+        // so it stays behind detail.message.
         return Array.isArray(detail.errors)
             ? detail.errors
                 .filter((error) => error
                     && typeof error === 'object'
-                    && (error.type === 'rule_validation' || error.type === 'preflight')
+                    && (error.type === 'rule_validation'
+                        || error.type === 'preflight'
+                        || error.type === 'source_invalid')
                     && typeof error.msg === 'string')
                 .map((error) => error.msg)
             : [];
@@ -1085,6 +1088,9 @@ export function registerCore(ctx) {
         ['Start At Entry', 'editor:fields.startAtEntry'],
         ['Target Type', 'editor:fields.targetType'],
         ['Selector Model', 'editor:fields.selectorModel'],
+        ['Routing Policy', 'editor:fields.routerRoutingPolicy'],
+        ['Target Description', 'editor:fields.routerTargetDescription'],
+        ['Cost Hint', 'editor:fields.routerCostHint'],
         ['Voices Target Path', 'editor:fields.voicesTargetPath'],
         ['Query Model (optional)', 'editor:fields.queryModelOptional'],
         ['Provider Name', 'editor:fields.providerName'],
@@ -1121,6 +1127,9 @@ export function registerCore(ctx) {
     const PLACEHOLDER_KEYS = new Map([
         ['Choose or enter model', 'editor:placeholders.chooseOrEnterModel'],
         ['Select a gateway model', 'editor:placeholders.chooseGatewayModel'],
+        ['How the selector should compare candidates', 'editor:placeholders.routerRoutingPolicy'],
+        ['What this target is best at', 'editor:placeholders.routerTargetDescription'],
+        ['No cost hint', 'editor:placeholders.routerCostHint'],
         ['default', 'editor:placeholders.defaultValue'],
         ['Retry delay (seconds)', 'editor:placeholders.retryDelay'],
         ['Retry count', 'editor:placeholders.retryCount'],

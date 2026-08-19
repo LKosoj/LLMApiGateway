@@ -108,6 +108,36 @@ def _rule_validation_errors(
     return ({"type": "rule_validation", "loc": [], "msg": str(cause)},)
 
 
+def _resync_validation_errors(
+    error: ConfigError,
+) -> tuple[dict[str, object], ...] | None:
+    """Name the on-disk source a resync refused, when nothing safer is known.
+
+    A resync validates six files nobody just submitted, so the frozen generic
+    message leaves an operator with no idea which one to look at — and the
+    common cause is a process whose code predates a file already written in a
+    newer shape, where the fix is a restart rather than an edit. The file name
+    is an identifier, not raw input, so it is safe to hand back; the Pydantic
+    or json5 report that produced it still stays behind the generic message.
+    """
+    rule_errors = _rule_validation_errors(error)
+    if rule_errors is not None:
+        return rule_errors
+    config_file = getattr(error, "config_file", None)
+    if not isinstance(config_file, ConfigFile):
+        return None
+    return (
+        {
+            "type": "source_invalid",
+            "loc": [config_file.value],
+            "msg": (
+                f"{config_file.value} on disk did not pass validation in this "
+                "process. Restart the gateway if its code is older than the file."
+            ),
+        },
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ConfigRevision:
     """Strong revision parsed by an HTTP boundary before coordinator admission."""
@@ -655,7 +685,7 @@ class ConfigUpdateCoordinator:
                 )
                 raise ConfigUpdateError(
                     ConfigUpdateErrorCode.VALIDATION_FAILED,
-                    errors=_rule_validation_errors(exc),
+                    errors=_resync_validation_errors(exc),
                 ) from None
 
             candidate = await self._build_candidate(

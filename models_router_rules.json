@@ -2,18 +2,25 @@
   {
     "gateway_model_name": "llmgateway/router",
     "selector_model": "llmgateway/small",
+    "routing_policy": "Prefer the cheapest candidate that can still answer well. Escalate to a more expensive candidate only when the request truly needs it: writing or debugging code, tool calls, long or complex input, multi-step reasoning, or a task where a wrong answer is costly. Never pick an expensive candidate for greetings, short factual questions, translation, summarisation or formatting.",
     "targets": [
       {
         "type": "gateway_model",
-        "model": "llmgateway/light_model"
+        "model": "llmgateway/light_model",
+        "description": "Fast general-purpose models. Everyday requests: explanations, translation, summarisation, formatting, short factual answers.",
+        "cost_hint": "cheap"
       },
       {
         "type": "gateway_model",
-        "model": "llmgateway/free"
+        "model": "llmgateway/free",
+        "description": "Free-tier models. Best for throwaway and bulk work: simple rewrites, boilerplate, quick lookups, short chat replies.",
+        "cost_hint": "free"
       },
       {
         "type": "gateway_model",
-        "model": "llmgateway/high"
+        "model": "llmgateway/high",
+        "description": "Strongest and most expensive models. Code and debugging, tool calls, long context, multi-step reasoning, analysis and anything where a wrong answer is costly.",
+        "cost_hint": "premium"
       }
     ]
   }
