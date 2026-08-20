@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import llm_gateway_core.config.environment as environment
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOTENV_PATH = PROJECT_ROOT / ".env"
@@ -13,6 +15,17 @@ SETTINGS_MODULE_NAME = "llm_gateway_core.config.settings"
 class SettingsEnvPriorityTests(unittest.TestCase):
     def test_deep_research_process_limits_are_strict_on_reload(self):
         settings_module = importlib.import_module(SETTINGS_MODULE_NAME)
+        # A deployment may pin these keys in the project .env; the reload below must
+        # still observe the code defaults, not whatever this checkout is running with.
+        dotenv_patcher = patch.object(
+            environment,
+            "PROJECT_DOTENV",
+            PROJECT_ROOT / ".env.absent",
+        )
+        dotenv_patcher.start()
+        self.addCleanup(dotenv_patcher.stop)
+        environment.load_application_environment.cache_clear()
+        self.addCleanup(environment.load_application_environment.cache_clear)
         names = (
             "DEEP_RESEARCH_PROCESS_CAPACITY",
             "DEEP_RESEARCH_ADMISSION_TIMEOUT_SECONDS",

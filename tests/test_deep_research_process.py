@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1126,6 +1127,39 @@ def test_capacity_timeout_crash_and_cancel_reap_children() -> None:
                 blocked.cancel()
                 await asyncio.gather(blocked, return_exceptions=True)
             await runner.aclose()
+
+    run_async(scenario())
+
+
+def test_capacity_two_runs_two_children_at_once_and_still_bounds_the_third() -> None:
+    """Deployment sets DEEP_RESEARCH_PROCESS_CAPACITY=2, so two children must coexist."""
+
+    async def scenario() -> None:
+        runner = DeepResearchProcessRunner(
+            capacity=2,
+            admission_timeout_seconds=0.05,
+            _adapter_module=FIXTURE_ADAPTER,
+        )
+        await runner.start()
+        blocked = [
+            asyncio.create_task(runner.run(replace(_job("block"), job_id=f"job-block-{index}")))
+            for index in range(2)
+        ]
+        try:
+            for _attempt in range(10_000):
+                if runner.active_process_count == 2:
+                    break
+                await asyncio.sleep(0.001)
+            assert runner.active_process_count == 2
+            assert len(set(runner.active_process_ids)) == 2
+            with pytest.raises(DeepResearchAdmissionTimeout):
+                await runner.run(_job("third"))
+        finally:
+            for task in blocked:
+                task.cancel()
+            await asyncio.gather(*blocked, return_exceptions=True)
+            await runner.aclose()
+        assert runner.active_process_count == 0
 
     run_async(scenario())
 
