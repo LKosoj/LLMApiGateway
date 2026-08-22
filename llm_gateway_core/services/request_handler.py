@@ -6,7 +6,6 @@ import httpx
 import logging
 import time
 import zlib
-from collections import deque
 from collections.abc import Awaitable, Callable, MutableMapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -1340,14 +1339,20 @@ async def _make_streaming_request(
         )
     try:
         reader: _DecodedResponseReader | None = None
-        prefetched_chunks: deque[_LeasedDecodedChunk] = deque()
+        # Primed frames are merged into one buffer instead of being queued one
+        # lease per frame: an upstream that keeps the connection warm with SSE
+        # comments (`: OPENROUTER PROCESSING`) before its first content chunk
+        # would otherwise hold one admission slot per keepalive frame and
+        # exhaust the process-wide observation budget before the client ever
+        # sees a token.
+        primed_payload = bytearray()
+        primed_retention = _StreamObservationRetention(stream_observation_capacity)
         stream_handed_off = False
 
         async def close_stream_resources() -> None:
             cleanup_error: BaseException | None = None
             framer.abort()
-            while prefetched_chunks:
-                prefetched_chunks.popleft().lease.release_all()
+            primed_retention.release_all()
             framer_retention.release_all()
             if reader is not None:
                 try:
@@ -1451,7 +1456,7 @@ async def _make_streaming_request(
 
         # Prime until the first complete SSE event so empty/error streams fail closed.
         while True:
-            if prefetched_chunks:
+            if primed_payload:
                 snapshot = stream_observation_capacity.snapshot
                 if snapshot.waiters or snapshot.active_items >= snapshot.max_items:
                     stream_observation_capacity.record_failure(
@@ -1464,7 +1469,7 @@ async def _make_streaming_request(
             try:
                 decoded = await reader.read(
                     copy_retention=framer_retention,
-                    fail_if_blocked=bool(prefetched_chunks),
+                    fail_if_blocked=bool(primed_payload),
                 )
             except LocalStreamObservationError:
                 raise
@@ -1506,7 +1511,8 @@ async def _make_streaming_request(
                 framer_retention.consume(batch.consumed_bytes)
                 inspect_events(batch.events)
                 if not error_in_stream:
-                    prefetched_chunks.append(decoded)
+                    primed_payload += decoded.data
+                    primed_retention.absorb(decoded.lease)
                     keep_decoded = True
             except SSEFramingError as exc:
                 _log_stream_inspection_failure(
@@ -1526,29 +1532,28 @@ async def _make_streaming_request(
         if error_in_stream:
             return None, error_detail
 
-        if not prefetched_chunks or not saw_real_data_chunk:
+        if not primed_payload or not saw_real_data_chunk:
             return None, "Stream ended before any content chunks were received."
 
         async def combined_generator():
             nonlocal error_in_stream, error_detail, tokens_usage, saw_real_data_chunk
             nonlocal upstream_done, terminal_clip_bytes
             try:
-                while prefetched_chunks:
-                    prefetched_chunk = prefetched_chunks.popleft()
-                    try:
-                        # The terminal can only land in the last primed chunk:
-                        # priming stops as soon as `upstream_done` is set.
-                        payload = prefetched_chunk.data
-                        if not prefetched_chunks and terminal_clip_bytes:
-                            payload = _clip_trailing_and_log(
-                                payload,
-                                terminal_clip_bytes,
-                                stream_request_id,
-                            )
-                        if payload:
-                            yield payload
-                    finally:
-                        prefetched_chunk.lease.release_all()
+                try:
+                    # The terminal can only land at the end of the primed
+                    # buffer: priming stops as soon as `upstream_done` is set.
+                    payload = bytes(primed_payload)
+                    if terminal_clip_bytes:
+                        payload = _clip_trailing_and_log(
+                            payload,
+                            terminal_clip_bytes,
+                            stream_request_id,
+                        )
+                    if payload:
+                        yield payload
+                finally:
+                    primed_payload.clear()
+                    primed_retention.release_all()
 
                 if upstream_done:
                     return

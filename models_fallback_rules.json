@@ -22,7 +22,7 @@
       },
       {
         "provider": "nvidia",
-        "model": "z-ai/glm-5.2",
+        "model": "nvidia/nemotron-4-340b-instruct",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -158,7 +158,7 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "glm-5.3",
       "use_provider_order_as_fallback": false,
       "retry_delay": 1,
       "retry_count": 2,
@@ -201,7 +201,7 @@
       },
       {
         "provider": "nvidia",
-        "model": "z-ai/glm-5.2",
+        "model": "nvidia/nemotron-4-340b-instruct",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -401,6 +401,21 @@
   {
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
+      {
+        "provider": "openrouter",
+        "model": "stealth/ox-alpha",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
       {
         "provider": "agentrouter",
         "model": "gpt-5.6-sol",
@@ -799,7 +814,7 @@
     "fallback_models": [
       {
         "provider": "nvidia",
-        "model": "z-ai/glm-5.2",
+        "model": "nvidia/nemotron-4-340b-instruct",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},

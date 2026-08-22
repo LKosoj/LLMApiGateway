@@ -671,6 +671,56 @@ def test_local_stream_failure_returns_503_without_next_fallback() -> None:
     run_async(scenario())
 
 
+def test_stream_without_first_token_falls_back_to_next_model() -> None:
+    """An upstream that never emits a token is a provider failure, not ours."""
+
+    async def scenario() -> None:
+        request, snapshot = _dispatch_request()
+        snapshot.config_loader.fallback_rules = {
+            "gateway-model": {
+                "fallback_models": [
+                    {"provider": "provider-a", "model": "model-a"},
+                    {"provider": "provider-b", "model": "model-b"},
+                ],
+                "rotate_models": False,
+            }
+        }
+        second_response = StreamingResponse(
+            iter(()),
+            media_type="text/event-stream",
+        )
+        attempted_models: list[str] = []
+
+        async def attempt(*args, **kwargs):
+            model_fallback_rule = args[5]
+            attempted_models.append(model_fallback_rule["model"])
+            if len(attempted_models) == 1:
+                return (
+                    None,
+                    "Stream ended before any content chunks were received.",
+                    1,
+                )
+            request.state.llmgateway_provider = "provider-b"
+            request.state.llmgateway_provider_model = "model-b"
+            return second_response, None, 2
+
+        with patch.object(chat_api, "_attempt_model_fallback_rule", new=attempt):
+            result = await chat_api._dispatch_chat_request(
+                request,
+                {
+                    "model": "gateway-model",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": True,
+                },
+                enforce_model_access=False,
+            )
+
+        assert attempted_models == ["model-a", "model-b"]
+        assert result is second_response
+
+    run_async(scenario())
+
+
 def test_router_dispatch_uses_observed_result_for_outer_handoff() -> None:
     async def scenario() -> None:
         request, snapshot = _dispatch_request(router=True)

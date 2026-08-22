@@ -236,6 +236,41 @@ class _FakeStreamingClient:
         return self.context
 
 
+class _CapacityGrabbingStreamingResponse(_FakeStreamingResponse):
+    """Let another observer take the process budget mid-stream."""
+
+    def __init__(self, chunks, capacity, grab_before_index, grabbed):
+        super().__init__(chunks)
+        self._capacity = capacity
+        self._grab_before_index = grab_before_index
+        self._grabbed = grabbed
+
+    async def aiter_raw(self, *, chunk_size=None):
+        for index, chunk in enumerate(self._chunks):
+            if index == self._grab_before_index:
+                snapshot = self._capacity.snapshot
+                while self._capacity.snapshot.active_items < snapshot.max_items:
+                    self._grabbed.append(self._capacity.try_acquire(1))
+            yield chunk
+
+
+class _CapacityGrabbingStreamingClient(_FakeStreamingClient):
+    def __init__(self, chunks, capacity, *, grab_before_index):
+        super().__init__(chunks)
+        self.grabbed = []
+        self.response = _CapacityGrabbingStreamingResponse(
+            chunks,
+            capacity,
+            grab_before_index,
+            self.grabbed,
+        )
+        self.context = _FakeStreamContext(self.response)
+
+    def release_grabbed(self):
+        while self.grabbed:
+            self.grabbed.pop().release_all()
+
+
 class MakeStreamingRequestTests(unittest.TestCase):
     def test_resource_owner_runs_cleanup_when_task_creation_fails(self):
         class TaskCreationFailure(MemoryError):
@@ -759,12 +794,21 @@ class MakeStreamingRequestTests(unittest.TestCase):
         self.assertEqual(capacity.snapshot.active_bytes, 0)
 
     def test_prefetch_item_limit_fails_typed_without_self_deadlock(self):
+        # Priming merges its frames into one lease, so it never holds an
+        # admission slot per frame: item exhaustion can only come from other
+        # streams sharing the process budget. When it does, priming must fail
+        # with a typed reason instead of queueing behind capacity it can only
+        # release after it stops priming.
         chunks = [
             b": keepalive\n\n",
             b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
         ]
-        fake_client = _FakeStreamingClient(chunks)
         capacity = StreamObservationCapacity(max_items=1, max_bytes=4096)
+        fake_client = _CapacityGrabbingStreamingClient(
+            chunks,
+            capacity,
+            grab_before_index=1,
+        )
 
         async def scenario():
             with self.assertRaises(LocalStreamObservationError) as error:
@@ -781,8 +825,39 @@ class MakeStreamingRequestTests(unittest.TestCase):
                 )
             self.assertEqual(
                 error.exception.reason_code,
-                "prefetch_item_capacity_exhausted",
+                "decode_capacity_exhausted",
             )
+            fake_client.release_grabbed()
+
+        run_async(scenario())
+
+        self.assertTrue(fake_client.context.closed)
+        self.assertEqual(capacity.snapshot.active_items, 0)
+        self.assertEqual(capacity.snapshot.active_bytes, 0)
+
+    def test_keepalive_comments_prime_into_one_frame_without_item_pressure(self):
+        keepalive = b": OPENROUTER PROCESSING\n\n"
+        content = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+        chunks = [keepalive] * 64 + [content]
+        fake_client = _FakeStreamingClient(chunks)
+        capacity = StreamObservationCapacity(max_items=2, max_bytes=1024 * 1024)
+
+        async def scenario():
+            response, error_detail = await _make_streaming_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=64 * 1024,
+            )
+
+            self.assertIsNone(error_detail)
+            # More keepalive frames than admission slots must still reach the
+            # client: they are replayed as a single merged frame.
+            self.assertEqual(capacity.snapshot.active_items, 0)
+            parts = [part async for part in response.body_iterator]
+            self.assertEqual(parts, [b"".join(chunks)])
 
         run_async(scenario())
 
@@ -840,6 +915,36 @@ class MakeStreamingRequestTests(unittest.TestCase):
             error_detail,
             "Stream ended before any content chunks were received.",
         )
+
+    def test_keepalive_only_stream_reports_attempt_error_not_local_failure(self):
+        # An upstream that keeps the connection warm and then drops it without
+        # a single content chunk must fail as a *provider* attempt error so the
+        # caller can move on to the next fallback model. Before priming merged
+        # its frames, this exhausted the process-wide admission budget and
+        # raised LocalStreamObservationError, which fails closed with 503.
+        keepalive = b": OPENROUTER PROCESSING\n\n"
+        fake_client = _FakeStreamingClient([keepalive] * 40)
+        capacity = StreamObservationCapacity(max_items=2, max_bytes=1024 * 1024)
+
+        response_data, error_detail = run_async(
+            _make_streaming_request(
+                fake_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=64 * 1024,
+            )
+        )
+
+        self.assertIsNone(response_data)
+        self.assertEqual(
+            error_detail,
+            "Stream ended before any content chunks were received.",
+        )
+        self.assertTrue(fake_client.context.closed)
+        self.assertEqual(capacity.snapshot.active_bytes, 0)
+        self.assertEqual(capacity.snapshot.active_items, 0)
 
     def test_raw_gzip_decode_is_bounded_for_success_error_and_cancel(self):
         event = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
@@ -1201,7 +1306,7 @@ class MakeStreamingRequestTests(unittest.TestCase):
         self.assertTrue(fake_client.context.closed)
         self.assertEqual(capacity.snapshot.active_bytes, 0)
 
-    def test_prefetched_bytes_release_exactly_as_replay_advances(self):
+    def test_primed_bytes_release_when_merged_replay_frame_is_delivered(self):
         chunks = [
             b": keepalive\n\n",
             b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
@@ -1219,18 +1324,20 @@ class MakeStreamingRequestTests(unittest.TestCase):
                 stream_event_max_bytes=256,
             )
             self.assertIsNone(error_detail)
+            # Primed bytes stay accounted for, but priming holds no admission
+            # slot per frame.
             self.assertEqual(capacity.snapshot.active_bytes, sum(map(len, chunks)))
-            self.assertEqual(capacity.snapshot.active_items, len(chunks))
+            self.assertEqual(capacity.snapshot.active_items, 0)
 
             iterator = response.body_iterator
-            self.assertEqual(await anext(iterator), chunks[0])
+            self.assertEqual(await anext(iterator), b"".join(chunks))
+            # The merged lease is released as soon as replay resumes past the
+            # frame it handed to the client.
             self.assertEqual(capacity.snapshot.active_bytes, sum(map(len, chunks)))
-            self.assertEqual(capacity.snapshot.active_items, len(chunks))
-            self.assertEqual(await anext(iterator), chunks[1])
-            self.assertEqual(capacity.snapshot.active_bytes, len(chunks[1]))
-            self.assertEqual(capacity.snapshot.active_items, 1)
             with self.assertRaises(StopAsyncIteration):
                 await anext(iterator)
+            self.assertEqual(capacity.snapshot.active_bytes, 0)
+            self.assertEqual(capacity.snapshot.active_items, 0)
 
         run_async(scenario())
 
@@ -1238,7 +1345,7 @@ class MakeStreamingRequestTests(unittest.TestCase):
         self.assertEqual(capacity.snapshot.active_bytes, 0)
         self.assertEqual(capacity.snapshot.active_items, 0)
 
-    def test_replay_close_releases_current_and_unreplayed_prefetch(self):
+    def test_replay_close_releases_retained_primed_bytes(self):
         chunks = [
             b": keepalive\n\n",
             b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
@@ -1257,7 +1364,8 @@ class MakeStreamingRequestTests(unittest.TestCase):
             )
             self.assertIsNone(error_detail)
             iterator = response.body_iterator
-            self.assertEqual(await anext(iterator), chunks[0])
+            self.assertEqual(await anext(iterator), b"".join(chunks))
+            self.assertEqual(capacity.snapshot.active_bytes, sum(map(len, chunks)))
             await iterator.aclose()
 
         run_async(scenario())
@@ -1282,29 +1390,46 @@ class MakeStreamingRequestTests(unittest.TestCase):
                 stream_event_max_bytes=len(chunk),
             )
             self.assertIsNone(first_error)
+            self.assertEqual(capacity.snapshot.active_bytes, len(chunk))
 
-            second_task = asyncio.create_task(
-                _make_streaming_request(
-                    second_client,
-                    "https://upstream.example/v1/chat/completions",
-                    {},
-                    {},
-                    stream_observation_capacity=capacity,
-                    stream_event_max_bytes=len(chunk),
+            # Bytes primed by the first stream stay charged to the shared
+            # budget, so a second priming fails closed instead of overdrawing it.
+            with self.assertRaises(LocalStreamObservationError) as error:
+                await asyncio.wait_for(
+                    _make_streaming_request(
+                        second_client,
+                        "https://upstream.example/v1/chat/completions",
+                        {},
+                        {},
+                        stream_observation_capacity=capacity,
+                        stream_event_max_bytes=len(chunk),
+                    ),
+                    timeout=1,
                 )
+            self.assertEqual(
+                error.exception.reason_code,
+                "decode_capacity_exhausted",
             )
-            await asyncio.sleep(0)
-            self.assertFalse(second_task.done())
-            self.assertEqual(capacity.snapshot.waiters, 1)
+            self.assertTrue(second_client.context.closed)
 
             self.assertEqual(
                 b"".join([part async for part in first_response.body_iterator]),
                 chunk,
             )
-            second_response, second_error = await second_task
-            self.assertIsNone(second_error)
+            self.assertEqual(capacity.snapshot.active_bytes, 0)
+
+            third_client = _FakeStreamingClient([chunk])
+            third_response, third_error = await _make_streaming_request(
+                third_client,
+                "https://upstream.example/v1/chat/completions",
+                {},
+                {},
+                stream_observation_capacity=capacity,
+                stream_event_max_bytes=len(chunk),
+            )
+            self.assertIsNone(third_error)
             self.assertEqual(
-                b"".join([part async for part in second_response.body_iterator]),
+                b"".join([part async for part in third_response.body_iterator]),
                 chunk,
             )
 

@@ -180,7 +180,14 @@ def _operation_rules_providers(raw_operation_rules: Any) -> set[str]:
 def _fallback_rules_providers(raw_fallback_rules: Any) -> set[str]:
     providers: set[str] = set()
     for rule in raw_fallback_rules:
-        for fallback_model in rule.get("fallback_models") or []:
+        referenced = list(rule.get("fallback_models") or [])
+        # Валидатор проверяет провайдера context_overflow_fallback наравне с
+        # обычными моделями цепочки, поэтому синтетический providers.json
+        # должен покрывать и его.
+        context_overflow_fallback = rule.get("context_overflow_fallback")
+        if isinstance(context_overflow_fallback, dict):
+            referenced.append(context_overflow_fallback)
+        for fallback_model in referenced:
             provider = fallback_model.get("provider")
             if isinstance(provider, str):
                 providers.add(provider)
