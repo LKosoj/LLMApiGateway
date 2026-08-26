@@ -18,6 +18,7 @@ from ..config.config_store import (
     AtomicConfigTransactionState,
     CommentsBackupLifecycle,
     CommentsBackupState,
+    ConfigDocument,
     ConfigFile,
     ConfigSourceBundle,
     ConfigSourceError,
@@ -402,7 +403,7 @@ class ConfigUpdateCoordinator:
             await self._commit_lock.acquire()
             try:
                 try:
-                    self._validate_commit_preconditions(
+                    target_document = self._validate_commit_preconditions(
                         base_snapshot=base_snapshot,
                         base_bundle=base_bundle,
                         config_file=config_file,
@@ -411,12 +412,12 @@ class ConfigUpdateCoordinator:
                     )
                     if comments_backup:
                         backup = CommentsBackupLifecycle.begin(
-                            base_bundle[config_file]
+                            target_document
                         )
                         if backup is not None:
                             backup.prepare()
                     transaction = AtomicConfigFileTransaction.begin(
-                        base_bundle[config_file],
+                        target_document,
                         candidate_bytes,
                         new_file_mode=_NEW_CONFIG_FILE_MODE,
                     )
@@ -927,7 +928,8 @@ class ConfigUpdateCoordinator:
         config_file: ConfigFile,
         expected_revision: ConfigRevision | None,
         candidate: RuntimeCandidate,
-    ) -> None:
+    ) -> ConfigDocument:
+        """Validate the commit and return the disk document to write against."""
         self._raise_if_admitted_update_cannot_commit()
         self._validate_manager_generation(base_snapshot.generation)
         self._validate_expected_revision(
@@ -935,7 +937,7 @@ class ConfigUpdateCoordinator:
             config_file,
             expected_revision,
         )
-        self._validate_source_digests(
+        current_bundle = self._validate_source_digests(
             base_bundle=base_bundle,
             config_file=config_file,
         )
@@ -959,6 +961,8 @@ class ConfigUpdateCoordinator:
                 ConfigUpdateErrorCode.GENERATION_BUSY
             ) from None
 
+        return current_bundle[config_file]
+
     def _validate_manager_generation(self, expected_generation: int) -> None:
         from .runtime_config import RuntimeManagerStatus
 
@@ -972,7 +976,7 @@ class ConfigUpdateCoordinator:
         *,
         base_bundle: ConfigSourceBundle,
         config_file: ConfigFile,
-    ) -> None:
+    ) -> ConfigSourceBundle:
         """Reject a write whose validation base no longer matches the disk.
 
         Only content identity is compared: the candidate was validated
@@ -980,6 +984,13 @@ class ConfigUpdateCoordinator:
         hold. Filesystem metadata is deliberately excluded — a ``chmod`` or
         an atomic replacement with identical bytes changes nothing the
         candidate depends on.
+
+        The recaptured bundle is returned so the caller can use it as the
+        transaction base: the atomic transaction does compare full document
+        identity, and it copies the target's mode/uid/gid onto the file it
+        writes. Handing it the loaded snapshot instead would make an
+        out-of-band ``chmod`` an unresolvable conflict and would silently
+        restore the old permissions on every save.
 
         Drift here always means the loaded snapshot fell behind the disk,
         and that holds for the file being written just as much as for the
@@ -1003,7 +1014,7 @@ class ConfigUpdateCoordinator:
             if current_digests[candidate_file] != base_digests[candidate_file]
         )
         if not drifted:
-            return
+            return current_bundle
         logger.warning(
             "Loaded configuration no longer matches disk for %s; "
             "an update of %s cannot proceed until the runtime is resynced.",

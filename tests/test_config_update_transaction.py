@@ -777,6 +777,41 @@ def test_out_of_band_drift_is_rejected_and_external_bytes_survive(
     run_async(scenario())
 
 
+def test_metadata_only_drift_commits_and_adopts_the_new_permissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        harness = await _make_harness(tmp_path, monkeypatch)
+        config_file = ConfigFile.MODEL_RULES
+        target = tmp_path / FILENAMES[config_file]
+        candidate_bytes = _model_rules("alias-one")
+        try:
+            target.chmod(0o640)
+            (tmp_path / FILENAMES[ConfigFile.PROVIDERS]).chmod(0o640)
+
+            result = await harness.coordinator.update(
+                base_snapshot=harness.initial_snapshot,
+                config_file=config_file,
+                candidate_bytes=candidate_bytes,
+                expected_revision=_revision(
+                    harness.initial_snapshot,
+                    config_file,
+                ),
+            )
+
+            assert result.snapshot.generation == 2
+            assert target.read_bytes() == candidate_bytes
+            assert stat.S_IMODE(target.stat().st_mode) == 0o640
+            result_bundle = result.snapshot.config_loader.source_bundle
+            assert isinstance(result_bundle, ConfigSourceBundle)
+            assert result_bundle == result_bundle.recapture()
+        finally:
+            await harness.shutdown()
+
+    run_async(scenario())
+
+
 def test_publish_failure_rolls_back_exact_file_and_closes_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
