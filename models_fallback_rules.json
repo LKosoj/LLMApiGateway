@@ -13,7 +13,7 @@
         },
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1310720,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -85,7 +85,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 272000,
+        "context_window": 1050000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -93,14 +93,14 @@
         ]
       },
       {
-        "provider": "alibaba",
-        "model": "deepseek-v4-flash-0731",
+        "provider": "agentrouter",
+        "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1310720,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -166,7 +166,7 @@
       "custom_headers": {},
       "supports_vision": false,
       "supports_tools": true,
-      "context_window": 1048576,
+      "context_window": 1310720,
       "capabilities_autofilled": [
         "context_window",
         "supports_tools",
@@ -252,7 +252,7 @@
         },
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1310720,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -402,21 +402,6 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
-        "provider": "openrouter",
-        "model": "stealth/ox-alpha",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
         "provider": "agentrouter",
         "model": "gpt-5.6-sol",
         "use_provider_order_as_fallback": false,
@@ -490,7 +475,7 @@
         },
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1310720,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -708,14 +693,14 @@
     "gateway_model_name": "llmgateway/free",
     "fallback_models": [
       {
-        "provider": "anymodel",
-        "model": "am/deepseek-v4-flash",
+        "provider": "agentrouter",
+        "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

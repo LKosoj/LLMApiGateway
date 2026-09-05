@@ -241,6 +241,14 @@ class RouterDispatchTests(unittest.TestCase):
                 ],
                 "rotate_models": False,
             },
+            "gateway/light": {
+                "fallback_models": [{"provider": "p1", "model": "light-upstream"}],
+                "rotate_models": False,
+            },
+            "gateway/free": {
+                "fallback_models": [{"provider": "p1", "model": "free-upstream"}],
+                "rotate_models": False,
+            },
         }
         loader.fusion_rules = {}
         loader.operation_rules = {}
@@ -348,6 +356,246 @@ class RouterDispatchTests(unittest.TestCase):
         self.assertEqual(seen_models, ["selector-upstream", "model-a", "model-b"])
         self.assertEqual(response["choices"][0]["message"]["content"], "final from model-b")
         self.assertEqual(response["router"]["selected_candidate_id"], "gateway:gateway/high")
+
+    def test_recent_tool_error_selects_premium_without_selector_call(self):
+        config_loader = self._config_loader(
+            [
+                {"type": "gateway_model", "model": "gateway/light", "cost_hint": "cheap"},
+                {"type": "gateway_model", "model": "gateway/free", "cost_hint": "free"},
+                {"type": "gateway_model", "model": "gateway/high", "cost_hint": "premium"},
+            ]
+        )
+        request = self._request(config_loader)
+        service = request.state.runtime_snapshot.router_model_service
+        seen_models = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
+            seen_models.append(payload["model"])
+            return _openai_response("recovered")
+
+        with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
+            observed = run_async(
+                service.run_observed(
+                    request=request,
+                    gateway_model_name="gateway/router",
+                    router_config=config_loader.router_rules["gateway/router"],
+                    request_body={
+                        "model": "gateway/router",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "exec_command", "arguments": "{}"},
+                                    }
+                                ],
+                            },
+                            {
+                                "role": "tool",
+                                "tool_call_id": "call_1",
+                                "content": "Traceback (most recent call last): SyntaxError: invalid syntax",
+                            },
+                        ],
+                    },
+                )
+            )
+        response = observed.response
+
+        self.assertEqual(seen_models, ["model-a"])
+        self.assertEqual([component.model for component in observed.observation.components], ["model-a"])
+        self.assertEqual(response["router"]["selected_candidate_id"], "gateway:gateway/high")
+        self.assertEqual(response["router"]["reason"], "tool_error")
+        self.assertEqual(response["router"]["decision_source"], "tool_history")
+        self.assertIsNone(response["router"]["confidence"])
+        self.assertEqual(response["usage"]["total_tokens"], 2)
+
+    def test_passed_tests_after_edit_select_cheap_but_not_free(self):
+        config_loader = self._config_loader(
+            [
+                {"type": "gateway_model", "model": "gateway/light", "cost_hint": "cheap"},
+                {"type": "gateway_model", "model": "gateway/free", "cost_hint": "free"},
+                {"type": "gateway_model", "model": "gateway/high", "cost_hint": "premium"},
+            ]
+        )
+        request = self._request(config_loader)
+        seen_models = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
+            seen_models.append(payload["model"])
+            return _openai_response("next step")
+
+        with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
+            response = run_async(
+                _dispatch_chat_request(
+                    request,
+                    {
+                        "model": "gateway/router",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "apply_patch", "arguments": "{}"},
+                                    }
+                                ],
+                            },
+                            {"role": "tool", "tool_call_id": "call_1", "content": "Done!"},
+                            {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_2",
+                                        "type": "function",
+                                        "function": {"name": "exec_command", "arguments": "{}"},
+                                    }
+                                ],
+                            },
+                            {"role": "tool", "tool_call_id": "call_2", "content": "12 passed in 0.4s"},
+                        ],
+                    },
+                )
+            )
+
+        self.assertEqual(seen_models, ["light-upstream"])
+        self.assertEqual(response["router"]["selected_candidate_id"], "gateway:gateway/light")
+        self.assertEqual(response["router"]["reason"], "tests_passed_after_change")
+        self.assertEqual(response["router"]["decision_source"], "tool_history")
+
+    def test_ambiguous_tool_history_still_uses_selector(self):
+        config_loader = self._config_loader(
+            [
+                {"type": "gateway_model", "model": "gateway/light", "cost_hint": "cheap"},
+                {"type": "gateway_model", "model": "gateway/high", "cost_hint": "premium"},
+            ]
+        )
+        request = self._request(config_loader)
+        seen_models = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
+            seen_models.append(payload["model"])
+            if payload["model"] == "selector-upstream":
+                return _openai_response(json.dumps({"candidate_id": "gateway:gateway/light"}))
+            return _openai_response("answer")
+
+        with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
+            response = run_async(
+                _dispatch_chat_request(
+                    request,
+                    {
+                        "model": "gateway/router",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "read_file", "arguments": "{}"},
+                                    }
+                                ],
+                            },
+                            {"role": "tool", "tool_call_id": "call_1", "content": "file contents"},
+                        ],
+                    },
+                )
+            )
+
+        self.assertEqual(seen_models, ["selector-upstream", "light-upstream"])
+        self.assertEqual(response["router"]["decision_source"], "llm_selector")
+
+    def test_partial_test_failure_still_uses_selector(self):
+        config_loader = self._config_loader(
+            [
+                {"type": "gateway_model", "model": "gateway/light", "cost_hint": "cheap"},
+                {"type": "gateway_model", "model": "gateway/high", "cost_hint": "premium"},
+            ]
+        )
+        request = self._request(config_loader)
+        seen_models = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
+            seen_models.append(payload["model"])
+            if payload["model"] == "selector-upstream":
+                return _openai_response(json.dumps({"candidate_id": "gateway:gateway/high"}))
+            return _openai_response("fix the failure")
+
+        with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
+            response = run_async(
+                _dispatch_chat_request(
+                    request,
+                    {
+                        "model": "gateway/router",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "apply_patch", "arguments": "{}"},
+                                    }
+                                ],
+                            },
+                            {
+                                "role": "tool",
+                                "tool_call_id": "call_1",
+                                "content": "1 failed, 12 passed in 0.4s",
+                            },
+                        ],
+                    },
+                )
+            )
+
+        self.assertEqual(seen_models, ["selector-upstream", "model-a"])
+        self.assertEqual(response["router"]["decision_source"], "llm_selector")
+
+    def test_rates_resolve_cheap_target_when_cost_hints_are_missing(self):
+        config_loader = self._config_loader(
+            [
+                {"type": "gateway_model", "model": "gateway/light"},
+                {"type": "gateway_model", "model": "gateway/high"},
+            ]
+        )
+        config_loader.providers_config["p1"].models = {
+            "light-upstream": {"input_rate": 1, "output_rate": 2},
+            "model-a": {"input_rate": 10, "output_rate": 20},
+        }
+        request = self._request(config_loader)
+        seen_models = []
+
+        async def fake_make_llm_request(client, url, headers, payload, is_streaming, **_kwargs):
+            seen_models.append(payload["model"])
+            return _openai_response("next step")
+
+        with patch("llm_gateway_core.api.v1.chat.make_llm_request", side_effect=fake_make_llm_request):
+            response = run_async(
+                _dispatch_chat_request(
+                    request,
+                    {
+                        "model": "gateway/router",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "apply_patch", "arguments": "{}"},
+                                    }
+                                ],
+                            },
+                            {"role": "tool", "tool_call_id": "call_1", "content": "5 passed in 0.2s"},
+                        ],
+                    },
+                )
+            )
+
+        self.assertEqual(seen_models, ["light-upstream"])
+        self.assertEqual(response["router"]["selected_candidate_id"], "gateway:gateway/light")
 
     def test_routing_policy_and_target_hints_reach_the_selector(self):
         config_loader = self._config_loader(

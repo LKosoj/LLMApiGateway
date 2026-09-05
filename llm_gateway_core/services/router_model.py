@@ -11,6 +11,8 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -22,6 +24,46 @@ from .chat_accounting import ChatTerminalObservation, ObservedChatResponse
 from .operation_accounting import build_token_model_component
 
 logger = logging.getLogger(__name__)
+
+_RECENT_TOOL_WINDOW = 3
+_TOOL_ERROR_MARKERS = (
+    "out of memory",
+    "cannot allocate memory",
+    "connection refused",
+    "traceback (most recent call last)",
+    "modulenotfounderror:",
+    "importerror:",
+    "assertionerror",
+    "syntaxerror:",
+    "timeouterror",
+    "deadline exceeded",
+    "filenotfounderror:",
+    "no such file or directory",
+    "exit code 1",
+    "exit code 2",
+    "exit status 1",
+    "returned non-zero",
+)
+_TEST_PASS_MARKERS = (
+    "tests passed",
+    "all tests passed",
+    "passed in",
+    "test result: ok",
+)
+_EDIT_TOOL_NAMES = {
+    "apply_patch",
+    "create_file",
+    "edit",
+    "multiedit",
+    "new_file",
+    "notebookedit",
+    "patch",
+    "str_replace",
+    "text_editor",
+    "write",
+    "write_file",
+}
+_NONZERO_TEST_FAILURE = re.compile(r"\b[1-9]\d*\s+(?:failed|failures?|errors?)\b")
 
 _SELECTOR_SYSTEM_PROMPT = (
     "You are an internal routing selector for LLMApiGateway. Choose exactly one "
@@ -208,6 +250,126 @@ def _request_summary(request_body: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+        nested = block.get("content")
+        if block.get("type") == "tool_result":
+            nested_text = _content_text(nested)
+            if nested_text:
+                parts.append(nested_text)
+    return "\n".join(parts)
+
+
+def _tool_history(messages: list[Any]) -> tuple[list[str], list[str]]:
+    results: list[str] = []
+    calls: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") == "tool":
+            results.append(_content_text(message.get("content")))
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function")
+            if isinstance(function, dict) and isinstance(function.get("name"), str):
+                calls.append(function["name"].lower())
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type == "tool_use" and isinstance(block.get("name"), str):
+                calls.append(block["name"].lower())
+            elif block_type in {"tool_result", "function_call_output"}:
+                results.append(_content_text(block.get("content") or block.get("output")))
+    return results[-_RECENT_TOOL_WINDOW:], calls[-_RECENT_TOOL_WINDOW:]
+
+
+def _tool_result_failed(text: str) -> bool:
+    lower = text.lower()
+    return any(marker in lower for marker in _TOOL_ERROR_MARKERS)
+
+
+def _tests_passed(results: list[str]) -> bool:
+    for result in results:
+        lower = result.lower()
+        if (
+            any(marker in lower for marker in _TEST_PASS_MARKERS)
+            and not _tool_result_failed(result)
+            and _NONZERO_TEST_FAILURE.search(lower) is None
+        ):
+            return True
+    return False
+
+
+def _candidate_rate(candidate: dict[str, Any]) -> float | None:
+    metadata = candidate.get("metadata")
+    if not isinstance(metadata, dict):
+        fallback_chain = candidate.get("fallback_chain") or candidate.get("remaining_fallback_chain")
+        if isinstance(fallback_chain, list) and fallback_chain and isinstance(fallback_chain[0], dict):
+            metadata = fallback_chain[0].get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    input_rate = metadata.get("input_rate")
+    output_rate = metadata.get("output_rate")
+    if not isinstance(input_rate, (int, float)) or not isinstance(output_rate, (int, float)):
+        return None
+    rate = float(input_rate) + float(output_rate)
+    if not math.isfinite(rate) or rate <= 0:
+        return None
+    return rate
+
+
+def _candidate_for_cost_tier(candidates: list[dict[str, Any]], tier: str) -> dict[str, Any] | None:
+    explicit = [candidate for candidate in candidates if candidate.get("cost_hint") == tier]
+    if len(explicit) == 1:
+        return explicit[0]
+    if explicit:
+        return None
+
+    priced = [
+        (rate, candidate)
+        for candidate in candidates
+        if candidate.get("cost_hint") is None
+        if (rate := _candidate_rate(candidate)) is not None
+    ]
+    if len(priced) < 2:
+        return None
+    extreme = min(rate for rate, _candidate in priced) if tier == "cheap" else max(
+        rate for rate, _candidate in priced
+    )
+    matches = [candidate for rate, candidate in priced if rate == extreme]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _direct_stage_decision(
+    candidates: list[dict[str, Any]], messages: list[Any]
+) -> tuple[dict[str, Any], str] | None:
+    results, calls = _tool_history(messages)
+    if not results:
+        return None
+    if any(_tool_result_failed(result) for result in results):
+        candidate = _candidate_for_cost_tier(candidates, "premium")
+        return (candidate, "tool_error") if candidate is not None else None
+    if _tests_passed(results) and any(call in _EDIT_TOOL_NAMES for call in calls):
+        candidate = _candidate_for_cost_tier(candidates, "cheap")
+        return (candidate, "tests_passed_after_change") if candidate is not None else None
+    return None
+
+
 def _coerce_token_count(value: Any) -> int:
     try:
         return max(int(value or 0), 0)
@@ -299,40 +461,54 @@ class RouterModelService:
         )
         candidates_by_id = {candidate["id"]: candidate for candidate in candidates}
 
-        selector_response = await self._call_selector(
-            request=request,
-            selector_model=router_config["selector_model"],
-            routing_policy=router_config.get("routing_policy"),
-            candidates=candidates,
-            request_body=request_body,
-        )
-        selector_usage = selector_response.get("usage") if isinstance(selector_response, dict) else {}
-        selector_provider = getattr(request.state, "llmgateway_provider", None)
-        selector_provider_model = getattr(request.state, "llmgateway_provider_model", None)
-        if not isinstance(selector_provider, str) or not isinstance(
-            selector_provider_model,
-            str,
-        ):
-            raise AccountingValidationError
-        selector_component = build_token_model_component(
-            selector_response,
-            provider=selector_provider,
-            model=selector_provider_model,
-            cost_rate_registry=self._cost_rate_registry,
-        )
-        selector_text = _extract_text(selector_response)
-        try:
-            decision = _parse_selector_decision(selector_text)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Router selector returned invalid JSON: {exc}") from exc
-
-        selected_id = decision["candidate_id"]
-        selected_candidate = candidates_by_id.get(selected_id)
-        if selected_candidate is None:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Router selector chose unknown candidate_id '{selected_id}'.",
+        selector_component = None
+        selector_usage: dict[str, Any] = {}
+        direct_decision = _direct_stage_decision(candidates, messages)
+        if direct_decision is not None:
+            selected_candidate, reason = direct_decision
+            selected_id = selected_candidate["id"]
+            decision = {
+                "candidate_id": selected_id,
+                "reason": reason,
+                "confidence": None,
+            }
+            decision_source = "tool_history"
+        else:
+            selector_response = await self._call_selector(
+                request=request,
+                selector_model=router_config["selector_model"],
+                routing_policy=router_config.get("routing_policy"),
+                candidates=candidates,
+                request_body=request_body,
             )
+            selector_usage = selector_response.get("usage") if isinstance(selector_response, dict) else {}
+            selector_provider = getattr(request.state, "llmgateway_provider", None)
+            selector_provider_model = getattr(request.state, "llmgateway_provider_model", None)
+            if not isinstance(selector_provider, str) or not isinstance(
+                selector_provider_model,
+                str,
+            ):
+                raise AccountingValidationError
+            selector_component = build_token_model_component(
+                selector_response,
+                provider=selector_provider,
+                model=selector_provider_model,
+                cost_rate_registry=self._cost_rate_registry,
+            )
+            selector_text = _extract_text(selector_response)
+            try:
+                decision = _parse_selector_decision(selector_text)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"Router selector returned invalid JSON: {exc}") from exc
+
+            selected_id = decision["candidate_id"]
+            selected_candidate = candidates_by_id.get(selected_id)
+            if selected_candidate is None:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Router selector chose unknown candidate_id '{selected_id}'.",
+                )
+            decision_source = "llm_selector"
 
         response = await self._dispatch_selected_target(
             request=request,
@@ -359,10 +535,14 @@ class RouterModelService:
             model=delegate_model,
             cost_rate_registry=self._cost_rate_registry,
         )
+        components = (delegate_component,) if selector_component is None else (
+            selector_component,
+            delegate_component,
+        )
         observation = ChatTerminalObservation(
             top_provider=delegate_provider,
             top_model=delegate_model,
-            components=(selector_component, delegate_component),
+            components=components,
         )
 
         response_usage = response.get("usage")
@@ -382,6 +562,7 @@ class RouterModelService:
             "selected_candidate": selected_candidate,
             "reason": decision.get("reason"),
             "confidence": decision.get("confidence"),
+            "decision_source": decision_source,
         }
         return ObservedChatResponse(response=response, observation=observation)
 
