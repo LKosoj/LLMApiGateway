@@ -5,6 +5,7 @@ from llm_gateway_core.api.v1.chat_model_behavior import (
     ModelBehaviorFailureDetail,
     describe_degenerate_response,
     detect_degenerate_non_stream_response,
+    detect_upstream_provider_error_non_stream,
 )
 
 
@@ -491,6 +492,75 @@ class ModelBehaviorFailureDetailTests(unittest.TestCase):
     def test_model_behavior_detail_rejects_unknown_class(self):
         with self.assertRaises(ValueError):
             ModelBehaviorFailureDetail("bad", behavior_class="not_a_registered_class")
+
+
+class UpstreamProviderErrorTests(unittest.TestCase):
+    def test_exact_prefix_and_fourteen_tokens_is_error(self):
+        response_data = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": (
+                            "[Error] The upstream provider is temporarily unavailable. "
+                            "Try again shortly."
+                        ),
+                    }
+                }
+            ],
+            "usage": {"completion_tokens": 14},
+        }
+
+        result = detect_upstream_provider_error_non_stream(
+            response_data,
+            "provider-model",
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsInstance(result, ModelBehaviorFailureDetail)
+        self.assertEqual(result.behavior_class, "upstream_provider_error")
+
+    def test_prefix_with_other_token_count_is_not_error(self):
+        response_data = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "[Error] The upstream provider is unavailable.",
+                    }
+                }
+            ],
+            "usage": {"completion_tokens": 13},
+        }
+
+        result = detect_upstream_provider_error_non_stream(
+            response_data,
+            "provider-model",
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsNone(result)
+
+    def test_fourteen_tokens_without_prefix_is_not_error(self):
+        response_data = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "A legitimate answer with a different beginning.",
+                    }
+                }
+            ],
+            "usage": {"completion_tokens": 14},
+        }
+
+        result = detect_upstream_provider_error_non_stream(
+            response_data,
+            "provider-model",
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

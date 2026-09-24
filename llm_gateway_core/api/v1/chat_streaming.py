@@ -15,7 +15,7 @@ from ...services.chat_accounting import (
     build_direct_chat_terminal_observation,
 )
 from ...services.request_handler import replace_streaming_response_body
-from ...services.stream_observation import SSEEvent, parse_sse_json
+from ...services.stream_observation import SSEEvent, SSEFramer, parse_sse_json
 from ...utils.text_sanitize import sanitize_payload
 from ...utils.usage_tracking import ModelCostRates, estimate_token_count, extract_tokens_usage
 from .chat_accounting import ChatStreamDialect
@@ -26,6 +26,11 @@ from .chat_dialects import (
     _build_openai_usage_to_responses_usage,
     _coerce_anthropic_usage_token_count,
     _map_finish_reason_to_anthropic,
+)
+from .chat_model_behavior import (
+    ModelBehaviorFailureDetail,
+    UPSTREAM_PROVIDER_ERROR_PREFIX,
+    detect_upstream_provider_error_text,
 )
 from .chat_sanitizers import strip_think_blocks as _strip_think_blocks
 from ...services.tool_call_rescue import (
@@ -58,6 +63,108 @@ def get_token_usage(chunk_data: dict) -> dict:
     Returns a dict with prompt_tokens, completion_tokens, total_tokens, etc.
     """
     return extract_tokens_usage(chunk_data)
+
+
+async def detect_upstream_provider_error_stream(
+    response: StreamingResponse,
+    provider_model: str,
+    *,
+    is_anthropic_provider: bool,
+) -> tuple[StreamingResponse, ModelBehaviorFailureDetail | None]:
+    """Hold only a possible upstream-error stream until it can be classified."""
+    source_iterator = response.body_iterator
+    buffered_chunks: list[object] = []
+    framer = SSEFramer()
+    text_parts: list[str] = []
+    completion_tokens: object = None
+    incompatible_output = False
+
+    def inspect_events(events: tuple[SSEEvent, ...]) -> None:
+        nonlocal completion_tokens, incompatible_output
+        for event in events:
+            if event.done:
+                continue
+            payload = parse_sse_json(event)
+            if not isinstance(payload, Mapping):
+                continue
+            usage = payload.get("usage")
+            if isinstance(usage, Mapping):
+                token_key = "output_tokens" if is_anthropic_provider else "completion_tokens"
+                if usage.get(token_key) is not None:
+                    completion_tokens = usage.get(token_key)
+            if is_anthropic_provider:
+                if payload.get("type") == "content_block_start":
+                    content_block = payload.get("content_block")
+                    if isinstance(content_block, Mapping) and content_block.get("type") != "text":
+                        incompatible_output = True
+                delta = payload.get("delta")
+                if isinstance(delta, Mapping) and delta.get("type") not in (None, "text_delta"):
+                    incompatible_output = True
+                if isinstance(delta, Mapping) and delta.get("type") == "text_delta":
+                    text = delta.get("text")
+                    if isinstance(text, str):
+                        text_parts.append(text)
+                continue
+            choices = payload.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, Mapping):
+                    continue
+                delta = choice.get("delta")
+                if not isinstance(delta, Mapping):
+                    continue
+                if delta.get("tool_calls") or delta.get("function_call"):
+                    incompatible_output = True
+                reasoning_content = delta.get("reasoning_content")
+                if isinstance(reasoning_content, str) and reasoning_content:
+                    incompatible_output = True
+                content = delta.get("content")
+                if isinstance(content, str):
+                    text_parts.append(content)
+
+    async def replay_buffered_and_source():
+        for chunk in buffered_chunks:
+            yield chunk
+        async for chunk in source_iterator:
+            yield chunk
+
+    async for chunk in source_iterator:
+        buffered_chunks.append(chunk)
+        if not isinstance(chunk, bytes):
+            return replace_streaming_response_body(
+                response,
+                replay_buffered_and_source(),
+            ), None
+        inspect_events(framer.feed(chunk).events)
+        if incompatible_output:
+            return replace_streaming_response_body(
+                response,
+                replay_buffered_and_source(),
+            ), None
+        text_content = "".join(text_parts)
+        if text_content and not (
+            UPSTREAM_PROVIDER_ERROR_PREFIX.startswith(text_content)
+            or text_content.startswith(UPSTREAM_PROVIDER_ERROR_PREFIX)
+        ):
+            return replace_streaming_response_body(
+                response,
+                replay_buffered_and_source(),
+            ), None
+
+    inspect_events(framer.finish().events)
+    text_content = "".join(text_parts)
+    if isinstance(completion_tokens, bool) or not isinstance(completion_tokens, (int, float)):
+        completion_tokens = estimate_token_count(text_content, provider_model)
+    failure = detect_upstream_provider_error_text(text_content, completion_tokens)
+    if failure is not None:
+        return response, failure
+
+    async def replay_buffered():
+        for chunk in buffered_chunks:
+            yield chunk
+
+    return replace_streaming_response_body(response, replay_buffered()), None
 
 
 def _buffer_json_stream_suffix(content: str, state: dict) -> str:

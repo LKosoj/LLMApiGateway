@@ -2340,6 +2340,62 @@ class ModelBehaviorFailoverTests(unittest.TestCase):
     @patch("main.TokensUsageDB")
     @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
+    def test_streamed_upstream_provider_error_falls_back_to_next_model(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_config_loader = self._two_model_config_loader()
+        config_loader_cls.return_value = fake_config_loader
+
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        async def error_stream():
+            yield b'data: {"choices":[{"delta":{"content":"[Error] The upstream "}}]}\n\n'
+            yield b'data: {"choices":[{"delta":{"content":"provider is temporarily unavailable. Try again shortly."}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        async def success_stream():
+            yield b'data: {"choices":[{"delta":{"content":"Fallback answer"}}]}\n\n'
+            yield b'data: {"choices":[],"usage":{"completion_tokens":2}}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        make_llm_request_mock.side_effect = [
+            (StreamingResponse(error_stream(), media_type="text/event-stream"), None),
+            (StreamingResponse(success_stream(), media_type="text/event-stream"), None),
+        ]
+
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                with client.stream(
+                    "POST",
+                    "/v1/chat/completions",
+                    json={
+                        "model": "gateway-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    },
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                ) as response:
+                    response_text = response.read().decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Fallback answer", response_text)
+        self.assertNotIn("The upstream provider", response_text)
+        self.assertEqual(make_llm_request_mock.await_count, 2)
+        self.assertEqual(
+            [call.args[3]["model"] for call in make_llm_request_mock.await_args_list],
+            ["first-model", "second-model"],
+        )
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
     def test_fallback_event_error_type_is_empty_completion(
         self,
         config_loader_cls,

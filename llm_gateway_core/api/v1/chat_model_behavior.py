@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 
+from ...utils.usage_tracking import estimate_token_count
 from .chat_sanitizers import (
     expects_json_object_response,
     extract_sanitized_json_object_content,
@@ -34,8 +35,16 @@ DEGENERATE_PREVIEW_CHARS = 400
 # is a placeholder for the upcoming tool-call-rescue package (Package E) and is
 # not produced anywhere yet.
 MODEL_BEHAVIOR_FAILURE_CLASSES: frozenset[str] = frozenset(
-    {"empty_completion", "format_ignored", "unparsed_tool_call_dialect"}
+    {
+        "empty_completion",
+        "format_ignored",
+        "unparsed_tool_call_dialect",
+        "upstream_provider_error",
+    }
 )
+
+UPSTREAM_PROVIDER_ERROR_PREFIX = "[Error] The upstream provider"
+UPSTREAM_PROVIDER_ERROR_COMPLETION_TOKENS = 14
 
 
 class ModelBehaviorFailureDetail(str):
@@ -147,6 +156,54 @@ def _extract_anthropic_block_text(content_blocks: list, block_type: str, text_ke
         if isinstance(block, dict) and block.get("type") == block_type
     ]
     return "".join(part for part in text_parts if isinstance(part, str))
+
+
+def detect_upstream_provider_error_text(
+    text: str,
+    completion_tokens: object,
+) -> ModelBehaviorFailureDetail | None:
+    if (
+        text.startswith(UPSTREAM_PROVIDER_ERROR_PREFIX)
+        and not isinstance(completion_tokens, bool)
+        and completion_tokens == UPSTREAM_PROVIDER_ERROR_COMPLETION_TOKENS
+    ):
+        return ModelBehaviorFailureDetail(
+            "Model returned an upstream-provider error as completion text.",
+            behavior_class="upstream_provider_error",
+        )
+    return None
+
+
+def detect_upstream_provider_error_non_stream(
+    response_data: object,
+    provider_model: str,
+    *,
+    is_anthropic_provider: bool,
+) -> ModelBehaviorFailureDetail | None:
+    if not isinstance(response_data, dict):
+        return None
+
+    usage = response_data.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    if is_anthropic_provider:
+        content_blocks = response_data.get("content")
+        content_blocks = content_blocks if isinstance(content_blocks, list) else []
+        text_content = _extract_anthropic_block_text(content_blocks, "text", "text")
+        completion_tokens = usage.get("output_tokens")
+    else:
+        choices = response_data.get("choices")
+        first_choice = choices[0] if isinstance(choices, list) and choices else None
+        first_choice = first_choice if isinstance(first_choice, dict) else {}
+        message = first_choice.get("message")
+        message = message if isinstance(message, dict) else {}
+        text_content = _extract_openai_message_text(message.get("content"))
+        completion_tokens = usage.get("completion_tokens")
+
+    if not text_content.startswith(UPSTREAM_PROVIDER_ERROR_PREFIX):
+        return None
+    if isinstance(completion_tokens, bool) or not isinstance(completion_tokens, (int, float)):
+        completion_tokens = estimate_token_count(text_content, provider_model)
+    return detect_upstream_provider_error_text(text_content, completion_tokens)
 
 
 def _detect_degenerate_anthropic_completion(

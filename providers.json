@@ -157,7 +157,8 @@
       "available_models": [
         "glm-5.3",
         "glm-5.2",
-        "glm-5-turbo"
+        "glm-5-turbo",
+        "GLM-5.3-Flash"
       ],
       "routing": {
         "strategy": "round-robin",
@@ -448,6 +449,9 @@
           "input_rate": 0.3,
           "output_rate": 1.2
         }
+      },
+      "custom_headers": {
+        "User-Agent": "Cline/1.0"
       },
       "routing": {
         "strategy": "round-robin",

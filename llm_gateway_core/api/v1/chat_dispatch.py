@@ -72,6 +72,7 @@ from .chat_model_behavior import (
     ModelBehaviorFailureDetail,
     describe_degenerate_response,
     detect_degenerate_non_stream_response,
+    detect_upstream_provider_error_non_stream,
 )
 from .chat_sanitizers import (
     expects_json_object_response as _expects_json_object_response,
@@ -87,6 +88,7 @@ from .chat_streaming import (
     _sanitize_openai_json_object_stream,
     _sanitize_openai_stream_think_tags,
     _sanitize_openai_stream_tool_call_rescue,
+    detect_upstream_provider_error_stream,
 )
 from ...services.tool_call_rescue import (
     build_tool_schema_map,
@@ -946,11 +948,34 @@ async def attempt_model_fallback_rule(
             duration_ms = int((time.monotonic() - t0) * 1000)
             _record_rate_limit_observations(target_url, response_headers)
 
+            if (
+                response_data
+                and error_detail is None
+                and is_streaming
+                and isinstance(response_data, StreamingResponse)
+            ):
+                response_data, error_detail = await detect_upstream_provider_error_stream(
+                    response_data,
+                    provider_model,
+                    is_anthropic_provider=is_anthropic_provider,
+                )
+                if error_detail is not None:
+                    logging.warning(
+                        "Detected upstream-provider error response from model '%s' via provider '%s'.",
+                        provider_model,
+                        provider_name,
+                    )
+                    response_data = None
+
             if response_data and error_detail is None and not is_streaming:
                 # Detection must run before _observe_success(): the accounting
                 # handoff is one-shot, and publishing on a degenerate attempt
                 # would burn it before the eventual successful attempt.
-                behavior_detail = detect_degenerate_non_stream_response(
+                behavior_detail = detect_upstream_provider_error_non_stream(
+                    response_data,
+                    provider_model,
+                    is_anthropic_provider=is_anthropic_provider,
+                ) or detect_degenerate_non_stream_response(
                     response_data,
                     request_body_json,
                     is_anthropic_provider=is_anthropic_provider,
@@ -1127,12 +1152,36 @@ async def attempt_model_fallback_rule(
                     duration_ms = int((time.monotonic() - t0) * 1000)
                     _record_rate_limit_observations(target_url, response_headers)
 
+                    if (
+                        response_data
+                        and error_detail is None
+                        and is_streaming
+                        and isinstance(response_data, StreamingResponse)
+                    ):
+                        response_data, error_detail = await detect_upstream_provider_error_stream(
+                            response_data,
+                            provider_model,
+                            is_anthropic_provider=is_anthropic_provider,
+                        )
+                        if error_detail is not None:
+                            logging.warning(
+                                "Detected upstream-provider error response from model '%s' via provider '%s' sub-provider '%s'.",
+                                provider_model,
+                                provider_name,
+                                sub_provider,
+                            )
+                            response_data = None
+
                     if response_data and error_detail is None and not is_streaming:
                         # Detection must run before _observe_success(): the
                         # accounting handoff is one-shot, and publishing on a
                         # degenerate attempt would burn it before the eventual
                         # successful attempt.
-                        behavior_detail = detect_degenerate_non_stream_response(
+                        behavior_detail = detect_upstream_provider_error_non_stream(
+                            response_data,
+                            provider_model,
+                            is_anthropic_provider=is_anthropic_provider,
+                        ) or detect_degenerate_non_stream_response(
                             response_data,
                             request_body_json,
                             is_anthropic_provider=is_anthropic_provider,

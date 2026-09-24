@@ -93,14 +93,14 @@
         ]
       },
       {
-        "provider": "agentrouter",
-        "model": "deepseek-v4-flash",
+        "provider": "z.ai",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1310720,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -417,6 +417,21 @@
         ]
       },
       {
+        "provider": "anymodel",
+        "model": "cx/gpt-6-astra",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1050000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
         "provider": "kimicode",
         "model": "k3",
         "use_provider_order_as_fallback": false,
@@ -709,7 +724,7 @@
       },
       {
         "provider": "anymodel",
-        "model": "am/minimax-m3",
+        "model": "am/kimi-k3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
@@ -718,7 +733,7 @@
         },
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 512000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -868,7 +883,7 @@
     "fallback_models": [
       {
         "provider": "cerebras",
-        "model": "gemma-4-31b",
+        "model": "qwen-3.8-27b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
