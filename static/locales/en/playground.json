@@ -141,6 +141,7 @@
     "running": "Running…",
     "uploadingPdf": "Uploading PDF…",
     "pdfRunning": "Running · {percent, number}%",
+    "pdfReconnecting": "Connection lost. Retrying job status…",
     "error": "Request failed with status {status, number}.",
     "done": "Done in {seconds, number}s",
     "chatDone": "Done in {seconds, number}s · context {count, number}/{limit, number}",

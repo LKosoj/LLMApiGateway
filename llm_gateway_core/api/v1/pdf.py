@@ -350,6 +350,10 @@ def _parse_pdf_terminal_observation(
 ) -> OperationTerminalObservation:
     if not isinstance(payload, Mapping):
         raise AccountingValidationError
+    # PDF messages describe job status rather than chat usage envelopes.
+    if isinstance(payload.get("message"), str):
+        payload = dict(payload)
+        payload.pop("message")
     return parse_upstream_operation_observation(
         payload,
         policy=owner.context.policy,

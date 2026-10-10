@@ -383,6 +383,9 @@ async def get_models(request: Request):
         for model_name in router_rules.keys():
             _add_capability(gateway_models, model_name, "chat")
     _add_gateway_operation_models(gateway_models, operation_rules)
+    for model_name, rule in fallback_rules.items():
+        if any(candidate.get("supports_vision") is True for candidate in rule["fallback_models"]):
+            _add_input_modalities(gateway_models, model_name, ("image",))
 
     # 2. Fetch and add models from the fallback provider
     fallback_provider_name = settings.fallback_provider
@@ -545,6 +548,9 @@ async def get_model(model_id: str, request: Request):
         for model_name in router_rules.keys():
             _add_capability(gateway_models, model_name, "chat")
     _add_gateway_operation_models(gateway_models, operation_rules)
+    for model_name, rule in fallback_rules.items():
+        if any(candidate.get("supports_vision") is True for candidate in rule["fallback_models"]):
+            _add_input_modalities(gateway_models, model_name, ("image",))
     gateway_models = _apply_model_rules_to_gateway_models(
         gateway_models,
         getattr(config_loader_instance, "model_rules", None),

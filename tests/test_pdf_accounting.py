@@ -553,10 +553,12 @@ def test_pdf_job_non_success_releases_without_charge(method: str, status: str) -
         ({}, DEFAULT_OPERATION_COST_USD, CostSource.OPERATION_DEFAULT),
     ],
 )
+@pytest.mark.parametrize("status_fields", [{}, {"message": "Готово"}])
 def test_pdf_job_success_without_usage_uses_calculator_or_default(
     calculators: dict[tuple[str, str], OperationCostCalculator],
     expected_cost: float,
     expected_source: CostSource,
+    status_fields: dict[str, str],
 ) -> None:
     async def scenario() -> None:
         request, services = _request(
@@ -567,7 +569,7 @@ def test_pdf_job_success_without_usage_uses_calculator_or_default(
         )
         events: list[object] = []
         _install_successful_commit(services.accounting_service, events)
-        payload = {"id": "job-1", "status": "completed"}
+        payload = {"id": "job-1", "status": "completed", **status_fields}
 
         with _get_dependencies(payload):
             response = await pdf.get_pdf_job("job-1", "gateway/pdf", request)

@@ -59,6 +59,7 @@
         running: "status.running",
         uploadingPdf: "status.uploadingPdf",
         pdfRunning: "status.pdfRunning",
+        pdfReconnecting: "status.pdfReconnecting",
         error: "status.error",
         done: "status.done",
         chatDone: "status.chatDone",
@@ -1425,9 +1426,15 @@
 
             while (job.status === "queued" || job.status === "running") {
                 await new Promise((resolve) => setTimeout(resolve, 1000));
-                job = await fetchPdfJobJson(
-                    `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}?model=${encodeURIComponent(model)}`
-                );
+                try {
+                    job = await fetchPdfJobJson(
+                        `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}?model=${encodeURIComponent(model)}`
+                    );
+                } catch (err) {
+                    if (!(err instanceof TypeError)) throw err;
+                    setStatus(kind, KEYS.pdfReconnecting, false, {}, err.message || String(err));
+                    continue;
+                }
                 setStatus(
                     kind,
                     KEYS.pdfRunning,

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
@@ -273,6 +274,38 @@ class ModelsCapabilitiesTests(unittest.TestCase):
 
             with TestClient(main.app) as client:
                 yield client, fake_http_client
+
+    def test_vision_metadata_in_list_and_single_model_for_both_formats(self):
+        for supports_vision in (None, False, True):
+            rules = json.loads(VALID_FALLBACK_RULES_TEXT)
+            rules[1]["fallback_models"][0]["supports_vision"] = supports_vision
+            self.rules_path.write_text(json.dumps(rules), encoding="utf-8")
+            self.config_loader = ConfigLoader(
+                providers_filename=str(self.providers_path),
+                fallback_rules_filename=str(self.rules_path),
+                operation_rules_filename=str(self.operation_rules_path),
+                fusion_rules_filename=str(self.fusion_rules_path),
+                model_rules_filename=str(self.model_rules_path),
+                router_rules_filename=str(self.router_rules_path),
+            )
+            expected_inputs = ["text", "image"] if supports_vision else ["text"]
+            with self._client() as (client, _):
+                for headers in (
+                    {"Authorization": "Bearer test-gateway-key"},
+                    {"x-api-key": "test-gateway-key"},
+                ):
+                    for path in ("/v1/models", "/v1/models/gateway/chat-and-embeddings"):
+                        with self.subTest(vision=supports_vision, headers=headers, path=path):
+                            response = client.get(path, headers=headers)
+                            self.assertEqual(response.status_code, 200)
+                            model = response.json()
+                            if path == "/v1/models":
+                                model = next(
+                                    item for item in model["data"]
+                                    if item["id"] == "gateway/chat-and-embeddings"
+                                )
+                            self.assertEqual(model["architecture"]["input_modalities"], expected_inputs)
+                            self.assertEqual(model["architecture"]["output_modalities"], ["text", "embeddings"])
 
     def test_models_endpoint_merges_capabilities_from_chat_embeddings_and_rerank_rules(self):
         with self._client() as (client, fake_http_client):

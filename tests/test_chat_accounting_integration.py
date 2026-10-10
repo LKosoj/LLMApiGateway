@@ -380,13 +380,12 @@ def test_direct_openai_stream_publishes_at_upstream_terminal_and_preserves_bytes
             yield expected[57:]
 
         response = StreamingResponse(body(), media_type="text/event-stream")
-        source_iterator = response.body_iterator
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
         )
         assert isinstance(result, StreamingResponse)
-        assert result.body_iterator is source_iterator
+        assert result is response
 
         received = b"".join([chunk async for chunk in result.body_iterator])
 
@@ -408,12 +407,8 @@ def test_direct_openai_stream_rejects_non_finite_json() -> None:
             yield frames
 
         response = StreamingResponse(body(), media_type="text/event-stream")
-        result, handoff = await _attempt_direct(response, streaming=True)
-        assert isinstance(result, StreamingResponse)
-
-        received = b"".join([chunk async for chunk in result.body_iterator])
-        with pytest.raises(AccountingValidationError):
-            _observe_handoff_stream(handoff, received)
+        with pytest.raises(ValueError, match="non-finite JSON constants are not supported"):
+            await _attempt_direct(response, streaming=True)
 
     run_async(scenario())
 
@@ -439,7 +434,6 @@ def test_direct_native_anthropic_stream_publishes_actual_split_usage() -> None:
         }
         request = _direct_request(anthropic_payload=anthropic_payload)
         response = StreamingResponse(body(), media_type="text/event-stream")
-        source_iterator = response.body_iterator
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
@@ -447,7 +441,7 @@ def test_direct_native_anthropic_stream_publishes_actual_split_usage() -> None:
             request=request,
         )
         assert isinstance(result, StreamingResponse)
-        assert result.body_iterator is source_iterator
+        assert result is response
 
         received = b"".join([chunk async for chunk in result.body_iterator])
 
@@ -461,7 +455,7 @@ def test_direct_native_anthropic_stream_publishes_actual_split_usage() -> None:
     run_async(scenario())
 
 
-def test_direct_responses_stream_uses_client_wire_observer_without_wrapper() -> None:
+def test_direct_responses_stream_preserves_bytes_for_client_wire_observer() -> None:
     async def scenario() -> None:
         frames = (
             b'event: response.completed\ndata: {"type":"response.completed",'
@@ -476,7 +470,6 @@ def test_direct_responses_stream_uses_client_wire_observer_without_wrapper() -> 
         request = _direct_request()
         request.state.llmgateway_original_responses_payload = {"stream": True}
         response = StreamingResponse(body(), media_type="text/event-stream")
-        source_iterator = response.body_iterator
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
@@ -484,8 +477,8 @@ def test_direct_responses_stream_uses_client_wire_observer_without_wrapper() -> 
         )
 
         assert result is response
-        assert response.body_iterator is source_iterator
         received = b"".join([chunk async for chunk in response.body_iterator])
+        assert received == frames
         _observe_handoff_stream(handoff, received)
         observation = handoff.take()
         assert observation.usage.prompt_tokens == 2
@@ -507,13 +500,12 @@ def test_direct_stream_without_actual_usage_commits_estimated_usage() -> None:
             yield b"data: [DONE]\n\n"
 
         response = StreamingResponse(body(), media_type="text/event-stream")
-        source_iterator = response.body_iterator
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
         )
         assert isinstance(result, StreamingResponse)
-        assert result.body_iterator is source_iterator
+        assert result is response
 
         received = b"".join([chunk async for chunk in result.body_iterator])
         _observe_handoff_stream(handoff, received)

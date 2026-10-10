@@ -141,6 +141,7 @@
     "running": "Выполняется…",
     "uploadingPdf": "Загрузка PDF…",
     "pdfRunning": "Выполняется · {percent, number}%",
+    "pdfReconnecting": "Связь прервалась. Повторяем запрос статуса задания…",
     "error": "Запрос завершился со статусом {status, number}.",
     "done": "Готово за {seconds, number} с",
     "chatDone": "Готово за {seconds, number} с · контекст {count, number}/{limit, number}",

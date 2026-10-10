@@ -548,6 +548,7 @@ def test_lock_file_replacement_failure_fails_closed(
 ) -> None:
     lock_path = tmp_path / LOCK_FILENAME
     lock_path.touch(mode=0o660)
+    lock_path.chmod(0o660)
     secret = "unlink-secret-sentinel"
 
     def denied_unlink(path: str, *args: object, **kwargs: object) -> None:

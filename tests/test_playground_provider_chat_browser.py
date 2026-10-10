@@ -219,3 +219,42 @@ def test_provider_message_pins_provider_header(
         assert captured[1]["body"]["model"] == "gateway/chat-stream"
     finally:
         context.close()
+
+
+@pytest.mark.parametrize('failure', ['network', 'http'])
+def test_pdf_polling_recovers_network_errors_without_resubmission(browser, provider_chat_server, failure):
+    context = _login(browser, provider_chat_server)
+    calls = []
+    try:
+        page = context.new_page()
+        page.route('**/v1/ui/playground/models', lambda route: route.fulfill(json={'pdf_conversions': ['gateway/pdf']}))
+
+        def handle(route):
+            calls.append(route.request.method)
+            job = {'id': 'test-job', 'status': 'running', 'percent': 25, 'message': 'Checking formulas'}
+            if route.request.method == 'POST':
+                route.fulfill(json=job)
+            elif calls.count('GET') == 1:
+                if failure == 'network':
+                    route.abort('failed')
+                else:
+                    route.fulfill(status=403, json={'detail': 'Forbidden'})
+            else:
+                route.fulfill(json={**job, 'status': 'succeeded', 'percent': 100,
+                                    'downloads': [{'artifact': 'docx', 'filename': 'test.docx'}]})
+
+        page.route('**/v1/pdf/jobs**', handle)
+        page.goto(f'{provider_chat_server}/v1/ui/playground')
+        page.locator('[data-playground-section-tab="pdf-conversion"]').click()
+        page.locator('#pdfConversionFile').set_input_files({'name': 'test.pdf', 'mimeType': 'application/pdf', 'buffer': b'%PDF-1.4\n'})
+        page.locator('#pdfConversionForm .run-button').click()
+        status = page.locator('[data-status-for="pdf-conversion"]')
+        if failure == 'network':
+            expect(status).to_contain_text('Connection lost', timeout=10000)
+            expect(page.locator('[data-result-for="pdf-conversion"] a')).to_have_count(1, timeout=10000)
+            assert calls == ['POST', 'GET', 'GET']
+        else:
+            expect(status).to_contain_text('Error 403', timeout=10000)
+            assert calls == ['POST', 'GET']
+    finally:
+        context.close()
