@@ -20,6 +20,7 @@ const rulesEmptyState = document.getElementById('rulesEmptyState');
 const tabOpenRouterFree = document.querySelector('[data-entity-target="openrouter-free"]');
 const editorContainerRules = document.getElementById('editor-container-rules');
 const editorContainerEmbeddings = document.getElementById('editor-container-embeddings');
+const editorContainerDecisions = document.getElementById('editor-container-decisions');
 const editorContainerRerank = document.getElementById('editor-container-rerank');
 const editorContainerImages = document.getElementById('editor-container-images');
 const editorContainerAudio = document.getElementById('editor-container-audio');
@@ -42,6 +43,9 @@ const providersEmptyState = document.getElementById('providersEmptyState');
 const addEmbeddingButton = document.getElementById('addEmbeddingButton');
 const embeddingsList = document.getElementById('embeddingsList');
 const embeddingsEmptyState = document.getElementById('embeddingsEmptyState');
+const addDecisionsButton = document.getElementById('addDecisionsButton');
+const decisionsList = document.getElementById('decisionsList');
+const decisionsEmptyState = document.getElementById('decisionsEmptyState');
 const addRerankButton = document.getElementById('addRerankButton');
 const rerankList = document.getElementById('rerankList');
 const rerankEmptyState = document.getElementById('rerankEmptyState');
@@ -97,6 +101,7 @@ const modelRulesRawInput = document.getElementById('modelRulesRawInput');
         tabOpenRouterFree,
         editorContainerRules,
         editorContainerEmbeddings,
+        editorContainerDecisions,
         editorContainerRerank,
         editorContainerImages,
         editorContainerAudio,
@@ -119,6 +124,9 @@ const modelRulesRawInput = document.getElementById('modelRulesRawInput');
         addEmbeddingButton,
         embeddingsList,
         embeddingsEmptyState,
+        addDecisionsButton,
+        decisionsList,
+        decisionsEmptyState,
         addRerankButton,
         rerankList,
         rerankEmptyState,
@@ -219,6 +227,7 @@ export function registerCore(ctx) {
     const CONFIG_NAME_KEYS = new Map([
         ['Fallback Rules', 'editor:tabs.rules'],
         ['Embeddings Routes', 'editor:sections.embeddings.title'],
+        ['Decisions Routes', 'editor:sections.decisions.title'],
         ['Rerank Routes', 'editor:sections.rerank.title'],
         ['Images Routes', 'editor:messages.imagesName'],
         ['Audio Routes', 'editor:messages.audioName'],
@@ -679,7 +688,7 @@ export function registerCore(ctx) {
     }
 
     function currentDocumentName() {
-        if (['embeddings', 'rerank', 'images', 'audio', 'web'].includes(ctx.state.activeEditor)) {
+        if (['embeddings', 'decisions', 'rerank', 'images', 'audio', 'web'].includes(ctx.state.activeEditor)) {
             return 'operation';
         }
         return {
@@ -940,6 +949,7 @@ export function registerCore(ctx) {
         const key = {
             rules: 'editor:actions.saveFallback',
             embeddings: 'editor:actions.saveEmbeddings',
+            decisions: 'editor:actions.saveDecisions',
             rerank: 'editor:actions.saveRerank',
             images: 'editor:actions.saveImages',
             audio: 'editor:actions.saveAudio',
@@ -957,6 +967,7 @@ export function registerCore(ctx) {
         return {
             rules: ctx.state.originalRulesContent,
             embeddings: ctx.state.originalEmbeddingsContent,
+            decisions: ctx.state.originalDecisionsContent,
             rerank: ctx.state.originalRerankContent,
             images: ctx.state.originalImagesContent,
             audio: ctx.state.originalAudioContent,
@@ -1665,6 +1676,13 @@ export function registerCore(ctx) {
                 return true;
             }
         }
+        if (ctx.state.activeEditor === 'decisions' && ctx.state.originalDecisionsContent !== null) {
+            try {
+                return ctx.getNormalizedDecisionsContent() !== ctx.state.originalDecisionsContent;
+            } catch (error) {
+                return true;
+            }
+        }
         if (ctx.state.activeEditor === 'rerank' && ctx.state.originalRerankContent !== null) {
             try {
                 return ctx.getNormalizedRerankContent() !== ctx.state.originalRerankContent;
@@ -1741,6 +1759,7 @@ export function registerCore(ctx) {
         return !(
             ctx.state.originalRulesContent !== null
             || ctx.state.originalEmbeddingsContent !== null
+            || ctx.state.originalDecisionsContent !== null
             || ctx.state.originalRerankContent !== null
             || ctx.state.originalImagesContent !== null
             || ctx.state.originalAudioContent !== null
@@ -1780,6 +1799,8 @@ export function registerCore(ctx) {
         ctx.elements.editorContainerRouter.style.display = 'none';
         ctx.elements.editorContainerModelRules.classList.remove('active');
         ctx.elements.editorContainerModelRules.style.display = 'none';
+        ctx.elements.editorContainerDecisions.classList.remove('active');
+        ctx.elements.editorContainerDecisions.style.display = 'none';
 
         if (tabName === 'rules') {
             ctx.elements.editorContainerRules.classList.add('active');
@@ -1817,6 +1838,26 @@ export function registerCore(ctx) {
             ctx.elements.editorContainerProviders.classList.remove('active');
             ctx.elements.editorContainerProviders.style.display = 'none';
             return ctx.loadEmbeddingsEditor();
+        } else if (tabName === 'decisions') {
+            ctx.elements.editorContainerRules.classList.remove('active');
+            ctx.elements.editorContainerRules.style.display = 'none';
+            ctx.elements.editorContainerEmbeddings.classList.remove('active');
+            ctx.elements.editorContainerEmbeddings.style.display = 'none';
+            ctx.elements.editorContainerDecisions.classList.add('active');
+            ctx.elements.editorContainerDecisions.style.display = 'flex';
+            ctx.elements.editorContainerRerank.classList.remove('active');
+            ctx.elements.editorContainerRerank.style.display = 'none';
+            ctx.elements.editorContainerImages.classList.remove('active');
+            ctx.elements.editorContainerImages.style.display = 'none';
+            ctx.elements.editorContainerAudio.classList.remove('active');
+            ctx.elements.editorContainerAudio.style.display = 'none';
+            ctx.elements.editorContainerWeb.classList.remove('active');
+            ctx.elements.editorContainerWeb.style.display = 'none';
+            ctx.elements.editorContainerFallbackEval.classList.remove('active');
+            ctx.elements.editorContainerFallbackEval.style.display = 'none';
+            ctx.elements.editorContainerProviders.classList.remove('active');
+            ctx.elements.editorContainerProviders.style.display = 'none';
+            return ctx.loadDecisionsEditor();
         } else if (tabName === 'rerank') {
             ctx.elements.editorContainerRules.classList.remove('active');
             ctx.elements.editorContainerRules.style.display = 'none';
@@ -2048,6 +2089,9 @@ export function registerCore(ctx) {
         if (ctx.state.activeEditor === 'embeddings') {
             return ctx.loadEmbeddingsEditor();
         }
+        if (ctx.state.activeEditor === 'decisions') {
+            return ctx.loadDecisionsEditor();
+        }
         if (ctx.state.activeEditor === 'rerank') {
             return ctx.loadRerankEditor();
         }
@@ -2188,6 +2232,7 @@ export function registerCore(ctx) {
 const ENTITY_DOCUMENT_LABEL_KEYS = {
     rules: 'editor:tabs.rules',
     embeddings: 'editor:tabs.embeddings',
+    decisions: 'editor:tabs.decisions',
     rerank: 'editor:tabs.rerank',
     images: 'editor:tabs.images',
     audio: 'editor:tabs.audio',

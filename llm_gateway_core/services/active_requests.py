@@ -15,6 +15,7 @@ _PATH_OPERATION_SUFFIXES = (
     ("/messages", "messages"),
     ("/embeddings", "embeddings"),
     ("/rerank", "rerank"),
+    ("/decisions", "decisions"),
     ("/images/generations", "images_generation"),
     ("/images/edits", "images_edit"),
     ("/images", "images_generation"),

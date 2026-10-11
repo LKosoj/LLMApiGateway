@@ -76,6 +76,7 @@
                     <div class="editor-entity-group" data-entity-group="operation">
                         <h2 class="editor-entity-group-title" data-i18n="editor:panel.groups.operation">Operation</h2>
                         <button type="button" class="editor-entity-item" data-entity-target="embeddings" data-i18n="editor:tabs.embeddings">Embeddings</button>
+                        <button type="button" class="editor-entity-item" data-entity-target="decisions" data-i18n="editor:tabs.decisions">Decisions</button>
                         <button type="button" class="editor-entity-item" data-entity-target="rerank" data-i18n="editor:tabs.rerank">Rerank</button>
                         <button type="button" class="editor-entity-item" data-entity-target="images" data-i18n="editor:tabs.images">Images</button>
                         <button type="button" class="editor-entity-item" data-entity-target="audio" data-i18n="editor:tabs.audio">Audio</button>
@@ -133,6 +134,21 @@
                     <div id="embeddingsList" class="rules-list"></div>
                     <div id="embeddingsEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.embeddings.empty">
                         No embedding routes yet. Add the first embedding model to begin.
+                    </div>
+                </div>
+            </div>
+            <div id="editor-container-decisions" class="editor-tab-content" role="tabpanel" style="display: none;">
+                <div id="decisionsBuilder" class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong data-i18n="editor:sections.decisions.title">Decisions Routes</strong>
+                            <span data-i18n="editor:sections.decisions.description">Configure routes for /v1/decisions endpoint.</span>
+                        </div>
+                        <button id="addDecisionsButton" type="button" class="secondary-button" data-i18n="editor:actions.addDecisionsModel">Add Decisions Model</button>
+                    </div>
+                    <div id="decisionsList" class="rules-list"></div>
+                    <div id="decisionsEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.decisions.empty">
+                        No decisions routes yet. Add the first decisions model to begin.
                     </div>
                 </div>
             </div>

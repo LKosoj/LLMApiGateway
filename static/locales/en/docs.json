@@ -19,6 +19,10 @@
         "hint": "Operation routes for /v1/embeddings.",
         "title": "Embeddings"
       },
+      "decisions": {
+        "hint": "Decision routes for /v1/decisions.",
+        "title": "Decisions"
+      },
       "images": {
         "hint": "Generation and editing models for /v1/images*.",
         "title": "Images"
@@ -146,6 +150,37 @@
       "text006": "Client-side user identifier.",
       "text007": "OpenAI-compatible embeddings response with",
       "text008": "and"
+    },
+    "decisions": {
+      "heading": "Decisions",
+      "kicker": "Structured decisions",
+      "text001": "Use the gateway model",
+      "text002": "State can be a string, object, or array.",
+      "text003": "A non-empty object",
+      "text004": ". Fields depend on the question type.",
+      "text005": "or",
+      "text006": "A text instruction or JSON value.",
+      "text007": "For",
+      "text008": "can be a non-empty object with",
+      "text009": ". For",
+      "text010": "requires a non-empty options object. For",
+      "text011": "requires a non-empty levels array.",
+      "text012": "and",
+      "text013": ". The field",
+      "text014": "is the cost in rubles, not USD.",
+      "text015": "Streaming is not supported for Decisions.",
+      "text016": "The next route",
+      "text017": "is used after Jev when Jev temporarily returns",
+      "text018": "or an accounting response error. The gateway switches before recording spend; a",
+      "text019": "does not trigger replacement. Spend is recorded only for a successful response.",
+      "text020": "If upstream returns a valid",
+      "text021": ", it has priority in USD. Otherwise the gateway calculates cost from",
+      "text022": "and actual input/output tokens. The response stores",
+      "text023": "in rubles, not USD.",
+      "text024": "For score, values and levels use index 0. The client chooses the confidence threshold; noul, probabilities and confidence help interpret the answer together with that threshold.",
+      "exampleNoul": "Example: noul",
+      "exampleChoice": "Example: choice",
+      "exampleScore": "Example: score"
     },
     "images": {
       "heading": "Image generation and editing",
@@ -411,6 +446,7 @@
     "audio": "Audio",
     "auth": "Authorization",
     "embeddings": "Embeddings",
+    "decisions": "Decisions",
     "images": "Images",
     "keys": "Access",
     "models": "Models",

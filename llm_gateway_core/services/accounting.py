@@ -1269,6 +1269,7 @@ _BILLING_POLICIES = MappingProxyType(
         ("POST", "/v1/v1/messages"): BillingPolicy("chat", BillingUnit.TOKEN),
         ("POST", "/v1/embeddings"): BillingPolicy("embeddings", BillingUnit.TOKEN),
         ("POST", "/v1/rerank"): BillingPolicy("rerank", BillingUnit.TOKEN),
+        ("POST", "/v1/decisions"): BillingPolicy("decisions", BillingUnit.TOKEN),
         ("POST", "/v1/images"): BillingPolicy("images_generation", BillingUnit.OPERATION),
         ("POST", "/v1/images/generations"): BillingPolicy(
             "images_generation",

@@ -5,6 +5,7 @@ export function registerOperations(ctx) {
     function normalizeOperationRulesPayload(payload = {}) {
         const normalized = {
             embeddings: Array.isArray(payload.embeddings) ? payload.embeddings : [],
+            decisions: Array.isArray(payload.decisions) ? payload.decisions : [],
             rerank: Array.isArray(payload.rerank) ? payload.rerank : [],
             images_generations: Array.isArray(payload.images_generations) ? payload.images_generations : [],
             images_edits: Array.isArray(payload.images_edits) ? payload.images_edits : [],
@@ -30,6 +31,7 @@ export function registerOperations(ctx) {
     function applyOperationRulesPayload(payload = {}) {
         const normalized = normalizeOperationRulesPayload(payload);
         ctx.state.embeddingRules = normalized.embeddings;
+        ctx.state.decisionsRules = normalized.decisions;
         ctx.state.rerankRules = normalized.rerank;
         ctx.state.imageGenerationRules = normalized.images_generations;
         ctx.state.imageEditRules = normalized.images_edits;
@@ -46,6 +48,7 @@ export function registerOperations(ctx) {
     function buildOperationRoutesPayload(overrides = {}, basePayload = null) {
         const source = basePayload ? normalizeOperationRulesPayload(basePayload) : {
             embeddings: ctx.state.embeddingRules,
+            decisions: ctx.state.decisionsRules,
             rerank: ctx.state.rerankRules,
             images_generations: ctx.state.imageGenerationRules,
             images_edits: ctx.state.imageEditRules,
@@ -61,6 +64,7 @@ export function registerOperations(ctx) {
         }
         const payload = {
             embeddings: overrides.embeddings ?? source.embeddings,
+            decisions: overrides.decisions ?? source.decisions,
             rerank: overrides.rerank ?? source.rerank,
             images_generations: overrides.images_generations ?? source.images_generations,
             images_edits: overrides.images_edits ?? source.images_edits,
@@ -202,7 +206,84 @@ export function registerOperations(ctx) {
         return ctx.stableSerialize(getEmbeddingsPayloadForSave());
     }
 
-    function normalizeEmbeddingRouteForSave(routeRow) {
+    function getDecisionsPayloadForSave(basePayload = null) {
+        const decisions = Array.from(ctx.elements.decisionsList.querySelectorAll('.rule-card')).map(normalizeDecisionsCardForSave);
+        return buildOperationRoutesPayload({ decisions }, basePayload);
+    }
+
+    function getNormalizedDecisionsContent() {
+        return ctx.stableSerialize(getDecisionsPayloadForSave());
+    }
+
+    function normalizeDecisionsCardForSave(ruleCard) {
+        const gatewayModelInput = ruleCard.querySelector('.gateway-model-input');
+        const routeRows = Array.from(ruleCard.querySelectorAll('.fallback-list > .fallback-row'));
+        const gatewayModelName = gatewayModelInput.value.trim();
+        if (!gatewayModelName) {
+            throw new Error('Each decisions model rule must have a gateway model name.');
+        }
+        if (routeRows.length === 0) {
+            throw new Error(`Decisions model '${gatewayModelName}' must contain at least one route.`);
+        }
+        return {
+            gateway_model_name: gatewayModelName,
+            routes: routeRows.map(routeRow => normalizeEmbeddingRouteForSave(routeRow, '/decisions')),
+        };
+    }
+
+    async function loadDecisionsEditor() {
+        try {
+            const loaded = await loadOperationRulesPayload(
+                'Decisions Routes',
+                async payload => {
+                    await renderDecisions(payload.decisions);
+                }
+            );
+            if (!loaded) {
+                ctx.showLocalizedMessage('warning', 'A newer local edit was preserved. Reload again to discard it.');
+                return false;
+            }
+            ctx.state.originalDecisionsContent = getNormalizedDecisionsContent();
+            ctx.updateSaveButtonDisabledState();
+            ctx.showLocalizedMessage('success', 'Decisions Routes loaded successfully.');
+            return true;
+        } catch (error) {
+            console.error('Error fetching Decisions Routes:', error);
+            ctx.showLocalizedError('Error loading Decisions Routes:', error);
+            ctx.state.originalDecisionsContent = null;
+            ctx.updateSaveButtonDisabledState();
+            return false;
+        }
+    }
+
+    function refreshDecisionsEmptyState() {
+        ctx.elements.decisionsEmptyState.hidden = ctx.elements.decisionsList.children.length !== 0;
+    }
+
+    function renderDecisions(decisions) {
+        ctx.elements.decisionsList.textContent = '';
+        if (!Array.isArray(decisions) || decisions.length === 0) {
+            refreshDecisionsEmptyState();
+            return;
+        }
+        decisions.forEach(decision => ctx.elements.decisionsList.appendChild(buildDecisionsCard(decision)));
+        refreshDecisionsEmptyState();
+    }
+
+    function buildDecisionsCard(initialData) {
+        return buildEmbeddingCard(initialData, {
+            gatewayPlaceholder: 'llmgateway/decisions-model',
+            refreshEmptyState: refreshDecisionsEmptyState,
+            addRouteAction: 'Add Route',
+            buildRouteRow: buildDecisionsRouteRow,
+        });
+    }
+
+    function buildDecisionsRouteRow(initialData) {
+        return buildEmbeddingRouteRow(initialData, '/decisions');
+    }
+
+    function normalizeEmbeddingRouteForSave(routeRow, defaultTargetPath = '/embeddings') {
         const providerSelect = routeRow.querySelector('.provider-select');
         const modelInput = routeRow.querySelector('.model-input');
         const customBodyParamsInput = routeRow.querySelector('.custom-body-params-input');
@@ -224,7 +305,7 @@ export function registerOperations(ctx) {
         const routePayload = {
             provider,
             model,
-            target_path: targetPathInput.value.trim() || '/embeddings',
+            target_path: targetPathInput.value.trim() || defaultTargetPath,
             custom_body_params: ctx.parseObjectTextarea(customBodyParamsInput.value, 'Custom body params'),
             custom_headers: ctx.parseObjectTextarea(customHeadersInput.value, 'Custom headers'),
         };
@@ -297,7 +378,9 @@ export function registerOperations(ctx) {
         ctx.refreshEmbeddingsEmptyState();
     }
 
-    function buildEmbeddingCard(initialData) {
+    function buildEmbeddingCard(initialData, options = {}) {
+        const refreshEmptyState = options.refreshEmptyState || ctx.refreshEmbeddingsEmptyState;
+        const buildRouteRow = options.buildRouteRow || buildEmbeddingRouteRow;
         const card = document.createElement('section');
         card.className = 'rule-card';
 
@@ -307,7 +390,7 @@ export function registerOperations(ctx) {
         const titleWrap = document.createElement('div');
         titleWrap.className = 'rule-card-title';
 
-        const gatewayModelInput = ctx.createTextInput('gateway-model-input', 'llmgateway/embedding-model');
+        const gatewayModelInput = ctx.createTextInput('gateway-model-input', options.gatewayPlaceholder || 'llmgateway/embedding-model');
         gatewayModelInput.value = initialData.gateway_model_name || '';
         titleWrap.appendChild(ctx.createFieldGroup('Gateway Model Name', gatewayModelInput, 'gateway-model-field'));
 
@@ -317,7 +400,7 @@ export function registerOperations(ctx) {
         ctx.bindKnownActionText(removeButton, 'Remove Model');
         removeButton.addEventListener('click', () => {
             card.remove();
-            ctx.refreshEmbeddingsEmptyState();
+            refreshEmptyState();
         });
 
         cardHeader.appendChild(titleWrap);
@@ -329,9 +412,9 @@ export function registerOperations(ctx) {
         const addRouteButton = document.createElement('button');
         addRouteButton.type = 'button';
         addRouteButton.className = 'secondary-button add-fallback-button';
-        ctx.bindKnownActionText(addRouteButton, 'Add Fallback Route');
+        ctx.bindKnownActionText(addRouteButton, options.addRouteAction || 'Add Fallback Route');
         addRouteButton.addEventListener('click', () => {
-            routeList.appendChild(buildEmbeddingRouteRow({}));
+            routeList.appendChild(buildRouteRow({}));
         });
 
         const cardBody = document.createElement('div');
@@ -379,19 +462,19 @@ export function registerOperations(ctx) {
 
         const routes = Array.isArray(initialData.routes) ? initialData.routes : [];
         routes.forEach(route => {
-            const routeRow = buildEmbeddingRouteRow(route);
+            const routeRow = buildRouteRow(route);
             routeList.appendChild(routeRow);
         });
 
         if (routes.length === 0) {
-            const routeRow = buildEmbeddingRouteRow({});
+            const routeRow = buildRouteRow({});
             routeList.appendChild(routeRow);
         }
 
         return card;
     }
 
-    function buildEmbeddingRouteRow(initialData) {
+    function buildEmbeddingRouteRow(initialData, defaultTargetPath = '/embeddings') {
         const row = document.createElement('div');
         row.className = 'fallback-row';
 
@@ -412,8 +495,8 @@ export function registerOperations(ctx) {
         dataList.id = dataListId;
         row.appendChild(dataList);
 
-        const targetPathInput = ctx.createTextInput('target-path-input', '/embeddings');
-        targetPathInput.value = initialData.target_path || '/embeddings';
+        const targetPathInput = ctx.createTextInput('target-path-input', defaultTargetPath);
+        targetPathInput.value = initialData.target_path || defaultTargetPath;
         targetPathInput.readOnly = true;
         const { retryDelayInput, retryCountInput } = ctx.createRetrySettingsInputs(initialData);
 
@@ -853,6 +936,37 @@ export function registerOperations(ctx) {
         } catch (error) {
             console.error('Error saving Embeddings:', error);
             ctx.showLocalizedError('Error saving Embeddings Routes:', error);
+        } finally {
+            ctx.updateSaveButtonDisabledState();
+        }
+    }
+
+    async function saveDecisions() {
+        ctx.elements.saveButton.disabled = true;
+        ctx.showLocalizedMessage('info', 'Saving Decisions Routes...');
+        let payload;
+        try {
+            payload = getDecisionsPayloadForSave(ctx.getOperationBasePayload());
+        } catch (error) {
+            ctx.showClientValidationError(error);
+            return;
+        }
+        try {
+            const result = await saveOperationPayload(
+                payload,
+                'Error saving Decisions Routes:',
+                () => {
+                    ctx.state.originalDecisionsContent = getNormalizedDecisionsContent();
+                }
+            );
+            if (!result) return;
+            ctx.showLocalizedMessage(
+                'success',
+                ctx.safeSuccessMessage(result.body, 'Decisions Routes updated successfully.')
+            );
+        } catch (error) {
+            console.error('Error saving Decisions:', error);
+            ctx.showLocalizedError('Error saving Decisions Routes:', error);
         } finally {
             ctx.updateSaveButtonDisabledState();
         }
@@ -2103,6 +2217,9 @@ export function registerOperations(ctx) {
         applyOperationCatalog,
         getEmbeddingsPayloadForSave,
         getNormalizedEmbeddingsContent,
+        getDecisionsPayloadForSave,
+        getNormalizedDecisionsContent,
+        refreshDecisionsEmptyState,
         normalizeEmbeddingRouteForSave,
         normalizeEmbeddingCardForSave,
         normalizeEmbeddingRouteRowForSave,
@@ -2110,6 +2227,11 @@ export function registerOperations(ctx) {
         renderEmbeddings,
         buildEmbeddingCard,
         buildEmbeddingRouteRow,
+        normalizeDecisionsCardForSave,
+        loadDecisionsEditor,
+        renderDecisions,
+        buildDecisionsCard,
+        buildDecisionsRouteRow,
         loadRerankEditor,
         renderRerank,
         buildRerankCard,
@@ -2120,6 +2242,7 @@ export function registerOperations(ctx) {
         normalizeRerankCardForSave,
         saveRerank,
         saveEmbeddings,
+        saveDecisions,
         renderImageSection,
         buildImageCard,
         buildImageRouteRow,

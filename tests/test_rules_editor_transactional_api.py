@@ -462,13 +462,14 @@ def test_raw_writers_delegate_exact_bytes_and_backup_policy(
             {},
             (
                 b'{\n  "embeddings": [],\n  "rerank": [],\n'
-                b'  "images_generations": [],\n  "images_edits": []\n}\n'
+                b'  "decisions": [],\n  "images_generations": [],\n  "images_edits": []\n}\n'
             ),
             {
                 "embeddings": [],
                 "rerank": [],
                 "images_generations": [],
                 "images_edits": [],
+                "decisions": [],
             },
         ),
     ],

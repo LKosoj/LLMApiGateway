@@ -34,6 +34,7 @@ CAPABILITY_ORDER = (
     "chat",
     "embeddings",
     "rerank",
+    "decisions",
     "images",
     "audio_speech",
     "audio_transcription",
@@ -47,6 +48,7 @@ MODEL_TYPE_BY_CAPABILITY = {
     "chat": "text",
     "embeddings": "embeddings",
     "rerank": "rerank",
+    "decisions": "decisions",
     "images": "image",
     "audio_speech": "audio",
     "audio_transcription": "audio",
@@ -60,6 +62,7 @@ INPUT_MODALITIES_BY_CAPABILITY = {
     "chat": ("text",),
     "embeddings": ("text",),
     "rerank": ("text",),
+    "decisions": ("text",),
     "images": ("text",),
     "audio_speech": ("text",),
     "audio_transcription": ("audio",),
@@ -73,6 +76,7 @@ OUTPUT_MODALITIES_BY_CAPABILITY = {
     "chat": ("text",),
     "embeddings": ("embeddings",),
     "rerank": ("text",),
+    "decisions": ("decisions",),
     "images": ("image",),
     "audio_speech": ("audio",),
     "audio_transcription": ("text",),
@@ -82,7 +86,7 @@ OUTPUT_MODALITIES_BY_CAPABILITY = {
     "web_research": ("text",),
     "web_deep_research": ("text",),
 }
-MODALITY_ORDER = ("text", "image", "audio", "document", "embeddings")
+MODALITY_ORDER = ("text", "image", "audio", "document", "embeddings", "decisions")
 IMAGE_OPERATION_ORDER = ("generation", "edit")
 WEB_OPERATION_ORDER = ("search", "read", "research", "deep_research")
 
@@ -226,6 +230,9 @@ def _add_web_operation(gateway_models: dict, model_name: str, operation: str) ->
 def _add_gateway_operation_models(gateway_models: dict, operation_rules: dict) -> None:
     for model_name in operation_rules.get("embeddings", {}).keys():
         _add_capability(gateway_models, model_name, "embeddings")
+
+    for model_name in operation_rules.get("decisions", {}).keys():
+        _add_capability(gateway_models, model_name, "decisions")
 
     for model_name in operation_rules.get("rerank", {}).keys():
         _add_capability(gateway_models, model_name, "rerank")

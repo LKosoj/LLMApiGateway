@@ -769,6 +769,7 @@ SUPPORTED_OPERATION_TYPES = frozenset(
     {
         "embeddings",
         "rerank",
+        "decisions",
         "images_generations",
         "images_edits",
         "audio_speech",

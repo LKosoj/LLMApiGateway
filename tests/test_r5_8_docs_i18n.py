@@ -73,7 +73,7 @@ def test_docs_catalogs_and_html_cover_page_prose() -> None:
     assert required <= _leaf_keys(english)
 
     html = (ROOT / "static/gateway-docs.html").read_text(encoding="utf-8")
-    assert html.count("data-docs-api-base") == 11
+    assert html.count("data-docs-api-base") == 14
     assert html.count('data-i18n="docs:') >= 120
     assert 'data-i18n="docs:page.heading"' in html
     assert 'data-i18n-aria-label="docs:tabs.ariaLabel"' in html
@@ -108,6 +108,8 @@ def test_docs_locale_rerender_uses_snapshot_without_refetching_or_rebuilding() -
 def test_docs_preserve_technical_examples_and_separate_raw_errors() -> None:
     html = (ROOT / "static/gateway-docs.html").read_text(encoding="utf-8")
     source = (ROOT / "static/gateway-docs.js").read_text(encoding="utf-8")
+    # Keep the original examples unchanged; Decisions examples have their own tests.
+    html = re.sub(r'<section id="decisions".*?</section>', "", html, flags=re.DOTALL)
     blocks = re.findall(
         r'<pre tabindex="0"><code>(.*?)</code></pre>',
         html,

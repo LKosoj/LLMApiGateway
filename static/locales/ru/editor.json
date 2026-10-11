@@ -26,6 +26,7 @@
   "tabs": {
     "rules": "Правила фолбэка",
     "embeddings": "Эмбеддинги",
+    "decisions": "Decisions",
     "rerank": "Реранкинг",
     "images": "Изображения",
     "audio": "Аудио",
@@ -42,6 +43,7 @@
     "suggestOrder": "Предложить порядок",
     "addGatewayModel": "Добавить модель шлюза",
     "addEmbeddingModel": "Добавить модель эмбеддингов",
+    "addDecisionsModel": "Добавить модель Decisions",
     "addRerankModel": "Добавить модель реранкинга",
     "addFusionModel": "Добавить Fusion-модель",
     "addRouterModel": "Добавить Router-модель",
@@ -59,6 +61,7 @@
     "saveConfiguration": "Сохранить конфигурацию",
     "saveFallback": "Сохранить правила фолбэка",
     "saveEmbeddings": "Сохранить маршруты эмбеддингов",
+    "saveDecisions": "Сохранить маршруты Decisions",
     "saveRerank": "Сохранить маршруты реранкинга",
     "saveImages": "Сохранить маршруты изображений",
     "saveAudio": "Сохранить аудиомаршруты",
@@ -99,6 +102,11 @@
       "title": "Маршруты эмбеддингов",
       "description": "Настройте маршруты эндпойнта /v1/embeddings.",
       "empty": "Маршрутов эмбеддингов пока нет. Добавьте первую модель."
+    },
+    "decisions": {
+      "title": "Маршруты Decisions",
+      "description": "Настройте маршруты эндпойнта /v1/decisions.",
+      "empty": "Маршрутов Decisions пока нет. Добавьте первую модель."
     },
     "rerank": {
       "title": "Маршруты реранкинга",

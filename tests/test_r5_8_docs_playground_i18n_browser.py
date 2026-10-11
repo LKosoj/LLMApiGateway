@@ -59,12 +59,15 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     expect(page.locator("html")).to_have_attribute("data-i18n-state", "ready")
     model_chip = page.locator("#modelCatalog .model-chip", has_text="gateway/chat")
     expect(model_chip).to_have_count(1)
-    expect(page.locator("[data-docs-api-base]")).to_have_count(11)
+    expect(page.locator("[data-docs-api-base]")).to_have_count(14)
     assert page.locator("[data-docs-api-base]").all_inner_texts() == [
         f"{server}/v1"
-    ] * 11
+    ] * 14
     assert counters["docs_models"] == 1
 
+    page.evaluate(
+        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
     docs_scroll = page.evaluate(
         """() => {
             const chip = document.querySelector('#modelCatalog .model-chip');

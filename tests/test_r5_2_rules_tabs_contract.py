@@ -48,7 +48,7 @@ def test_rules_editor_preserves_veto_retry_polling_and_repair_contracts() -> Non
     assert "await ctx.state.rulesTabsController.repair();" in source
 
 
-def test_rules_editor_declares_all_twelve_keys_and_panels_in_tab_order() -> None:
+def test_rules_editor_declares_all_thirteen_keys_and_panels_in_tab_order() -> None:
     source = _editor_source()
     html = RULES_HTML.read_text(encoding="utf-8")
     elements_block = re.search(
@@ -60,6 +60,7 @@ def test_rules_editor_declares_all_twelve_keys_and_panels_in_tab_order() -> None
     assert panels == {
         "editorContainerRules",
         "editorContainerEmbeddings",
+        "editorContainerDecisions",
         "editorContainerRerank",
         "editorContainerImages",
         "editorContainerAudio",
@@ -82,6 +83,7 @@ def test_rules_editor_declares_all_twelve_keys_and_panels_in_tab_order() -> None
         "rules",
         "model-rules",
         "embeddings",
+        "decisions",
         "rerank",
         "images",
         "audio",

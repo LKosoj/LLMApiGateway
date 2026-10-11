@@ -63,6 +63,7 @@ DOCS_CAPABILITY_ORDER = (
     "chat",
     "embeddings",
     "rerank",
+    "decisions",
     "images",
     "audio_speech",
     "audio_transcription",
@@ -75,6 +76,7 @@ DOCS_CAPABILITY_ORDER = (
 DOCS_CAPABILITY_SECTIONS = {
     "embeddings": "embeddings",
     "rerank": "rerank",
+    "decisions": "decisions",
     "images_generations": "images",
     "images_edits": "images",
     "audio_speech": "audio_speech",
@@ -455,6 +457,7 @@ def _serialize_structured_operation_rules(
     serialized_payload = {
         "embeddings": payload_dump["embeddings"],
         "rerank": payload_dump["rerank"],
+        "decisions": payload_dump["decisions"],
         "images_generations": payload_dump["images_generations"],
         "images_edits": payload_dump["images_edits"],
     }
@@ -494,6 +497,10 @@ def _build_structured_operation_rules_response(config_loader) -> dict:
         "embeddings": [
             serialize_model(gateway_model_name, config, include_routes=True)
             for gateway_model_name, config in config_loader.operation_rules.get("embeddings", {}).items()
+        ],
+        "decisions": [
+            serialize_model(gateway_model_name, config, include_routes=True)
+            for gateway_model_name, config in config_loader.operation_rules.get("decisions", {}).items()
         ],
         "rerank": [
             serialize_model(gateway_model_name, config, include_routes=True)

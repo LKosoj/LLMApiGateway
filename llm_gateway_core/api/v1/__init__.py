@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from .chat import router as chat_router, anthropic_router, responses_router
 from .models import router as models_router # Import the new models router
 from .embeddings import router as embeddings_router
+from .decisions import router as decisions_router
 from .images import router as images_router
 from .audio import router as audio_router
 from .pdf import router as pdf_router
@@ -31,6 +32,7 @@ router.include_router(models_router, prefix="/models", tags=["Models V1"]) # Inc
 # Support both /v1/models and /v1/v1/models
 router.include_router(models_router, prefix="/v1/models", tags=["Models V1 (Double Prefix Compat)"])
 router.include_router(embeddings_router, tags=["Embeddings V1"])
+router.include_router(decisions_router, tags=["Decisions V1"])
 router.include_router(images_router, tags=["Images V1"])
 router.include_router(audio_router, tags=["Audio V1"])
 router.include_router(pdf_router, tags=["PDF V1"])

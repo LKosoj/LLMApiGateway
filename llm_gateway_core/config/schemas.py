@@ -833,6 +833,32 @@ class RerankModelConfig(_TokenPricedOperationModelConfig):
         return updated_data
 
 
+class DecisionsModelConfig(_TokenPricedOperationModelConfig):
+    gateway_model_name: str
+    routes: List[OperationRoute]
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_default_target_path(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        routes = data.get("routes")
+        if not isinstance(routes, list):
+            return data
+
+        updated_data = dict(data)
+        updated_data["routes"] = [
+            (
+                {**route, "target_path": "/decisions"}
+                if isinstance(route, dict) and "target_path" not in route
+                else route
+            )
+            for route in routes
+        ]
+        return updated_data
+
+
 class ImagesGenerationModelConfig(BaseModel):
     gateway_model_name: str
     cost_calculator: OperationCostCalculatorConfig | None = None
@@ -991,6 +1017,7 @@ class _ModelsOperationConfigSections(BaseModel):
 
     embeddings: List[EmbeddingsModelConfig] = Field(default_factory=list)
     rerank: List[RerankModelConfig] = Field(default_factory=list)
+    decisions: List[DecisionsModelConfig] = Field(default_factory=list)
     images_generations: List[ImagesGenerationModelConfig] = Field(default_factory=list)
     images_edits: List[ImagesEditModelConfig] = Field(default_factory=list)
     audio_speech: List[AudioSpeechModelConfig] = Field(default_factory=list)
@@ -1010,6 +1037,10 @@ class ModelsOperationConfig(RootModel[_ModelsOperationConfigSections]):
     @property
     def rerank(self) -> List[RerankModelConfig]:
         return self.root.rerank
+
+    @property
+    def decisions(self) -> List[DecisionsModelConfig]:
+        return self.root.decisions
 
     @property
     def images_generations(self) -> List[ImagesGenerationModelConfig]:

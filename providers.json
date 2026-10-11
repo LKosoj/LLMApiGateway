@@ -223,6 +223,10 @@
       "baseUrl": "https://api.aitunnel.ru/v1/",
       "apikey": "${APIKEY_AITUNNEL}",
       "models": {
+        "jev-1.13": {
+          "input_rate": 0.042,
+          "output_rate": 0
+        },
         "deepseek-v4-flash": {
           "input_rate": 0.09,
           "output_rate": 0.18

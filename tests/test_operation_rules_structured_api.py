@@ -135,6 +135,7 @@ UPDATED_OPERATION_RULES_PAYLOAD = {
 }
 
 UPDATED_OPERATION_RULES_RESPONSE = {
+    "decisions": [],
     "embeddings": [
         {
             "gateway_model_name": "gateway/embed-updated",
@@ -279,6 +280,7 @@ class OperationRulesStructuredApiTests(unittest.TestCase):
                     }
                 ],
                 "rerank": [],
+                "decisions": [],
                 "images_generations": [],
                 "images_edits": [],
             },

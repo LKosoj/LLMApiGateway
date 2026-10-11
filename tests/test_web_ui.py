@@ -148,8 +148,8 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator("#catalogStatus")).to_contain_text("Загружено gateway-моделей")
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/light_model")).to_have_count(1)
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/rerank")).to_have_count(1)
-    expect(page.locator("[data-docs-api-base]")).to_have_count(11)
-    assert page.locator("[data-docs-api-base]").all_inner_texts() == [api_base] * 11
+    expect(page.locator("[data-docs-api-base]")).to_have_count(14)
+    assert page.locator("[data-docs-api-base]").all_inner_texts() == [api_base] * 14
     expect(page.locator("#insecureTransportWarning")).to_be_hidden()
     expect(page.locator("#text .service-card")).to_have_count(3)
     expect(page.locator("#text")).to_contain_text("OpenAI-compatible chat completion")
@@ -219,7 +219,7 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     assert abs(positions[0]["left"] - positions[2]["left"]) <= 2
     assert abs(positions[0]["left"] - positions[4]["left"]) <= 2
     all_service_cards = page.locator(".docs-section .service-card")
-    expect(all_service_cards).to_have_count(18)
+    expect(all_service_cards).to_have_count(19)
     overflowing_elements = all_service_cards.evaluate_all(
         """
         cards => cards.flatMap(card => {
@@ -274,8 +274,8 @@ def test_gateway_docs_warns_on_public_http_origin(page: Page, server):
         expect(page.locator("html")).to_have_attribute("data-i18n-state", "ready")
         assert page.evaluate("window.gatewayI18n.currentLocale") == "en"
 
-        expect(page.locator("[data-docs-api-base]")).to_have_count(11)
-        assert page.locator("[data-docs-api-base]").all_inner_texts() == [f"{origin}/v1"] * 11
+        expect(page.locator("[data-docs-api-base]")).to_have_count(14)
+        assert page.locator("[data-docs-api-base]").all_inner_texts() == [f"{origin}/v1"] * 14
         warning = page.locator("#insecureTransportWarning")
         expect(warning).to_have_attribute("role", "note")
         if should_warn:

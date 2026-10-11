@@ -1958,6 +1958,7 @@
     const tabOpenRouterFree = document.querySelector('[data-entity-target="openrouter-free"]');
     const editorContainerRules = document.getElementById("editor-container-rules");
     const editorContainerEmbeddings = document.getElementById("editor-container-embeddings");
+    const editorContainerDecisions = document.getElementById("editor-container-decisions");
     const editorContainerRerank = document.getElementById("editor-container-rerank");
     const editorContainerImages = document.getElementById("editor-container-images");
     const editorContainerAudio = document.getElementById("editor-container-audio");
@@ -1980,6 +1981,9 @@
     const addEmbeddingButton = document.getElementById("addEmbeddingButton");
     const embeddingsList = document.getElementById("embeddingsList");
     const embeddingsEmptyState = document.getElementById("embeddingsEmptyState");
+    const addDecisionsButton = document.getElementById("addDecisionsButton");
+    const decisionsList = document.getElementById("decisionsList");
+    const decisionsEmptyState = document.getElementById("decisionsEmptyState");
     const addRerankButton = document.getElementById("addRerankButton");
     const rerankList = document.getElementById("rerankList");
     const rerankEmptyState = document.getElementById("rerankEmptyState");
@@ -2034,6 +2038,7 @@
       tabOpenRouterFree,
       editorContainerRules,
       editorContainerEmbeddings,
+      editorContainerDecisions,
       editorContainerRerank,
       editorContainerImages,
       editorContainerAudio,
@@ -2056,6 +2061,9 @@
       addEmbeddingButton,
       embeddingsList,
       embeddingsEmptyState,
+      addDecisionsButton,
+      decisionsList,
+      decisionsEmptyState,
       addRerankButton,
       rerankList,
       rerankEmptyState,
@@ -2146,6 +2154,7 @@
     const CONFIG_NAME_KEYS = /* @__PURE__ */ new Map([
       ["Fallback Rules", "editor:tabs.rules"],
       ["Embeddings Routes", "editor:sections.embeddings.title"],
+      ["Decisions Routes", "editor:sections.decisions.title"],
       ["Rerank Routes", "editor:sections.rerank.title"],
       ["Images Routes", "editor:messages.imagesName"],
       ["Audio Routes", "editor:messages.audioName"],
@@ -2515,7 +2524,7 @@
       }
     }
     function currentDocumentName() {
-      if (["embeddings", "rerank", "images", "audio", "web"].includes(ctx.state.activeEditor)) {
+      if (["embeddings", "decisions", "rerank", "images", "audio", "web"].includes(ctx.state.activeEditor)) {
         return "operation";
       }
       return {
@@ -2741,6 +2750,7 @@
       const key = {
         rules: "editor:actions.saveFallback",
         embeddings: "editor:actions.saveEmbeddings",
+        decisions: "editor:actions.saveDecisions",
         rerank: "editor:actions.saveRerank",
         images: "editor:actions.saveImages",
         audio: "editor:actions.saveAudio",
@@ -2757,6 +2767,7 @@
       return {
         rules: ctx.state.originalRulesContent,
         embeddings: ctx.state.originalEmbeddingsContent,
+        decisions: ctx.state.originalDecisionsContent,
         rerank: ctx.state.originalRerankContent,
         images: ctx.state.originalImagesContent,
         audio: ctx.state.originalAudioContent,
@@ -3364,6 +3375,13 @@
           return true;
         }
       }
+      if (ctx.state.activeEditor === "decisions" && ctx.state.originalDecisionsContent !== null) {
+        try {
+          return ctx.getNormalizedDecisionsContent() !== ctx.state.originalDecisionsContent;
+        } catch (error) {
+          return true;
+        }
+      }
       if (ctx.state.activeEditor === "rerank" && ctx.state.originalRerankContent !== null) {
         try {
           return ctx.getNormalizedRerankContent() !== ctx.state.originalRerankContent;
@@ -3431,7 +3449,7 @@
       if (tabName === "providers" && ctx.state.providersLoadState === "error") {
         return true;
       }
-      return !(ctx.state.originalRulesContent !== null || ctx.state.originalEmbeddingsContent !== null || ctx.state.originalRerankContent !== null || ctx.state.originalImagesContent !== null || ctx.state.originalAudioContent !== null || ctx.state.originalWebContent !== null || ctx.state.originalProvidersContent !== null || ctx.state.originalFusionContent !== null || ctx.state.originalRouterContent !== null || ctx.state.originalModelRulesContent !== null);
+      return !(ctx.state.originalRulesContent !== null || ctx.state.originalEmbeddingsContent !== null || ctx.state.originalDecisionsContent !== null || ctx.state.originalRerankContent !== null || ctx.state.originalImagesContent !== null || ctx.state.originalAudioContent !== null || ctx.state.originalWebContent !== null || ctx.state.originalProvidersContent !== null || ctx.state.originalFusionContent !== null || ctx.state.originalRouterContent !== null || ctx.state.originalModelRulesContent !== null);
     }
     function activateRulesTab(context) {
       const tabName = context.key;
@@ -3457,6 +3475,8 @@
       ctx.elements.editorContainerRouter.style.display = "none";
       ctx.elements.editorContainerModelRules.classList.remove("active");
       ctx.elements.editorContainerModelRules.style.display = "none";
+      ctx.elements.editorContainerDecisions.classList.remove("active");
+      ctx.elements.editorContainerDecisions.style.display = "none";
       if (tabName === "rules") {
         ctx.elements.editorContainerRules.classList.add("active");
         ctx.elements.editorContainerRules.style.display = "flex";
@@ -3493,6 +3513,26 @@
         ctx.elements.editorContainerProviders.classList.remove("active");
         ctx.elements.editorContainerProviders.style.display = "none";
         return ctx.loadEmbeddingsEditor();
+      } else if (tabName === "decisions") {
+        ctx.elements.editorContainerRules.classList.remove("active");
+        ctx.elements.editorContainerRules.style.display = "none";
+        ctx.elements.editorContainerEmbeddings.classList.remove("active");
+        ctx.elements.editorContainerEmbeddings.style.display = "none";
+        ctx.elements.editorContainerDecisions.classList.add("active");
+        ctx.elements.editorContainerDecisions.style.display = "flex";
+        ctx.elements.editorContainerRerank.classList.remove("active");
+        ctx.elements.editorContainerRerank.style.display = "none";
+        ctx.elements.editorContainerImages.classList.remove("active");
+        ctx.elements.editorContainerImages.style.display = "none";
+        ctx.elements.editorContainerAudio.classList.remove("active");
+        ctx.elements.editorContainerAudio.style.display = "none";
+        ctx.elements.editorContainerWeb.classList.remove("active");
+        ctx.elements.editorContainerWeb.style.display = "none";
+        ctx.elements.editorContainerFallbackEval.classList.remove("active");
+        ctx.elements.editorContainerFallbackEval.style.display = "none";
+        ctx.elements.editorContainerProviders.classList.remove("active");
+        ctx.elements.editorContainerProviders.style.display = "none";
+        return ctx.loadDecisionsEditor();
       } else if (tabName === "rerank") {
         ctx.elements.editorContainerRules.classList.remove("active");
         ctx.elements.editorContainerRules.style.display = "none";
@@ -3719,6 +3759,9 @@
       if (ctx.state.activeEditor === "embeddings") {
         return ctx.loadEmbeddingsEditor();
       }
+      if (ctx.state.activeEditor === "decisions") {
+        return ctx.loadDecisionsEditor();
+      }
       if (ctx.state.activeEditor === "rerank") {
         return ctx.loadRerankEditor();
       }
@@ -3847,6 +3890,7 @@
   var ENTITY_DOCUMENT_LABEL_KEYS = {
     rules: "editor:tabs.rules",
     embeddings: "editor:tabs.embeddings",
+    decisions: "editor:tabs.decisions",
     rerank: "editor:tabs.rerank",
     images: "editor:tabs.images",
     audio: "editor:tabs.audio",
@@ -4051,6 +4095,7 @@
     function normalizeOperationRulesPayload(payload = {}) {
       const normalized = {
         embeddings: Array.isArray(payload.embeddings) ? payload.embeddings : [],
+        decisions: Array.isArray(payload.decisions) ? payload.decisions : [],
         rerank: Array.isArray(payload.rerank) ? payload.rerank : [],
         images_generations: Array.isArray(payload.images_generations) ? payload.images_generations : [],
         images_edits: Array.isArray(payload.images_edits) ? payload.images_edits : []
@@ -4073,6 +4118,7 @@
     function applyOperationRulesPayload(payload = {}) {
       const normalized = normalizeOperationRulesPayload(payload);
       ctx.state.embeddingRules = normalized.embeddings;
+      ctx.state.decisionsRules = normalized.decisions;
       ctx.state.rerankRules = normalized.rerank;
       ctx.state.imageGenerationRules = normalized.images_generations;
       ctx.state.imageEditRules = normalized.images_edits;
@@ -4088,6 +4134,7 @@
     function buildOperationRoutesPayload(overrides = {}, basePayload = null) {
       const source = basePayload ? normalizeOperationRulesPayload(basePayload) : {
         embeddings: ctx.state.embeddingRules,
+        decisions: ctx.state.decisionsRules,
         rerank: ctx.state.rerankRules,
         images_generations: ctx.state.imageGenerationRules,
         images_edits: ctx.state.imageEditRules
@@ -4103,6 +4150,7 @@
       }
       const payload = {
         embeddings: overrides.embeddings ?? source.embeddings,
+        decisions: overrides.decisions ?? source.decisions,
         rerank: overrides.rerank ?? source.rerank,
         images_generations: overrides.images_generations ?? source.images_generations,
         images_edits: overrides.images_edits ?? source.images_edits
@@ -4208,7 +4256,76 @@
     function getNormalizedEmbeddingsContent() {
       return ctx.stableSerialize(getEmbeddingsPayloadForSave());
     }
-    function normalizeEmbeddingRouteForSave(routeRow) {
+    function getDecisionsPayloadForSave(basePayload = null) {
+      const decisions = Array.from(ctx.elements.decisionsList.querySelectorAll(".rule-card")).map(normalizeDecisionsCardForSave);
+      return buildOperationRoutesPayload({ decisions }, basePayload);
+    }
+    function getNormalizedDecisionsContent() {
+      return ctx.stableSerialize(getDecisionsPayloadForSave());
+    }
+    function normalizeDecisionsCardForSave(ruleCard) {
+      const gatewayModelInput = ruleCard.querySelector(".gateway-model-input");
+      const routeRows = Array.from(ruleCard.querySelectorAll(".fallback-list > .fallback-row"));
+      const gatewayModelName = gatewayModelInput.value.trim();
+      if (!gatewayModelName) {
+        throw new Error("Each decisions model rule must have a gateway model name.");
+      }
+      if (routeRows.length === 0) {
+        throw new Error(`Decisions model '${gatewayModelName}' must contain at least one route.`);
+      }
+      return {
+        gateway_model_name: gatewayModelName,
+        routes: routeRows.map((routeRow) => normalizeEmbeddingRouteForSave(routeRow, "/decisions"))
+      };
+    }
+    async function loadDecisionsEditor() {
+      try {
+        const loaded = await loadOperationRulesPayload(
+          "Decisions Routes",
+          async (payload) => {
+            await renderDecisions(payload.decisions);
+          }
+        );
+        if (!loaded) {
+          ctx.showLocalizedMessage("warning", "A newer local edit was preserved. Reload again to discard it.");
+          return false;
+        }
+        ctx.state.originalDecisionsContent = getNormalizedDecisionsContent();
+        ctx.updateSaveButtonDisabledState();
+        ctx.showLocalizedMessage("success", "Decisions Routes loaded successfully.");
+        return true;
+      } catch (error) {
+        console.error("Error fetching Decisions Routes:", error);
+        ctx.showLocalizedError("Error loading Decisions Routes:", error);
+        ctx.state.originalDecisionsContent = null;
+        ctx.updateSaveButtonDisabledState();
+        return false;
+      }
+    }
+    function refreshDecisionsEmptyState() {
+      ctx.elements.decisionsEmptyState.hidden = ctx.elements.decisionsList.children.length !== 0;
+    }
+    function renderDecisions(decisions) {
+      ctx.elements.decisionsList.textContent = "";
+      if (!Array.isArray(decisions) || decisions.length === 0) {
+        refreshDecisionsEmptyState();
+        return;
+      }
+      decisions.forEach((decision) => ctx.elements.decisionsList.appendChild(buildDecisionsCard(decision)));
+      refreshDecisionsEmptyState();
+    }
+    function buildDecisionsCard(initialData) {
+      return buildEmbeddingCard(initialData, {
+        gatewayPlaceholder: "llmgateway/decisions-model",
+        refreshEmptyState: refreshDecisionsEmptyState,
+        addRouteAction: "Add Route",
+        buildRouteRow: buildDecisionsRouteRow
+      });
+    }
+    function buildDecisionsRouteRow(initialData) {
+      return buildEmbeddingRouteRow(initialData, "/decisions");
+    }
+    function normalizeEmbeddingRouteForSave(routeRow, defaultTargetPath = "/embeddings") {
       const providerSelect = routeRow.querySelector(".provider-select");
       const modelInput = routeRow.querySelector(".model-input");
       const customBodyParamsInput = routeRow.querySelector(".custom-body-params-input");
@@ -4227,7 +4344,7 @@
       const routePayload = {
         provider,
         model,
-        target_path: targetPathInput.value.trim() || "/embeddings",
+        target_path: targetPathInput.value.trim() || defaultTargetPath,
         custom_body_params: ctx.parseObjectTextarea(customBodyParamsInput.value, "Custom body params"),
         custom_headers: ctx.parseObjectTextarea(customHeadersInput.value, "Custom headers")
       };
@@ -4288,14 +4405,16 @@
       });
       ctx.refreshEmbeddingsEmptyState();
     }
-    function buildEmbeddingCard(initialData) {
+    function buildEmbeddingCard(initialData, options = {}) {
+      const refreshEmptyState = options.refreshEmptyState || ctx.refreshEmbeddingsEmptyState;
+      const buildRouteRow = options.buildRouteRow || buildEmbeddingRouteRow;
       const card = document.createElement("section");
       card.className = "rule-card";
       const cardHeader = document.createElement("div");
       cardHeader.className = "rule-card-header";
       const titleWrap = document.createElement("div");
       titleWrap.className = "rule-card-title";
-      const gatewayModelInput = ctx.createTextInput("gateway-model-input", "llmgateway/embedding-model");
+      const gatewayModelInput = ctx.createTextInput("gateway-model-input", options.gatewayPlaceholder || "llmgateway/embedding-model");
       gatewayModelInput.value = initialData.gateway_model_name || "";
       titleWrap.appendChild(ctx.createFieldGroup("Gateway Model Name", gatewayModelInput, "gateway-model-field"));
       const removeButton = document.createElement("button");
@@ -4304,7 +4423,7 @@
       ctx.bindKnownActionText(removeButton, "Remove Model");
       removeButton.addEventListener("click", () => {
         card.remove();
-        ctx.refreshEmbeddingsEmptyState();
+        refreshEmptyState();
       });
       cardHeader.appendChild(titleWrap);
       cardHeader.appendChild(removeButton);
@@ -4313,9 +4432,9 @@
       const addRouteButton = document.createElement("button");
       addRouteButton.type = "button";
       addRouteButton.className = "secondary-button add-fallback-button";
-      ctx.bindKnownActionText(addRouteButton, "Add Fallback Route");
+      ctx.bindKnownActionText(addRouteButton, options.addRouteAction || "Add Fallback Route");
       addRouteButton.addEventListener("click", () => {
-        routeList.appendChild(buildEmbeddingRouteRow({}));
+        routeList.appendChild(buildRouteRow({}));
       });
       const cardBody = document.createElement("div");
       cardBody.className = "rule-card-body";
@@ -4355,16 +4474,16 @@
       card.appendChild(cardBody);
       const routes = Array.isArray(initialData.routes) ? initialData.routes : [];
       routes.forEach((route) => {
-        const routeRow = buildEmbeddingRouteRow(route);
+        const routeRow = buildRouteRow(route);
         routeList.appendChild(routeRow);
       });
       if (routes.length === 0) {
-        const routeRow = buildEmbeddingRouteRow({});
+        const routeRow = buildRouteRow({});
         routeList.appendChild(routeRow);
       }
       return card;
     }
-    function buildEmbeddingRouteRow(initialData) {
+    function buildEmbeddingRouteRow(initialData, defaultTargetPath = "/embeddings") {
       const row = document.createElement("div");
       row.className = "fallback-row";
       ctx.setupRowReordering(row);
@@ -4379,8 +4498,8 @@
       const dataList = document.createElement("datalist");
       dataList.id = dataListId;
       row.appendChild(dataList);
-      const targetPathInput = ctx.createTextInput("target-path-input", "/embeddings");
-      targetPathInput.value = initialData.target_path || "/embeddings";
+      const targetPathInput = ctx.createTextInput("target-path-input", defaultTargetPath);
+      targetPathInput.value = initialData.target_path || defaultTargetPath;
       targetPathInput.readOnly = true;
       const { retryDelayInput, retryCountInput } = ctx.createRetrySettingsInputs(initialData);
       const customBodyParamsInput = ctx.createTextarea("custom-body-params-input", '{"param": "value"}');
@@ -4753,6 +4872,36 @@
       } catch (error) {
         console.error("Error saving Embeddings:", error);
         ctx.showLocalizedError("Error saving Embeddings Routes:", error);
+      } finally {
+        ctx.updateSaveButtonDisabledState();
+      }
+    }
+    async function saveDecisions() {
+      ctx.elements.saveButton.disabled = true;
+      ctx.showLocalizedMessage("info", "Saving Decisions Routes...");
+      let payload;
+      try {
+        payload = getDecisionsPayloadForSave(ctx.getOperationBasePayload());
+      } catch (error) {
+        ctx.showClientValidationError(error);
+        return;
+      }
+      try {
+        const result = await saveOperationPayload(
+          payload,
+          "Error saving Decisions Routes:",
+          () => {
+            ctx.state.originalDecisionsContent = getNormalizedDecisionsContent();
+          }
+        );
+        if (!result) return;
+        ctx.showLocalizedMessage(
+          "success",
+          ctx.safeSuccessMessage(result.body, "Decisions Routes updated successfully.")
+        );
+      } catch (error) {
+        console.error("Error saving Decisions:", error);
+        ctx.showLocalizedError("Error saving Decisions Routes:", error);
       } finally {
         ctx.updateSaveButtonDisabledState();
       }
@@ -5850,6 +5999,9 @@
       applyOperationCatalog,
       getEmbeddingsPayloadForSave,
       getNormalizedEmbeddingsContent,
+      getDecisionsPayloadForSave,
+      getNormalizedDecisionsContent,
+      refreshDecisionsEmptyState,
       normalizeEmbeddingRouteForSave,
       normalizeEmbeddingCardForSave,
       normalizeEmbeddingRouteRowForSave,
@@ -5857,6 +6009,11 @@
       renderEmbeddings,
       buildEmbeddingCard,
       buildEmbeddingRouteRow,
+      normalizeDecisionsCardForSave,
+      loadDecisionsEditor,
+      renderDecisions,
+      buildDecisionsCard,
+      buildDecisionsRouteRow,
       loadRerankEditor,
       renderRerank,
       buildRerankCard,
@@ -5867,6 +6024,7 @@
       normalizeRerankCardForSave,
       saveRerank,
       saveEmbeddings,
+      saveDecisions,
       renderImageSection,
       buildImageCard,
       buildImageRouteRow,
@@ -7074,6 +7232,7 @@
       activeEditor: "rules",
       originalRulesContent: null,
       originalEmbeddingsContent: null,
+      originalDecisionsContent: null,
       originalRerankContent: null,
       originalImagesContent: null,
       originalAudioContent: null,
@@ -7084,6 +7243,7 @@
       originalModelRulesContent: null,
       availableProviders: [],
       embeddingRules: [],
+      decisionsRules: [],
       rerankRules: [],
       imageGenerationRules: [],
       imageEditRules: [],
@@ -7173,6 +7333,12 @@
       embeddingCard.classList.remove("collapsed");
       ctx.elements.embeddingsList.appendChild(embeddingCard);
       ctx.refreshEmbeddingsEmptyState();
+    });
+    ctx.elements.addDecisionsButton.addEventListener("click", () => {
+      const decisionsCard = ctx.buildDecisionsCard({});
+      decisionsCard.classList.remove("collapsed");
+      ctx.elements.decisionsList.appendChild(decisionsCard);
+      ctx.refreshDecisionsEmptyState();
     });
     ctx.elements.addRerankButton.addEventListener("click", () => {
       const rerankCard = ctx.buildRerankCard({});
@@ -7278,6 +7444,8 @@
         saveAction = ctx.saveRules;
       } else if (ctx.state.activeEditor === "embeddings") {
         saveAction = ctx.saveEmbeddings;
+      } else if (ctx.state.activeEditor === "decisions") {
+        saveAction = ctx.saveDecisions;
       } else if (ctx.state.activeEditor === "rerank") {
         saveAction = ctx.saveRerank;
       } else if (ctx.state.activeEditor === "images") {

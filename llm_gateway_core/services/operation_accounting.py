@@ -31,7 +31,7 @@ from .accounting import (
 
 logger = logging.getLogger(__name__)
 
-_INPUT_ONLY_OPERATIONS = frozenset({"embeddings", "rerank"})
+_INPUT_ONLY_OPERATIONS = frozenset({"embeddings", "rerank", "decisions"})
 _INT64_MAX = (1 << 63) - 1
 _TOKEN_USAGE_KEYS = frozenset(
     {

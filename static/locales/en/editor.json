@@ -26,6 +26,7 @@
   "tabs": {
     "rules": "Fallback Rules",
     "embeddings": "Embeddings",
+    "decisions": "Decisions",
     "rerank": "Rerank",
     "images": "Images",
     "audio": "Audio",
@@ -42,6 +43,7 @@
     "suggestOrder": "Suggest Eval Order",
     "addGatewayModel": "Add Gateway Model",
     "addEmbeddingModel": "Add Embedding Model",
+    "addDecisionsModel": "Add Decisions Model",
     "addRerankModel": "Add Rerank Model",
     "addFusionModel": "Add Fusion Model",
     "addRouterModel": "Add Router Model",
@@ -59,6 +61,7 @@
     "saveConfiguration": "Save Configuration",
     "saveFallback": "Save Fallback Rules",
     "saveEmbeddings": "Save Embeddings Routes",
+    "saveDecisions": "Save Decisions Routes",
     "saveRerank": "Save Rerank Routes",
     "saveImages": "Save Images Routes",
     "saveAudio": "Save Audio Routes",
@@ -99,6 +102,11 @@
       "title": "Embeddings Routes",
       "description": "Configure routes for /v1/embeddings endpoint.",
       "empty": "No embedding routes yet. Add the first embedding model to begin."
+    },
+    "decisions": {
+      "title": "Decisions Routes",
+      "description": "Configure routes for /v1/decisions endpoint.",
+      "empty": "No decisions routes yet. Add the first decisions model to begin."
     },
     "rerank": {
       "title": "Rerank Routes",

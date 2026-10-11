@@ -55,6 +55,12 @@ function startEditor(ctx) {
         ctx.elements.embeddingsList.appendChild(embeddingCard);
         ctx.refreshEmbeddingsEmptyState();
     });
+    ctx.elements.addDecisionsButton.addEventListener('click', () => {
+        const decisionsCard = ctx.buildDecisionsCard({});
+        decisionsCard.classList.remove('collapsed');
+        ctx.elements.decisionsList.appendChild(decisionsCard);
+        ctx.refreshDecisionsEmptyState();
+    });
     ctx.elements.addRerankButton.addEventListener('click', () => {
         const rerankCard = ctx.buildRerankCard({});
         rerankCard.classList.remove('collapsed');
@@ -165,6 +171,8 @@ function startEditor(ctx) {
             saveAction = ctx.saveRules;
         } else if (ctx.state.activeEditor === 'embeddings') {
             saveAction = ctx.saveEmbeddings;
+        } else if (ctx.state.activeEditor === 'decisions') {
+            saveAction = ctx.saveDecisions;
         } else if (ctx.state.activeEditor === 'rerank') {
             saveAction = ctx.saveRerank;
         } else if (ctx.state.activeEditor === 'images') {

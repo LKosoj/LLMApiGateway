@@ -34,6 +34,10 @@
             catalogKey: "embeddings",
         },
         {
+            key: "decisions",
+            catalogKey: "decisions",
+        },
+        {
             key: "rerank",
             catalogKey: "rerank",
         },
