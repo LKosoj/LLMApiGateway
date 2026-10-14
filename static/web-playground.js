@@ -1665,6 +1665,15 @@
     function wirePdfConversionForm() {
         const form = document.getElementById("pdfConversionForm");
         if (!form) return;
+        const mdImagesField = document.createElement("div");
+        mdImagesField.className = "field-group";
+        mdImagesField.innerHTML = `
+            <label for="pdfConversionMdImages" data-playground-i18n="labels.mdImages">${escapeHtml(translate("labels.mdImages"))}</label>
+            <select id="pdfConversionMdImages" name="md_images">
+                <option value="true" selected data-playground-i18n="options.withImages">${escapeHtml(translate("options.withImages"))}</option>
+                <option value="false" data-playground-i18n="options.withoutImages">${escapeHtml(translate("options.withoutImages"))}</option>
+            </select>`;
+        document.getElementById("pdfConversionOutput").closest(".field-group").after(mdImagesField);
         form.addEventListener("submit", (event) => {
             event.preventDefault();
             submitPdfJobRequest("pdf-conversion", form);

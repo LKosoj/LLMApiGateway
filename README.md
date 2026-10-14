@@ -319,6 +319,9 @@ CRUD над виртуальными ключами доступен через 
 ### Playground (admin testing)
 Страница http://localhost:9000/v1/ui/playground (доступна только мастеру под `GATEWAY_API_KEY`) предоставляет админский UI для ручного тестирования operation endpoints. Старый путь `/v1/ui/web-playground` сохранён как совместимый alias. Playground разделён на секции **Chat**, **Web**, **Speech to Text**, **Text to Speech**, **Image Generation**, **Image Editing** и **PDF Conversion**; выпадающие списки моделей заполняются из сконфигурированных в `models_operation_rules.json` секций `web_search`, `web_read`, `web_research`, `web_deep_research`, `audio_speech`, `audio_transcriptions`, `images_generations`, `images_edits` и `pdf_conversions`.
 
+Для формул `math_ocr_provider=off` отключает распознавание, `auto` включает автоматическое распознавание через DeepSeek; `mathpix` и `local_im2latex` выбирают отдельного провайдера.
+Опция `md_images=true|false` выбирает MD с изображениями или без них (по умолчанию `true`); изображения в DOCX не меняются. В песочнице доступен выбор «Изображения в MD».
+
 При временном сетевом обрыве во время опроса PDF-задачи Playground показывает восстановление связи и продолжает запрашивать статус того же задания, не загружая документ повторно. Ошибки HTTP и ошибки самой конвертации по-прежнему завершают запрос.
 
 Кнопки действий используют общие primary/secondary состояния светлой и тёмной темы. На экранах до 480 px группы полей занимают ширину формы без ложной 160-пиксельной flex-высоты, поэтому вертикальный ритм сохраняется во всех секциях.

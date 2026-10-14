@@ -833,6 +833,7 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     expect(page.locator("#pdfConversionModel option", has_text="llmgateway/pdf-convert")).to_have_count(1)
     expect(page.locator("#pdfConversionFile")).to_be_visible()
     expect(page.locator("#pdfConversionOutput")).to_have_value("both")
+    expect(page.locator("#pdfConversionMdImages")).to_have_value("true")
     expect(page.locator("#pdfConversionLanguage")).to_have_value("rus+eng")
     expect(page.locator("#pdfConversionTargetLanguage")).to_have_value("")
     expect(page.locator("#pdfConversionMathOcr")).to_have_value("off")
@@ -843,7 +844,8 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     expect(page.locator("#pdfConversionMode")).to_have_count(0)
 
 
-def test_playground_pdf_conversion_uses_job_api_and_gateway_downloads(page: Page, server, tmp_path):
+@pytest.mark.parametrize("math_provider", ["off", "auto", "mathpix", "local_im2latex"])
+def test_playground_pdf_conversion_uses_job_api_and_gateway_downloads(page: Page, server, tmp_path, math_provider):
     add_session(page, server)
     source_pdf = tmp_path / "source.pdf"
     source_pdf.write_bytes(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
@@ -946,7 +948,9 @@ def test_playground_pdf_conversion_uses_job_api_and_gateway_downloads(page: Page
     page.select_option("#pdfConversionOutput", "both")
     page.fill("#pdfConversionLanguage", "rus+eng")
     page.select_option("#pdfConversionTargetLanguage", "English")
-    page.select_option("#pdfConversionMathOcr", "mathpix")
+    page.select_option("#pdfConversionMathOcr", math_provider)
+    md_images = "false" if math_provider == "off" else "true"
+    page.select_option("#pdfConversionMdImages", md_images)
     page.fill("#pdfConversionFormulaPages", "2")
     page.fill("#pdfConversionMaxPages", "47")
     page.fill("#pdfConversionPassword", "secret")
@@ -969,7 +973,8 @@ def test_playground_pdf_conversion_uses_job_api_and_gateway_downloads(page: Page
     assert 'name="target_language"' in multipart_body
     assert "English" in multipart_body
     assert 'name="math_ocr_provider"' in multipart_body
-    assert "mathpix" in multipart_body
+    assert f'name="math_ocr_provider"\r\n\r\n{math_provider}\r\n' in multipart_body
+    assert f'name="md_images"\r\n\r\n{md_images}\r\n' in multipart_body
     assert 'name="formulas_max_pages"' in multipart_body
     assert "2" in multipart_body
     assert 'name="max_pages"' in multipart_body

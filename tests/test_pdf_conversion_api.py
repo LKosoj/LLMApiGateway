@@ -201,6 +201,7 @@ class PdfConversionApiTests(unittest.TestCase):
                     ("formats", (None, "md")),
                     ("ocr", (None, "auto")),
                     ("target_language", (None, "English")),
+                    ("md_images", (None, "false")),
                 ],
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
@@ -215,6 +216,7 @@ class PdfConversionApiTests(unittest.TestCase):
                 "formats": ["docx", "md"],
                 "ocr": "auto",
                 "target_language": "English",
+                "md_images": "false",
             },
         )
         file_field, file_payload = fake_http_client.post.await_args.kwargs["files"][0]

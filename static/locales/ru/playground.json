@@ -22,6 +22,7 @@
     "deepResearch": "Глубокое исследование"
   },
   "labels": {
+    "mdImages": "Изображения в MD",
     "modelSource": "Тип моделей",
     "provider": "Провайдер",
     "providerModel": "Модель провайдера",
@@ -93,6 +94,8 @@
     "startPdfConversion": "Запустить преобразование"
   },
   "options": {
+    "withImages": "С изображениями",
+    "withoutImages": "Без изображений",
     "gatewayModels": "Модели шлюза",
     "providerModels": "Модели провайдеров",
     "off": "выкл.",

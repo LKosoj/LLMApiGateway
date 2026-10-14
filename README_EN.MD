@@ -319,6 +319,9 @@ The separate **Free-tier Providers** tab on the same page loads Markdown for the
 ### Playground (admin testing)
 The page http://localhost:9000/v1/ui/playground (available only under the master `GATEWAY_API_KEY`) provides an admin UI for manually exercising operation endpoints. The old `/v1/ui/web-playground` path remains as a compatible alias. Playground is split into **Chat**, **Web**, **Speech to Text**, **Text to Speech**, **Image Generation**, **Image Editing**, and **PDF Conversion** sections; model dropdowns are populated from the configured `models_operation_rules.json` sections `web_search`, `web_read`, `web_research`, `web_deep_research`, `audio_speech`, `audio_transcriptions`, `images_generations`, `images_edits`, and `pdf_conversions`.
 
+For formulas, `math_ocr_provider=off` disables recognition, while `auto` enables automatic recognition through DeepSeek; `mathpix` and `local_im2latex` select an explicit provider.
+The `md_images=true|false` option selects MD with or without images (default: `true`); DOCX images are unaffected. The playground includes an “Images in MD” selector.
+
 If a network connection drops while polling a PDF job, Playground shows reconnection status and keeps checking the same job without uploading the document again. HTTP errors and conversion failures still terminate the request.
 
 Action buttons use the shared primary/secondary states in both light and dark themes. At widths up to 480 px, field groups fill the form without the false 160-pixel flex height, preserving vertical rhythm across every section.

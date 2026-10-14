@@ -34,27 +34,6 @@
       ]
     }
   ],
-  "decisions": [
-    {
-      "gateway_model_name": "llmgateway/jev-1.13",
-      "routes": [
-        {
-          "provider": "aitunnel",
-          "model": "jev-1.13",
-          "target_path": "/decisions",
-          "custom_headers": {},
-          "custom_body_params": {}
-        },
-        {
-          "provider": "aitunnel",
-          "model": "pplx-decider-v1-27b",
-          "target_path": "/decisions",
-          "custom_headers": {},
-          "custom_body_params": {}
-        }
-      ]
-    }
-  ],
   "rerank": [
     {
       "gateway_model_name": "llmgateway/rerank",
@@ -75,6 +54,27 @@
           "response_output_format": "jina_results",
           "retry_delay": 1.0,
           "retry_count": 3
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "gateway_model_name": "llmgateway/decision",
+      "routes": [
+        {
+          "provider": "aitunnel",
+          "model": "jev-1.13",
+          "target_path": "/decisions",
+          "custom_headers": {},
+          "custom_body_params": {}
+        },
+        {
+          "provider": "aitunnel",
+          "model": "pplx-decider-v1-27b",
+          "target_path": "/decisions",
+          "custom_headers": {},
+          "custom_body_params": {}
         }
       ]
     }
