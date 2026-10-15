@@ -1622,7 +1622,7 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 436,
-      "column": 273,
+      "column": 292,
       "text": "mathpix",
       "classification": "code"
     },
@@ -1631,7 +1631,7 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 436,
-      "column": 349,
+      "column": 368,
       "text": "local_im2latex",
       "classification": "code"
     },
@@ -4186,7 +4186,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 675,
+      "line": 676,
       "column": 57,
       "text": "mathpix",
       "classification": "protocol"
@@ -4195,7 +4195,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 676,
+      "line": 677,
       "column": 64,
       "text": "local_im2latex",
       "classification": "protocol"
@@ -4523,6 +4523,33 @@
       "column": 66,
       "text": "{ \"answers\": { \"refund_allowed\": {\"type\": \"noul\", \"noul\": 0.91}, \"risk_level\": {\"type\": \"choice\", \"choice\": \"low\", \"confidence\": 0.68, \"probabilities\": {\"low\": 0.84, \"high\": 0.16}}, \"service_score\": {\"type\": \"score\", \"score\": 2, \"confidence\": 1, \"probabilities\": {\"0\": 0, \"1\": 0, \"2\": 1, \"3\": 0, \"4\": 0}, \"legend\": {\"0\": 1, \"1\": 2, \"2\": 3, \"3\": 4, \"4\": 5}} }, \"usage\": {\"input_tokens\": 120, \"output_tokens\": 42, \"cost_rub\": 0.37} }",
       "classification": "pre"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 436,
+      "column": 273,
+      "text": "auto",
+      "classification": "code"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 675,
+      "column": 54,
+      "text": "auto",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.js",
+      "kind": "js-sink",
+      "line": 1670,
+      "column": 35,
+      "text": "\n            <label for=\"pdfConversionMdImages\" data-playground-i18n=\"labels.mdImages\">${escapeHtml(translate(\"labels.mdImages\"))}</label>\n            <select id=\"pdfConversionMdImages\" name=\"md_images\">\n                <option value=\"true\" selected data-playground-i18n=\"options.withImages\">${escapeHtml(translate(\"options.withImages\"))}</option>\n                <option value=\"false\" data-playground-i18n=\"options.withoutImages\">${escapeHtml(translate(\"options.withoutImages\"))}</option>\n            </select>",
+      "classification": "code"
     }
   ]
 }

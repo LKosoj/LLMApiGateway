@@ -732,6 +732,14 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 ```
 
 
+### OpenCode Zen (`opencode-zen`)
+
+В `providers.json` настроен отдельный провайдер `opencode-zen` по адресу `https://opencode.ai/inference/v1` с публичным ключом `public` и `User-Agent: opencode/1.19.0`. Подключение бесплатных моделей основано на [dsh-opencode-zen-free-provider](https://github.com/jiesou/dsh-opencode-zen-free-provider). Установка DSH и личный ключ не требуются. Старый адрес `/zen/v1` с одним User-Agent при проверке возвращал `403 FreeTierError`.
+
+Gateway добавляет заголовки сессии OpenCode и недостающие описания инструментов `bash`/`read`, которые проверяет бесплатный канал Zen. Он не выполняет эти инструменты: вызовы добавленных gateway инструментов удаляются из ответа. Если клиент сам передал `bash` или `read`, их определения и вызовы сохраняются. Текст, рассуждения и статистика использования сохраняются. Zen всегда вызывается с потоковой передачей; для обычного запроса gateway собирает поток в единый ответ. Для сохранения одной сессии между запросами передавайте одинаковый `X-Session-Id`.
+
+Для проверки выберите Playground → Chat → «Provider models» → `opencode-zen` → `big-pickle`. В API используйте мастер-ключ, заголовок `X-LLMGateway-Provider: opencode-zen` и `model: "big-pickle"` в `/v1/chat/completions`. `available_models` содержит явный список бесплатных chat-моделей; он обновляется вручную. Доступность зависит от лимитов, региона и текущих условий Zen. Существующие цепочки gateway не изменяются; автоматического перехода на платный доступ нет. Для всех перечисленных бесплатных моделей в `models` заданы нулевые цены в USD за 1 млн входных и выходных токенов по [официальному каталогу Zen](https://opencode.ai/docs/zen/#pricing). Если Zen вернул валидный `usage.cost`, учёт использует эту стоимость; иначе стоимость считается по нулевым ценам.
+
 ### Пример JSON fallback-правил (`models_fallback_rules.json`):
 
 >[!Note]
@@ -1214,7 +1222,7 @@ pip install -r requirements-research.txt
 > ```
 > Canonical `pip-compile` команды определены только в `scripts/check_dependency_contract.py`: script последовательно генерирует runtime, dev, research и container locks с одинаковыми security/compatibility inputs, затем выполняет статическую проверку. `requirements-container.txt` повторяет production closure research-lock, добавляет SHA-256 для `--require-hashes` и не включает dev tools. Активные installer dependencies (`pip`/`setuptools`) включаются как обычные exact pins; comments-only unsafe omission footer считается ошибкой контракта. Обычная регенерация не использует `--upgrade` и может сохранять существующие lock preferences. Независимый `python scripts/check_dependency_contract.py --verify-bootstrap` копирует только source inputs во временный каталог и заново компилирует все четыре locks без существующих outputs, не изменяя repository locks. Статический checker также проверяет активные direct dependencies и markers для Python 3.12, security/compatibility contract, exact lock pins, совпадение общих версий, container hashes и headers, но намеренно не подменяет resolver. Resolver closure дополнительно закрывают clean bootstrap, установка `requirements-dev.txt` в чистое окружение, `python -m pip check` и `python -m pip_audit -r requirements-dev.txt` без молчаливого исключения advisory. Локальную `.venv` после изменения lock следует пересоздать, а не дополнять пакетами вручную.
 >
-> Pytest трактует deprecation warnings как ошибки. Единственное временное исключение — точный полный upstream warning `gpt-researcher==0.15.1` об импорте `langchain-community`; policy привязана ко всему message (включая URL и конец строки), category/module и автоматически истекает 2026-10-11 через dependency checker. Изменение текста или дополнительный suffix не подавляются. В W4 нужно повторно проверить upstream и удалить исключение, если импорт устранён. Остальные категории warnings не маскируются этим policy и разбираются в задачах соответствующих подсистем.
+> Pytest трактует deprecation warnings как ошибки. Единственное временное исключение — точный полный upstream warning `gpt-researcher==0.15.1` об импорте `langchain-community`; policy привязана ко всему message (включая URL и конец строки), category/module и автоматически истекает 2027-01-15 через dependency checker. Изменение текста или дополнительный suffix не подавляются. В W4 нужно повторно проверить upstream и удалить исключение, если импорт устранён. Остальные категории warnings не маскируются этим policy и разбираются в задачах соответствующих подсистем.
 
 ### Через Docker
 Если вы предпочитаете запуск через Docker, смотрите [это руководство](/docker/README.md) (спасибо [canadaduane](https://github.com/canadaduane)!👍)

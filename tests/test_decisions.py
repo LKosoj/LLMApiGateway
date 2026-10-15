@@ -215,7 +215,7 @@ def test_configured_jev_route_registry_and_usage_record(monkeypatch):
     assert rates.output_rate == 0
     assert calculate_model_cost_usd(prompt_tokens=1000000, completion_tokens=0, rates=rates) == 0.042
     config = ModelsOperationConfig.model_validate(json.loads((root / "models_operation_rules.json").read_text()))
-    model = next(item for item in config.decisions if item.gateway_model_name == "llmgateway/jev-1.13")
+    model = next(item for item in config.decisions if item.gateway_model_name == "llmgateway/decision")
     assert [route.model for route in model.routes] == ["jev-1.13", "pplx-decider-v1-27b"]
     assert (model.routes[0].provider, model.routes[0].model, model.routes[0].target_path) == ("aitunnel", "jev-1.13", "/decisions")
     status, _, _, service = _endpoint_case(

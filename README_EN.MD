@@ -731,6 +731,14 @@ Localized free-tier provider reference catalogs live in [`static/locales/en/free
 ```
 
 
+### OpenCode Zen (`opencode-zen`)
+
+`providers.json` configures a separate provider, `opencode-zen`, at `https://opencode.ai/inference/v1` with the public key `public` and `User-Agent: opencode/1.19.0`. Free model access follows [dsh-opencode-zen-free-provider](https://github.com/jiesou/dsh-opencode-zen-free-provider). No DSH installation or personal key is required. Live checks of the old `/zen/v1` URL with only a User-Agent returned `403 FreeTierError`.
+
+The gateway adds OpenCode session headers and missing `bash`/`read` tool definitions required by Zen's free channel. It does not execute those tools: calls to gateway-injected tools are removed from the response. If the client supplied `bash` or `read`, their definitions and calls are preserved. Text, reasoning, and usage statistics are preserved. Zen is always called with streaming enabled; for regular requests, the gateway collects the stream into one response. Send the same `X-Session-Id` across requests to keep one session.
+
+To try it, select Playground → Chat → “Provider models” → `opencode-zen` → `big-pickle`. For API access, use a master key, `X-LLMGateway-Provider: opencode-zen`, and `model: "big-pickle"` in `/v1/chat/completions`. `available_models` contains an explicit, manually updated list of free chat models. Availability depends on Zen limits, region, and current terms. Existing gateway chains are unchanged; there is no automatic switch to paid access. All listed free models have zero prices under `models`, in USD per 1M input and output tokens, following the [official Zen catalog](https://opencode.ai/docs/zen/#pricing). A valid upstream `usage.cost` remains authoritative; otherwise cost is calculated using the zero rates.
+
 ### Fallback Rules JSON Example (`models_fallback_rules.json`):
 
 >[!Note]
@@ -1213,7 +1221,7 @@ pip install -r requirements-research.txt
 > ```
 > Canonical `pip-compile` commands live only in `scripts/check_dependency_contract.py`: the script generates the runtime, dev, research, and container locks in order with the same security/compatibility inputs, then runs static validation. `requirements-container.txt` mirrors the research production closure, adds SHA-256 hashes for `--require-hashes`, and excludes development tools. Active installer dependencies (`pip`/`setuptools`) are included as ordinary exact pins; a comments-only unsafe-omission footer is a contract violation. Normal regeneration does not use `--upgrade` and may preserve existing lock preferences. The independent `python scripts/check_dependency_contract.py --verify-bootstrap` command copies source inputs only into a temporary directory and compiles all four locks without prior outputs, leaving repository locks unchanged. The static checker also validates active direct dependencies and markers for Python 3.12, the security/compatibility contract, exact lock pins, shared-version parity, container hashes, and headers, but intentionally does not replace the resolver. Resolver closure is additionally proved by clean bootstrap, a clean `requirements-dev.txt` install, `python -m pip check`, and `python -m pip_audit -r requirements-dev.txt` without silently excluding advisories. Recreate the local `.venv` after lock changes instead of adding packages manually.
 >
-> Pytest treats deprecation warnings as errors. The only temporary exception is the exact full `gpt-researcher==0.15.1` upstream warning about its `langchain-community` import; the policy is bound to the entire message (including its URL and end anchor), category/module, and automatically expires on 2026-10-11 through the dependency checker. Changed text or an added suffix is not suppressed. W4 must re-check upstream and remove the exception once the import is gone. This policy does not mask other warning categories; those remain owned by their respective subsystem work.
+> Pytest treats deprecation warnings as errors. The only temporary exception is the exact full `gpt-researcher==0.15.1` upstream warning about its `langchain-community` import; the policy is bound to the entire message (including its URL and end anchor), category/module, and automatically expires on 2027-01-15 through the dependency checker. Changed text or an added suffix is not suppressed. W4 must re-check upstream and remove the exception once the import is gone. This policy does not mask other warning categories; those remain owned by their respective subsystem work.
 
 ### With Docker
 if you prefer docker deployment see [this guide](/docker/README.md) (Thanks  [canadaduane](https://github.com/canadaduane)!👍)

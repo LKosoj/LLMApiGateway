@@ -4,6 +4,7 @@ import io
 import json
 import logging
 from collections.abc import Mapping
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,6 +22,7 @@ from ...services.request_handler import (
     make_llm_request as make_llm_request,
 )
 from ...services.provider_auth import resolve_provider_auth_material as resolve_provider_auth_material
+from ...services.opencode_zen import make_opencode_zen_request
 from ...services.stream_observation import StreamObservationCapacity
 from ...services.upstream_routing_state import UpstreamRoutingState
 from ...utils.text_sanitize import sanitize_payload
@@ -184,6 +186,14 @@ async def _attempt_model_fallback_rule(
     immediately with the last error so the caller does not advance to the next
     fallback model. ``None`` disables the cap (legacy behavior).
     """
+    request_hook = make_llm_request
+    if model_fallback_rule.get("provider") == "opencode-zen":
+        request_hook = partial(
+            make_opencode_zen_request, make_llm_request, request,
+            stream_observation_capacity=stream_observation_capacity,
+            stream_event_max_bytes=stream_event_max_bytes,
+            stream_request_id=request_id,
+        )
     return await _attempt_model_fallback_rule_impl(
         request,
         http_client,
@@ -204,7 +214,7 @@ async def _attempt_model_fallback_rule(
         cost_rate_registry=cost_rate_registry,
         stream_observation_capacity=stream_observation_capacity,
         stream_event_max_bytes=stream_event_max_bytes,
-        make_llm_request_hook=make_llm_request,
+        make_llm_request_hook=request_hook,
         asyncio_hook=asyncio,
         logging_hook=logging,
         classify_error_hook=classify_error,

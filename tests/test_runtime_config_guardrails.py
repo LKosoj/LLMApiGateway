@@ -21,7 +21,13 @@ def _literal_provider_api_key_offenders(providers: list[object]) -> list[str]:
             if not isinstance(details, dict):
                 continue
             api_key = details.get("apikey")
-            if isinstance(api_key, str) and api_key and not _is_env_reference(api_key):
+            # Zen's public channel uses this documented, non-secret literal.
+            is_zen_public_key = (
+                provider_name == "opencode-zen"
+                and details.get("baseUrl") == "https://opencode.ai/inference/v1"
+                and api_key == "public"
+            )
+            if isinstance(api_key, str) and api_key and not _is_env_reference(api_key) and not is_zen_public_key:
                 offenders.append(provider_name)
 
             pools = details.get("upstream_key_pools")
@@ -59,3 +65,17 @@ def test_gitignore_has_local_runtime_config_overrides():
     assert "providers.secret.json" in gitignore
     assert "models_*_rules.local.json" in gitignore
     assert "models_*_rules.secret.json" in gitignore
+
+
+def test_only_zen_public_key_is_allowed_as_a_literal():
+    assert _literal_provider_api_key_offenders([{
+        "opencode-zen": {"baseUrl": "https://opencode.ai/inference/v1", "apikey": "public"},
+    }]) == []
+    for provider, url, key in (
+        ("other", "https://opencode.ai/inference/v1", "public"),
+        ("opencode-zen", "https://example.com/v1", "public"),
+        ("opencode-zen", "https://opencode.ai/inference/v1", "secret-key"),
+    ):
+        assert _literal_provider_api_key_offenders([{
+            provider: {"baseUrl": url, "apikey": key},
+        }]) == [provider]

@@ -65,6 +65,7 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     ] * 14
     assert counters["docs_models"] == 1
 
+    page.evaluate("() => document.fonts.ready")
     page.evaluate(
         "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
     )

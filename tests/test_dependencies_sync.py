@@ -131,7 +131,7 @@ filterwarnings = [
 id = "gpt-researcher-langchain-community"
 package = "gpt-researcher"
 package_version = "0.14.8"
-expires = 2026-10-11
+expires = 9999-12-31
 filter = '{UPSTREAM_WARNING_POLICY_FILTER}'
 reason = "upstream still imports the deprecated integration"
 """.strip()
@@ -270,6 +270,11 @@ def test_required_ci_tools_are_part_of_the_dev_contract() -> None:
 
 def test_upstream_warning_policy_expires_automatically(tmp_path: Path) -> None:
     _write_contract_fixture(tmp_path)
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace("9999-12-31", "2026-10-11"),
+        encoding="utf-8",
+    )
 
     errors = collect_dependency_contract_errors(
         tmp_path,
