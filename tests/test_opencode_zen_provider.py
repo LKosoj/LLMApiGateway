@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+import httpx
 from fastapi.responses import StreamingResponse
 
 from tests._async_compat import run_async
@@ -38,16 +39,50 @@ def provider():
     return ProviderDetails.model_validate(matches[0])
 
 
-def test_free_chat_catalog_does_not_require_upstream_discovery(provider):
+@pytest.mark.parametrize("provider_name", ["opencode-zen", "other-provider"])
+def test_upstream_catalog_is_filtered_by_free_suffix_only_for_zen(provider, provider_name):
     client = Mock()
-    models = run_async(
-        ProviderModelsService().get_models("opencode-zen", provider, client)
+    entries = [
+        {"id": "new-model-free", "context_length": 100000},
+        {"id": "paid-model"},
+        {"id": "big-pickle"},
+        {"id": "free-in-the-middle-model"},
+        {"id": "another-free"},
+    ]
+    client.get = AsyncMock(return_value=httpx.Response(200, json={"data": entries}))
+    service = ProviderModelsService()
+    assert provider.available_models is None
+    models = run_async(service.get_models(provider_name, provider, client))
+    metadata = run_async(service.get_model_entries(provider_name, provider, client))
+
+    expected = [entry for entry in entries if entry["id"].endswith("-free")] if provider_name == "opencode-zen" else entries
+    assert models == [entry["id"] for entry in expected]
+    assert metadata == {entry["id"]: entry for entry in expected}
+    client.get.assert_awaited_once_with(
+        "https://opencode.ai/inference/v1/models",
+        headers={"Content-Type": "application/json", "Authorization": "Bearer public", "User-Agent": "opencode/1.19.0"},
     )
 
-    assert "big-pickle" in models
-    assert "deepseek-v4.1-flash-free" in models
-    assert all(model == "big-pickle" or model.endswith("-free") for model in models)
-    assert not client.mock_calls
+
+def test_zen_catalog_refresh_discovers_new_free_models(provider):
+    now = [0]
+    client = Mock()
+    client.get = AsyncMock(side_effect=[
+        httpx.Response(200, json={"data": [{"id": "old-free"}, {"id": "paid"}]}),
+        httpx.Response(200, json={"data": [{"id": "new-free"}, {"id": "big-pickle"}]}),
+    ])
+    service = ProviderModelsService(time_func=lambda: now[0])
+    assert run_async(service.get_models("opencode-zen", provider, client)) == ["old-free"]
+    now[0] = service.ttl_seconds + 1
+    assert run_async(service.get_models("opencode-zen", provider, client)) == ["new-free"]
+    assert client.get.await_count == 2
+
+
+def test_zen_catalog_error_is_not_replaced_with_model_prices(provider):
+    client = Mock()
+    client.get = AsyncMock(return_value=httpx.Response(503, text="unavailable"))
+    with pytest.raises(ValueError, match="HTTP 503"):
+        run_async(ProviderModelsService().get_models("opencode-zen", provider, client))
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -101,7 +136,8 @@ def test_chat_sends_public_key_and_opencode_user_agent(provider, stream):
 
 def test_free_model_rates_and_calculator_are_zero(provider):
     registry = build_model_cost_rate_registry({"opencode-zen": provider})
-    for model in provider.available_models:
+    assert provider.models
+    for model in provider.models:
         rates = registry[("opencode-zen", model)]
         assert (rates.input_rate, rates.output_rate) == (0, 0)
         assert calculate_model_cost_usd(

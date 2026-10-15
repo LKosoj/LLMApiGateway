@@ -37,16 +37,6 @@
           "output_rate": 0
         }
       },
-      "available_models": [
-        "big-pickle",
-        "cat-jam-free",
-        "mimo-v2.6-flash-free",
-        "nemotron-3.5-lightning-free",
-        "step-5-preview-free",
-        "longcat-2.5-preview-free",
-        "deepseek-v4.1-flash-free",
-        "space-bunny-free"
-      ],
       "custom_headers": {
         "User-Agent": "opencode/1.19.0"
       }

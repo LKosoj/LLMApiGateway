@@ -225,6 +225,8 @@ class ProviderModelsService:
             model_id = model_entry.get("id")
             if not isinstance(model_id, str) or not model_id or model_id in entries_by_id:
                 continue
+            if provider_name == "opencode-zen" and not model_id.endswith("-free"):
+                continue
             entries_by_id[model_id] = model_entry
 
         logger.info(
