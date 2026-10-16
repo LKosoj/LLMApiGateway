@@ -4323,7 +4323,9 @@
       });
     }
     function buildDecisionsRouteRow(initialData) {
-      return buildEmbeddingRouteRow(initialData, "/decisions");
+      const row = buildEmbeddingRouteRow(initialData, "/decisions");
+      row.querySelector(".target-path-input").readOnly = false;
+      return row;
     }
     function normalizeEmbeddingRouteForSave(routeRow, defaultTargetPath = "/embeddings") {
       const providerSelect = routeRow.querySelector(".provider-select");

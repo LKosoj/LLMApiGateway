@@ -31,6 +31,7 @@ from llm_gateway_core.services.accounting import (
     classify_billing_policy,
 )
 from llm_gateway_core.services.active_requests import operation_from_path
+from llm_gateway_core.services.request_handler import OperationDispatcher
 from llm_gateway_core.utils.usage_tracking import ModelCostRates, build_model_cost_rate_registry, calculate_model_cost_usd
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
@@ -106,14 +107,17 @@ def _endpoint_case(monkeypatch, *, usage, rates=True, upstream_error=False, unkn
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
             loader = ConfigLoader()
-            loader.providers_config = {"aitunnel": ProviderDetails(baseUrl="https://upstream/v1", apikey="test")}
+            loader.providers_config = {
+                route["provider"]: ProviderDetails(baseUrl="https://upstream/v1", apikey="test")
+                for route in (operation_rules or RULES)["decisions"][0]["routes"]
+            }
             loader.operation_rules = loader._build_operation_config(operation_rules or RULES)
             services = make_app_services(http_client=client)
             services.accounting_service.release.return_value = True
             snapshot = make_runtime_snapshot(
                 config_loader=loader, http_client=client,
                 cost_rate_registry={
-                    ("aitunnel", route["model"]): ModelCostRates(input_rate, 0.0)
+                    (route["provider"], route["model"]): ModelCostRates(input_rate, 0.0)
                     for route in (operation_rules or RULES)["decisions"][0]["routes"]
                 } if rates else {},
             )
@@ -216,8 +220,16 @@ def test_configured_jev_route_registry_and_usage_record(monkeypatch):
     assert calculate_model_cost_usd(prompt_tokens=1000000, completion_tokens=0, rates=rates) == 0.042
     config = ModelsOperationConfig.model_validate(json.loads((root / "models_operation_rules.json").read_text()))
     model = next(item for item in config.decisions if item.gateway_model_name == "llmgateway/decision")
-    assert [route.model for route in model.routes] == ["jev-1.13", "pplx-decider-v1-27b"]
-    assert (model.routes[0].provider, model.routes[0].model, model.routes[0].target_path) == ("aitunnel", "jev-1.13", "/decisions")
+    assert [route.model for route in model.routes] == ["jev-1.13-free", "jev-1.13", "pplx-decider-v1.1-27b"]
+    assert (model.routes[0].provider, model.routes[0].model, model.routes[0].target_path) == (
+        "opencode-zen", "jev-1.13-free", "https://opencode.ai/inference/systemone/v1/systemone",
+    )
+    zen_rates = build_model_cost_rate_registry(providers)[("opencode-zen", "jev-1.13-free")]
+    assert zen_rates == rates
+    dispatcher = OperationDispatcher({}, {}, None)
+    assert dispatcher.build_target_url(model.routes[0], ProviderDetails(**providers["opencode-zen"])) == (
+        "https://opencode.ai/inference/systemone/v1/systemone"
+    )
     status, _, _, service = _endpoint_case(
         monkeypatch, usage={"input_tokens": 1000, "cost_rub": 0.0084}, input_rate=rates.input_rate,
     )
@@ -251,3 +263,26 @@ def test_decisions_exhausted_fallbacks_return_error_and_release(monkeypatch):
     assert [call["model"] for call in calls] == ["jev-1.13", "other"]
     service.commit.assert_not_called()
     service.release.assert_awaited_once()
+
+
+@pytest.mark.parametrize("upstream_cost,expected", [(None, 0.000042), (0, 0), (0.123, 0.123)])
+def test_zen_jev_usage_uses_configured_rates_and_preserves_upstream_cost(monkeypatch, upstream_cost, expected):
+    root = Path(__file__).resolve().parents[1]
+    rule = json.loads((root / "models_operation_rules.json").read_text())["decisions"][0]
+    rule["gateway_model_name"] = PAYLOAD["model"]
+    providers = {}
+    for item in json.loads((root / "providers.json").read_text()):
+        providers.update(item)
+    rates = build_model_cost_rate_registry(providers)[("opencode-zen", "jev-1.13-free")]
+    usage = {"input_tokens": 1000}
+    if upstream_cost is not None:
+        usage["cost"] = upstream_cost
+    status, _, calls, service = _endpoint_case(
+        monkeypatch, usage=usage, input_rate=rates.input_rate, operation_rules={"decisions": [rule]},
+    )
+    assert status == 200
+    assert [call["model"] for call in calls] == ["jev-1.13-free"]
+    event = service.commit.call_args.args[1]
+    assert event.provider == "opencode-zen"
+    assert event.model == "jev-1.13-free"
+    assert event.usage.cost == pytest.approx(expected)

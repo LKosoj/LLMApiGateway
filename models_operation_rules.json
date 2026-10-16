@@ -63,6 +63,13 @@
       "gateway_model_name": "llmgateway/decision",
       "routes": [
         {
+          "provider": "opencode-zen",
+          "model": "jev-1.13-free",
+          "target_path": "https://opencode.ai/inference/systemone/v1/systemone",
+          "custom_headers": {},
+          "custom_body_params": {}
+        },
+        {
           "provider": "aitunnel",
           "model": "jev-1.13",
           "target_path": "/decisions",

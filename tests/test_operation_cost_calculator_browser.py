@@ -64,6 +64,14 @@ def isolated_rules_editor():
         operation_rules_path.write_text(
             json.dumps(
                 {
+                    "decisions": [
+                        {
+                            "gateway_model_name": "llmgateway/decision",
+                            "routes": [
+                                {"provider": "openai", "model": "jev-1.13", "target_path": "/decisions"}
+                            ],
+                        }
+                    ],
                     "embeddings": [
                         {
                             "gateway_model_name": "llmgateway/embed",
@@ -301,3 +309,23 @@ def test_operation_cost_calculators_round_trip_across_rules_editor_tabs(
     assert "cost_calculator" not in persisted["web_read"][0]
     assert persisted["pdf_conversions"][0]["cost_calculator"]["rate_usd"] == 0.7
     assert console_problems == []
+
+
+def test_decisions_target_path_is_editable_and_saved(page: Page, isolated_rules_editor):
+    base_url, operation_rules_path = isolated_rules_editor
+    session_cookie = create_authenticated_session(base_url)
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session_cookie, "url": base_url}])
+    page.goto(f"{base_url}/v1/ui/rules-editor")
+    page.locator('[data-entity-target="decisions"]').click()
+    _expand_first_card(page, "#decisionsList")
+    target = page.locator("#decisionsList .target-path-input").first
+    expect(target).to_be_editable()
+    target.fill("https://opencode.ai/inference/systemone/v1/systemone")
+    page.locator("#saveButton").click()
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+    routes = json.loads(operation_rules_path.read_text())["decisions"][0]["routes"]
+    assert routes[0]["target_path"] == "https://opencode.ai/inference/systemone/v1/systemone"
+    page.reload()
+    page.locator('[data-entity-target="decisions"]').click()
+    _expand_first_card(page, "#decisionsList")
+    expect(page.locator("#decisionsList .target-path-input").first).to_have_value(routes[0]["target_path"])

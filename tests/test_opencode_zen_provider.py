@@ -134,10 +134,10 @@ def test_chat_sends_public_key_and_opencode_user_agent(provider, stream):
     assert "tools" not in body
 
 
-def test_free_model_rates_and_calculator_are_zero(provider):
+def test_free_chat_model_rates_and_calculator_are_zero(provider):
     registry = build_model_cost_rate_registry({"opencode-zen": provider})
     assert provider.models
-    for model in provider.models:
+    for model in provider.models.keys() - {"jev-1.13-free"}:
         rates = registry[("opencode-zen", model)]
         assert (rates.input_rate, rates.output_rate) == (0, 0)
         assert calculate_model_cost_usd(

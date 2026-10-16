@@ -4,6 +4,10 @@
       "baseUrl": "https://opencode.ai/inference/v1",
       "apikey": "public",
       "models": {
+        "jev-1.13-free": {
+          "input_rate": 0.042,
+          "output_rate": 0
+        },
         "big-pickle": {
           "input_rate": 0,
           "output_rate": 0
