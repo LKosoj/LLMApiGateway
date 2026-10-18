@@ -230,6 +230,7 @@ def test_configured_jev_route_registry_and_usage_record(monkeypatch):
     )
     zen_rates = build_model_cost_rate_registry(providers)[("opencode-zen", "jev-1.13-free")]
     assert zen_rates == rates
+    assert build_model_cost_rate_registry(providers)[("routerai", "~typesafe/jev-latest")] == rates
     dispatcher = OperationDispatcher({}, {}, None)
     assert dispatcher.build_target_url(model.routes[0], ProviderDetails(**providers["opencode-zen"])) == (
         "https://opencode.ai/inference/systemone/v1/systemone"

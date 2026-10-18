@@ -563,7 +563,13 @@
   {
     "routerai": {
       "baseUrl": "https://routerai.ru/api/v1",
-      "apikey": "${APIKEY_ROUTERAI}"
+      "apikey": "${APIKEY_ROUTERAI}",
+      "models": {
+        "~typesafe/jev-latest": {
+          "input_rate": 0.042,
+          "output_rate": 0
+        }
+      }
     }
   }
 ]
