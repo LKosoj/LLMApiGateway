@@ -4,11 +4,11 @@
     "panel": [
       {
         "provider": "openai_codex",
-        "model": "gpt-5.5"
+        "model": "gpt-6.1-sol"
       },
       {
         "provider": "z.ai",
-        "model": "glm-5.2"
+        "model": "GLM-5.3-Flash"
       },
       {
         "provider": "minimax",
@@ -20,12 +20,12 @@
       },
       {
         "provider": "alibaba",
-        "model": "qwen3.8-max-preview"
+        "model": "qwen3.8-max"
       }
     ],
     "main_model": {
       "provider": "openai_codex",
-      "model": "gpt-5.5"
+      "model": "gpt-6.1-sol"
     },
     "include_details_default": true,
     "web_tools": {
@@ -37,8 +37,8 @@
     },
     "reserve": [
       {
-        "provider": "aitunnel",
-        "model": "deepseek-v4-pro"
+        "provider": "routerai",
+        "model": "deepseek/deepseek-v4.1-flash-1017"
       }
     ]
   }

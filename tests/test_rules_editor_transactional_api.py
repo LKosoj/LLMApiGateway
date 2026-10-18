@@ -454,7 +454,7 @@ def test_raw_writers_delegate_exact_bytes_and_backup_policy(
             ConfigFile.ROUTER_RULES,
             {"rules": []},
             b"[]\n",
-            {"rules": [], "chat_models": [], "fallback_chains": {}},
+            {"rules": [], "chat_models": [], "decision_models": [], "fallback_chains": {}},
         ),
         (
             "/v1/config/model-operations/structured",

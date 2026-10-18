@@ -325,12 +325,25 @@ def test_complete_load_rejects_excluded_router_internal_target(tmp_path: Path) -
         json.dumps({"excluded_models": ["gateway/chat"]}).encode(),
     )
     bundle = bundle.with_candidate(
+        ConfigFile.OPERATION_RULES,
+        json.dumps(
+            {
+                "decisions": [
+                    {
+                        "gateway_model_name": "gateway/decision",
+                        "routes": [{"provider": "primary", "model": "decider"}],
+                    }
+                ]
+            }
+        ).encode(),
+    )
+    bundle = bundle.with_candidate(
         ConfigFile.ROUTER_RULES,
         json.dumps(
             [
                 {
                     "gateway_model_name": "gateway/router",
-                    "selector_model": "gateway/chat",
+                    "selector_model": "gateway/decision",
                     "targets": [{"type": "gateway_model", "model": "gateway/chat"}],
                 }
             ]
@@ -396,7 +409,7 @@ def test_complete_load_rejects_unknown_web_search_query_model(tmp_path: Path) ->
                 }
             ],
             "Router model 'gateway/router' references unknown selector_model "
-            "'gateway/ghost' (must be a gateway chat model in fallback rules).",
+            "'gateway/ghost' (must be a gateway decisions model in operation rules).",
         ),
         (
             ConfigFile.OPERATION_RULES,
@@ -695,6 +708,12 @@ def _rich_bundle(root: Path) -> ConfigSourceBundle:
                 {"gateway_model_name": "gateway/search", "query_model": "gateway/chat"}
             ],
             "web_read": [{"gateway_model_name": "gateway/read"}],
+            "decisions": [
+                {
+                    "gateway_model_name": "gateway/decision",
+                    "routes": [{"provider": "primary", "model": "decider"}],
+                }
+            ],
         },
         ConfigFile.FUSION_RULES: [
             {
@@ -712,7 +731,7 @@ def _rich_bundle(root: Path) -> ConfigSourceBundle:
         ConfigFile.ROUTER_RULES: [
             {
                 "gateway_model_name": "gateway/router",
-                "selector_model": "gateway/chat",
+                "selector_model": "gateway/decision",
                 "targets": [{"type": "gateway_model", "model": "gateway/pool"}],
             }
         ],

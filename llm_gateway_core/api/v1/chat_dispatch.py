@@ -1600,6 +1600,14 @@ async def dispatch_chat_request(
     )
     if router_config is not None:
         router_service = runtime_snapshot.router_model_service
+        if is_streaming:
+            return await router_service.run_stream(
+                request=request,
+                gateway_model_name=routing_model,
+                router_config=router_config,
+                request_body=request_body_json,
+                accounting_handoff=accounting_handoff,
+            )
         if accounting_handoff is not None:
             observed = await router_service.run_observed(
                 request=request,

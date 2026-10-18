@@ -51,6 +51,8 @@
     "addEditModel": "Add Edit Model",
     "addSpeechModel": "Add Speech Model",
     "addAudioModel": "Add Audio Model",
+    "addDiarizationModel": "Add Diarization Model",
+    "addSpeakerTranscriptionModel": "Add Speaker Transcription Model",
     "addSearchService": "Add Search Service",
     "addReadService": "Add Read Service",
     "addResearchService": "Add Research Service",
@@ -127,8 +129,8 @@
     },
     "router": {
       "title": "Router Models",
-      "description": "Each Router model calls a selector gateway model, then routes the original request to one explicit target.",
-      "hint": "Selector and targets come from chat models configured in Fallback Rules. A target can use the full fallback chain or start at a specific entry.",
+      "description": "Each Router model asks a decisions gateway model to pick a target, then routes the original request to one explicit target.",
+      "hint": "The selector comes from Decisions models; targets come from chat models configured in Fallback Rules. A target can use the full fallback chain or start at a specific entry.",
       "empty": "No router models yet. Add the first router model to begin.",
       "targetsHeading": "Routing targets"
     },
@@ -155,6 +157,16 @@
       "description": "Configure routes for /v1/audio/transcriptions.",
       "hint": "Requests remain OpenAI-compatible multipart/form-data. Advanced options can select vendor adapters such as NVIDIA Riva gRPC.",
       "empty": "No audio transcription routes yet. Add the first audio model to begin."
+    },
+    "audioDiarization": {
+      "title": "Audio Diarization Routes",
+      "description": "Configure routes for /v1/audio/diarize (who spoke when).",
+      "empty": "No diarization routes yet. Add the first diarization model to begin."
+    },
+    "audioSpeakerTranscriptions": {
+      "title": "Speaker Transcriptions",
+      "description": "Composite models for /v1/audio/transcriptions: run a transcription model and a diarization model in parallel and return text split by speaker.",
+      "empty": "No speaker transcription models yet. Add the first one to begin."
     },
     "webSearch": {
       "title": "Web Search Services",
@@ -262,7 +274,9 @@
     "contextWindow": "Context window (tokens)",
     "routerRoutingPolicy": "Routing Policy",
     "routerTargetDescription": "Target Description",
-    "routerCostHint": "Cost Hint"
+    "routerCostHint": "Cost Hint",
+    "transcriptionModel": "Transcription Model",
+    "diarizationModel": "Diarization Model"
   },
   "toggles": {
     "providerOrder": "Use provider order as fallback",
@@ -285,7 +299,7 @@
     "routerGatewayTarget": "Use the selected gateway model with its full fallback chain.",
     "routerFallbackGateway": "Choose which gateway fallback chain to start inside.",
     "routerFallbackEntry": "The selected entry is tried first, then the remaining fallback entries are tried in order.",
-    "routerSelector": "Gateway chat model that decides which configured target should handle the request.",
+    "routerSelector": "Gateway decisions model (Decisions tab) that picks which configured target should handle the request.",
     "webQueryModel": "Gateway chat LLM used to expand the user query into multiple search queries. Leave empty to skip.",
     "webSearchModel": "Pick one of the Web Search services configured above.",
     "webReadModel": "Pick one of the Web Read services configured above.",

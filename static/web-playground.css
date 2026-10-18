@@ -690,3 +690,15 @@ body.dark-mode .playground-result pre.raw-json {
         align-self: flex-start;
     }
 }
+
+.diarization-table {
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+.diarization-table th,
+.diarization-table td {
+    padding: 4px 16px 4px 0;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}

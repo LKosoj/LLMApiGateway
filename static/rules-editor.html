@@ -188,8 +188,8 @@
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
                             <strong data-i18n="editor:sections.router.title">Router Models</strong>
-                            <span data-i18n="editor:sections.router.description">Each Router model calls a selector gateway model, then routes the original request to one explicit target.</span>
-                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;" data-i18n="editor:sections.router.hint">Selector and targets come from chat models configured in Fallback Rules. A target can use the full fallback chain or start at a specific entry.</span>
+                            <span data-i18n="editor:sections.router.description">Each Router model asks a decisions gateway model to pick a target, then routes the original request to one explicit target.</span>
+                            <span style="display:block; margin-top:4px; font-size:0.85em; opacity:0.8;" data-i18n="editor:sections.router.hint">The selector comes from Decisions models; targets come from chat models configured in Fallback Rules. A target can use the full fallback chain or start at a specific entry.</span>
                         </div>
                         <button id="addRouterButton" type="button" class="secondary-button" data-i18n="editor:actions.addRouterModel">Add Router Model</button>
                     </div>
@@ -256,6 +256,32 @@
                     <div id="audioTranscriptionsList" class="rules-list"></div>
                     <div id="audioTranscriptionsEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.audioTranscriptions.empty">
                         No audio transcription routes yet. Add the first audio model to begin.
+                    </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong data-i18n="editor:sections.audioDiarization.title">Audio Diarization Routes</strong>
+                            <span data-i18n="editor:sections.audioDiarization.description">Configure routes for /v1/audio/diarize (who spoke when).</span>
+                        </div>
+                        <button id="addAudioDiarizationButton" type="button" class="secondary-button" data-i18n="editor:actions.addDiarizationModel">Add Diarization Model</button>
+                    </div>
+                    <div id="audioDiarizationsList" class="rules-list"></div>
+                    <div id="audioDiarizationsEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.audioDiarization.empty">
+                        No diarization routes yet. Add the first diarization model to begin.
+                    </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong data-i18n="editor:sections.audioSpeakerTranscriptions.title">Speaker Transcriptions</strong>
+                            <span data-i18n="editor:sections.audioSpeakerTranscriptions.description">Composite models for /v1/audio/transcriptions: run a transcription model and a diarization model in parallel and return text split by speaker.</span>
+                        </div>
+                        <button id="addAudioSpeakerTranscriptionButton" type="button" class="secondary-button" data-i18n="editor:actions.addSpeakerTranscriptionModel">Add Speaker Transcription Model</button>
+                    </div>
+                    <div id="audioSpeakerTranscriptionsList" class="rules-list"></div>
+                    <div id="audioSpeakerTranscriptionsEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.audioSpeakerTranscriptions.empty">
+                        No speaker transcription models yet. Add the first one to begin.
                     </div>
                 </div>
             </div>

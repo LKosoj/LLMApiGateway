@@ -52,7 +52,11 @@ class RulesEditorSaveTests(unittest.TestCase):
         self.model_rules_path = Path(self.temp_dir.name) / "models_model_rules.json"
         self.providers_path.write_text(VALID_PROVIDERS_TEXT, encoding="utf-8")
         self.rules_path.write_text(VALID_RULES_TEXT, encoding="utf-8")
-        self.operation_rules_path.write_text("{}", encoding="utf-8")
+        self.operation_rules_path.write_text(
+            '{"decisions": [{"gateway_model_name": "gateway/decision", '
+            '"routes": [{"provider": "devbox", "model": "decider"}]}]}',
+            encoding="utf-8",
+        )
         self.fusion_rules_path.write_text("[]", encoding="utf-8")
         self.router_rules_path.write_text("[]", encoding="utf-8")
         self.model_rules_path.write_text("{}", encoding="utf-8")
@@ -209,7 +213,7 @@ class RulesEditorSaveTests(unittest.TestCase):
 [
   {
     "gateway_model_name": "gateway/router",
-    "selector_model": "gateway-model",
+    "selector_model": "gateway/decision",
     "targets": [
       {"type": "gateway_model", "model": "gateway-model"}
     ]
@@ -238,14 +242,15 @@ class RulesEditorSaveTests(unittest.TestCase):
         self.assertEqual(payload["chat_models"], ["gateway-model"])
         self.assertEqual(payload["fallback_chains"]["gateway-model"][0]["provider"], "devbox")
         self.assertEqual(payload["rules"][0]["gateway_model_name"], "gateway/router")
-        self.assertEqual(payload["rules"][0]["selector_model"], "gateway-model")
+        self.assertEqual(payload["rules"][0]["selector_model"], "gateway/decision")
+        self.assertEqual(payload["decision_models"], ["gateway/decision"])
 
     def test_save_router_rules_structured_updates_file_and_runtime_config(self):
         payload = {
             "rules": [
                 {
                     "gateway_model_name": "gateway/router",
-                    "selector_model": "gateway-model",
+                    "selector_model": "gateway/decision",
                     "targets": [
                         {"type": "gateway_model", "model": "gateway-model"},
                         {"type": "fallback_entry", "gateway_model": "gateway-model", "index": 0},
@@ -278,7 +283,7 @@ class RulesEditorSaveTests(unittest.TestCase):
             "rules": [
                 {
                     "gateway_model_name": "gateway/router",
-                    "selector_model": "gateway-model",
+                    "selector_model": "gateway/decision",
                     "routing_policy": "Prefer the cheapest candidate that can answer well.",
                     "targets": [
                         {

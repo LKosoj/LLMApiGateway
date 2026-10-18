@@ -50,6 +50,10 @@
       "webSearch": {
         "hint": "Service models for /v1/web/search.",
         "title": "Web search"
+      },
+      "audioDiarization": {
+        "hint": "Speaker diarization models for /v1/audio/diarize.",
+        "title": "Diarization"
       }
     },
     "loading": "Loading the model catalog...",
@@ -125,7 +129,17 @@
       "text020": "or",
       "text021": "Controls decoding variability if the model supports the parameter.",
       "text022": "Query timestamps at the segment or word level, if supported by the model.",
-      "text023": "OpenAI-compatible transcription response. Streaming is not supported."
+      "text023": "OpenAI-compatible transcription response. Streaming is not supported.",
+      "text024": "Free-form text about the emotion and speaking style, if the model supports it (for example, Qwen3-TTS).",
+      "tableHeader001": "Speaker split",
+      "text025": "Models from the",
+      "text026": "section call speech recognition and diarization in parallel and return text with lines like",
+      "text027": ". Supported formats:",
+      "text028": "Audio file in which to detect who spoke when.",
+      "text029": "Gateway model from the audio diarizations group.",
+      "text030": "Minimum segment duration in seconds, if supported by the model.",
+      "text031": "JSON with a list of",
+      "text032": "segments, or RTTM text."
     },
     "auth": {
       "heading": "Authorization and base URL",

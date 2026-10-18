@@ -67,6 +67,7 @@ DOCS_CAPABILITY_ORDER = (
     "images",
     "audio_speech",
     "audio_transcription",
+    "audio_diarization",
     "pdf_conversion",
     "web_search",
     "web_read",
@@ -81,6 +82,8 @@ DOCS_CAPABILITY_SECTIONS = {
     "images_edits": "images",
     "audio_speech": "audio_speech",
     "audio_transcriptions": "audio_transcription",
+    "audio_speaker_transcriptions": "audio_transcription",
+    "audio_diarizations": "audio_diarization",
     "pdf_conversions": "pdf_conversion",
     "web_search": "web_search",
     "web_read": "web_read",
@@ -298,6 +301,7 @@ def _build_structured_router_response(config_loader) -> dict:
     return {
         "rules": rules,
         "chat_models": sorted(fallback_rules.keys()),
+        "decision_models": sorted(((getattr(config_loader, "operation_rules", None) or {}).get("decisions") or {}).keys()),
         "fallback_chains": fallback_chains,
     }
 
@@ -450,6 +454,8 @@ def _serialize_structured_operation_rules(
     *,
     include_audio_speech: bool = False,
     include_audio_transcriptions: bool = False,
+    include_audio_diarizations: bool = False,
+    include_audio_speaker_transcriptions: bool = False,
     include_pdf_conversions: bool = False,
     include_web_sections: bool = False,
 ) -> str:
@@ -465,6 +471,10 @@ def _serialize_structured_operation_rules(
         serialized_payload["audio_speech"] = payload_dump["audio_speech"]
     if include_audio_transcriptions or payload.audio_transcriptions:
         serialized_payload["audio_transcriptions"] = payload_dump["audio_transcriptions"]
+    if include_audio_diarizations or payload.audio_diarizations:
+        serialized_payload["audio_diarizations"] = payload_dump["audio_diarizations"]
+    if include_audio_speaker_transcriptions or payload.audio_speaker_transcriptions:
+        serialized_payload["audio_speaker_transcriptions"] = payload_dump["audio_speaker_transcriptions"]
     if include_pdf_conversions or payload.pdf_conversions:
         serialized_payload["pdf_conversions"] = payload_dump["pdf_conversions"]
     if include_web_sections or payload.web_search:
@@ -523,7 +533,7 @@ def _build_structured_operation_rules_response(config_loader) -> dict:
     if audio_transcriptions:
         response_payload["audio_transcriptions"] = audio_transcriptions
 
-    for section_name in ("audio_speech", "pdf_conversions"):
+    for section_name in ("audio_speech", "audio_diarizations", "pdf_conversions"):
         section_rules = [
             serialize_model(gateway_model_name, config, include_routes=True)
             for gateway_model_name, config in config_loader.operation_rules.get(section_name, {}).items()
@@ -531,7 +541,7 @@ def _build_structured_operation_rules_response(config_loader) -> dict:
         if section_rules:
             response_payload[section_name] = section_rules
 
-    for section_name in ("web_search", "web_read"):
+    for section_name in ("audio_speaker_transcriptions", "web_search", "web_read"):
         section_rules = [
             serialize_model(gateway_model_name, config, include_routes=False)
             for gateway_model_name, config in config_loader.operation_rules.get(section_name, {}).items()
@@ -871,7 +881,10 @@ def _build_playground_models(config_loader) -> dict[str, list[str]]:
         "web_research": _names("web_research"),
         "web_deep_research": _names("web_deep_research"),
         "audio_speech": _names("audio_speech"),
-        "audio_transcriptions": _names("audio_transcriptions"),
+        "audio_transcriptions": sorted(
+            set(_names("audio_transcriptions")) | set(_names("audio_speaker_transcriptions"))
+        ),
+        "audio_diarizations": _names("audio_diarizations"),
         "images_generations": _names("images_generations"),
         "images_edits": _names("images_edits"),
         "pdf_conversions": _names("pdf_conversions"),
@@ -1273,6 +1286,14 @@ async def save_operation_rules_structured(request: Request):
             include_audio_transcriptions=(
                 "audio_transcriptions" in envelope
                 or bool(structured_payload.audio_transcriptions)
+            ),
+            include_audio_diarizations=(
+                "audio_diarizations" in envelope
+                or bool(structured_payload.audio_diarizations)
+            ),
+            include_audio_speaker_transcriptions=(
+                "audio_speaker_transcriptions" in envelope
+                or bool(structured_payload.audio_speaker_transcriptions)
             ),
             include_pdf_conversions=(
                 "pdf_conversions" in envelope

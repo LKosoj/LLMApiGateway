@@ -61,6 +61,12 @@ const audioSpeechEmptyState = document.getElementById('audioSpeechEmptyState');
 const addAudioTranscriptionButton = document.getElementById('addAudioTranscriptionButton');
 const audioTranscriptionsList = document.getElementById('audioTranscriptionsList');
 const audioTranscriptionsEmptyState = document.getElementById('audioTranscriptionsEmptyState');
+const addAudioDiarizationButton = document.getElementById('addAudioDiarizationButton');
+const audioDiarizationsList = document.getElementById('audioDiarizationsList');
+const audioDiarizationsEmptyState = document.getElementById('audioDiarizationsEmptyState');
+const addAudioSpeakerTranscriptionButton = document.getElementById('addAudioSpeakerTranscriptionButton');
+const audioSpeakerTranscriptionsList = document.getElementById('audioSpeakerTranscriptionsList');
+const audioSpeakerTranscriptionsEmptyState = document.getElementById('audioSpeakerTranscriptionsEmptyState');
 const addWebSearchButton = document.getElementById('addWebSearchButton');
 const webSearchList = document.getElementById('webSearchList');
 const webSearchEmptyState = document.getElementById('webSearchEmptyState');
@@ -142,6 +148,12 @@ const modelRulesRawInput = document.getElementById('modelRulesRawInput');
         addAudioTranscriptionButton,
         audioTranscriptionsList,
         audioTranscriptionsEmptyState,
+        addAudioDiarizationButton,
+        audioDiarizationsList,
+        audioDiarizationsEmptyState,
+        addAudioSpeakerTranscriptionButton,
+        audioSpeakerTranscriptionsList,
+        audioSpeakerTranscriptionsEmptyState,
         addWebSearchButton,
         webSearchList,
         webSearchEmptyState,
@@ -526,6 +538,9 @@ export function registerCore(ctx) {
         requireArrayProperty(payload, 'rules');
         if (Object.prototype.hasOwnProperty.call(payload, 'chat_models')) {
             requireArrayProperty(payload, 'chat_models');
+        }
+        if (Object.prototype.hasOwnProperty.call(payload, 'decision_models')) {
+            requireArrayProperty(payload, 'decision_models');
         }
         if (
             Object.prototype.hasOwnProperty.call(payload, 'fallback_chains')
@@ -1041,6 +1056,14 @@ export function registerCore(ctx) {
         ctx.elements.audioTranscriptionsEmptyState.hidden = ctx.elements.audioTranscriptionsList.children.length !== 0;
     }
 
+    function refreshAudioDiarizationsEmptyState() {
+        ctx.elements.audioDiarizationsEmptyState.hidden = ctx.elements.audioDiarizationsList.children.length !== 0;
+    }
+
+    function refreshAudioSpeakerTranscriptionsEmptyState() {
+        ctx.elements.audioSpeakerTranscriptionsEmptyState.hidden = ctx.elements.audioSpeakerTranscriptionsList.children.length !== 0;
+    }
+
     function refreshWebSearchEmptyState() {
         ctx.elements.webSearchEmptyState.hidden = ctx.elements.webSearchList.children.length !== 0;
     }
@@ -1119,6 +1142,8 @@ export function registerCore(ctx) {
         ['Read Model', 'editor:fields.readModel'],
         ['Rerank Model', 'editor:fields.rerankModel'],
         ['Analysis Model', 'editor:fields.analysisModel'],
+        ['Transcription Model', 'editor:fields.transcriptionModel'],
+        ['Diarization Model', 'editor:fields.diarizationModel'],
         ['Fast LLM', 'editor:fields.fastModel'],
         ['Smart LLM', 'editor:fields.smartModel'],
         ['Strategic LLM', 'editor:fields.strategicModel'],
@@ -2178,6 +2203,8 @@ export function registerCore(ctx) {
         refreshImageEditEmptyState,
         refreshAudioSpeechEmptyState,
         refreshAudioTranscriptionsEmptyState,
+        refreshAudioDiarizationsEmptyState,
+        refreshAudioSpeakerTranscriptionsEmptyState,
         refreshWebSearchEmptyState,
         refreshWebReadEmptyState,
         refreshWebResearchEmptyState,

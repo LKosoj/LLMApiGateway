@@ -1,7 +1,7 @@
 [
   {
     "gateway_model_name": "llmgateway/router",
-    "selector_model": "llmgateway/small",
+    "selector_model": "llmgateway/decision",
     "routing_policy": "Prefer the cheapest candidate that can still answer well. Escalate to a more expensive candidate only when the request truly needs it: writing or debugging code, tool calls, long or complex input, multi-step reasoning, or a task where a wrong answer is costly. Never pick an expensive candidate for greetings, short factual questions, translation, summarisation or formatting.",
     "targets": [
       {

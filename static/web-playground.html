@@ -37,6 +37,7 @@
             <button type="button" class="tab-button active" data-playground-section-tab="web" role="tab" data-i18n="playground:tabs.web">Web</button>
             <button type="button" class="tab-button" data-playground-section-tab="chat" role="tab" data-i18n="playground:tabs.chat">Chat</button>
             <button type="button" class="tab-button" data-playground-section-tab="audio-transcription" role="tab" data-i18n="playground:tabs.audioTranscription">Speech to Text</button>
+            <button type="button" class="tab-button" data-playground-section-tab="audio-diarization" role="tab" data-i18n="playground:tabs.audioDiarization">Diarization</button>
             <button type="button" class="tab-button" data-playground-section-tab="audio-speech" role="tab" data-i18n="playground:tabs.audioSpeech">Text to Speech</button>
             <button type="button" class="tab-button" data-playground-section-tab="image-generation" role="tab" data-i18n="playground:tabs.imageGeneration">Image Generation</button>
             <button type="button" class="tab-button" data-playground-section-tab="image-edit" role="tab" data-i18n="playground:tabs.imageEdit">Image Editing</button>
@@ -431,6 +432,10 @@
                         <label for="audioSpeechInput" data-i18n="playground:labels.inputText">Input text</label>
                         <textarea id="audioSpeechInput" name="input" rows="5" required></textarea>
                     </div>
+                    <div class="field-group">
+                        <label for="audioSpeechInstructions" data-i18n="playground:labels.instructions">Instructions (emotion and style)</label>
+                        <input id="audioSpeechInstructions" name="instructions" type="text" data-i18n-placeholder="playground:placeholders.speechInstructions" placeholder="cheerful, calm announcer">
+                    </div>
                     <div class="field-row">
                         <div class="field-group">
                             <label for="audioSpeechVoice" data-i18n="playground:labels.voice">Voice</label>
@@ -530,6 +535,39 @@
                     </div>
                 </form>
                 <div class="playground-result" data-result-for="audio-transcription" hidden></div>
+            </section>
+        </section>
+
+        <section class="playground-section" data-playground-section-panel="audio-diarization" role="tabpanel" hidden>
+            <section class="playground-panel">
+                <form class="playground-form" id="audioDiarizationForm" autocomplete="off">
+                    <div class="field-group">
+                        <label for="audioDiarizationModel" data-i18n="playground:labels.gatewayModel">Gateway model</label>
+                        <select id="audioDiarizationModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="audioDiarizationFile" data-i18n="playground:labels.audioFile">Audio file</label>
+                        <input id="audioDiarizationFile" name="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.webm" required>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="audioDiarizationFormat" data-i18n="playground:labels.responseFormat">Response format</label>
+                            <select id="audioDiarizationFormat" name="response_format">
+                                <option value="json" selected>json</option>
+                                <option value="rttm">rttm</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="audioDiarizationMinDuration" data-i18n="playground:labels.minDuration">Min segment duration, s</label>
+                            <input id="audioDiarizationMinDuration" name="min_duration" type="number" min="0" step="0.05" placeholder="0.3">
+                        </div>
+                    </div>
+                    <div class="playground-actions">
+                        <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.diarizeAudio">Find speakers</button>
+                        <span class="playground-status" data-status-for="audio-diarization"></span>
+                    </div>
+                </form>
+                <div class="playground-result" data-result-for="audio-diarization" hidden></div>
             </section>
         </section>
 

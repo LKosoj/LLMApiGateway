@@ -98,6 +98,20 @@ function startEditor(ctx) {
         audioCard.classList.remove('collapsed');
         ctx.elements.audioTranscriptionsList.appendChild(audioCard);
         ctx.refreshAudioTranscriptionsEmptyState();
+        ctx.refreshAudioSpeakerDropdowns();
+    });
+    ctx.elements.addAudioDiarizationButton.addEventListener('click', () => {
+        const audioCard = ctx.buildAudioDiarizationCard({});
+        audioCard.classList.remove('collapsed');
+        ctx.elements.audioDiarizationsList.appendChild(audioCard);
+        ctx.refreshAudioDiarizationsEmptyState();
+        ctx.refreshAudioSpeakerDropdowns();
+    });
+    ctx.elements.addAudioSpeakerTranscriptionButton.addEventListener('click', () => {
+        const speakerCard = ctx.buildAudioSpeakerTranscriptionCard({});
+        speakerCard.classList.remove('collapsed');
+        ctx.elements.audioSpeakerTranscriptionsList.appendChild(speakerCard);
+        ctx.refreshAudioSpeakerTranscriptionsEmptyState();
     });
     ctx.elements.addWebSearchButton.addEventListener('click', () => {
         const searchCard = ctx.buildWebSearchCard({}, WEB_SEARCH_CARD_OPTIONS);

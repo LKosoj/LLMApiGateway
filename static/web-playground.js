@@ -15,6 +15,7 @@
         {id: "deepResearchModel", section: "web_deep_research"},
         {id: "audioSpeechModel", section: "audio_speech"},
         {id: "audioTranscriptionModel", section: "audio_transcriptions"},
+        {id: "audioDiarizationModel", section: "audio_diarizations"},
         {id: "imageGenerationModel", section: "images_generations"},
         {id: "imageEditModel", section: "images_edits"},
         {id: "pdfConversionModel", section: "pdf_conversions"},
@@ -29,6 +30,7 @@
         "deep-research",
         "audio-speech",
         "audio-transcription",
+        "audio-diarization",
         "image-generation",
         "image-edit",
         "pdf-conversion",
@@ -917,6 +919,19 @@
         return `<h3>${translatedSpan(titleKey)}</h3>${actions}<pre class="raw-json">${escapeHtml(payload && payload.text ? payload.text : "")}</pre>`;
     }
 
+    function renderDiarizationResult(payload) {
+        const segments = payload && typeof payload === "object" && Array.isArray(payload.segments) ? payload.segments : null;
+        if (!segments) return renderPlainOrJsonResult(payload, "results.diarizationTitle");
+        const rows = segments.map((segment) =>
+            `<tr><td>${escapeHtml(segment.speaker)}</td><td>${escapeHtml(segment.start)}</td><td>${escapeHtml(segment.end)}</td></tr>`
+        ).join("");
+        return `<h3>${translatedSpan("results.diarizationTitle")}</h3>` +
+            `<p>${translatedSpan("results.speakersFound", {count: Number(payload.num_speakers || 0)})}</p>` +
+            `<table class="diarization-table"><thead><tr><th>${translatedSpan("results.speaker")}</th>` +
+            `<th>${translatedSpan("results.segmentStart")}</th><th>${translatedSpan("results.segmentEnd")}</th></tr></thead>` +
+            `<tbody>${rows}</tbody></table>${renderRawDetails(payload)}`;
+    }
+
     function formatDuration(seconds) {
         if (seconds == null || !Number.isFinite(Number(seconds))) return "";
         const total = Math.max(0, Math.round(Number(seconds)));
@@ -1749,6 +1764,7 @@
         wireAudioSpeechForm();
         wirePdfConversionForm();
         wireMultipartForm("audio-transcription", "audioTranscriptionForm", "/v1/audio/transcriptions", (payload, download) => renderPlainOrJsonResult(payload, "results.transcriptionTitle", download));
+        wireMultipartForm("audio-diarization", "audioDiarizationForm", "/v1/audio/diarize", renderDiarizationResult);
         wireForm("image-generation", "imageGenerationForm", "/v1/images/generations", (payload) => renderImageOperationResult(payload, "results.generatedImagesTitle"));
         wireMultipartForm("image-edit", "imageEditForm", "/v1/images/edits", (payload) => renderImageOperationResult(payload, "results.editedImagesTitle"));
         document.addEventListener("change", captureLocaleChange, {capture: true});

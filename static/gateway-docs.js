@@ -50,6 +50,10 @@
             catalogKey: "audioTranscription",
         },
         {
+            key: "audio_diarization",
+            catalogKey: "audioDiarization",
+        },
+        {
             key: "audio_speech",
             catalogKey: "audioSpeech",
         },

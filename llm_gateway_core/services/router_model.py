@@ -1,15 +1,15 @@
 """Router model service.
 
-A Router gateway model asks a configured selector gateway model to pick one
-explicit target from an allowlist, then delegates the original request to that
-target. Targets are either full gateway chat models or a specific fallback-chain
+A Router gateway model asks a configured decisions gateway model to pick one
+explicit target from an allowlist (a ``choice`` question), then delegates the
+original request to that target, streaming or not. Targets are either full gateway chat models or a specific fallback-chain
 entry inside a gateway chat model.
 """
 
 from __future__ import annotations
 
 import copy
-import json
+import dataclasses
 import logging
 import math
 import re
@@ -65,66 +65,55 @@ _EDIT_TOOL_NAMES = {
 }
 _NONZERO_TEST_FAILURE = re.compile(r"\b[1-9]\d*\s+(?:failed|failures?|errors?)\b")
 
-_SELECTOR_SYSTEM_PROMPT = (
-    "You are an internal routing selector for LLMApiGateway. Choose exactly one "
-    "candidate for the user request. Return ONLY a JSON object with these keys: "
-    '"candidate_id" (string, must exactly match one candidate id), "reason" '
-    "(short string), and \"confidence\" (number from 0 to 1). Do not answer the "
-    "user request itself."
+_DECISION_QUESTION = "route"
+_DECISION_INSTRUCTIONS = (
+    "Choose the candidate model that should answer the chat request in the state. "
+    "Each option describes one candidate."
 )
 
 
-def _selector_system_prompt(routing_policy: str | None) -> str:
+def _decision_instructions(routing_policy: str | None) -> str:
     if not routing_policy:
-        return _SELECTOR_SYSTEM_PROMPT
-    return (
-        f"{_SELECTOR_SYSTEM_PROMPT}\n\nRouting policy configured by the gateway operator. "
-        f"Follow it when comparing candidates:\n{routing_policy}"
-    )
+        return _DECISION_INSTRUCTIONS
+    return f"{_DECISION_INSTRUCTIONS}\n\nRouting policy configured by the gateway operator:\n{routing_policy}"
 
 
-def _extract_text(openai_response: dict[str, Any]) -> str:
-    choices = openai_response.get("choices") or []
-    if not choices:
-        return ""
-    first_choice = choices[0] if isinstance(choices[0], dict) else {}
-    message = first_choice.get("message") if isinstance(first_choice, dict) else {}
-    if not isinstance(message, dict):
-        return ""
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = [
-            part.get("text", "")
-            for part in content
-            if isinstance(part, dict) and part.get("type") in (None, "text")
-        ]
-        return "".join(parts)
-    return ""
+def _candidate_criterion(candidate: dict[str, Any]) -> str:
+    """Option text for one candidate: operator hints plus the models it runs on."""
+    chain = candidate.get("fallback_chain") or candidate.get("remaining_fallback_chain") or []
+    models = ", ".join(f"{item.get('provider')}/{item.get('model')}" for item in chain)
+    parts = [candidate.get("description"), f"Cost tier: {candidate['cost_hint']}." if candidate.get("cost_hint") else None]
+    parts.append(f"Models: {models}." if models else None)
+    return " ".join(part for part in parts if part) or str(candidate["id"])
 
 
-def _parse_selector_decision(text: str) -> dict[str, Any]:
-    stripped = (text or "").strip()
-    if not stripped:
-        raise ValueError("selector returned an empty response")
-    if stripped.startswith("```"):
-        stripped = stripped.strip("`")
-        newline = stripped.find("\n")
-        if newline != -1:
-            stripped = stripped[newline + 1:]
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        stripped = stripped[start:end + 1]
-    parsed = json.loads(stripped)
-    if not isinstance(parsed, dict):
-        raise ValueError("selector response must be a JSON object")
-    candidate_id = parsed.get("candidate_id")
+def _decision_payload(
+    selector_model: str,
+    routing_policy: str | None,
+    candidates: list[dict[str, Any]],
+    request_body: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "model": selector_model,
+        "state": {"request": _request_summary(request_body)},
+        "questions": {
+            _DECISION_QUESTION: {
+                "type": "choice",
+                "instructions": _decision_instructions(routing_policy),
+                "criteria": {candidate["id"]: _candidate_criterion(candidate) for candidate in candidates},
+            }
+        },
+    }
+
+
+def _parse_decision_answer(response: dict[str, Any]) -> dict[str, Any]:
+    answer = (response.get("answers") or {}).get(_DECISION_QUESTION)
+    if not isinstance(answer, dict):
+        raise ValueError(f"decision response has no '{_DECISION_QUESTION}' answer")
+    candidate_id = answer.get("choice")
     if not isinstance(candidate_id, str) or not candidate_id.strip():
-        raise ValueError("selector response must contain non-empty 'candidate_id'")
-    parsed["candidate_id"] = candidate_id.strip()
-    return parsed
+        raise ValueError("decision answer must contain non-empty 'choice'")
+    return {"candidate_id": candidate_id.strip(), "confidence": answer.get("confidence")}
 
 
 def _provider_model_metadata(provider_config: Any, model: str) -> dict[str, Any]:
@@ -397,6 +386,10 @@ def _usage_for_cost(usage: dict[str, Any]) -> dict[str, Any]:
 
 
 def _add_usage(target_usage: dict[str, Any], extra_usage: dict[str, Any]) -> None:
+    if "total_tokens" not in target_usage:
+        target_usage["total_tokens"] = _coerce_token_count(target_usage.get("prompt_tokens")) + _coerce_token_count(
+            target_usage.get("completion_tokens")
+        )
     for key in ("prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens", "cached_tokens"):
         value = extra_usage.get(key)
         if isinstance(value, (int, float)) and value > 0:
@@ -411,6 +404,28 @@ def _add_anthropic_usage(target_usage: dict[str, Any], extra_usage: dict[str, An
         target_usage["input_tokens"] = _coerce_token_count(target_usage.get("input_tokens")) + input_tokens
     if output_tokens:
         target_usage["output_tokens"] = _coerce_token_count(target_usage.get("output_tokens")) + output_tokens
+
+
+class _PrefixedChatHandoff:
+    """Chat accounting handoff that bills the decision call before the delegate's components."""
+
+    def __init__(self, handoff: Any, components: tuple[Any, ...]) -> None:
+        self._handoff = handoff
+        self._components = components
+
+    def _prefixed(self, observation: ChatTerminalObservation | None) -> ChatTerminalObservation | None:
+        if observation is None:
+            return None
+        return dataclasses.replace(observation, components=self._components + tuple(observation.components))
+
+    def publish(self, observation: ChatTerminalObservation) -> None:
+        self._handoff.publish(self._prefixed(observation))
+
+    def publish_stream_observer(self, observer: Any, *, build_partial: Any = None) -> None:
+        self._handoff.publish_stream_observer(
+            lambda event: self._prefixed(observer(event)),
+            build_partial=None if build_partial is None else lambda: self._prefixed(build_partial()),
+        )
 
 
 class RouterModelService:
@@ -439,6 +454,31 @@ class RouterModelService:
         )
         return observed.response
 
+    async def run_stream(
+        self,
+        *,
+        request: Request,
+        gateway_model_name: str,
+        router_config: dict[str, Any],
+        request_body: dict[str, Any],
+        accounting_handoff: Any = None,
+    ) -> Any:
+        """Select a target, then return its stream; the decision cost joins the stream accounting."""
+        selected_candidate, _decision, _source, selector_component, _usage = await self._select(
+            request=request,
+            router_config=router_config,
+            request_body=request_body,
+        )
+        handoff = accounting_handoff
+        if accounting_handoff is not None and selector_component is not None:
+            handoff = _PrefixedChatHandoff(accounting_handoff, (selector_component,))
+        return await self._dispatch_selected_target(
+            request=request,
+            request_body=request_body,
+            selected_candidate=selected_candidate,
+            accounting_handoff=handoff,
+        )
+
     async def run_observed(
         self,
         *,
@@ -448,67 +488,14 @@ class RouterModelService:
         request_body: dict[str, Any],
     ) -> ObservedChatResponse:
         if request_body.get("stream", False):
-            raise HTTPException(status_code=400, detail="Router models do not support streaming responses.")
+            raise HTTPException(status_code=400, detail="Use run_stream for streaming Router requests.")
 
-        messages = request_body.get("messages")
-        if not isinstance(messages, list) or not messages:
-            raise HTTPException(status_code=400, detail="Router request requires a non-empty 'messages' list.")
-
-        candidates = build_router_candidates(
+        selected_candidate, decision, decision_source, selector_component, selector_usage = await self._select(
+            request=request,
             router_config=router_config,
-            fallback_rules=self._config_loader.fallback_rules,
-            providers_config=self._config_loader.providers_config,
+            request_body=request_body,
         )
-        candidates_by_id = {candidate["id"]: candidate for candidate in candidates}
-
-        selector_component = None
-        selector_usage: dict[str, Any] = {}
-        direct_decision = _direct_stage_decision(candidates, messages)
-        if direct_decision is not None:
-            selected_candidate, reason = direct_decision
-            selected_id = selected_candidate["id"]
-            decision = {
-                "candidate_id": selected_id,
-                "reason": reason,
-                "confidence": None,
-            }
-            decision_source = "tool_history"
-        else:
-            selector_response = await self._call_selector(
-                request=request,
-                selector_model=router_config["selector_model"],
-                routing_policy=router_config.get("routing_policy"),
-                candidates=candidates,
-                request_body=request_body,
-            )
-            selector_usage = selector_response.get("usage") if isinstance(selector_response, dict) else {}
-            selector_provider = getattr(request.state, "llmgateway_provider", None)
-            selector_provider_model = getattr(request.state, "llmgateway_provider_model", None)
-            if not isinstance(selector_provider, str) or not isinstance(
-                selector_provider_model,
-                str,
-            ):
-                raise AccountingValidationError
-            selector_component = build_token_model_component(
-                selector_response,
-                provider=selector_provider,
-                model=selector_provider_model,
-                cost_rate_registry=self._cost_rate_registry,
-            )
-            selector_text = _extract_text(selector_response)
-            try:
-                decision = _parse_selector_decision(selector_text)
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail=f"Router selector returned invalid JSON: {exc}") from exc
-
-            selected_id = decision["candidate_id"]
-            selected_candidate = candidates_by_id.get(selected_id)
-            if selected_candidate is None:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Router selector chose unknown candidate_id '{selected_id}'.",
-                )
-            decision_source = "llm_selector"
+        selected_id = selected_candidate["id"]
 
         response = await self._dispatch_selected_target(
             request=request,
@@ -549,11 +536,10 @@ class RouterModelService:
         if not isinstance(response_usage, dict):
             response_usage = {}
             response["usage"] = response_usage
-        selector_usage_dict = selector_usage if isinstance(selector_usage, dict) else {}
         if is_anthropic_raw and "choices" not in response:
-            _add_anthropic_usage(response_usage, selector_usage_dict)
+            _add_anthropic_usage(response_usage, selector_usage)
         else:
-            _add_usage(response_usage, selector_usage_dict)
+            _add_usage(response_usage, selector_usage)
         response_usage["cost"] = observation.usage.cost
         response["router"] = {
             "model": gateway_model_name,
@@ -566,53 +552,102 @@ class RouterModelService:
         }
         return ObservedChatResponse(response=response, observation=observation)
 
-    async def _call_selector(
+    async def _select(
+        self,
+        *,
+        request: Request,
+        router_config: dict[str, Any],
+        request_body: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], str, Any, dict[str, Any]]:
+        """Pick a candidate from tool history or the decisions model.
+
+        Returns the candidate, the decision, its source, the decision billing
+        component (``None`` without a model call) and the decision usage in
+        chat ``prompt_tokens``/``completion_tokens`` form.
+        """
+        messages = request_body.get("messages")
+        if not isinstance(messages, list) or not messages:
+            raise HTTPException(status_code=400, detail="Router request requires a non-empty 'messages' list.")
+
+        candidates = build_router_candidates(
+            router_config=router_config,
+            fallback_rules=self._config_loader.fallback_rules,
+            providers_config=self._config_loader.providers_config,
+        )
+        direct_decision = _direct_stage_decision(candidates, messages)
+        if direct_decision is not None:
+            selected_candidate, reason = direct_decision
+            decision = {"candidate_id": selected_candidate["id"], "reason": reason, "confidence": None}
+            return selected_candidate, decision, "tool_history", None, {}
+
+        decision_response, selector_component = await self._call_decision_model(
+            request=request,
+            selector_model=router_config["selector_model"],
+            payload=_decision_payload(
+                router_config["selector_model"],
+                router_config.get("routing_policy"),
+                candidates,
+                request_body,
+            ),
+        )
+        try:
+            decision = _parse_decision_answer(decision_response)
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail=f"Router decision model returned an invalid answer: {exc}") from exc
+
+        selected_candidate = {candidate["id"]: candidate for candidate in candidates}.get(decision["candidate_id"])
+        if selected_candidate is None:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Router decision model chose unknown candidate_id '{decision['candidate_id']}'.",
+            )
+        usage = decision_response.get("usage")
+        selector_usage = _usage_for_cost(usage) if isinstance(usage, dict) else {}
+        return selected_candidate, decision, "decision_model", selector_component, selector_usage
+
+    async def _call_decision_model(
         self,
         *,
         request: Request,
         selector_model: str,
-        routing_policy: str | None,
-        candidates: list[dict[str, Any]],
-        request_body: dict[str, Any],
-    ) -> dict[str, Any]:
-        from ..api.v1.chat import _dispatch_chat_request
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], Any]:
+        from ..api.v1.decisions import call_decision_routes
 
-        selector_body = {
-            "model": selector_model,
-            "stream": False,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": _selector_system_prompt(routing_policy)},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "candidates": candidates,
-                            "request": _request_summary(request_body),
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
+        routes = request.state.runtime_snapshot.operation_dispatcher.lookup_routes("decisions", selector_model)
+        if not routes:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Router decision model '{selector_model}' has no decisions route.",
+            )
+
+        def observe(response: dict[str, Any], route: Any) -> Any:
+            return build_token_model_component(
+                response,
+                provider=route.provider,
+                model=route.model,
+                cost_rate_registry=self._cost_rate_registry,
+                input_only=True,
+            )
+
+        # The decisions call reuses request.state; restore the chat request identity afterwards.
+        saved_state = {
+            name: getattr(request.state, name, None)
+            for name in ("llmgateway_gateway_model", "llmgateway_operation", "llmgateway_target_path")
         }
-
-        original_anthropic_payload = getattr(request.state, "llmgateway_original_anthropic_payload", None)
-        original_anthropic_raw = getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
-        request.state.llmgateway_original_anthropic_payload = None
-        request.state.llmgateway_response_is_anthropic_raw = False
         try:
-            response = await _dispatch_chat_request(
+            response, _status_code, component = await call_decision_routes(
                 request,
-                selector_body,
-                enforce_model_access=False,
+                selector_model,
+                payload,
+                routes,
+                cost_rate_registry=self._cost_rate_registry,
+                observe=observe,
             )
         finally:
-            request.state.llmgateway_original_anthropic_payload = original_anthropic_payload
-            request.state.llmgateway_response_is_anthropic_raw = original_anthropic_raw
-
-        if not isinstance(response, dict):
-            raise HTTPException(status_code=502, detail="Router selector returned a non-JSON response.")
-        return response
+            for name, value in saved_state.items():
+                setattr(request.state, name, value)
+        return response, component
 
     async def _dispatch_selected_target(
         self,
@@ -620,6 +655,7 @@ class RouterModelService:
         request: Request,
         request_body: dict[str, Any],
         selected_candidate: dict[str, Any],
+        accounting_handoff: Any = None,
     ) -> Any:
         from ..api.v1.chat import _dispatch_chat_request
 
@@ -636,7 +672,7 @@ class RouterModelService:
             else:
                 request.state.llmgateway_forced_fallback_start_index = None
                 request.state.llmgateway_forced_fallback_owner_model = None
-            return await _dispatch_chat_request(request, target_body)
+            return await _dispatch_chat_request(request, target_body, accounting_handoff=accounting_handoff)
         finally:
             request.state.llmgateway_forced_fallback_start_index = previous_start_index
             request.state.llmgateway_forced_fallback_owner_model = previous_owner_model

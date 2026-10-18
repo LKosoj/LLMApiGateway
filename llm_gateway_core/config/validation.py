@@ -580,6 +580,8 @@ class _ConfigValidationMixin:
             ("images_edits", operation_rules.images_edits),
             ("audio_speech", operation_rules.audio_speech),
             ("audio_transcriptions", operation_rules.audio_transcriptions),
+            ("audio_diarizations", operation_rules.audio_diarizations),
+            ("audio_speaker_transcriptions", operation_rules.audio_speaker_transcriptions),
             ("web_search", operation_rules.web_search),
             ("web_read", operation_rules.web_read),
             ("web_research", operation_rules.web_research),
@@ -741,12 +743,15 @@ class _ConfigValidationMixin:
         router_rules_to_validate: Dict[str, Dict[str, Any]],
         fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
         fusion_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+        operation_rules: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
     ) -> None:
         if not router_rules_to_validate:
             return
 
         effective_fallback_rules = self.fallback_rules if fallback_rules is None else fallback_rules
         effective_fusion_rules = self.fusion_rules if fusion_rules is None else fusion_rules
+        effective_operation_rules = self.operation_rules if operation_rules is None else operation_rules
+        decision_models = (effective_operation_rules or {}).get("decisions") or {}
         if not effective_fallback_rules:
             raise ValueError("Fallback rules must be loaded before validating router rules.")
 
@@ -761,10 +766,10 @@ class _ConfigValidationMixin:
                 )
 
             selector_model = config.get("selector_model")
-            if selector_model not in effective_fallback_rules:
+            if selector_model not in decision_models:
                 raise ValueError(
                     f"Router model '{router_model_name}' references unknown selector_model "
-                    f"'{selector_model}' (must be a gateway chat model in fallback rules)."
+                    f"'{selector_model}' (must be a gateway decisions model in operation rules)."
                 )
 
             seen_target_ids: set[str] = set()
@@ -827,6 +832,7 @@ class _ConfigValidationMixin:
                 routes = config.get("routes", [])
                 if not routes:
                     if section_name in {
+                        "audio_speaker_transcriptions",
                         "web_search",
                         "web_read",
                         "web_research",
@@ -849,6 +855,27 @@ class _ConfigValidationMixin:
                             f"Invalid provider '{provider}' used in operation route for '{gateway_model_name}' "
                             f"in '{section_name}'. Provider not found in configuration."
                         )
+
+        audio_transcription_models = set(effective_operation_routes.get("audio_transcriptions", {}))
+        audio_diarization_models = set(effective_operation_routes.get("audio_diarizations", {}))
+        for gateway_model_name, config in effective_operation_routes.get("audio_speaker_transcriptions", {}).items():
+            transcription_model = config.get("transcription_model") if isinstance(config, dict) else None
+            diarization_model = config.get("diarization_model") if isinstance(config, dict) else None
+            if gateway_model_name in audio_transcription_models:
+                raise ValueError(
+                    f"Audio speaker transcription model '{gateway_model_name}' duplicates a gateway model "
+                    "in audio_transcriptions. Gateway model names must be unique across both sections."
+                )
+            if transcription_model not in audio_transcription_models:
+                raise ValueError(
+                    f"Audio speaker transcription model '{gateway_model_name}' references unknown "
+                    f"transcription_model '{transcription_model}' (must be a gateway audio_transcriptions model)."
+                )
+            if diarization_model not in audio_diarization_models:
+                raise ValueError(
+                    f"Audio speaker transcription model '{gateway_model_name}' references unknown "
+                    f"diarization_model '{diarization_model}' (must be a gateway audio_diarizations model)."
+                )
 
         web_search_models = set(effective_operation_routes.get("web_search", {}))
         web_read_models = set(effective_operation_routes.get("web_read", {}))
@@ -1044,6 +1071,7 @@ class _ConfigValidationMixin:
         payload_text: str,
         fallback_rules: Optional[Dict[str, Dict[str, Any]]] = None,
         fusion_rules: Optional[Dict[str, Dict[str, Any]]] = None,
+        operation_rules: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         raw_rules = json5.loads(payload_text)
         router_rules = self._build_router_rules_config(raw_rules)
@@ -1052,6 +1080,7 @@ class _ConfigValidationMixin:
                 router_rules,
                 fallback_rules=fallback_rules,
                 fusion_rules=fusion_rules,
+                operation_rules=operation_rules,
             )
         return router_rules
 

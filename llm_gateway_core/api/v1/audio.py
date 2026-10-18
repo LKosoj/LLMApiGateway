@@ -1,15 +1,20 @@
+import asyncio
+import dataclasses
 import json
 import logging
+import shutil
+import tempfile
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from ..accounting_http import AccountingHttpUse, accounting_error_response
@@ -29,6 +34,7 @@ from .audio_adapters import (
     sanitize_nvidia_riva_request_payload,
     transcribe_with_nvidia_riva_grpc,
 )
+from .audio_speakers import merge_transcription_with_diarization
 from .operation_proxy import (
     extract_downstream_error_detail,
     proxy_json_raw_to_downstream,
@@ -62,6 +68,10 @@ AUDIO_SPEECH_SECTION = "audio_speech"
 AUDIO_SPEECH_OPERATION = "audio_speech"
 AUDIO_TRANSCRIPTIONS_SECTION = "audio_transcriptions"
 AUDIO_TRANSCRIPTION_OPERATION = "audio_transcription"
+AUDIO_DIARIZATIONS_SECTION = "audio_diarizations"
+AUDIO_DIARIZATION_OPERATION = "audio_diarization"
+AUDIO_SPEAKER_TRANSCRIPTIONS_SECTION = "audio_speaker_transcriptions"
+SPEAKER_TRANSCRIPTION_RESPONSE_FORMATS = frozenset({"json", "verbose_json", "text"})
 AUDIO_TRANSCRIPTION_DOWNSTREAM_TIMEOUT = httpx.Timeout(connect=30.0, read=1200.0, write=60.0, pool=30.0)
 TRUTHY_FORM_VALUES = frozenset({"1", "on", "true", "yes"})
 PROTECTED_AUDIO_CUSTOM_PARAM_KEYS = frozenset({"file", "model"})
@@ -130,10 +140,13 @@ async def _validate_upload(value: UploadFile | StarletteUploadFile) -> Validated
 @asynccontextmanager
 async def _parse_audio_transcription_request(
     request: Request,
+    *,
+    endpoint_label: str = "Audio transcriptions",
+    operation_label: str = "Audio transcription",
 ) -> AsyncIterator[tuple[str, dict[str, object], ValidatedUpload]]:
     content_type = request.headers.get("content-type", "").lower()
     if "multipart/form-data" not in content_type:
-        raise HTTPException(status_code=400, detail="Audio transcriptions endpoint expects multipart/form-data.")
+        raise HTTPException(status_code=400, detail=f"{endpoint_label} endpoint expects multipart/form-data.")
 
     scalar_fields: dict[str, object] = {}
     upload_file: ValidatedUpload | None = None
@@ -162,7 +175,7 @@ async def _parse_audio_transcription_request(
             raise HTTPException(status_code=400, detail="Missing 'file' in request body")
 
         if _is_truthy_form_value(scalar_fields.get("stream")):
-            raise HTTPException(status_code=400, detail="Audio transcription streaming is not supported.")
+            raise HTTPException(status_code=400, detail=f"{operation_label} streaming is not supported.")
 
         yield requested_model, scalar_fields, upload_file
 
@@ -521,6 +534,7 @@ def _should_try_next_route(exc: HTTPException, route_index: int, routes: list[Op
 
 
 def _log_route_fallback(
+    label: str,
     requested_model: str,
     route: OperationRoute,
     route_index: int,
@@ -528,8 +542,9 @@ def _log_route_fallback(
     exc: HTTPException,
 ) -> None:
     logger.warning(
-        "Audio transcription route failed for gateway model '%s'; falling back to next route. "
+        "%s route failed for gateway model '%s'; falling back to next route. "
         "route=%s/%s provider=%s model=%s detail=%s",
+        label.capitalize(),
         requested_model,
         route_index + 1,
         len(routes),
@@ -595,9 +610,18 @@ async def _run_audio_accounting(
         raise
 
 
-async def _proxy_audio_transcription(
+@dataclass(frozen=True, slots=True)
+class _AudioRouteResult:
+    route: OperationRoute
+    status_code: int
+    content_type: str | None
+    body: object
+    is_json: bool
+    synthesized: bool
+
+
+async def _call_multipart_audio_routes(
     request: Request,
-    owner: OperationTerminalOwner,
     *,
     dispatcher: OperationDispatcher,
     http_client: httpx.AsyncClient,
@@ -607,8 +631,9 @@ async def _proxy_audio_transcription(
     requested_model: str,
     request_payload: dict[str, object],
     upload: ValidatedUpload,
-) -> object:
-    request_started_at = time.monotonic()
+    operation: str,
+    label: str,
+) -> _AudioRouteResult:
     files_payload: list[tuple[str, MultipartFilePayload]] = [
         ("file", upload.as_multipart_file())
     ]
@@ -623,8 +648,9 @@ async def _proxy_audio_transcription(
                 provider_config = config_loader_instance.providers_config.get(route.provider)
                 if provider_config is None:
                     logger.error(
-                        "Provider '%s' for audio transcription route '%s' is missing from providers_config.",
+                        "Provider '%s' for %s route '%s' is missing from providers_config.",
                         route.provider,
+                        label,
                         requested_model,
                     )
                     raise HTTPException(
@@ -637,6 +663,7 @@ async def _proxy_audio_transcription(
                     dispatcher,
                     route,
                     gateway_model=requested_model,
+                    operation=operation,
                 )
                 route_request_payload = request_payload
                 if route.request_format == REQUEST_FORMAT_NVIDIA_RIVA_GRPC:
@@ -656,26 +683,14 @@ async def _proxy_audio_transcription(
                         retry_delay=retry_delay,
                         decoded_audio_max_bytes=settings.audio_decoded_max_bytes,
                     )
-                    if adapter_response.is_json:
-                        response = JSONResponse(
-                            content=adapter_response.body,
-                            status_code=adapter_response.status_code,
-                        )
-                    else:
-                        response = Response(
-                            content=adapter_response.body,
-                            status_code=adapter_response.status_code,
-                            headers={"content-type": adapter_response.content_type},
-                        )
-                    observation = _parse_audio_terminal_observation(
-                        owner,
-                        {},
-                        gateway_model=requested_model,
+                    return _AudioRouteResult(
                         route=route,
-                        duration_ms=request_duration_ms(request_started_at),
+                        status_code=adapter_response.status_code,
+                        content_type=adapter_response.content_type,
+                        body=adapter_response.body,
+                        is_json=adapter_response.is_json,
                         synthesized=True,
                     )
-                    return await finalize_buffered_operation(owner, response, observation)
 
                 target_url, headers = await _prepare_audio_http_request(
                     request,
@@ -696,7 +711,6 @@ async def _proxy_audio_transcription(
                         timeout=AUDIO_TRANSCRIPTION_DOWNSTREAM_TIMEOUT,
                     )
                 )
-                duration_ms = request_duration_ms(request_started_at)
                 if _is_json_content_type(downstream_content_type):
                     try:
                         parsed_response = json.loads(response_body.decode("utf-8"))
@@ -705,47 +719,214 @@ async def _proxy_audio_transcription(
                             status_code=503,
                             detail="Downstream request returned invalid JSON.",
                         ) from exc
-
-                    response = JSONResponse(
-                        content=parsed_response,
-                        status_code=downstream_status_code,
-                    )
-                    usage_payload = parsed_response if isinstance(parsed_response, dict) else {}
-                    observation = _parse_audio_terminal_observation(
-                        owner,
-                        usage_payload,
-                        gateway_model=requested_model,
+                    return _AudioRouteResult(
                         route=route,
-                        duration_ms=duration_ms,
+                        status_code=downstream_status_code,
+                        content_type=downstream_content_type,
+                        body=parsed_response,
+                        is_json=True,
                         synthesized=False,
                     )
-                    return await finalize_buffered_operation(owner, response, observation)
 
-                response_headers = {"content-type": downstream_content_type} if downstream_content_type else None
-                response = Response(
-                    content=response_body,
-                    status_code=downstream_status_code,
-                    headers=response_headers,
-                )
-                observation = _parse_audio_terminal_observation(
-                    owner,
-                    {},
-                    gateway_model=requested_model,
+                return _AudioRouteResult(
                     route=route,
-                    duration_ms=duration_ms,
+                    status_code=downstream_status_code,
+                    content_type=downstream_content_type,
+                    body=response_body,
+                    is_json=False,
                     synthesized=True,
                 )
-                return await finalize_buffered_operation(owner, response, observation)
             except HTTPException as exc:
                 if _should_try_next_route(exc, route_index, routes):
-                    _log_route_fallback(requested_model, route, route_index, routes, exc)
+                    _log_route_fallback(label, requested_model, route, route_index, routes, exc)
                     continue
                 raise
 
     raise HTTPException(
         status_code=503,
-        detail="Audio transcription request failed after exhausting fallback routes.",
+        detail=f"{label.capitalize()} request failed after exhausting fallback routes.",
     )
+
+
+async def _proxy_multipart_audio(
+    request: Request,
+    owner: OperationTerminalOwner,
+    *,
+    dispatcher: OperationDispatcher,
+    http_client: httpx.AsyncClient,
+    config_loader_instance: ConfigLoader,
+    proxy_http_clients: Mapping[str, httpx.AsyncClient],
+    routes: list[OperationRoute],
+    requested_model: str,
+    request_payload: dict[str, object],
+    upload: ValidatedUpload,
+    operation: str = AUDIO_TRANSCRIPTION_OPERATION,
+    label: str = "audio transcription",
+) -> object:
+    request_started_at = time.monotonic()
+    result = await _call_multipart_audio_routes(
+        request,
+        dispatcher=dispatcher,
+        http_client=http_client,
+        config_loader_instance=config_loader_instance,
+        proxy_http_clients=proxy_http_clients,
+        routes=routes,
+        requested_model=requested_model,
+        request_payload=request_payload,
+        upload=upload,
+        operation=operation,
+        label=label,
+    )
+    if result.is_json:
+        response = JSONResponse(content=result.body, status_code=result.status_code)
+    else:
+        response_headers = {"content-type": result.content_type} if result.content_type else None
+        response = Response(
+            content=result.body,
+            status_code=result.status_code,
+            headers=response_headers,
+        )
+    usage_payload = result.body if result.is_json and isinstance(result.body, dict) else {}
+    observation = _parse_audio_terminal_observation(
+        owner,
+        usage_payload if not result.synthesized else {},
+        gateway_model=requested_model,
+        route=result.route,
+        duration_ms=request_duration_ms(request_started_at),
+        synthesized=result.synthesized,
+    )
+    return await finalize_buffered_operation(owner, response, observation)
+
+
+def _speaker_transcription_config(
+    config_loader_instance: ConfigLoader,
+    requested_model: str,
+) -> dict[str, object] | None:
+    section = config_loader_instance.operation_rules.get(AUDIO_SPEAKER_TRANSCRIPTIONS_SECTION, {})
+    config = section.get(requested_model) if isinstance(section, dict) else None
+    return config if isinstance(config, dict) else None
+
+
+def _validate_speaker_response_format(request_payload: dict[str, object]) -> str:
+    response_format = request_payload.get("response_format") or "json"
+    if response_format not in SPEAKER_TRANSCRIPTION_RESPONSE_FORMATS:
+        supported_values = ", ".join(sorted(SPEAKER_TRANSCRIPTION_RESPONSE_FORMATS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Speaker transcription supports only these response_format values: {supported_values}.",
+        )
+    return str(response_format)
+
+
+def _child_json_body(result: _AudioRouteResult, label: str) -> dict[str, object]:
+    if not result.is_json or not isinstance(result.body, dict) or result.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{label.capitalize()} model returned an unexpected response (status {result.status_code}).",
+        )
+    return result.body
+
+
+@asynccontextmanager
+async def _copied_upload(upload: ValidatedUpload) -> AsyncIterator[ValidatedUpload]:
+    """Independent file handle so two parallel upstream requests never share one read position."""
+
+    def _copy(target: BinaryIO) -> None:
+        upload.file.seek(0)
+        shutil.copyfileobj(upload.file, target)
+        upload.file.seek(0)
+        target.seek(0)
+
+    with tempfile.TemporaryFile() as copy_file:
+        await asyncio.to_thread(_copy, copy_file)
+        yield dataclasses.replace(upload, file=copy_file)
+
+
+async def _proxy_audio_speaker_transcription(
+    request: Request,
+    owner: OperationTerminalOwner,
+    *,
+    dispatcher: OperationDispatcher,
+    http_client: httpx.AsyncClient,
+    config_loader_instance: ConfigLoader,
+    proxy_http_clients: Mapping[str, httpx.AsyncClient],
+    speaker_config: dict[str, object],
+    requested_model: str,
+    request_payload: dict[str, object],
+    response_format: str,
+    upload: ValidatedUpload,
+) -> object:
+    request_started_at = time.monotonic()
+    transcription_model = str(speaker_config["transcription_model"])
+    diarization_model = str(speaker_config["diarization_model"])
+    transcription_routes = dispatcher.lookup_routes(AUDIO_TRANSCRIPTIONS_SECTION, transcription_model)
+    diarization_routes = dispatcher.lookup_routes(AUDIO_DIARIZATIONS_SECTION, diarization_model)
+    if not transcription_routes or not diarization_routes:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Speaker transcription model '{requested_model}' references a model without routes.",
+        )
+
+    transcription_payload = {
+        key: value
+        for key, value in request_payload.items()
+        if key not in {"model", "response_format", "timestamp_granularities", "timestamp_granularities[]"}
+    }
+    transcription_payload["response_format"] = "verbose_json"
+    transcription_payload["timestamp_granularities[]"] = ["segment"]
+    shared_kwargs = {
+        "dispatcher": dispatcher,
+        "http_client": http_client,
+        "config_loader_instance": config_loader_instance,
+        "proxy_http_clients": proxy_http_clients,
+        "requested_model": requested_model,
+        "operation": AUDIO_TRANSCRIPTION_OPERATION,
+    }
+
+    async with _copied_upload(upload) as diarization_upload:
+        try:
+            async with asyncio.TaskGroup() as task_group:
+                transcription_task = task_group.create_task(
+                    _call_multipart_audio_routes(
+                        request,
+                        routes=transcription_routes,
+                        request_payload=transcription_payload,
+                        upload=upload,
+                        label="audio transcription",
+                        **shared_kwargs,
+                    )
+                )
+                diarization_task = task_group.create_task(
+                    _call_multipart_audio_routes(
+                        request,
+                        routes=diarization_routes,
+                        request_payload={},
+                        upload=diarization_upload,
+                        label="audio diarization",
+                        **shared_kwargs,
+                    )
+                )
+        except* HTTPException as group:
+            raise group.exceptions[0] from None
+
+    transcription_result = transcription_task.result()
+    merged = merge_transcription_with_diarization(
+        _child_json_body(transcription_result, "audio transcription"),
+        _child_json_body(diarization_task.result(), "audio diarization"),
+    )
+    if response_format == "text":
+        response: Response = PlainTextResponse(content=str(merged["text"]))
+    else:
+        response = JSONResponse(content=merged)
+    observation = _parse_audio_terminal_observation(
+        owner,
+        {},
+        gateway_model=requested_model,
+        route=transcription_result.route,
+        duration_ms=request_duration_ms(request_started_at),
+        synthesized=True,
+    )
+    return await finalize_buffered_operation(owner, response, observation)
 
 
 @router.post("/audio/transcriptions")
@@ -759,14 +940,67 @@ async def create_audio_transcription(request: Request):
 
         dispatcher, http_client, config_loader_instance, proxy_http_clients = _get_operation_runtime(request)
         routes = dispatcher.lookup_routes(AUDIO_TRANSCRIPTIONS_SECTION, requested_model)
-        if not routes:
+        if routes:
+            operation = partial(
+                _proxy_multipart_audio,
+                request,
+                dispatcher=dispatcher,
+                http_client=http_client,
+                config_loader_instance=config_loader_instance,
+                proxy_http_clients=proxy_http_clients,
+                routes=routes,
+                requested_model=requested_model,
+                request_payload=request_payload,
+                upload=upload,
+            )
+            return await _run_audio_accounting(request, operation)
+
+        speaker_config = _speaker_transcription_config(config_loader_instance, requested_model)
+        if speaker_config is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"No audio transcription route configured for model '{requested_model}'.",
             )
 
         operation = partial(
-            _proxy_audio_transcription,
+            _proxy_audio_speaker_transcription,
+            request,
+            dispatcher=dispatcher,
+            http_client=http_client,
+            config_loader_instance=config_loader_instance,
+            proxy_http_clients=proxy_http_clients,
+            speaker_config=speaker_config,
+            requested_model=requested_model,
+            request_payload=request_payload,
+            response_format=_validate_speaker_response_format(request_payload),
+            upload=upload,
+        )
+        return await _run_audio_accounting(request, operation)
+
+
+@router.post("/audio/diarize")
+async def create_audio_diarization(request: Request):
+    async with _parse_audio_transcription_request(
+        request,
+        endpoint_label="Audio diarization",
+        operation_label="Audio diarization",
+    ) as (
+        requested_model,
+        request_payload,
+        upload,
+    ):
+        enforce_virtual_key_access(request, requested_model)
+
+        dispatcher, http_client, config_loader_instance, proxy_http_clients = _get_operation_runtime(request)
+        routes = dispatcher.lookup_routes(AUDIO_DIARIZATIONS_SECTION, requested_model)
+        if not routes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No audio diarization route configured for model '{requested_model}'.",
+            )
+
+        operation = partial(
+            _proxy_multipart_audio,
             request,
             dispatcher=dispatcher,
             http_client=http_client,
@@ -776,6 +1010,8 @@ async def create_audio_transcription(request: Request):
             requested_model=requested_model,
             request_payload=request_payload,
             upload=upload,
+            operation=AUDIO_DIARIZATION_OPERATION,
+            label="audio diarization",
         )
         return await _run_audio_accounting(request, operation)
 

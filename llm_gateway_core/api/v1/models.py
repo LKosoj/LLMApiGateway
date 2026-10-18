@@ -38,6 +38,7 @@ CAPABILITY_ORDER = (
     "images",
     "audio_speech",
     "audio_transcription",
+    "audio_diarization",
     "pdf_conversion",
     "web_search",
     "web_read",
@@ -52,6 +53,7 @@ MODEL_TYPE_BY_CAPABILITY = {
     "images": "image",
     "audio_speech": "audio",
     "audio_transcription": "audio",
+    "audio_diarization": "audio",
     "pdf_conversion": "document",
     "web_search": "web",
     "web_read": "web",
@@ -66,6 +68,7 @@ INPUT_MODALITIES_BY_CAPABILITY = {
     "images": ("text",),
     "audio_speech": ("text",),
     "audio_transcription": ("audio",),
+    "audio_diarization": ("audio",),
     "pdf_conversion": ("document",),
     "web_search": ("text",),
     "web_read": ("text",),
@@ -80,6 +83,7 @@ OUTPUT_MODALITIES_BY_CAPABILITY = {
     "images": ("image",),
     "audio_speech": ("audio",),
     "audio_transcription": ("text",),
+    "audio_diarization": ("text",),
     "pdf_conversion": ("document",),
     "web_search": ("text",),
     "web_read": ("text",),
@@ -88,6 +92,12 @@ OUTPUT_MODALITIES_BY_CAPABILITY = {
 }
 MODALITY_ORDER = ("text", "image", "audio", "document", "embeddings", "decisions")
 IMAGE_OPERATION_ORDER = ("generation", "edit")
+# New API-style endpoint types: clients such as Cherry Studio read them from /v1/models
+# instead of guessing image models from their ids.
+IMAGE_ENDPOINT_TYPE_BY_OPERATION = {
+    "generation": "image-generation",
+    "edit": "image-edit",
+}
 WEB_OPERATION_ORDER = ("search", "read", "research", "deep_research")
 
 
@@ -255,6 +265,12 @@ def _add_gateway_operation_models(gateway_models: dict, operation_rules: dict) -
     for model_name in operation_rules.get("audio_transcriptions", {}).keys():
         _add_capability(gateway_models, model_name, "audio_transcription")
 
+    for model_name in operation_rules.get("audio_speaker_transcriptions", {}).keys():
+        _add_capability(gateway_models, model_name, "audio_transcription")
+
+    for model_name in operation_rules.get("audio_diarizations", {}).keys():
+        _add_capability(gateway_models, model_name, "audio_diarization")
+
     for model_name in operation_rules.get("pdf_conversions", {}).keys():
         _add_capability(gateway_models, model_name, "pdf_conversion")
 
@@ -273,6 +289,13 @@ def _add_gateway_operation_models(gateway_models: dict, operation_rules: dict) -
     for model_name in operation_rules.get("web_deep_research", {}).keys():
         _add_capability(gateway_models, model_name, "web_deep_research")
         _add_web_operation(gateway_models, model_name, "deep_research")
+
+    # Only image-only models: for mixed models the first endpoint type would reroute chat calls.
+    for model_entry in gateway_models.values():
+        if model_entry.get("capabilities") == ["images"]:
+            model_entry["supported_endpoint_types"] = [
+                IMAGE_ENDPOINT_TYPE_BY_OPERATION[operation] for operation in model_entry["image_operations"]
+            ]
 
 
 def _apply_model_rules_to_gateway_models(gateway_models: dict, model_rules: dict | None) -> dict:

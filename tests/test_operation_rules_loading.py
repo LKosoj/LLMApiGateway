@@ -297,7 +297,7 @@ class OperationRulesLoadingTests(unittest.TestCase):
     def test_project_root_operation_rules_load_against_project_root_fallback_rules(self):
         _config_loader, operation_rules = self._load_project_root_operation_rules()
 
-        self.assertEqual(set(operation_rules), set(EMPTY_OPERATION_RULES) | {"decisions"})
+        self.assertEqual(set(operation_rules), set(EMPTY_OPERATION_RULES) | {"decisions", "audio_diarizations", "audio_speaker_transcriptions"})
         configured_models = [name for section in operation_rules.values() for name in section]
         self.assertTrue(configured_models, "боевые operation rules не должны быть пустыми")
 

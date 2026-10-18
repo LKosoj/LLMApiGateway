@@ -774,6 +774,7 @@ SUPPORTED_OPERATION_TYPES = frozenset(
         "images_edits",
         "audio_speech",
         "audio_transcriptions",
+        "audio_diarizations",
         "pdf_conversions",
         "web_search",
         "web_read",

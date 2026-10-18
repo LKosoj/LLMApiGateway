@@ -229,6 +229,7 @@ class _ConfigLoaderCore(_ConfigValidationMixin):
                 payload,
                 fallback_rules=fallback_rules,
                 fusion_rules=fusion_rules,
+                operation_rules=operation_rules,
             ),
         )
         try:

@@ -383,6 +383,8 @@ _OPERATION_RULE_SECTIONS = MappingProxyType(
         "images_edits": "images_edit",
         "audio_speech": "audio_speech",
         "audio_transcriptions": "audio_transcription",
+        "audio_speaker_transcriptions": "audio_transcription",
+        "audio_diarizations": "audio_diarization",
         "pdf_conversions": "pdf_conversion",
         "web_search": "web_search",
         "web_read": "web_read",
@@ -1281,6 +1283,7 @@ _BILLING_POLICIES = MappingProxyType(
             "audio_transcription",
             BillingUnit.OPERATION,
         ),
+        ("POST", "/v1/audio/diarize"): BillingPolicy("audio_diarization", BillingUnit.OPERATION),
         ("POST", "/v1/pdf/convert"): BillingPolicy("pdf_conversion", BillingUnit.OPERATION),
         ("POST", "/v1/pdf/jobs"): BillingPolicy(
             "pdf_conversion",

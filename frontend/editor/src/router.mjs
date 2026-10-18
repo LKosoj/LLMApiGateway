@@ -117,7 +117,7 @@ export function registerRouter(ctx) {
         titleWrap.appendChild(ctx.createFieldGroup('Gateway Model Name', gatewayModelInput, 'gateway-model-field'));
 
         const selectorSelect = ctx.createSelect('router-selector-model-select');
-        ctx.setModelSelectOptions(selectorSelect, ctx.state.gatewayModelCatalog.chat, data.selector_model || '');
+        ctx.setModelSelectOptions(selectorSelect, ctx.state.gatewayModelCatalog.decisions, data.selector_model || '');
         const selectorField = ctx.createFieldGroup('Selector Model', selectorSelect, 'router-selector-model-field');
         ctx.appendFieldHint(selectorField, 'editor:hints.routerSelector');
         titleWrap.appendChild(selectorField);
@@ -272,6 +272,7 @@ export function registerRouter(ctx) {
                     validate: ctx.validateRouterPayload,
                     apply: async payload => {
                         ctx.state.gatewayModelCatalog.chat = payload.chat_models || [];
+                        ctx.state.gatewayModelCatalog.decisions = payload.decision_models || [];
                         ctx.state.routerFallbackChains = payload.fallback_chains || {};
                         await renderRouter(payload.rules);
                     },
@@ -321,6 +322,7 @@ export function registerRouter(ctx) {
             }
             if (ctx.state.editorMutationVersion === result.submittedMutationVersion) {
                 ctx.state.gatewayModelCatalog.chat = result.payload.chat_models || [];
+                ctx.state.gatewayModelCatalog.decisions = result.payload.decision_models || [];
                 ctx.state.routerFallbackChains = result.payload.fallback_chains || {};
                 const application = renderRouter(result.payload.rules);
                 ctx.syncInteractionLock();

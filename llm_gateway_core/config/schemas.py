@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 
 from .placeholder_secrets import is_placeholder_secret, placeholder_secret_error
 from .schema_validation import (
+    AUDIO_DIARIZATIONS_DEFAULT_TARGET_PATH,
     AUDIO_SPEECH_DEFAULT_TARGET_PATH,
     AUDIO_TRANSCRIPTIONS_DEFAULT_TARGET_PATH,
     IMAGES_EDITS_DEFAULT_TARGET_PATH,
@@ -27,6 +28,7 @@ from .schema_validation import (
 from ..services.payload_transform import (
     validate_payload_transform_filters,
     validate_payload_transform_object,
+    validate_payload_transform_value_maps,
 )
 
 class SubscriptionQuotaConfig(BaseModel):
@@ -236,6 +238,7 @@ class PayloadTransformConfig(BaseModel):
     defaults: Dict[str, Any] = Field(default_factory=dict)
     overrides: Dict[str, Any] = Field(default_factory=dict)
     filters: list[str] = Field(default_factory=list)
+    value_maps: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
     @field_validator("defaults")
     @classmethod
@@ -251,6 +254,11 @@ class PayloadTransformConfig(BaseModel):
     @classmethod
     def validate_filters(cls, value: list[str]) -> list[str]:
         return validate_payload_transform_filters(value, "payload_transforms.filters")
+
+    @field_validator("value_maps")
+    @classmethod
+    def validate_value_maps(cls, value: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        return validate_payload_transform_value_maps(value, "payload_transforms.value_maps")
 
 
 class FallbackModelRule(BaseModel):
@@ -946,6 +954,42 @@ class AudioTranscriptionModelConfig(BaseModel):
         return updated_data
 
 
+class AudioDiarizationModelConfig(BaseModel):
+    gateway_model_name: str
+    cost_calculator: OperationCostCalculatorConfig | None = None
+    routes: List[OperationRoute]
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_default_target_path(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        routes = data.get("routes")
+        if not isinstance(routes, list):
+            return data
+
+        updated_data = dict(data)
+        updated_data["routes"] = [
+            (
+                {**route, "target_path": AUDIO_DIARIZATIONS_DEFAULT_TARGET_PATH}
+                if isinstance(route, dict) and "target_path" not in route
+                else route
+            )
+            for route in routes
+        ]
+        return updated_data
+
+
+class AudioSpeakerTranscriptionModelConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gateway_model_name: str
+    cost_calculator: OperationCostCalculatorConfig | None = None
+    transcription_model: str
+    diarization_model: str
+
+
 class PdfConversionModelConfig(BaseModel):
     gateway_model_name: str
     cost_calculator: OperationCostCalculatorConfig | None = None
@@ -1022,6 +1066,8 @@ class _ModelsOperationConfigSections(BaseModel):
     images_edits: List[ImagesEditModelConfig] = Field(default_factory=list)
     audio_speech: List[AudioSpeechModelConfig] = Field(default_factory=list)
     audio_transcriptions: List[AudioTranscriptionModelConfig] = Field(default_factory=list)
+    audio_diarizations: List[AudioDiarizationModelConfig] = Field(default_factory=list)
+    audio_speaker_transcriptions: List[AudioSpeakerTranscriptionModelConfig] = Field(default_factory=list)
     web_search: List[WebSearchModelConfig] = Field(default_factory=list)
     web_read: List[WebReadModelConfig] = Field(default_factory=list)
     web_research: List[WebResearchModelConfig] = Field(default_factory=list)
@@ -1057,6 +1103,14 @@ class ModelsOperationConfig(RootModel[_ModelsOperationConfigSections]):
     @property
     def audio_transcriptions(self) -> List[AudioTranscriptionModelConfig]:
         return self.root.audio_transcriptions
+
+    @property
+    def audio_diarizations(self) -> List[AudioDiarizationModelConfig]:
+        return self.root.audio_diarizations
+
+    @property
+    def audio_speaker_transcriptions(self) -> List[AudioSpeakerTranscriptionModelConfig]:
+        return self.root.audio_speaker_transcriptions
 
     @property
     def web_search(self) -> List[WebSearchModelConfig]:

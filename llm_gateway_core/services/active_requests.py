@@ -21,6 +21,7 @@ _PATH_OPERATION_SUFFIXES = (
     ("/images", "images_generation"),
     ("/audio/speech", "audio_speech"),
     ("/audio/transcriptions", "audio_transcription"),
+    ("/audio/diarize", "audio_diarization"),
     ("/pdf/convert", "pdf_conversion"),
     ("/pdf/jobs", "pdf_conversion"),
     ("/web/search", "web_search"),

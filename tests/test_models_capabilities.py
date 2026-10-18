@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi.testclient import TestClient
 
 import main
+from llm_gateway_core.api.v1.models import _add_capability, _add_gateway_operation_models
 from llm_gateway_core.config.loader import ConfigLoader
 from tests.chat_accounting_test_support import install_main_chat_accounting_double
 
@@ -68,6 +69,17 @@ VALID_OPERATION_RULES_TEXT = """
           "provider": "openrouter",
           "model": "embed-model-shared",
           "target_path": "/embeddings"
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "gateway_model_name": "gateway/decision-only",
+      "routes": [
+        {
+          "provider": "openrouter",
+          "model": "decider-v1"
         }
       ]
     }
@@ -219,7 +231,7 @@ class ModelsCapabilitiesTests(unittest.TestCase):
             """[
   {
     "gateway_model_name": "gateway/router",
-    "selector_model": "gateway/chat-only",
+    "selector_model": "gateway/decision-only",
     "targets": [
       {"type": "gateway_model", "model": "gateway/chat-only"}
     ]
@@ -366,6 +378,9 @@ class ModelsCapabilitiesTests(unittest.TestCase):
                 "output_modalities": ["image"],
             },
         )
+        self.assertEqual(models_by_id["gateway/image-generation-only"]["supported_endpoint_types"], ["image-generation"])
+        self.assertEqual(models_by_id["gateway/image-edit-only"]["supported_endpoint_types"], ["image-edit"])
+        self.assertNotIn("supported_endpoint_types", models_by_id["gateway/chat-only"])
         self.assertEqual(models_by_id["gateway/audio-only"]["capabilities"], ["audio_transcription"])
         self.assertEqual(models_by_id["gateway/audio-only"]["type"], "audio")
         self.assertEqual(
@@ -529,3 +544,18 @@ class ModelsCapabilitiesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_image_endpoint_types_cover_both_operations_and_skip_mixed_models() -> None:
+    gateway_models: dict = {}
+    _add_capability(gateway_models, "gateway/chat-and-images", "chat")
+    _add_gateway_operation_models(
+        gateway_models,
+        {
+            "images_generations": {"gateway/both": {}, "gateway/chat-and-images": {}},
+            "images_edits": {"gateway/both": {}},
+        },
+    )
+
+    assert gateway_models["gateway/both"]["supported_endpoint_types"] == ["image-generation", "image-edit"]
+    assert "supported_endpoint_types" not in gateway_models["gateway/chat-and-images"]

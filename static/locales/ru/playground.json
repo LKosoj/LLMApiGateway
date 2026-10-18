@@ -19,7 +19,8 @@
     "tavilySearch": "Поиск Tavily",
     "tavilyExtract": "Извлечение Tavily",
     "research": "Исследование",
-    "deepResearch": "Глубокое исследование"
+    "deepResearch": "Глубокое исследование",
+    "audioDiarization": "Диаризация"
   },
   "labels": {
     "mdImages": "Изображения в MD",
@@ -75,7 +76,9 @@
     "savePreprocessedPdf": "Сохранить предобработанный PDF",
     "advancedSettings": "Дополнительные настройки",
     "topP": "Top-p",
-    "maxTokens": "Максимум токенов"
+    "maxTokens": "Максимум токенов",
+    "instructions": "Инструкции (эмоция и стиль)",
+    "minDuration": "Мин. длительность сегмента, с"
   },
   "actions": {
     "sendMessage": "Отправить сообщение",
@@ -91,7 +94,8 @@
     "transcribeAudio": "Распознать аудио",
     "generateImages": "Создать изображения",
     "editImages": "Изменить изображения",
-    "startPdfConversion": "Запустить преобразование"
+    "startPdfConversion": "Запустить преобразование",
+    "diarizeAudio": "Найти спикеров"
   },
   "options": {
     "withImages": "С изображениями",
@@ -112,7 +116,8 @@
   "placeholders": {
     "default": "по умолчанию",
     "auto": "авто",
-    "providerLimit": "ограничение провайдера"
+    "providerLimit": "ограничение провайдера",
+    "speechInstructions": "бодро, спокойный диктор"
   },
   "help": {
     "researchMaxResults": "Ограничивает число кандидатов для каждого выбранного языка поиска.",
@@ -230,6 +235,11 @@
     "elapsed": "Прошло",
     "eta": "Осталось",
     "pdfProgressAria": "Ход преобразования PDF",
-    "pdfTitle": "Задание преобразования PDF"
+    "pdfTitle": "Задание преобразования PDF",
+    "diarizationTitle": "Спикеры",
+    "speakersFound": "Найдено спикеров: {count, number}",
+    "speaker": "Спикер",
+    "segmentStart": "Начало, с",
+    "segmentEnd": "Конец, с"
   }
 }

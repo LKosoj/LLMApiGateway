@@ -74,6 +74,7 @@ PUBLIC_METHOD_PARAMETERS = {
         "payload_text",
         "fallback_rules",
         "fusion_rules",
+        "operation_rules",
     ),
     "validate_fallback_rules_mapping": (
         "self",
@@ -90,6 +91,7 @@ PUBLIC_METHOD_PARAMETERS = {
         "router_rules_to_validate",
         "fallback_rules",
         "fusion_rules",
+        "operation_rules",
     ),
     "validate_operation_routes": (
         "self",

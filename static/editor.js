@@ -1999,6 +1999,12 @@
     const addAudioTranscriptionButton = document.getElementById("addAudioTranscriptionButton");
     const audioTranscriptionsList = document.getElementById("audioTranscriptionsList");
     const audioTranscriptionsEmptyState = document.getElementById("audioTranscriptionsEmptyState");
+    const addAudioDiarizationButton = document.getElementById("addAudioDiarizationButton");
+    const audioDiarizationsList = document.getElementById("audioDiarizationsList");
+    const audioDiarizationsEmptyState = document.getElementById("audioDiarizationsEmptyState");
+    const addAudioSpeakerTranscriptionButton = document.getElementById("addAudioSpeakerTranscriptionButton");
+    const audioSpeakerTranscriptionsList = document.getElementById("audioSpeakerTranscriptionsList");
+    const audioSpeakerTranscriptionsEmptyState = document.getElementById("audioSpeakerTranscriptionsEmptyState");
     const addWebSearchButton = document.getElementById("addWebSearchButton");
     const webSearchList = document.getElementById("webSearchList");
     const webSearchEmptyState = document.getElementById("webSearchEmptyState");
@@ -2079,6 +2085,12 @@
       addAudioTranscriptionButton,
       audioTranscriptionsList,
       audioTranscriptionsEmptyState,
+      addAudioDiarizationButton,
+      audioDiarizationsList,
+      audioDiarizationsEmptyState,
+      addAudioSpeakerTranscriptionButton,
+      audioSpeakerTranscriptionsList,
+      audioSpeakerTranscriptionsEmptyState,
       addWebSearchButton,
       webSearchList,
       webSearchEmptyState,
@@ -2390,6 +2402,9 @@
       requireArrayProperty(payload, "rules");
       if (Object.prototype.hasOwnProperty.call(payload, "chat_models")) {
         requireArrayProperty(payload, "chat_models");
+      }
+      if (Object.prototype.hasOwnProperty.call(payload, "decision_models")) {
+        requireArrayProperty(payload, "decision_models");
       }
       if (Object.prototype.hasOwnProperty.call(payload, "fallback_chains") && !isRecord(payload.fallback_chains)) {
         throw new ConfigUiError("The configuration response has an invalid shape.");
@@ -2825,6 +2840,12 @@
     function refreshAudioTranscriptionsEmptyState() {
       ctx.elements.audioTranscriptionsEmptyState.hidden = ctx.elements.audioTranscriptionsList.children.length !== 0;
     }
+    function refreshAudioDiarizationsEmptyState() {
+      ctx.elements.audioDiarizationsEmptyState.hidden = ctx.elements.audioDiarizationsList.children.length !== 0;
+    }
+    function refreshAudioSpeakerTranscriptionsEmptyState() {
+      ctx.elements.audioSpeakerTranscriptionsEmptyState.hidden = ctx.elements.audioSpeakerTranscriptionsList.children.length !== 0;
+    }
     function refreshWebSearchEmptyState() {
       ctx.elements.webSearchEmptyState.hidden = ctx.elements.webSearchList.children.length !== 0;
     }
@@ -2896,6 +2917,8 @@
       ["Read Model", "editor:fields.readModel"],
       ["Rerank Model", "editor:fields.rerankModel"],
       ["Analysis Model", "editor:fields.analysisModel"],
+      ["Transcription Model", "editor:fields.transcriptionModel"],
+      ["Diarization Model", "editor:fields.diarizationModel"],
       ["Fast LLM", "editor:fields.fastModel"],
       ["Smart LLM", "editor:fields.smartModel"],
       ["Strategic LLM", "editor:fields.strategicModel"],
@@ -3846,6 +3869,8 @@
       refreshImageEditEmptyState,
       refreshAudioSpeechEmptyState,
       refreshAudioTranscriptionsEmptyState,
+      refreshAudioDiarizationsEmptyState,
+      refreshAudioSpeakerTranscriptionsEmptyState,
       refreshWebSearchEmptyState,
       refreshWebReadEmptyState,
       refreshWebResearchEmptyState,
@@ -4103,7 +4128,7 @@
       if (Object.prototype.hasOwnProperty.call(payload, "audio_transcriptions")) {
         normalized.audio_transcriptions = Array.isArray(payload.audio_transcriptions) ? payload.audio_transcriptions : [];
       }
-      ["audio_speech", "pdf_conversions"].forEach((sectionName) => {
+      ["audio_speech", "audio_diarizations", "audio_speaker_transcriptions", "pdf_conversions"].forEach((sectionName) => {
         if (Object.prototype.hasOwnProperty.call(payload, sectionName)) {
           normalized[sectionName] = Array.isArray(payload[sectionName]) ? payload[sectionName] : [];
         }
@@ -4124,6 +4149,8 @@
       ctx.state.imageEditRules = normalized.images_edits;
       ctx.state.audioSpeechRules = normalized.audio_speech || [];
       ctx.state.audioTranscriptionRules = normalized.audio_transcriptions || [];
+      ctx.state.audioDiarizationRules = normalized.audio_diarizations || [];
+      ctx.state.audioSpeakerTranscriptionRules = normalized.audio_speaker_transcriptions || [];
       ctx.state.pdfConversionRules = normalized.pdf_conversions || [];
       ctx.state.webSearchRules = normalized.web_search || [];
       ctx.state.webReadRules = normalized.web_read || [];
@@ -4145,6 +4172,12 @@
       if (!basePayload && ctx.state.audioSpeechRules.length > 0) {
         source.audio_speech = ctx.state.audioSpeechRules;
       }
+      if (!basePayload && ctx.state.audioDiarizationRules.length > 0) {
+        source.audio_diarizations = ctx.state.audioDiarizationRules;
+      }
+      if (!basePayload && ctx.state.audioSpeakerTranscriptionRules.length > 0) {
+        source.audio_speaker_transcriptions = ctx.state.audioSpeakerTranscriptionRules;
+      }
       if (!basePayload && ctx.state.pdfConversionRules.length > 0) {
         source.pdf_conversions = ctx.state.pdfConversionRules;
       }
@@ -4158,7 +4191,7 @@
       if (Object.prototype.hasOwnProperty.call(overrides, "audio_transcriptions") || Object.prototype.hasOwnProperty.call(source, "audio_transcriptions") || ctx.state.audioTranscriptionRules.length > 0) {
         payload.audio_transcriptions = overrides.audio_transcriptions ?? (source.audio_transcriptions || []);
       }
-      ["audio_speech", "pdf_conversions"].forEach((sectionName) => {
+      ["audio_speech", "audio_diarizations", "audio_speaker_transcriptions", "pdf_conversions"].forEach((sectionName) => {
         if (Object.prototype.hasOwnProperty.call(overrides, sectionName) || Object.prototype.hasOwnProperty.call(source, sectionName)) {
           payload[sectionName] = overrides[sectionName] ?? (source[sectionName] || []);
         }
@@ -5238,7 +5271,16 @@
       const audio_transcriptions = Array.from(ctx.elements.audioTranscriptionsList.querySelectorAll(".rule-card")).map(
         normalizeAudioTranscriptionCardForSave
       );
-      return buildOperationRoutesPayload({ audio_speech, audio_transcriptions }, basePayload);
+      const audio_diarizations = Array.from(ctx.elements.audioDiarizationsList.querySelectorAll(".rule-card")).map(
+        normalizeAudioDiarizationCardForSave
+      );
+      const audio_speaker_transcriptions = Array.from(
+        ctx.elements.audioSpeakerTranscriptionsList.querySelectorAll(".rule-card")
+      ).map(normalizeAudioSpeakerTranscriptionCardForSave);
+      return buildOperationRoutesPayload(
+        { audio_speech, audio_transcriptions, audio_diarizations, audio_speaker_transcriptions },
+        basePayload
+      );
     }
     function getNormalizedAudioContent() {
       return ctx.stableSerialize(getAudioPayloadForSave());
@@ -5256,6 +5298,7 @@
       const targetPathInput = routeRow.querySelector(".target-path-input");
       const requestFormatSelect = routeRow.querySelector(".request-format-select");
       const voicesTargetPathInput = routeRow.querySelector(".voices-target-path-input");
+      const payloadTransformsInput = routeRow.querySelector(".payload-transforms-input");
       const retryDelayInput = routeRow.querySelector(".retry-delay-input");
       const retryCountInput = routeRow.querySelector(".retry-count-input");
       const provider = providerSelect.value.trim();
@@ -5284,6 +5327,13 @@
         validateAudioTargetPath(voices_target_path, "Voices target path");
         routePayload.voices_target_path = voices_target_path;
       }
+      const payloadTransforms = ctx.parseObjectTextarea(
+        payloadTransformsInput ? payloadTransformsInput.value : "",
+        "Payload transforms"
+      );
+      if (Object.keys(payloadTransforms).length > 0) {
+        routePayload.payload_transforms = payloadTransforms;
+      }
       ctx.applyRetrySettingsToPayload(routePayload, retryDelayInput, retryCountInput);
       return routePayload;
     }
@@ -5297,6 +5347,12 @@
       return normalizeAudioRouteForSave(routeRow, {
         routeLabel: "audio transcription",
         defaultTargetPath: "/audio/transcriptions"
+      });
+    }
+    function normalizeAudioDiarizationRouteForSave(routeRow) {
+      return normalizeAudioRouteForSave(routeRow, {
+        routeLabel: "audio diarization",
+        defaultTargetPath: "/audio/diarize"
       });
     }
     function normalizeAudioSpeechCardForSave(ruleCard) {
@@ -5329,6 +5385,53 @@
         routes: routeRows.map(normalizeAudioTranscriptionRouteForSave)
       }, ruleCard);
     }
+    function normalizeAudioDiarizationCardForSave(ruleCard) {
+      const gatewayModelInput = ruleCard.querySelector(".gateway-model-input");
+      const routeRows = Array.from(ruleCard.querySelectorAll(".fallback-list > .fallback-row"));
+      const gatewayModelName = gatewayModelInput.value.trim();
+      if (!gatewayModelName) {
+        throw new Error("Each audio diarization model rule must have a gateway model name.");
+      }
+      if (routeRows.length === 0) {
+        throw new Error(`Audio diarization model '${gatewayModelName}' must contain at least one route.`);
+      }
+      return ctx.applyOperationCostCalculator({
+        gateway_model_name: gatewayModelName,
+        routes: routeRows.map(normalizeAudioDiarizationRouteForSave)
+      }, ruleCard);
+    }
+    function normalizeAudioSpeakerTranscriptionCardForSave(ruleCard) {
+      const gatewayModelName = ruleCard.querySelector(".gateway-model-input").value.trim();
+      if (!gatewayModelName) {
+        throw new Error("Each speaker transcription model rule must have a gateway model name.");
+      }
+      const transcriptionModel = ruleCard.querySelector(".transcription-model-input").value.trim();
+      const diarizationModel = ruleCard.querySelector(".diarization-model-input").value.trim();
+      if (!transcriptionModel) {
+        throw new Error(`Speaker transcription model '${gatewayModelName}' must define transcription_model.`);
+      }
+      if (!diarizationModel) {
+        throw new Error(`Speaker transcription model '${gatewayModelName}' must define diarization_model.`);
+      }
+      return ctx.applyOperationCostCalculator({
+        gateway_model_name: gatewayModelName,
+        transcription_model: transcriptionModel,
+        diarization_model: diarizationModel
+      }, ruleCard);
+    }
+    function collectAudioSpeakerCatalogs() {
+      ctx.state.gatewayModelCatalog.audio_transcriptions = collectCurrentWebSectionModels(ctx.elements.audioTranscriptionsList);
+      ctx.state.gatewayModelCatalog.audio_diarizations = collectCurrentWebSectionModels(ctx.elements.audioDiarizationsList);
+    }
+    function refreshAudioSpeakerDropdowns() {
+      collectAudioSpeakerCatalogs();
+      ctx.elements.audioSpeakerTranscriptionsList.querySelectorAll(".transcription-model-input").forEach((select) => {
+        ctx.setModelSelectOptions(select, ctx.state.gatewayModelCatalog.audio_transcriptions, select.value);
+      });
+      ctx.elements.audioSpeakerTranscriptionsList.querySelectorAll(".diarization-model-input").forEach((select) => {
+        ctx.setModelSelectOptions(select, ctx.state.gatewayModelCatalog.audio_diarizations, select.value);
+      });
+    }
     async function loadAudioEditor() {
       try {
         const loaded = await loadOperationRulesPayload(
@@ -5336,6 +5439,8 @@
           async (payload) => {
             await renderAudioSpeech(payload.audio_speech || []);
             await renderAudioTranscriptions(payload.audio_transcriptions || []);
+            await renderAudioDiarizations(payload.audio_diarizations || []);
+            await renderAudioSpeakerTranscriptions(payload.audio_speaker_transcriptions || []);
           }
         );
         if (!loaded) {
@@ -5378,6 +5483,31 @@
       });
       ctx.refreshAudioTranscriptionsEmptyState();
     }
+    function renderAudioDiarizations(items) {
+      ctx.elements.audioDiarizationsList.textContent = "";
+      if (!Array.isArray(items) || items.length === 0) {
+        ctx.refreshAudioDiarizationsEmptyState();
+        return;
+      }
+      items.forEach((item) => {
+        const card = buildAudioDiarizationCard(item);
+        ctx.elements.audioDiarizationsList.appendChild(card);
+      });
+      ctx.refreshAudioDiarizationsEmptyState();
+    }
+    function renderAudioSpeakerTranscriptions(items) {
+      ctx.elements.audioSpeakerTranscriptionsList.textContent = "";
+      collectAudioSpeakerCatalogs();
+      if (!Array.isArray(items) || items.length === 0) {
+        ctx.refreshAudioSpeakerTranscriptionsEmptyState();
+        return;
+      }
+      items.forEach((item) => {
+        const card = buildAudioSpeakerTranscriptionCard(item);
+        ctx.elements.audioSpeakerTranscriptionsList.appendChild(card);
+      });
+      ctx.refreshAudioSpeakerTranscriptionsEmptyState();
+    }
     function buildAudioSpeechCard(initialData) {
       return buildAudioCard(initialData, {
         gatewayPlaceholder: "llmgateway/audio-speech-model",
@@ -5394,6 +5524,63 @@
         buildRouteRow: buildAudioTranscriptionRouteRow
       });
     }
+    function buildAudioDiarizationCard(initialData) {
+      return buildAudioCard(initialData, {
+        gatewayPlaceholder: "llmgateway/diarizations",
+        addRouteButtonText: "Add Route",
+        refreshEmptyState: ctx.refreshAudioDiarizationsEmptyState,
+        buildRouteRow: buildAudioDiarizationRouteRow
+      });
+    }
+    function buildAudioSpeakerTranscriptionCard(initialData) {
+      const card = document.createElement("section");
+      card.className = "rule-card collapsed";
+      const cardHeader = document.createElement("div");
+      cardHeader.className = "rule-card-header";
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "rule-card-title";
+      const gatewayModelInput = ctx.createTextInput("gateway-model-input", "llmgateway/stt-speakers");
+      gatewayModelInput.value = initialData.gateway_model_name || "";
+      gatewayModelInput.addEventListener("input", refreshAudioSpeakerDropdowns);
+      titleWrap.appendChild(ctx.createFieldGroup("Gateway Model Name", gatewayModelInput, "gateway-model-field"));
+      const headerLeft = document.createElement("div");
+      headerLeft.className = "rule-card-header-left";
+      headerLeft.appendChild(createAccordionToggle(card));
+      headerLeft.appendChild(titleWrap);
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "icon-button danger-button";
+      ctx.bindKnownActionText(removeButton, "Remove Model");
+      removeButton.addEventListener("click", () => {
+        card.remove();
+        ctx.refreshAudioSpeakerTranscriptionsEmptyState();
+      });
+      cardHeader.appendChild(headerLeft);
+      cardHeader.appendChild(removeButton);
+      const fieldsGrid = document.createElement("div");
+      fieldsGrid.className = "fallback-row-grid";
+      const transcriptionModelSelect = ctx.createSelect("transcription-model-input");
+      ctx.setModelSelectOptions(
+        transcriptionModelSelect,
+        ctx.state.gatewayModelCatalog.audio_transcriptions,
+        initialData.transcription_model || ""
+      );
+      fieldsGrid.appendChild(ctx.createFieldGroup("Transcription Model", transcriptionModelSelect, "model-field"));
+      const diarizationModelSelect = ctx.createSelect("diarization-model-input");
+      ctx.setModelSelectOptions(
+        diarizationModelSelect,
+        ctx.state.gatewayModelCatalog.audio_diarizations,
+        initialData.diarization_model || ""
+      );
+      fieldsGrid.appendChild(ctx.createFieldGroup("Diarization Model", diarizationModelSelect, "model-field"));
+      const cardBody = document.createElement("div");
+      cardBody.className = "rule-card-body";
+      cardBody.appendChild(ctx.createOperationCostCalculatorField(initialData));
+      cardBody.appendChild(fieldsGrid);
+      card.appendChild(cardHeader);
+      card.appendChild(cardBody);
+      return card;
+    }
     function buildAudioCard(initialData, options) {
       const card = document.createElement("section");
       card.className = "rule-card";
@@ -5403,6 +5590,7 @@
       titleWrap.className = "rule-card-title";
       const gatewayModelInput = ctx.createTextInput("gateway-model-input", options.gatewayPlaceholder);
       gatewayModelInput.value = initialData.gateway_model_name || "";
+      gatewayModelInput.addEventListener("input", refreshAudioSpeakerDropdowns);
       titleWrap.appendChild(ctx.createFieldGroup("Gateway Model Name", gatewayModelInput, "gateway-model-field"));
       const removeButton = document.createElement("button");
       removeButton.type = "button";
@@ -5411,6 +5599,7 @@
       removeButton.addEventListener("click", () => {
         card.remove();
         options.refreshEmptyState();
+        refreshAudioSpeakerDropdowns();
       });
       const routeList = document.createElement("div");
       routeList.className = "fallback-list";
@@ -5486,6 +5675,16 @@
         customBodyPlaceholder: '{"language": "en"}'
       });
     }
+    function buildAudioDiarizationRouteRow(initialData) {
+      return buildAudioRouteRow(initialData, {
+        defaultTargetPath: "/audio/diarize",
+        includeRequestFormat: false,
+        includeVoicesTargetPath: false,
+        dataListPrefix: "audio-diarization-models-list",
+        removeButtonText: "Remove Route",
+        customBodyPlaceholder: '{"min_duration": 0.3}'
+      });
+    }
     function buildAudioRouteRow(initialData, options) {
       const row = document.createElement("div");
       row.className = "fallback-row";
@@ -5508,6 +5707,8 @@
       customBodyParamsInput.value = ctx.normalizeObjectTextarea(initialData.custom_body_params);
       const customHeadersInput = ctx.createTextarea("custom-headers-input", '{"X-Header": "value"}');
       customHeadersInput.value = ctx.normalizeObjectTextarea(initialData.custom_headers);
+      const payloadTransformsInput = ctx.createTextarea("payload-transforms-input", '{"value_maps": {"language": {"ru": "Russian"}}}');
+      payloadTransformsInput.value = ctx.normalizeObjectTextarea(initialData.payload_transforms);
       fieldsGrid.appendChild(ctx.createFieldGroup("Provider", providerSelect, "provider-field"));
       fieldsGrid.appendChild(ctx.createFieldGroup("Model", modelInput, "model-field"));
       fieldsGrid.appendChild(ctx.createFieldGroup("Target Path", targetPathInput));
@@ -5540,6 +5741,7 @@
       advancedGrid.appendChild(ctx.createFieldGroup("Retry Count", retryCountInput));
       advancedGrid.appendChild(ctx.createFieldGroup("Custom Body Params", customBodyParamsInput, "textarea-group"));
       advancedGrid.appendChild(ctx.createFieldGroup("Custom Headers", customHeadersInput, "textarea-group"));
+      advancedGrid.appendChild(ctx.createFieldGroup("Payload Transforms", payloadTransformsInput, "textarea-group"));
       advancedDetails.appendChild(advancedGrid);
       const removeButton = document.createElement("button");
       removeButton.type = "button";
@@ -6044,14 +6246,23 @@
       normalizeAudioTranscriptionRouteForSave,
       normalizeAudioSpeechCardForSave,
       normalizeAudioTranscriptionCardForSave,
+      normalizeAudioDiarizationRouteForSave,
+      normalizeAudioDiarizationCardForSave,
+      normalizeAudioSpeakerTranscriptionCardForSave,
       loadAudioEditor,
       renderAudioSpeech,
       renderAudioTranscriptions,
+      renderAudioDiarizations,
+      renderAudioSpeakerTranscriptions,
+      refreshAudioSpeakerDropdowns,
       buildAudioSpeechCard,
       buildAudioTranscriptionCard,
+      buildAudioDiarizationCard,
+      buildAudioSpeakerTranscriptionCard,
       buildAudioCard,
       buildAudioSpeechRouteRow,
       buildAudioTranscriptionRouteRow,
+      buildAudioDiarizationRouteRow,
       buildAudioRouteRow,
       saveAudio,
       createAccordionToggle,
@@ -6985,7 +7196,7 @@
       gatewayModelInput.value = data.gateway_model_name || "";
       titleWrap.appendChild(ctx.createFieldGroup("Gateway Model Name", gatewayModelInput, "gateway-model-field"));
       const selectorSelect = ctx.createSelect("router-selector-model-select");
-      ctx.setModelSelectOptions(selectorSelect, ctx.state.gatewayModelCatalog.chat, data.selector_model || "");
+      ctx.setModelSelectOptions(selectorSelect, ctx.state.gatewayModelCatalog.decisions, data.selector_model || "");
       const selectorField = ctx.createFieldGroup("Selector Model", selectorSelect, "router-selector-model-field");
       ctx.appendFieldHint(selectorField, "editor:hints.routerSelector");
       titleWrap.appendChild(selectorField);
@@ -7122,6 +7333,7 @@
             validate: ctx.validateRouterPayload,
             apply: async (payload) => {
               ctx.state.gatewayModelCatalog.chat = payload.chat_models || [];
+              ctx.state.gatewayModelCatalog.decisions = payload.decision_models || [];
               ctx.state.routerFallbackChains = payload.fallback_chains || {};
               await renderRouter(payload.rules);
             }
@@ -7168,6 +7380,7 @@
         }
         if (ctx.state.editorMutationVersion === result.submittedMutationVersion) {
           ctx.state.gatewayModelCatalog.chat = result.payload.chat_models || [];
+          ctx.state.gatewayModelCatalog.decisions = result.payload.decision_models || [];
           ctx.state.routerFallbackChains = result.payload.fallback_chains || {};
           const application = renderRouter(result.payload.rules);
           ctx.syncInteractionLock();
@@ -7251,6 +7464,8 @@
       imageEditRules: [],
       audioSpeechRules: [],
       audioTranscriptionRules: [],
+      audioDiarizationRules: [],
+      audioSpeakerTranscriptionRules: [],
       pdfConversionRules: [],
       webSearchRules: [],
       webReadRules: [],
@@ -7258,10 +7473,13 @@
       webDeepResearchRules: [],
       gatewayModelCatalog: {
         chat: [],
+        decisions: [],
         embeddings: [],
         images_generations: [],
         web_search: [],
-        web_read: []
+        web_read: [],
+        audio_transcriptions: [],
+        audio_diarizations: []
       },
       routerFallbackChains: {},
       providerModelsCache: /* @__PURE__ */ new Map(),
@@ -7379,6 +7597,20 @@
       audioCard.classList.remove("collapsed");
       ctx.elements.audioTranscriptionsList.appendChild(audioCard);
       ctx.refreshAudioTranscriptionsEmptyState();
+      ctx.refreshAudioSpeakerDropdowns();
+    });
+    ctx.elements.addAudioDiarizationButton.addEventListener("click", () => {
+      const audioCard = ctx.buildAudioDiarizationCard({});
+      audioCard.classList.remove("collapsed");
+      ctx.elements.audioDiarizationsList.appendChild(audioCard);
+      ctx.refreshAudioDiarizationsEmptyState();
+      ctx.refreshAudioSpeakerDropdowns();
+    });
+    ctx.elements.addAudioSpeakerTranscriptionButton.addEventListener("click", () => {
+      const speakerCard = ctx.buildAudioSpeakerTranscriptionCard({});
+      speakerCard.classList.remove("collapsed");
+      ctx.elements.audioSpeakerTranscriptionsList.appendChild(speakerCard);
+      ctx.refreshAudioSpeakerTranscriptionsEmptyState();
     });
     ctx.elements.addWebSearchButton.addEventListener("click", () => {
       const searchCard = ctx.buildWebSearchCard({}, WEB_SEARCH_CARD_OPTIONS);

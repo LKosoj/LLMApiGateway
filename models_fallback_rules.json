@@ -579,7 +579,7 @@
       },
       {
         "provider": "openai_codex",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6.1-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -691,14 +691,29 @@
         "custom_headers": {}
       },
       {
-        "provider": "agentrouter",
-        "model": "deepseek-v4-flash",
+        "provider": "nvidia",
+        "model": "z-ai/glm-5.3-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
+        "provider": "neuraldeep",
+        "model": "qwen3.8-27b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -734,36 +749,6 @@
         "supports_vision": true,
         "supports_tools": true,
         "context_window": 262144,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "nvidia",
-        "model": "nvidia/nemotron-3-ultra-550b-a55b",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": false,
-        "supports_tools": true,
-        "context_window": 1000000,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
-        "provider": "aitunnel",
-        "model": "deepseek-v4-flash-0731",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": false,
-        "supports_tools": true,
-        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

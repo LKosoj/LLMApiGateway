@@ -385,6 +385,7 @@ print(response.choices[0].message.content)</code></pre>
                             <tr><th><code>voice</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text004">Голос downstream TTS-сервиса, если он поддерживает выбор голоса.</span></td></tr>
                             <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text005">Формат аудио, например</span> <code>mp3</code> <span data-i18n="docs:sections.audio.text006">или</span> <code>wav</code>.</td></tr>
                             <tr><th><code>speed</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text007">Скорость речи, если поддерживается моделью.</span></td></tr>
+                            <tr><th><code>instructions</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text024">Свободный текст об эмоции и стиле речи, если модель его поддерживает (например, Qwen3-TTS).</span></td></tr>
                             <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.audio.text008">Raw audio bytes с downstream</span> <code>content-type</code><span data-i18n="docs:sections.audio.text009">. Streaming не поддерживается.</span></td></tr>
                         </tbody>
                     </table>
@@ -411,6 +412,20 @@ print(response.choices[0].message.content)</code></pre>
                             <tr><th><code>temperature</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text021">Управляет вариативностью расшифровки, если модель поддерживает параметр.</span></td></tr>
                             <tr><th><code>timestamp_granularities[]</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text022">Запрос временных меток на уровне сегментов или слов, если поддерживается моделью.</span></td></tr>
                             <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.audio.text023">OpenAI-compatible transcription response. Streaming не поддерживается.</span></td></tr>
+                            <tr><th><span data-i18n="docs:sections.audio.tableHeader001">Разбивка по спикерам</span></th><td><span data-i18n="docs:sections.audio.text025">Модели из секции</span> <code>audio_speaker_transcriptions</code> <span data-i18n="docs:sections.audio.text026">параллельно вызывают распознавание речи и диаризацию и возвращают текст со строками вида</span> <code>SPEAKER_0: ...</code><span data-i18n="docs:sections.audio.text027">. Поддерживаются форматы</span> <code>json</code>, <code>verbose_json</code> <span data-i18n="docs:sections.audio.text006">или</span> <code>text</code>.</td></tr>
+                        </tbody>
+                    </table>
+                </article>
+                <article class="service-card">
+                    <h3>POST /v1/audio/diarize</h3>
+                    <table class="params-table param-details">
+                        <tbody>
+                            <tr><th><code>Content-Type</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text014">Используйте</span> <code>multipart/form-data</code>.</td></tr>
+                            <tr><th><code>file</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text028">Аудиофайл, в котором нужно определить, кто и когда говорил.</span></td></tr>
+                            <tr><th><code>model</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td><span data-i18n="docs:sections.audio.text029">Gateway-модель из группы audio diarizations.</span></td></tr>
+                            <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><code>json</code> <span data-i18n="docs:sections.audio.text006">или</span> <code>rttm</code>.</td></tr>
+                            <tr><th><code>min_duration</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text030">Минимальная длительность сегмента в секундах, если поддерживается моделью.</span></td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.audio.text031">JSON со списком сегментов</span> <code>speaker</code>/<code>start</code>/<code>end</code> <span data-i18n="docs:sections.audio.text032">или текст в формате RTTM.</span></td></tr>
                         </tbody>
                     </table>
                 </article>

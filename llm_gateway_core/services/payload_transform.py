@@ -50,6 +50,15 @@ def validate_payload_transform_filters(value: list[str] | None, field_name: str)
     return normalized_values
 
 
+def validate_payload_transform_value_maps(value: Mapping[str, Any] | None, field_name: str) -> dict[str, dict[str, Any]]:
+    normalized_value: dict[str, dict[str, Any]] = {}
+    for key, value_map in validate_payload_transform_object(value, field_name).items():
+        if not isinstance(value_map, Mapping):
+            raise ValueError(f"'{field_name}.{key}' must be a JSON object mapping source values to target values.")
+        normalized_value[key] = dict(value_map)
+    return normalized_value
+
+
 def apply_payload_transforms(payload: dict[str, Any], transforms: object | None) -> dict[str, Any]:
     transform_config = _transform_config_to_dict(transforms)
     if not transform_config:
@@ -58,8 +67,16 @@ def apply_payload_transforms(payload: dict[str, Any], transforms: object | None)
     defaults = validate_payload_transform_object(transform_config.get("defaults"), "payload_transforms.defaults")
     overrides = validate_payload_transform_object(transform_config.get("overrides"), "payload_transforms.overrides")
     filters = validate_payload_transform_filters(transform_config.get("filters"), "payload_transforms.filters")
+    value_maps = validate_payload_transform_value_maps(
+        transform_config.get("value_maps"),
+        "payload_transforms.value_maps",
+    )
 
     transformed_payload = copy.deepcopy(payload)
+    for key, value_map in value_maps.items():
+        source_value = transformed_payload.get(key)
+        if isinstance(source_value, str) and source_value in value_map:
+            transformed_payload[key] = copy.deepcopy(value_map[source_value])
     for key, value in defaults.items():
         if key not in transformed_payload:
             transformed_payload[key] = copy.deepcopy(value)

@@ -219,7 +219,7 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     assert abs(positions[0]["left"] - positions[2]["left"]) <= 2
     assert abs(positions[0]["left"] - positions[4]["left"]) <= 2
     all_service_cards = page.locator(".docs-section .service-card")
-    expect(all_service_cards).to_have_count(19)
+    expect(all_service_cards).to_have_count(20)
     overflowing_elements = all_service_cards.evaluate_all(
         """
         cards => cards.flatMap(card => {
@@ -725,8 +725,8 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     page.goto(f"{server}/v1/ui/playground")
     expect(page.locator("h1")).to_contain_text("Playground")
 
-    # 7 верхнеуровневых разделов, Web активен по умолчанию.
-    expect(page.locator("[data-playground-section-tab]")).to_have_count(7)
+    # 8 верхнеуровневых разделов, Web активен по умолчанию.
+    expect(page.locator("[data-playground-section-tab]")).to_have_count(8)
     expect(page.locator("[data-playground-section-tab='web']")).to_have_class("tab-button active")
     expect(page.locator("[data-playground-section-tab='chat']")).to_be_visible()
     expect(page.locator("[data-playground-section-panel='web']")).to_be_visible()

@@ -15,7 +15,7 @@ export function registerOperations(ctx) {
                 ? payload.audio_transcriptions
                 : [];
         }
-        ['audio_speech', 'pdf_conversions'].forEach((sectionName) => {
+        ['audio_speech', 'audio_diarizations', 'audio_speaker_transcriptions', 'pdf_conversions'].forEach((sectionName) => {
             if (Object.prototype.hasOwnProperty.call(payload, sectionName)) {
                 normalized[sectionName] = Array.isArray(payload[sectionName]) ? payload[sectionName] : [];
             }
@@ -37,6 +37,8 @@ export function registerOperations(ctx) {
         ctx.state.imageEditRules = normalized.images_edits;
         ctx.state.audioSpeechRules = normalized.audio_speech || [];
         ctx.state.audioTranscriptionRules = normalized.audio_transcriptions || [];
+        ctx.state.audioDiarizationRules = normalized.audio_diarizations || [];
+        ctx.state.audioSpeakerTranscriptionRules = normalized.audio_speaker_transcriptions || [];
         ctx.state.pdfConversionRules = normalized.pdf_conversions || [];
         ctx.state.webSearchRules = normalized.web_search || [];
         ctx.state.webReadRules = normalized.web_read || [];
@@ -59,6 +61,12 @@ export function registerOperations(ctx) {
         if (!basePayload && ctx.state.audioSpeechRules.length > 0) {
             source.audio_speech = ctx.state.audioSpeechRules;
         }
+        if (!basePayload && ctx.state.audioDiarizationRules.length > 0) {
+            source.audio_diarizations = ctx.state.audioDiarizationRules;
+        }
+        if (!basePayload && ctx.state.audioSpeakerTranscriptionRules.length > 0) {
+            source.audio_speaker_transcriptions = ctx.state.audioSpeakerTranscriptionRules;
+        }
         if (!basePayload && ctx.state.pdfConversionRules.length > 0) {
             source.pdf_conversions = ctx.state.pdfConversionRules;
         }
@@ -76,7 +84,7 @@ export function registerOperations(ctx) {
         ) {
             payload.audio_transcriptions = overrides.audio_transcriptions ?? (source.audio_transcriptions || []);
         }
-        ['audio_speech', 'pdf_conversions'].forEach((sectionName) => {
+        ['audio_speech', 'audio_diarizations', 'audio_speaker_transcriptions', 'pdf_conversions'].forEach((sectionName) => {
             if (
                 Object.prototype.hasOwnProperty.call(overrides, sectionName)
                 || Object.prototype.hasOwnProperty.call(source, sectionName)
@@ -1357,7 +1365,16 @@ export function registerOperations(ctx) {
         const audio_transcriptions = Array.from(ctx.elements.audioTranscriptionsList.querySelectorAll('.rule-card')).map(
             normalizeAudioTranscriptionCardForSave
         );
-        return buildOperationRoutesPayload({ audio_speech, audio_transcriptions }, basePayload);
+        const audio_diarizations = Array.from(ctx.elements.audioDiarizationsList.querySelectorAll('.rule-card')).map(
+            normalizeAudioDiarizationCardForSave
+        );
+        const audio_speaker_transcriptions = Array.from(
+            ctx.elements.audioSpeakerTranscriptionsList.querySelectorAll('.rule-card')
+        ).map(normalizeAudioSpeakerTranscriptionCardForSave);
+        return buildOperationRoutesPayload(
+            { audio_speech, audio_transcriptions, audio_diarizations, audio_speaker_transcriptions },
+            basePayload
+        );
     }
 
     function getNormalizedAudioContent() {
@@ -1378,6 +1395,7 @@ export function registerOperations(ctx) {
         const targetPathInput = routeRow.querySelector('.target-path-input');
         const requestFormatSelect = routeRow.querySelector('.request-format-select');
         const voicesTargetPathInput = routeRow.querySelector('.voices-target-path-input');
+        const payloadTransformsInput = routeRow.querySelector('.payload-transforms-input');
         const retryDelayInput = routeRow.querySelector('.retry-delay-input');
         const retryCountInput = routeRow.querySelector('.retry-count-input');
 
@@ -1409,6 +1427,13 @@ export function registerOperations(ctx) {
             validateAudioTargetPath(voices_target_path, 'Voices target path');
             routePayload.voices_target_path = voices_target_path;
         }
+        const payloadTransforms = ctx.parseObjectTextarea(
+            payloadTransformsInput ? payloadTransformsInput.value : '',
+            'Payload transforms'
+        );
+        if (Object.keys(payloadTransforms).length > 0) {
+            routePayload.payload_transforms = payloadTransforms;
+        }
         ctx.applyRetrySettingsToPayload(routePayload, retryDelayInput, retryCountInput);
         return routePayload;
     }
@@ -1424,6 +1449,13 @@ export function registerOperations(ctx) {
         return normalizeAudioRouteForSave(routeRow, {
             routeLabel: 'audio transcription',
             defaultTargetPath: '/audio/transcriptions',
+        });
+    }
+
+    function normalizeAudioDiarizationRouteForSave(routeRow) {
+        return normalizeAudioRouteForSave(routeRow, {
+            routeLabel: 'audio diarization',
+            defaultTargetPath: '/audio/diarize',
         });
     }
 
@@ -1463,6 +1495,60 @@ export function registerOperations(ctx) {
         }, ruleCard);
     }
 
+    function normalizeAudioDiarizationCardForSave(ruleCard) {
+        const gatewayModelInput = ruleCard.querySelector('.gateway-model-input');
+        const routeRows = Array.from(ruleCard.querySelectorAll('.fallback-list > .fallback-row'));
+
+        const gatewayModelName = gatewayModelInput.value.trim();
+        if (!gatewayModelName) {
+            throw new Error('Each audio diarization model rule must have a gateway model name.');
+        }
+        if (routeRows.length === 0) {
+            throw new Error(`Audio diarization model '${gatewayModelName}' must contain at least one route.`);
+        }
+
+        return ctx.applyOperationCostCalculator({
+            gateway_model_name: gatewayModelName,
+            routes: routeRows.map(normalizeAudioDiarizationRouteForSave),
+        }, ruleCard);
+    }
+
+    function normalizeAudioSpeakerTranscriptionCardForSave(ruleCard) {
+        const gatewayModelName = ruleCard.querySelector('.gateway-model-input').value.trim();
+        if (!gatewayModelName) {
+            throw new Error('Each speaker transcription model rule must have a gateway model name.');
+        }
+        const transcriptionModel = ruleCard.querySelector('.transcription-model-input').value.trim();
+        const diarizationModel = ruleCard.querySelector('.diarization-model-input').value.trim();
+        if (!transcriptionModel) {
+            throw new Error(`Speaker transcription model '${gatewayModelName}' must define transcription_model.`);
+        }
+        if (!diarizationModel) {
+            throw new Error(`Speaker transcription model '${gatewayModelName}' must define diarization_model.`);
+        }
+
+        return ctx.applyOperationCostCalculator({
+            gateway_model_name: gatewayModelName,
+            transcription_model: transcriptionModel,
+            diarization_model: diarizationModel,
+        }, ruleCard);
+    }
+
+    function collectAudioSpeakerCatalogs() {
+        ctx.state.gatewayModelCatalog.audio_transcriptions = collectCurrentWebSectionModels(ctx.elements.audioTranscriptionsList);
+        ctx.state.gatewayModelCatalog.audio_diarizations = collectCurrentWebSectionModels(ctx.elements.audioDiarizationsList);
+    }
+
+    function refreshAudioSpeakerDropdowns() {
+        collectAudioSpeakerCatalogs();
+        ctx.elements.audioSpeakerTranscriptionsList.querySelectorAll('.transcription-model-input').forEach(select => {
+            ctx.setModelSelectOptions(select, ctx.state.gatewayModelCatalog.audio_transcriptions, select.value);
+        });
+        ctx.elements.audioSpeakerTranscriptionsList.querySelectorAll('.diarization-model-input').forEach(select => {
+            ctx.setModelSelectOptions(select, ctx.state.gatewayModelCatalog.audio_diarizations, select.value);
+        });
+    }
+
     async function loadAudioEditor() {
         try {
             const loaded = await loadOperationRulesPayload(
@@ -1470,6 +1556,8 @@ export function registerOperations(ctx) {
                 async payload => {
                     await renderAudioSpeech(payload.audio_speech || []);
                     await renderAudioTranscriptions(payload.audio_transcriptions || []);
+                    await renderAudioDiarizations(payload.audio_diarizations || []);
+                    await renderAudioSpeakerTranscriptions(payload.audio_speaker_transcriptions || []);
                 }
             );
             if (!loaded) {
@@ -1519,6 +1607,37 @@ export function registerOperations(ctx) {
         ctx.refreshAudioTranscriptionsEmptyState();
     }
 
+    function renderAudioDiarizations(items) {
+        ctx.elements.audioDiarizationsList.textContent = '';
+
+        if (!Array.isArray(items) || items.length === 0) {
+            ctx.refreshAudioDiarizationsEmptyState();
+            return;
+        }
+
+        items.forEach(item => {
+            const card = buildAudioDiarizationCard(item);
+            ctx.elements.audioDiarizationsList.appendChild(card);
+        });
+        ctx.refreshAudioDiarizationsEmptyState();
+    }
+
+    function renderAudioSpeakerTranscriptions(items) {
+        ctx.elements.audioSpeakerTranscriptionsList.textContent = '';
+        collectAudioSpeakerCatalogs();
+
+        if (!Array.isArray(items) || items.length === 0) {
+            ctx.refreshAudioSpeakerTranscriptionsEmptyState();
+            return;
+        }
+
+        items.forEach(item => {
+            const card = buildAudioSpeakerTranscriptionCard(item);
+            ctx.elements.audioSpeakerTranscriptionsList.appendChild(card);
+        });
+        ctx.refreshAudioSpeakerTranscriptionsEmptyState();
+    }
+
     function buildAudioSpeechCard(initialData) {
         return buildAudioCard(initialData, {
             gatewayPlaceholder: 'llmgateway/audio-speech-model',
@@ -1537,6 +1656,73 @@ export function registerOperations(ctx) {
         });
     }
 
+    function buildAudioDiarizationCard(initialData) {
+        return buildAudioCard(initialData, {
+            gatewayPlaceholder: 'llmgateway/diarizations',
+            addRouteButtonText: 'Add Route',
+            refreshEmptyState: ctx.refreshAudioDiarizationsEmptyState,
+            buildRouteRow: buildAudioDiarizationRouteRow,
+        });
+    }
+
+    function buildAudioSpeakerTranscriptionCard(initialData) {
+        const card = document.createElement('section');
+        card.className = 'rule-card collapsed';
+
+        const cardHeader = document.createElement('div');
+        cardHeader.className = 'rule-card-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'rule-card-title';
+        const gatewayModelInput = ctx.createTextInput('gateway-model-input', 'llmgateway/stt-speakers');
+        gatewayModelInput.value = initialData.gateway_model_name || '';
+        gatewayModelInput.addEventListener('input', refreshAudioSpeakerDropdowns);
+        titleWrap.appendChild(ctx.createFieldGroup('Gateway Model Name', gatewayModelInput, 'gateway-model-field'));
+
+        const headerLeft = document.createElement('div');
+        headerLeft.className = 'rule-card-header-left';
+        headerLeft.appendChild(createAccordionToggle(card));
+        headerLeft.appendChild(titleWrap);
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'icon-button danger-button';
+        ctx.bindKnownActionText(removeButton, 'Remove Model');
+        removeButton.addEventListener('click', () => {
+            card.remove();
+            ctx.refreshAudioSpeakerTranscriptionsEmptyState();
+        });
+
+        cardHeader.appendChild(headerLeft);
+        cardHeader.appendChild(removeButton);
+
+        const fieldsGrid = document.createElement('div');
+        fieldsGrid.className = 'fallback-row-grid';
+        const transcriptionModelSelect = ctx.createSelect('transcription-model-input');
+        ctx.setModelSelectOptions(
+            transcriptionModelSelect,
+            ctx.state.gatewayModelCatalog.audio_transcriptions,
+            initialData.transcription_model || ''
+        );
+        fieldsGrid.appendChild(ctx.createFieldGroup('Transcription Model', transcriptionModelSelect, 'model-field'));
+        const diarizationModelSelect = ctx.createSelect('diarization-model-input');
+        ctx.setModelSelectOptions(
+            diarizationModelSelect,
+            ctx.state.gatewayModelCatalog.audio_diarizations,
+            initialData.diarization_model || ''
+        );
+        fieldsGrid.appendChild(ctx.createFieldGroup('Diarization Model', diarizationModelSelect, 'model-field'));
+
+        const cardBody = document.createElement('div');
+        cardBody.className = 'rule-card-body';
+        cardBody.appendChild(ctx.createOperationCostCalculatorField(initialData));
+        cardBody.appendChild(fieldsGrid);
+
+        card.appendChild(cardHeader);
+        card.appendChild(cardBody);
+        return card;
+    }
+
     function buildAudioCard(initialData, options) {
         const card = document.createElement('section');
         card.className = 'rule-card';
@@ -1549,6 +1735,7 @@ export function registerOperations(ctx) {
 
         const gatewayModelInput = ctx.createTextInput('gateway-model-input', options.gatewayPlaceholder);
         gatewayModelInput.value = initialData.gateway_model_name || '';
+        gatewayModelInput.addEventListener('input', refreshAudioSpeakerDropdowns);
         titleWrap.appendChild(ctx.createFieldGroup('Gateway Model Name', gatewayModelInput, 'gateway-model-field'));
 
         const removeButton = document.createElement('button');
@@ -1558,6 +1745,7 @@ export function registerOperations(ctx) {
         removeButton.addEventListener('click', () => {
             card.remove();
             options.refreshEmptyState();
+            refreshAudioSpeakerDropdowns();
         });
 
         const routeList = document.createElement('div');
@@ -1646,6 +1834,17 @@ export function registerOperations(ctx) {
         });
     }
 
+    function buildAudioDiarizationRouteRow(initialData) {
+        return buildAudioRouteRow(initialData, {
+            defaultTargetPath: '/audio/diarize',
+            includeRequestFormat: false,
+            includeVoicesTargetPath: false,
+            dataListPrefix: 'audio-diarization-models-list',
+            removeButtonText: 'Remove Route',
+            customBodyPlaceholder: '{"min_duration": 0.3}',
+        });
+    }
+
     function buildAudioRouteRow(initialData, options) {
         const row = document.createElement('div');
         row.className = 'fallback-row';
@@ -1675,6 +1874,9 @@ export function registerOperations(ctx) {
 
         const customHeadersInput = ctx.createTextarea('custom-headers-input', '{"X-Header": "value"}');
         customHeadersInput.value = ctx.normalizeObjectTextarea(initialData.custom_headers);
+
+        const payloadTransformsInput = ctx.createTextarea('payload-transforms-input', '{"value_maps": {"language": {"ru": "Russian"}}}');
+        payloadTransformsInput.value = ctx.normalizeObjectTextarea(initialData.payload_transforms);
 
         fieldsGrid.appendChild(ctx.createFieldGroup('Provider', providerSelect, 'provider-field'));
         fieldsGrid.appendChild(ctx.createFieldGroup('Model', modelInput, 'model-field'));
@@ -1711,6 +1913,7 @@ export function registerOperations(ctx) {
         advancedGrid.appendChild(ctx.createFieldGroup('Retry Count', retryCountInput));
         advancedGrid.appendChild(ctx.createFieldGroup('Custom Body Params', customBodyParamsInput, 'textarea-group'));
         advancedGrid.appendChild(ctx.createFieldGroup('Custom Headers', customHeadersInput, 'textarea-group'));
+        advancedGrid.appendChild(ctx.createFieldGroup('Payload Transforms', payloadTransformsInput, 'textarea-group'));
         advancedDetails.appendChild(advancedGrid);
 
         const removeButton = document.createElement('button');
@@ -2262,14 +2465,23 @@ export function registerOperations(ctx) {
         normalizeAudioTranscriptionRouteForSave,
         normalizeAudioSpeechCardForSave,
         normalizeAudioTranscriptionCardForSave,
+        normalizeAudioDiarizationRouteForSave,
+        normalizeAudioDiarizationCardForSave,
+        normalizeAudioSpeakerTranscriptionCardForSave,
         loadAudioEditor,
         renderAudioSpeech,
         renderAudioTranscriptions,
+        renderAudioDiarizations,
+        renderAudioSpeakerTranscriptions,
+        refreshAudioSpeakerDropdowns,
         buildAudioSpeechCard,
         buildAudioTranscriptionCard,
+        buildAudioDiarizationCard,
+        buildAudioSpeakerTranscriptionCard,
         buildAudioCard,
         buildAudioSpeechRouteRow,
         buildAudioTranscriptionRouteRow,
+        buildAudioDiarizationRouteRow,
         buildAudioRouteRow,
         saveAudio,
         createAccordionToggle,

@@ -124,14 +124,14 @@ def test_web_playground_mobile_layout_and_labels_are_clean(page: Page, server):
     page.goto(f"{server}/v1/ui/playground")
     forms = page.locator(".playground-form")
     actions = page.locator(".playground-actions button")
-    expect(forms).to_have_count(12)
-    expect(actions).to_have_count(13)
+    expect(forms).to_have_count(13)
+    expect(actions).to_have_count(14)
     assert all("Include images[]" not in text for text in page.locator("label").all_text_contents())
 
     primary = page.locator(".playground-actions button.primary-button")
     secondary = page.locator(".playground-actions button.secondary-button")
     expect(primary).to_have_count(1)
-    expect(secondary).to_have_count(12)
+    expect(secondary).to_have_count(13)
 
     def assert_action_styles(*, dark_mode: bool):
         page.evaluate("darkMode => document.body.classList.toggle('dark-mode', darkMode)", dark_mode)
@@ -1624,18 +1624,28 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 2. Router
+    # 2. Decisions (Router selector must be a decisions model)
+    page.click('[data-entity-target="decisions"]')
+    expect(page.locator("#messageArea")).to_contain_text("Decisions Routes loaded successfully")
+    page.click("#addDecisionsButton")
+    page.fill("#editor-container-decisions .gateway-model-input", "model-decision")
+    page.select_option("#editor-container-decisions .provider-select", "openai")
+    page.fill("#editor-container-decisions .model-input", "decider-v1")
+    page.click("#saveButton")
+    expect(page.locator("#messageArea")).to_contain_text("updated successfully")
+
+    # 3. Router
     page.click('[data-entity-target="router"]')
     expect(page.locator("#messageArea")).to_contain_text("Router Models loaded successfully")
     page.click("#addRouterButton")
     page.fill("#editor-container-router .gateway-model-input", "model-router")
-    page.select_option("#editor-container-router .router-selector-model-select", "model-chat")
+    page.select_option("#editor-container-router .router-selector-model-select", "model-decision")
     page.select_option("#editor-container-router .router-target-type-select", "gateway_model")
     page.select_option("#editor-container-router .router-gateway-target-select", "model-chat")
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 3. Embeddings
+    # 4. Embeddings
     page.click('[data-entity-target="embeddings"]')
     expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
     page.click("#addEmbeddingButton")
@@ -1645,7 +1655,7 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 4. Rerank
+    # 5. Rerank
     page.click('[data-entity-target="rerank"]')
     expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
     page.click("#addRerankButton")
@@ -1655,7 +1665,7 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 5. Images
+    # 6. Images
     page.click('[data-entity-target="images"]')
     expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
     page.click("#addImageGenerationButton")
@@ -1669,7 +1679,7 @@ def test_editor_save_and_reload(page: Page, server):
     page.click("#saveButton")
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
-    # 6. Providers
+    # 7. Providers
     page.click('[data-entity-target="providers"]')
     expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
     
@@ -1682,7 +1692,7 @@ def test_editor_save_and_reload(page: Page, server):
     # Check Router
     page.click('[data-entity-target="router"]')
     expect(page.locator("#editor-container-router .gateway-model-input")).to_have_value("model-router")
-    expect(page.locator("#editor-container-router .router-selector-model-select")).to_have_value("model-chat")
+    expect(page.locator("#editor-container-router .router-selector-model-select")).to_have_value("model-decision")
     expect(page.locator("#editor-container-router .router-gateway-target-select")).to_have_value("model-chat")
     
     # Check Embeddings

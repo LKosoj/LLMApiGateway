@@ -19,7 +19,8 @@
     "tavilySearch": "Tavily Search",
     "tavilyExtract": "Tavily Extract",
     "research": "Research",
-    "deepResearch": "Deep Research"
+    "deepResearch": "Deep Research",
+    "audioDiarization": "Diarization"
   },
   "labels": {
     "mdImages": "Images in MD",
@@ -75,7 +76,9 @@
     "savePreprocessedPdf": "Save preprocessed PDF",
     "advancedSettings": "Advanced settings",
     "topP": "Top-p",
-    "maxTokens": "Max tokens"
+    "maxTokens": "Max tokens",
+    "instructions": "Instructions (emotion and style)",
+    "minDuration": "Min segment duration, s"
   },
   "actions": {
     "sendMessage": "Send message",
@@ -91,7 +94,8 @@
     "transcribeAudio": "Transcribe audio",
     "generateImages": "Generate images",
     "editImages": "Edit images",
-    "startPdfConversion": "Start conversion job"
+    "startPdfConversion": "Start conversion job",
+    "diarizeAudio": "Find speakers"
   },
   "options": {
     "withImages": "With images",
@@ -112,7 +116,8 @@
   "placeholders": {
     "default": "Default",
     "auto": "Auto",
-    "providerLimit": "provider limit"
+    "providerLimit": "provider limit",
+    "speechInstructions": "cheerful, calm announcer"
   },
   "help": {
     "researchMaxResults": "Limits search candidates collected for each selected search language.",
@@ -230,6 +235,11 @@
     "elapsed": "Elapsed",
     "eta": "ETA",
     "pdfProgressAria": "PDF conversion progress",
-    "pdfTitle": "PDF conversion job"
+    "pdfTitle": "PDF conversion job",
+    "diarizationTitle": "Speakers",
+    "speakersFound": "Speakers found: {count, number}",
+    "speaker": "Speaker",
+    "segmentStart": "Start, s",
+    "segmentEnd": "End, s"
   }
 }
