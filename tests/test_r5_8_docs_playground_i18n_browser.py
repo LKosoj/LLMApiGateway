@@ -36,6 +36,7 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     tmp_path,
 ) -> None:
     counters: Counter = Counter()
+    speech_payloads: list[dict] = []
     page.set_viewport_size({"width": 390, "height": 844})
     page.add_init_script(
         "localStorage.setItem('llmgateway:locale', 'en');"
@@ -57,12 +58,14 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     page.goto(f"{server}/v1/ui/docs")
 
     expect(page.locator("html")).to_have_attribute("data-i18n-state", "ready")
+    expect(page.locator("#jina-extract-docs")).to_contain_text("Jina Reader: GET")
+    expect(page.locator("#jina-search-docs")).to_contain_text("Equivalent to s.jina.ai: GET")
     model_chip = page.locator("#modelCatalog .model-chip", has_text="gateway/chat")
     expect(model_chip).to_have_count(1)
-    expect(page.locator("[data-docs-api-base]")).to_have_count(14)
+    expect(page.locator("[data-docs-api-base]")).to_have_count(16)
     assert page.locator("[data-docs-api-base]").all_inner_texts() == [
         f"{server}/v1"
-    ] * 14
+    ] * 16
     assert counters["docs_models"] == 1
 
     page.evaluate("() => document.fonts.ready")
@@ -132,6 +135,7 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
 
     def audio_speech_route(route) -> None:
         counters["audio_speech"] += 1
+        speech_payloads.append(route.request.post_data_json)
         route.fulfill(
             status=200,
             body=b"snapshot-audio",
@@ -219,6 +223,8 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
         ("readForm", "readUrl", "https://example.com/article"),
         ("tavilySearchForm", "tavilySearchQuery", "snapshot tavily"),
         ("tavilyExtractForm", "tavilyExtractUrls", "https://example.com/raw"),
+        ("jinaSearchForm", "jinaSearchQuery", "snapshot jina"),
+        ("jinaExtractForm", "jinaExtractUrl", "https://example.com/jina"),
         ("researchForm", "researchQuery", "snapshot research"),
         ("deepResearchForm", "deepResearchQuery", "snapshot deep research"),
         ("audioSpeechForm", "audioSpeechInput", "snapshot speech"),
@@ -240,6 +246,8 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     voice_option = page.locator("#audioSpeechVoice option[value='voice-a']")
     expect(voice_option).to_have_count(1)
     page.locator("#audioSpeechVoice").select_option("voice-a")
+    enhance = page.locator("#audioSpeechLlmEnhance")
+    expect(enhance).to_be_checked()
     page.locator("#audioSpeechForm .run-button").click()
     expect(page.locator('[data-result-for="audio-speech"] audio')).to_have_count(1)
     expect(
@@ -247,6 +255,11 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     ).to_have_count(1)
     assert counters["voices"] == 1
     assert counters["audio_speech"] == 1
+    assert speech_payloads[-1]["llm_enhance"] is True
+    enhance.uncheck()
+    page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator("#audioSpeechForm .run-button")).to_be_enabled()
+    assert speech_payloads[-1]["llm_enhance"] is False
 
     source_pdf = tmp_path / "snapshot.pdf"
     source_pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
@@ -316,6 +329,10 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     _change_locale(page, "ru")
     expect(page.locator("html")).to_have_attribute("lang", "ru")
     expect(page.locator("#searchForm .run-button")).to_have_text("Запустить поиск")
+    expect(enhance).not_to_be_checked()
+    expect(page.locator('[data-i18n="playground:labels.llmEnhance"]')).to_have_text(
+        "Улучшение речи через LLM (Silero / CosyVoice)"
+    )
     expect(search_result.locator("details.raw-details summary")).to_have_text(
         "Исходный JSON-ответ"
     )

@@ -55,6 +55,7 @@ def test_docs_catalogs_and_html_cover_page_prose() -> None:
         "labels.required",
         "labels.optional",
         "labels.response",
+        "sections.audio.llmEnhance",
         "catalog.loading",
         "catalog.ready",
         "catalog.unavailable",
@@ -73,13 +74,18 @@ def test_docs_catalogs_and_html_cover_page_prose() -> None:
     assert required <= _leaf_keys(english)
 
     html = (ROOT / "static/gateway-docs.html").read_text(encoding="utf-8")
-    assert html.count("data-docs-api-base") == 14
+    assert html.count("data-docs-api-base") == 16
     assert html.count('data-i18n="docs:') >= 120
     assert 'data-i18n="docs:page.heading"' in html
     assert 'data-i18n-aria-label="docs:tabs.ariaLabel"' in html
     assert 'id="catalogStatusDetail"' in html
     assert 'id="freeTierStatusDetail"' in html
     assert html.count("data-i18n-raw-detail") == 2
+    speech_section = html.split("<h3>POST /v1/audio/speech</h3>", 1)[1].split(
+        "</article>", 1
+    )[0]
+    assert "<code>llm_enhance</code>" in speech_section
+    assert 'data-i18n="docs:sections.audio.llmEnhance"' in speech_section
 
 
 def test_docs_locale_rerender_uses_snapshot_without_refetching_or_rebuilding() -> None:
@@ -116,8 +122,12 @@ def test_docs_preserve_technical_examples_and_separate_raw_errors() -> None:
         re.DOTALL,
     )
 
+    jina_blocks = [block for block in blocks if "/jina/" in block]
+    assert len(jina_blocks) == 2
+    assert 'Accept: application/json' in jina_blocks[0]
+    blocks = [block for block in blocks if "/jina/" not in block]
     assert len(blocks) == 8
-    assert html.count('<pre tabindex="0"><code>') == len(blocks)
+    assert html.count('<pre tabindex="0"><code>') == len(blocks) + len(jina_blocks)
     assert (
         sha256("\n\0\n".join(blocks).encode()).hexdigest()
         == "d5502763ab60f44bd5824950b9f72b1dbb0d3911d3c2dd814af74552e121a561"

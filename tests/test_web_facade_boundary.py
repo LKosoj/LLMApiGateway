@@ -23,23 +23,29 @@ def _module_tree(module) -> ast.Module:
     return ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
 
 
-def test_web_facade_owns_exactly_six_post_endpoints() -> None:
+def test_web_facade_owns_expected_endpoints() -> None:
     expected = {
         "/web/search": "web_search",
         "/web/read": "web_read",
         "/tavily/search": "tavily_search",
         "/tavily/extract": "tavily_extract",
+        "/jina/extract": "jina_extract",
+        "/jina/search": "jina_search",
         "/web/research": "web_research",
         "/web/deep-research": "web_deep_research",
     }
 
-    actual = {route.path: route for route in web.router.routes}
-
-    assert set(actual) == set(expected)
-    for path, endpoint_name in expected.items():
-        route = actual[path]
-        assert route.methods == {"POST"}
-        assert route.name == endpoint_name
+    expected_routes = {("POST", path, name) for path, name in expected.items()}
+    expected_routes.update({
+        ("GET", "/jina/extract", "jina_extract"),
+        ("GET", "/jina/extract/{url:path}", "jina_extract"),
+        ("GET", "/jina/search", "jina_search"),
+        ("GET", "/jina/search/{query:path}", "jina_search"),
+    })
+    assert {
+        (method, route.path, route.name) for route in web.router.routes for method in route.methods
+    } == expected_routes
+    for route in web.router.routes:
         assert inspect.unwrap(route.endpoint).__module__ == web.__name__
 
 

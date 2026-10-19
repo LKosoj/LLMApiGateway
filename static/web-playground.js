@@ -11,6 +11,9 @@
         {id: "tavilySearchModel", section: "web_search"},
         {id: "tavilySearchReadModel", section: "web_read"},
         {id: "tavilyExtractModel", section: "web_read"},
+        {id: "jinaSearchModel", section: "web_search"},
+        {id: "jinaSearchReadModel", section: "web_read"},
+        {id: "jinaExtractModel", section: "web_read"},
         {id: "researchModel", section: "web_research"},
         {id: "deepResearchModel", section: "web_deep_research"},
         {id: "audioSpeechModel", section: "audio_speech"},
@@ -26,6 +29,8 @@
         "read",
         "tavily-search",
         "tavily-extract",
+        "jina-search",
+        "jina-extract",
         "research",
         "deep-research",
         "audio-speech",
@@ -787,6 +792,20 @@
         return `<h3>${translatedSpan("results.fetchedArticle")}</h3>${meta}${title}${renderImagesSummary(payload.images)}${body}${renderUsage(payload.usage)}${renderRawDetails(payload)}`;
     }
 
+    function renderJinaResult(payload) {
+        const articles = Array.isArray(payload.data) ? payload.data : [payload.data];
+        const items = articles.length === 0
+            ? `<p><em>${translatedSpan("results.noResults")}</em></p>`
+            : articles.map((article) => `
+                <div class="search-hit">
+                    ${renderExternalLink(article.url, article.title || article.url)}
+                    <div class="snippet">${escapeHtml(article.description || "")}</div>
+                    <div class="markdown-render">${renderMarkdown(article.content || "")}</div>
+                </div>
+            `).join("");
+        return `<h3>${translatedSpan("results.jinaTitle")}</h3>${items}${renderRawDetails(payload)}`;
+    }
+
     function renderTavilySearchResult(payload) {
         const hits = Array.isArray(payload.results) ? payload.results : [];
         const meta = `<div class="result-meta"><span>${translatedSpan("results.resultCount", {count: hits.length})}</span>` +
@@ -1152,11 +1171,17 @@
         setStatus(kind, KEYS.running, false);
         const startedAt = performance.now();
         try {
-            const response = await apiFetch(url, {
+            const isGet = form.dataset.httpMethod === "GET";
+            const requestUrl = isGet ? `${url}?${new URLSearchParams(body)}` : url;
+            const options = isGet ? {
+                method: "GET",
+                headers: {"Accept": "application/json"},
+            } : {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify(body),
-            });
+            };
+            const response = await apiFetch(requestUrl, options);
             const text = await response.text();
             let payload;
             try {
@@ -1758,6 +1783,8 @@
         wireForm("read", "readForm", "/v1/web/read", renderReadResult);
         wireForm("tavily-search", "tavilySearchForm", "/v1/tavily/search", renderTavilySearchResult);
         wireForm("tavily-extract", "tavilyExtractForm", "/v1/tavily/extract", renderTavilyExtractResult);
+        wireForm("jina-search", "jinaSearchForm", "/v1/jina/search", renderJinaResult);
+        wireForm("jina-extract", "jinaExtractForm", "/v1/jina/extract", renderJinaResult);
         wireForm("research", "researchForm", "/v1/web/research", renderResearchResult);
         wireForm("deep-research", "deepResearchForm", "/v1/web/deep-research", renderDeepResearchResult);
         wireAudioVoiceCatalog();

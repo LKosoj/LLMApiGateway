@@ -124,14 +124,14 @@ def test_web_playground_mobile_layout_and_labels_are_clean(page: Page, server):
     page.goto(f"{server}/v1/ui/playground")
     forms = page.locator(".playground-form")
     actions = page.locator(".playground-actions button")
-    expect(forms).to_have_count(13)
-    expect(actions).to_have_count(14)
+    expect(forms).to_have_count(15)
+    expect(actions).to_have_count(16)
     assert all("Include images[]" not in text for text in page.locator("label").all_text_contents())
 
     primary = page.locator(".playground-actions button.primary-button")
     secondary = page.locator(".playground-actions button.secondary-button")
     expect(primary).to_have_count(1)
-    expect(secondary).to_have_count(13)
+    expect(secondary).to_have_count(15)
 
     def assert_action_styles(*, dark_mode: bool):
         page.evaluate("darkMode => document.body.classList.toggle('dark-mode', darkMode)", dark_mode)
@@ -215,6 +215,8 @@ def test_web_playground_mobile_layout_and_labels_are_clean(page: Page, server):
         "read": "readForm",
         "tavily-search": "tavilySearchForm",
         "tavily-extract": "tavilyExtractForm",
+        "jina-search": "jinaSearchForm",
+        "jina-extract": "jinaExtractForm",
         "research": "researchForm",
         "deep-research": "deepResearchForm",
     }

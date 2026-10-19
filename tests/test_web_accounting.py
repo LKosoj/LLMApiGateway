@@ -89,13 +89,14 @@ def _config_loader() -> ConfigLoader:
 def _request(
     path: str,
     *,
+    method: str = "POST",
     calculators: dict[tuple[str, str], OperationCostCalculator] | None = None,
     with_context: bool = True,
 ) -> tuple[Request, object]:
-    policy = classify_billing_policy("POST", path)
+    policy = classify_billing_policy(method, path)
     assert policy is not None
     context = AccountingRequestContext(
-        method="POST",
+        method=method,
         route_template=path,
         policy=policy,
         request_id="request-1",
@@ -142,7 +143,7 @@ def _request(
                 "type": "http",
                 "asgi": {"version": "3.0", "spec_version": "2.4"},
                 "http_version": "1.1",
-                "method": "POST",
+                "method": method,
                 "scheme": "http",
                 "path": path,
                 "raw_path": path.encode("ascii"),
@@ -275,6 +276,10 @@ def _payload(path: str) -> dict[str, object]:
         return {"model": SEARCH_MODEL, "query": "topic"}
     if path == "/v1/tavily/extract":
         return {"model": READ_MODEL, "urls": ["https://example.test/article"]}
+    if path == "/v1/jina/extract":
+        return {"url": "https://example.test/article"}
+    if path == "/v1/jina/search":
+        return {"q": "topic"}
     if path == "/v1/web/research":
         return {"model": RESEARCH_MODEL, "query": "topic", "language": "en"}
     if path == "/v1/web/deep-research":
@@ -288,6 +293,8 @@ async def _call_endpoint(path: str, request: Request):
         "/v1/web/read": web.web_read,
         "/v1/tavily/search": web.tavily_search,
         "/v1/tavily/extract": web.tavily_extract,
+        "/v1/jina/extract": web.jina_extract,
+        "/v1/jina/search": web.jina_search,
         "/v1/web/research": web.web_research,
         "/v1/web/deep-research": web.web_deep_research,
     }
@@ -429,6 +436,22 @@ def _web_dependencies(
             0.23,
             CostSource.OPERATION_CONFIGURED,
         ),
+        (
+            "/v1/jina/extract",
+            "web_read",
+            READ_MODEL,
+            0.25,
+            0.25,
+            CostSource.OPERATION_CONFIGURED,
+        ),
+        (
+            "/v1/jina/search",
+            "web_search",
+            SEARCH_MODEL,
+            0.26,
+            0.26,
+            CostSource.OPERATION_CONFIGURED,
+        ),
     ],
 )
 def test_web_endpoints_commit_one_synthesized_flat_charge(
@@ -470,7 +493,12 @@ def test_web_endpoints_commit_one_synthesized_flat_charge(
             response = await _call_endpoint(path, request)
 
         assert response.status_code == 200
-        assert isinstance(_response_json(response), dict)
+        if path == "/v1/jina/extract":
+            assert response.body.startswith(b"Title: Article")
+        elif path == "/v1/jina/search":
+            assert response.body.startswith(b"[1] Title: Article")
+        else:
+            assert isinstance(_response_json(response), dict)
         services.accounting_service.commit.assert_not_awaited()
 
         def before_send(message: dict[str, object]) -> None:

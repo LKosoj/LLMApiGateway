@@ -87,8 +87,8 @@ def test_playground_catalogs_and_html_cover_all_forms_and_actions() -> None:
 
     html = (ROOT / "static/web-playground.html").read_text(encoding="utf-8")
     css = (ROOT / "static/web-playground.css").read_text(encoding="utf-8")
-    assert html.count('class="playground-form"') == 13
-    assert html.count("run-button") == 13
+    assert html.count('class="playground-form"') == 15
+    assert html.count("run-button") == 15
     assert 'id="resetSimpleChatButton"' in html
     assert html.count('data-i18n="playground:') >= 70
     assert 'data-i18n="playground:actions.startPdfConversion"' in html

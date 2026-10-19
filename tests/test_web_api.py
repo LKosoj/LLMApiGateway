@@ -1097,6 +1097,72 @@ class WebApiTests(unittest.TestCase):
         read_adapter.assert_awaited_once_with(fake_http_client, "https://example.com/article")
         fake_http_client.post.assert_not_awaited()
 
+    def test_jina_get_extract_accepts_query_and_url_path(self):
+        url = "https://example.com/article?token=a%26b&x=%2F&model=page-model"
+        for path, params in (
+            ("/v1/jina/extract", {"url": url}),
+            ("/v1/jina/extract/" + url, None),
+        ):
+            with self.subTest(path=path):
+                with self._client() as (client, _http, _search, read):
+                    response = client.get(
+                        path, params=params,
+                        headers={"Authorization": "Bearer test-gateway-key", "Accept": "application/json"},
+                    )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["data"]["content"], "Downloaded article content")
+                read.assert_awaited_once_with(ANY, url)
+
+    def test_jina_get_search_accepts_query_and_query_path(self):
+        for path, params in (
+            ("/v1/jina/search", {"q": "topic", "num": 1}),
+            ("/v1/jina/search/topic", {"num": 1}),
+        ):
+            with self.subTest(path=path):
+                with self._client() as (client, _http, search, read):
+                    response = client.get(
+                        path, params=params,
+                        headers={"Authorization": "Bearer test-gateway-key", "Accept": "application/json"},
+                    )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["data"][0]["content"], "Downloaded article content")
+                search.assert_awaited_once_with(ANY, "topic", 1, include_images=False)
+                read.assert_awaited_once_with(ANY, "https://example.com/article")
+
+    def test_jina_search_endpoint_searches_and_reads_with_jina_json_envelope(self):
+        for body_field in ("json", "data"):
+            with self.subTest(body_field=body_field):
+                with self._client() as (client, _fake_http_client, search_adapter, read_adapter):
+                    response = client.post(
+                        "/v1/jina/search",
+                        **{body_field: {"q": "topic", "num": 1}},
+                        headers={"Authorization": "Bearer test-gateway-key", "Accept": "application/json"},
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["code"], 200)
+                self.assertEqual(response.json()["status"], 20000)
+                self.assertEqual(response.json()["data"][0]["description"], "Short snippet")
+                self.assertEqual(response.json()["data"][0]["content"], "Downloaded article content")
+                search_adapter.assert_awaited_once_with(ANY, "topic", 1, include_images=False)
+                read_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
+
+    def test_jina_extract_endpoint_reads_url_with_jina_json_envelope(self):
+        for body_field in ("json", "data"):
+            with self.subTest(body_field=body_field):
+                with self._client() as (client, _fake_http_client, _search_adapter, read_adapter):
+                    response = client.post(
+                        "/v1/jina/extract",
+                        **{body_field: {"url": "https://example.com/article"}},
+                        headers={"Authorization": "Bearer test-gateway-key", "Accept": "application/json"},
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["code"], 200)
+                self.assertEqual(response.json()["status"], 20000)
+                self.assertEqual(response.json()["data"]["content"], "Downloaded article content")
+                read_adapter.assert_awaited_once_with(ANY, "https://example.com/article")
+
     def test_tavily_extract_endpoint_reads_urls(self):
         with self._client() as (client, _fake_http_client, _search_adapter, read_adapter):
             response = client.post(

@@ -148,8 +148,8 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator("#catalogStatus")).to_contain_text("Загружено gateway-моделей")
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/light_model")).to_have_count(1)
     expect(page.locator("#modelCatalog .model-chip", has_text="llmgateway/rerank")).to_have_count(1)
-    expect(page.locator("[data-docs-api-base]")).to_have_count(14)
-    assert page.locator("[data-docs-api-base]").all_inner_texts() == [api_base] * 14
+    expect(page.locator("[data-docs-api-base]")).to_have_count(16)
+    assert page.locator("[data-docs-api-base]").all_inner_texts() == [api_base] * 16
     expect(page.locator("#insecureTransportWarning")).to_be_hidden()
     expect(page.locator("#text .service-card")).to_have_count(3)
     expect(page.locator("#text")).to_contain_text("OpenAI-compatible chat completion")
@@ -173,6 +173,11 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator("#web")).to_contain_text("/v1/web/deep-research")
     expect(page.locator("#web")).to_contain_text("/v1/tavily/search")
     expect(page.locator("#web")).to_contain_text("/v1/tavily/extract")
+    expect(page.locator("#jina-extract-docs")).to_contain_text("GET /v1/jina/extract")
+    expect(page.locator("#jina-search-docs")).to_contain_text("GET /v1/jina/search")
+    expect(page.locator("#web")).to_contain_text(f"curl -sG {api_base}/jina/search")
+    expect(page.locator("#jina-extract-docs")).to_contain_text("Accept: application/json")
+    expect(page.locator("#web")).to_contain_text(f"curl -sG {api_base}/jina/extract")
     expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/web/search")
     expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/web/read")
     expect(page.locator("#web")).to_contain_text(f"curl -s {api_base}/web/research")
@@ -196,7 +201,7 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     expect(page.locator(".endpoint-row")).to_have_count(0)
     expect(page.locator("a[href='/v1/ui/rules-editor']")).to_be_visible()
     service_cards = page.locator("#web .service-grid .service-card")
-    expect(service_cards).to_have_count(6)
+    expect(service_cards).to_have_count(8)
     positions = service_cards.evaluate_all(
         """
         cards => cards.map(card => {
@@ -219,7 +224,7 @@ def test_gateway_docs_page_renders_catalog_and_connection_sections(page: Page, s
     assert abs(positions[0]["left"] - positions[2]["left"]) <= 2
     assert abs(positions[0]["left"] - positions[4]["left"]) <= 2
     all_service_cards = page.locator(".docs-section .service-card")
-    expect(all_service_cards).to_have_count(20)
+    expect(all_service_cards).to_have_count(22)
     overflowing_elements = all_service_cards.evaluate_all(
         """
         cards => cards.flatMap(card => {
@@ -274,8 +279,8 @@ def test_gateway_docs_warns_on_public_http_origin(page: Page, server):
         expect(page.locator("html")).to_have_attribute("data-i18n-state", "ready")
         assert page.evaluate("window.gatewayI18n.currentLocale") == "en"
 
-        expect(page.locator("[data-docs-api-base]")).to_have_count(14)
-        assert page.locator("[data-docs-api-base]").all_inner_texts() == [f"{origin}/v1"] * 14
+        expect(page.locator("[data-docs-api-base]")).to_have_count(16)
+        assert page.locator("[data-docs-api-base]").all_inner_texts() == [f"{origin}/v1"] * 16
         warning = page.locator("#insecureTransportWarning")
         expect(warning).to_have_attribute("role", "note")
         if should_warn:
@@ -742,8 +747,8 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     page.click("[data-playground-section-tab='web']")
     expect(page.locator("[data-playground-section-panel='web']")).to_be_visible()
 
-    # Внутри Web остаются прежние 6 web-операций.
-    expect(page.locator("[data-web-tab]")).to_have_count(6)
+    # Внутри Web доступны обычные, Tavily и Jina операции.
+    expect(page.locator("[data-web-tab]")).to_have_count(8)
     expect(page.locator("[data-web-tab='search']")).to_have_class("tab-button active")
     expect(page.locator("[data-web-panel='search']")).to_be_visible()
     expect(page.locator("[data-web-panel='read']")).to_be_hidden()

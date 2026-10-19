@@ -1297,6 +1297,12 @@ _BILLING_POLICIES = MappingProxyType(
         ("POST", "/v1/tavily/search"): BillingPolicy("web_search", BillingUnit.OPERATION),
         ("POST", "/v1/web/read"): BillingPolicy("web_read", BillingUnit.OPERATION),
         ("POST", "/v1/tavily/extract"): BillingPolicy("web_read", BillingUnit.OPERATION),
+        ("POST", "/v1/jina/extract"): BillingPolicy("web_read", BillingUnit.OPERATION),
+        ("POST", "/v1/jina/search"): BillingPolicy("web_search", BillingUnit.OPERATION),
+        ("GET", "/v1/jina/extract"): BillingPolicy("web_read", BillingUnit.OPERATION),
+        ("GET", "/v1/jina/extract/{url}"): BillingPolicy("web_read", BillingUnit.OPERATION),
+        ("GET", "/v1/jina/search"): BillingPolicy("web_search", BillingUnit.OPERATION),
+        ("GET", "/v1/jina/search/{query}"): BillingPolicy("web_search", BillingUnit.OPERATION),
         ("POST", "/v1/web/research"): BillingPolicy("web_research", BillingUnit.OPERATION),
         ("POST", "/v1/web/deep-research"): BillingPolicy(
             "web_deep_research",

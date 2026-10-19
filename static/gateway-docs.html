@@ -386,6 +386,7 @@ print(response.choices[0].message.content)</code></pre>
                             <tr><th><code>response_format</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text005">Формат аудио, например</span> <code>mp3</code> <span data-i18n="docs:sections.audio.text006">или</span> <code>wav</code>.</td></tr>
                             <tr><th><code>speed</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text007">Скорость речи, если поддерживается моделью.</span></td></tr>
                             <tr><th><code>instructions</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.text024">Свободный текст об эмоции и стиле речи, если модель его поддерживает (например, Qwen3-TTS).</span></td></tr>
+                            <tr><th><code>llm_enhance</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td><span data-i18n="docs:sections.audio.llmEnhance">Необязательное логическое значение для Silero и CosyVoice; в этих сервисах по умолчанию true. Значение false отключает подготовку текста и автоматическую разметку через LLM. Silero и CosyVoice продолжают делить длинный текст на части и собирать единый аудиофайл независимо от этого параметра. Gateway пересылает значение без изменений. В CosyVoice инструкции об эмоциях и стиле из instructions (или прежнего instruct) передаются и в LLM для расстановки разметки. При llm_enhance=false они применяются только при озвучке. Другие TTS-сервисы могут не поддерживать этот параметр.</span></td></tr>
                             <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td><span data-i18n="docs:sections.audio.text008">Raw audio bytes с downstream</span> <code>content-type</code><span data-i18n="docs:sections.audio.text009">. Streaming не поддерживается.</span></td></tr>
                         </tbody>
                     </table>
@@ -559,6 +560,34 @@ print(response.choices[0].message.content)</code></pre>
                         </tbody>
                     </table>
                 </article>
+                <article class="service-card" id="jina-extract-docs">
+                    <h3>GET /v1/jina/extract</h3>
+                    <p data-i18n="docs:sections.web.jina.summary">Jina Reader: GET с url в параметрах запроса или с адресом страницы в пути /v1/jina/extract/https://example.com. Также поддерживается POST с JSON или формой. Авторизация — Bearer-ключ gateway.</p>
+                    <table class="params-table param-details">
+                        <tbody>
+                            <tr><th><code>url</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td data-i18n="docs:sections.web.jina.url">Адрес страницы (http или https).</td></tr>
+                            <tr><th><code>model</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td data-i18n="docs:sections.web.jina.model">Модель из web_read. Необязательна, если настроена ровно одна модель; при нескольких укажите model явно.</td></tr>
+                            <tr><th><code>respondWith</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td data-i18n="docs:sections.web.jina.respondWith">Формат содержимого: markdown (по умолчанию) или text. Можно задать полем respondWith или заголовком X-Respond-With; заголовок имеет приоритет.</td></tr>
+                            <tr><th><code>Accept</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td data-i18n="docs:sections.web.jina.accept">При Accept: application/json возвращается JSON с полями code (200), status (20000) и data. В data находятся title, description, url и content. Без этого заголовка — текст с Title, URL Source и Markdown Content; при формате text — только содержимое страницы.</td></tr>
+                        </tbody>
+                    </table>
+                    <p data-i18n="docs:sections.web.jina.limits">В форме GET с адресом в пути строка запроса сохраняется как часть адреса страницы. Для параметров model и respondWith используйте GET с параметром url. CSS-селекторы, снимки экрана и управление браузером не поддерживаются. Ошибки возвращаются в формате gateway; стоимость учитывается как web_read.</p>
+                </article>
+                <article class="service-card" id="jina-search-docs">
+                    <h3>GET /v1/jina/search</h3>
+                    <p data-i18n="docs:sections.web.jinaSearch.summary">Аналог s.jina.ai: GET с q в параметрах запроса или с запросом в пути /v1/jina/search/ваш%20запрос. Также поддерживается POST с JSON или формой. Найденные страницы читаются полностью; авторизация — Bearer-ключ gateway.</p>
+                    <table class="params-table param-details">
+                        <tbody>
+                            <tr><th><code>q</code><span class="param-label required"><span data-i18n="docs:labels.required">обязательно</span></span></th><td data-i18n="docs:sections.web.jinaSearch.q">Поисковый запрос в поле q.</td></tr>
+                            <tr><th><code>model / read_model</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td data-i18n="docs:sections.web.jinaSearch.model">Модель поиска из web_search и модель чтения из web_read. Каждое поле необязательно, если в соответствующем разделе настроена ровно одна модель.</td></tr>
+                            <tr><th><code>num / count</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td data-i18n="docs:sections.web.jinaSearch.count">Количество результатов: num или count, от 1 до 20, по умолчанию 10; num имеет приоритет.</td></tr>
+                            <tr><th><code>site / hl</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td data-i18n="docs:sections.web.jinaSearch.site">Ограничение по доменам: строка или массив строк; в форме можно повторять site. hl задаёт язык поиска, по умолчанию en.</td></tr>
+                            <tr><th><code>respondWith</code><span class="param-label"><span data-i18n="docs:labels.optional">опционально</span></span></th><td data-i18n="docs:sections.web.jinaSearch.format">X-Respond-With или поле respondWith: markdown (по умолчанию) либо text. Заголовок имеет приоритет.</td></tr>
+                            <tr><th><span data-i18n="docs:labels.response">Ответ</span></th><td data-i18n="docs:sections.web.jinaSearch.response">С Accept: application/json возвращается JSON с code (200), status (20000) и массивом data. Каждый элемент содержит title, url, description и полный content страницы. Без этого заголовка — текст с нумерованными Title, URL Source, Description и содержимым.</td></tr>
+                        </tbody>
+                    </table>
+                    <p data-i18n="docs:sections.web.jinaSearch.limits">Проверяется доступ к обеим моделям. Стоимость — одна операция web_search. Ошибка поиска или чтения завершает весь запрос ошибкой в формате gateway. GET и POST поддерживают одни параметры; no-content и потоковые ответы не реализованы.</p>
+                </article>
                 <article class="service-card">
                     <h3>POST /v1/web/research</h3>
                     <table class="params-table param-details">
@@ -685,6 +714,31 @@ print(response.choices[0].message.content)</code></pre>
     "format": "markdown",
     "include_images": true
   }'</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
+                </div>
+                <div class="docs-panel">
+                    <h3 data-i18n="docs:sections.web.jina.example">Jina-совместимое извлечение</h3>
+                    <div class="docs-code-block">
+                    <pre tabindex="0"><code>curl -sG <span data-docs-api-base></span>/jina/extract \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "Accept: application/json" \
+  --data-urlencode "url=https://example.com/article"</code></pre>
+                    <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
+                        <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    </div>
+                </div>
+                <div class="docs-panel">
+                    <h3 data-i18n="docs:sections.web.jinaSearch.example">Jina-совместимый поиск</h3>
+                    <div class="docs-code-block">
+                    <pre tabindex="0"><code>curl -sG <span data-docs-api-base></span>/jina/search \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "Accept: application/json" \
+  --data-urlencode "q=example domain" \
+  --data-urlencode "num=5"</code></pre>
                     <button type="button" class="btn-copy" aria-label="Copy" data-i18n-aria-label="common:actions.copy" title="Copy" data-i18n-title="common:actions.copy">
                         <svg class="btn-copy-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5H4A1.5 1.5 0 0 0 2.5 9v8A1.5 1.5 0 0 0 4 18.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
                     </button>

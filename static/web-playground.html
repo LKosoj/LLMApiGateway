@@ -117,6 +117,8 @@
                 <button type="button" class="tab-button" data-web-tab="read" role="tab" data-i18n="playground:tabs.read">Read</button>
                 <button type="button" class="tab-button" data-web-tab="tavily-search" role="tab" data-i18n="playground:tabs.tavilySearch">Tavily Search</button>
                 <button type="button" class="tab-button" data-web-tab="tavily-extract" role="tab" data-i18n="playground:tabs.tavilyExtract">Tavily Extract</button>
+                <button type="button" class="tab-button" data-web-tab="jina-search" role="tab" data-i18n="playground:tabs.jinaSearch">Jina Search</button>
+                <button type="button" class="tab-button" data-web-tab="jina-extract" role="tab" data-i18n="playground:tabs.jinaExtract">Jina Extract</button>
                 <button type="button" class="tab-button" data-web-tab="research" role="tab" data-i18n="playground:tabs.research">Research</button>
                 <button type="button" class="tab-button" data-web-tab="deep-research" role="tab" data-i18n="playground:tabs.deepResearch">Deep Research</button>
             </div>
@@ -297,6 +299,76 @@
             <div class="playground-result" data-result-for="tavily-extract" hidden></div>
         </section>
 
+        <section class="playground-panel" data-web-panel="jina-search" role="tabpanel" hidden>
+            <form class="playground-form" id="jinaSearchForm" data-http-method="GET" autocomplete="off">
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="jinaSearchModel" data-i18n="playground:labels.searchModel">Search model</label>
+                        <select id="jinaSearchModel" name="model" required></select>
+                    </div>
+                    <div class="field-group">
+                        <label for="jinaSearchReadModel" data-i18n="playground:labels.readModel">Read model</label>
+                        <select id="jinaSearchReadModel" name="read_model" required></select>
+                    </div>
+                </div>
+                <div class="field-group">
+                    <label for="jinaSearchQuery" data-i18n="playground:labels.query">Query</label>
+                    <input id="jinaSearchQuery" name="q" type="text" required>
+                </div>
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="jinaSearchNum" data-i18n="playground:labels.maxResults">Max results (1–20)</label>
+                        <input id="jinaSearchNum" name="num" type="number" min="1" max="20" value="10">
+                    </div>
+                    <div class="field-group">
+                        <label for="jinaSearchLanguage" data-i18n="playground:labels.language">Language</label>
+                        <input id="jinaSearchLanguage" name="hl" type="text" value="en">
+                    </div>
+                    <div class="field-group">
+                        <label for="jinaSearchSite" data-i18n="playground:labels.jinaSite">Domains (comma-separated)</label>
+                        <input id="jinaSearchSite" name="site" type="text" placeholder="example.com, docs.example.com">
+                    </div>
+                </div>
+                <div class="field-group">
+                    <label for="jinaSearchFormat" data-i18n="playground:labels.outputFormat">Output format</label>
+                    <select id="jinaSearchFormat" name="respondWith">
+                        <option value="markdown" selected>markdown</option>
+                        <option value="text">text</option>
+                    </select>
+                </div>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.run">Run</button>
+                    <span class="playground-status" data-status-for="jina-search"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="jina-search" hidden></div>
+        </section>
+
+        <section class="playground-panel" data-web-panel="jina-extract" role="tabpanel" hidden>
+            <form class="playground-form" id="jinaExtractForm" data-http-method="GET" autocomplete="off">
+                <div class="field-group">
+                    <label for="jinaExtractModel" data-i18n="playground:labels.readModel">Read model</label>
+                    <select id="jinaExtractModel" name="model" required></select>
+                </div>
+                <div class="field-group">
+                    <label for="jinaExtractUrl" data-i18n="playground:labels.url">Page URL</label>
+                    <input id="jinaExtractUrl" name="url" type="url" required>
+                </div>
+                <div class="field-group">
+                    <label for="jinaExtractFormat" data-i18n="playground:labels.outputFormat">Output format</label>
+                    <select id="jinaExtractFormat" name="respondWith">
+                        <option value="markdown" selected>markdown</option>
+                        <option value="text">text</option>
+                    </select>
+                </div>
+                <div class="playground-actions">
+                    <button type="submit" class="secondary-button run-button" data-i18n="playground:actions.run">Run</button>
+                    <span class="playground-status" data-status-for="jina-extract"></span>
+                </div>
+            </form>
+            <div class="playground-result" data-result-for="jina-extract" hidden></div>
+        </section>
+
         <section class="playground-panel" data-web-panel="research" role="tabpanel" hidden>
             <form class="playground-form" id="researchForm" autocomplete="off">
                 <div class="field-group">
@@ -436,6 +508,10 @@
                         <label for="audioSpeechInstructions" data-i18n="playground:labels.instructions">Instructions (emotion and style)</label>
                         <input id="audioSpeechInstructions" name="instructions" type="text" data-i18n-placeholder="playground:placeholders.speechInstructions" placeholder="cheerful, calm announcer">
                     </div>
+                    <label class="toggle-field">
+                        <input id="audioSpeechLlmEnhance" name="llm_enhance" type="checkbox" checked>
+                        <span data-i18n="playground:labels.llmEnhance">Enhance speech with LLM (Silero / CosyVoice)</span>
+                    </label>
                     <div class="field-row">
                         <div class="field-group">
                             <label for="audioSpeechVoice" data-i18n="playground:labels.voice">Voice</label>

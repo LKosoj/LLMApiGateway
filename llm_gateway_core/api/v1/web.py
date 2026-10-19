@@ -534,6 +534,135 @@ async def web_read(request: Request):
     return json_response(response_payload, 200)
 
 
+async def _read_jina_request_payload(request: Request, endpoint_name: str) -> dict[str, Any]:
+    if request.method == "GET":
+        values = request.query_params
+    elif request.headers.get("content-type", "").split(";", 1)[0].strip() == "application/x-www-form-urlencoded":
+        values = await request.form()
+    else:
+        return await read_json_request_body(request, endpoint_name)
+    payload = dict(values)
+    if len(values.getlist("site")) > 1:
+        payload["site"] = values.getlist("site")
+    return payload
+
+
+@router.get("/jina/search/{query:path}")
+@router.get("/jina/search")
+@router.post("/jina/search")
+@_with_web_terminal_accounting()
+async def jina_search(request: Request):
+    payload = await _read_jina_request_payload(request, "Jina-compatible search endpoint")
+    if request.path_params.get("query"):
+        payload["q"] = request.path_params["query"]
+    query = _require_text(payload, "q")
+    max_results = _clamp_int(payload.get("num", payload.get("count")), 10, 1, MAX_SEARCH_RESULTS)
+    include_domains = _parse_domain_list(payload.get("site"), "site")
+    output_format = _normalize_output_format(request.headers.get("x-respond-with") or payload.get("respondWith"))
+    _dispatcher, _http_client, config_loader, _proxy_http_clients = _get_operation_runtime(request)
+    requested_model = _resolve_service_model(
+        config_loader, WEB_SEARCH_SECTION, _payload_text(payload, "model"), field_name="model",
+    )
+    read_model = _resolve_service_model(
+        config_loader, WEB_READ_SECTION, _payload_text(payload, "read_model"), field_name="read_model",
+    )
+    enforce_virtual_key_access(request, requested_model)
+    enforce_virtual_key_access(request, read_model)
+    request.state.llmgateway_gateway_model = requested_model
+    request.state.llmgateway_operation = WEB_SEARCH_OPERATION
+    update_active_request_from_state(request)
+    results = await _search_with_model(
+        request,
+        search_model=requested_model,
+        query=query,
+        max_results=MAX_SEARCH_RESULTS if include_domains else max_results,
+        num_queries=1,
+        language=str(payload.get("hl") or "en"),
+        usage_accumulator=_UsageAccumulator(),
+        expand_query=False,
+        include_domains=include_domains,
+    )
+    results = _filter_search_results(
+        results, include_domains=include_domains, exclude_domains=[], max_results=max_results,
+    )
+
+    async def read_result(result: dict[str, Any]) -> dict[str, Any]:
+        article = await _read_with_model(
+            request,
+            read_model=read_model,
+            url=_validate_http_url(str(result.get("url") or "")),
+            output_format=output_format,
+        )
+        return {
+            "title": str(article.get("title") or result.get("title") or ""),
+            "url": article.get("url") or result["url"],
+            "description": str(result.get("snippet") or result.get("description") or ""),
+            "content": str(article.get("content") or ""),
+        }
+
+    articles = await asyncio.gather(*(read_result(result) for result in results), return_exceptions=True)
+    data = []
+    for article in articles:
+        if isinstance(article, BaseException):
+            raise article
+        data.append(article)
+    _set_web_service_usage_state(request, requested_model, "search", target_path="/v1/jina/search")
+    if "application/json" in request.headers.get("accept", ""):
+        return json_response({"code": 200, "status": 20000, "data": data}, 200)
+    text = "\n\n".join(
+        f"[{index}] Title: {item['title']}\n[{index}] URL Source: {item['url']}\n"
+        f"[{index}] Description: {item['description']}\n\n{item['content']}"
+        for index, item in enumerate(data, 1)
+    )
+    return Response(content=text + "\n", media_type="text/plain")
+
+
+@router.get("/jina/extract/{url:path}")
+@router.get("/jina/extract")
+@router.post("/jina/extract")
+@_with_web_terminal_accounting()
+async def jina_extract(request: Request):
+    payload = await _read_jina_request_payload(request, "Jina-compatible extract endpoint")
+    if request.path_params.get("url"):
+        payload = {"url": request.path_params["url"]}
+        if request.url.query:
+            payload["url"] += ("&" if "?" in payload["url"] else "?") + request.url.query
+    url = _validate_http_url(_require_text(payload, "url"))
+    output_format = _normalize_output_format(request.headers.get("x-respond-with") or payload.get("respondWith"))
+    _dispatcher, _http_client, config_loader, _proxy_http_clients = _get_operation_runtime(request)
+    requested_model = _resolve_service_model(
+        config_loader,
+        WEB_READ_SECTION,
+        _payload_text(payload, "model"),
+        field_name="model",
+    )
+    enforce_virtual_key_access(request, requested_model)
+    request.state.llmgateway_gateway_model = requested_model
+    request.state.llmgateway_operation = WEB_READ_OPERATION
+    update_active_request_from_state(request)
+    article = await _read_with_model(
+        request,
+        read_model=requested_model,
+        url=url,
+        output_format=output_format,
+    )
+    data = {
+        "title": str(article.get("title") or ""),
+        "description": str(article.get("description") or ""),
+        "url": article.get("url") or url,
+        "content": str(article.get("content") or ""),
+    }
+    _set_web_service_usage_state(request, requested_model, "read", target_path="/v1/jina/extract")
+    if "application/json" in request.headers.get("accept", ""):
+        return json_response({"code": 200, "status": 20000, "data": data}, 200)
+    if output_format == "text":
+        return Response(content=data["content"], media_type="text/plain")
+    return Response(
+        content=f"Title: {data['title']}\n\nURL Source: {data['url']}\n\nMarkdown Content:\n{data['content']}",
+        media_type="text/plain",
+    )
+
+
 @router.post("/tavily/search")
 @_with_web_terminal_accounting()
 async def tavily_search(request: Request):

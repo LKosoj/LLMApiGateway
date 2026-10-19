@@ -53,13 +53,13 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -93,8 +93,8 @@
         ]
       },
       {
-        "provider": "z.ai",
-        "model": "GLM-5.3-Flash",
+        "provider": "opencode-zen",
+        "model": "deepseek-v4.1-flash-free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -124,16 +124,16 @@
       },
       {
         "provider": "z.ai",
-        "model": "glm-5-turbo",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         },
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
-        "context_window": 202752,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -142,7 +142,7 @@
       },
       {
         "provider": "alibaba",
-        "model": "qwen3.6-flash",
+        "model": "qwen3.8-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -158,13 +158,13 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.3",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -217,13 +217,13 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -307,13 +307,13 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "retry_delay": 1,
       "retry_count": 2,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -333,7 +333,7 @@
     "fallback_models": [
       {
         "provider": "z.ai",
-        "model": "glm-5.2",
+        "model": "glm-5.3",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -362,8 +362,8 @@
         ]
       },
       {
-        "provider": "alibaba",
-        "model": "deepseek-v4-flash-0731",
+        "provider": "opencode-zen",
+        "model": "deepseek-v4.1-flash-free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -379,11 +379,11 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [

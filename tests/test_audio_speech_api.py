@@ -211,6 +211,24 @@ class AudioSpeechApiTests(unittest.TestCase):
         )
         tokens_usage_db.insert_usage.assert_not_called()
 
+    def test_audio_speech_preserves_llm_enhance_boolean_for_each_route(self):
+        for model in ("gateway/audio-speech", "gateway/audio-speech-alt"):
+            for enabled in (False, True):
+                with self.subTest(model=model, enabled=enabled), self._client(
+                    _FakeDownstreamResponse(b"audio-bytes", content_type="audio/wav")
+                ) as (client, _dispatcher, fake_http_client):
+                    response = client.post(
+                        "/v1/audio/speech",
+                        json={"model": model, "input": "Hello", "llm_enhance": enabled},
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.content, b"audio-bytes")
+                    fake_http_client.post.assert_awaited_once()
+                    payload = fake_http_client.post.await_args.kwargs["json"]
+                    self.assertIs(payload["llm_enhance"], enabled)
+
     def test_audio_speech_rejects_missing_input(self):
         with self._client(_FakeDownstreamResponse(b"unused")) as (client, _dispatcher, fake_http_client):
             response = client.post(

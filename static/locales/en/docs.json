@@ -130,6 +130,7 @@
       "text021": "Controls decoding variability if the model supports the parameter.",
       "text022": "Query timestamps at the segment or word level, if supported by the model.",
       "text023": "OpenAI-compatible transcription response. Streaming is not supported.",
+      "llmEnhance": "Optional boolean for Silero and CosyVoice, enabled by default in these services. Set false to skip LLM text preparation and automatic delivery markup. Silero and CosyVoice still split long text into parts and assemble one audio file regardless of this parameter. The gateway forwards the value unchanged. For CosyVoice, emotion and style instructions from instructions (or the legacy instruct field) are also passed to the LLM to guide delivery markup. With llm_enhance=false, they apply only during speech synthesis. Other TTS services may not support this parameter.",
       "text024": "Free-form text about the emotion and speaking style, if the model supports it (for example, Qwen3-TTS).",
       "tableHeader001": "Speaker split",
       "text025": "Models from the",
@@ -349,6 +350,26 @@
       "text031": "Anthropic-compatible message response."
     },
     "web": {
+      "jinaSearch": {
+        "summary": "Equivalent to s.jina.ai: GET with a q query parameter or a query in the path /v1/jina/search/your%20query. POST with JSON or form data is also supported. Reads the full result pages; authenticate with a gateway Bearer key.",
+        "q": "Search query in the q field.",
+        "model": "Search model from web_search and reader model from web_read. Each field is optional when its section contains exactly one configured model.",
+        "count": "Number of results: num or count, from 1 to 20, default 10; num takes precedence.",
+        "site": "Restrict domains with a string or an array of strings; form requests can repeat site. hl sets the search language, default en.",
+        "format": "X-Respond-With or respondWith: markdown (default) or text. The header takes precedence.",
+        "response": "Accept: application/json returns JSON with code (200), status (20000) and a data array. Each item contains title, url, description and the full page content. Otherwise returns text with numbered Title, URL Source, Description and page contents.",
+        "limits": "Access is checked for both models. Charged as one web_search operation. Search or page-reading failures fail the whole request with a gateway-format error. GET and POST support the same parameters; no-content and streaming are not implemented.",
+        "example": "Jina-compatible search"
+      },
+      "jina": {
+        "summary": "Jina Reader: GET with a url query parameter or a page URL in the path /v1/jina/extract/https://example.com. POST with JSON or form data is also supported. Authenticate with a gateway Bearer key.",
+        "model": "A model from web_read. Optional when exactly one model is configured; specify model explicitly when multiple models are configured.",
+        "url": "Page address (http or https).",
+        "respondWith": "Content format: markdown (default) or text. Set the respondWith field or the X-Respond-With header; the header takes precedence.",
+        "accept": "Accept: application/json returns JSON with code (200), status (20000) and data. The data object contains title, description, url and content. Otherwise returns text with Title, URL Source and Markdown Content; text format returns only the page content.",
+        "limits": "For GET with a page URL in the path, the query string remains part of the page URL. Use GET with a url query parameter for model and respondWith options. CSS selectors, screenshots and browser controls are not supported. Errors use the gateway format; charged as web_read.",
+        "example": "Jina-compatible extraction"
+      },
       "heading": "Web services: call parameters",
       "heading2": "Web* call examples",
       "kicker": "curl examples",

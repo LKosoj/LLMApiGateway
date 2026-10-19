@@ -30,11 +30,16 @@ _PATH_OPERATION_SUFFIXES = (
     ("/web/deep-research", "web_deep_research"),
     ("/tavily/search", "web_search"),
     ("/tavily/extract", "web_read"),
+    ("/jina/extract", "web_read"),
+    ("/jina/search", "web_search"),
 )
 
 
 def operation_from_path(path: str) -> str | None:
     normalized_path = path.rstrip("/")
+    for prefix, operation in (("/v1/jina/extract/", "web_read"), ("/v1/jina/search/", "web_search")):
+        if normalized_path.startswith(prefix):
+            return operation
     for suffix, operation in _PATH_OPERATION_SUFFIXES:
         if normalized_path.endswith(suffix):
             return operation
