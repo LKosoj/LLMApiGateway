@@ -4,14 +4,14 @@
     "fallback_models": [
       {
         "provider": "z.ai",
-        "model": "glm-5.3",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         },
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -37,13 +37,13 @@
       },
       {
         "provider": "minimax",
-        "model": "MiniMax-M3",
+        "model": "MiniMax-M3.1-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -108,8 +108,8 @@
         ]
       },
       {
-        "provider": "gem",
-        "model": "gemini-3.6-flash",
+        "provider": "routerai",
+        "model": "deepseek/deepseek-v4.1-flash-1017",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -261,13 +261,13 @@
       },
       {
         "provider": "minimax",
-        "model": "MiniMax-M3",
+        "model": "MiniMax-M3.1-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -333,11 +333,11 @@
     "fallback_models": [
       {
         "provider": "z.ai",
-        "model": "glm-5.3",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -348,13 +348,13 @@
       },
       {
         "provider": "minimax",
-        "model": "MiniMax-M3",
+        "model": "MiniMax-M3.1-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -401,6 +401,21 @@
   {
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
+      {
+        "provider": "agentrouter",
+        "model": "gpt-6.1-sol",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1050000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
       {
         "provider": "anymodel",
         "model": "cx/gpt-6.1-sol",
@@ -449,13 +464,13 @@
       },
       {
         "provider": "minimax",
-        "model": "MiniMax-M3",
+        "model": "MiniMax-M3.1-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -464,7 +479,7 @@
       },
       {
         "provider": "z.ai",
-        "model": "glm-5.3",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "retry_delay": 1,
         "retry_count": 3,
@@ -473,7 +488,7 @@
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         },
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -485,11 +500,11 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -540,11 +555,11 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -594,13 +609,13 @@
       },
       {
         "provider": "minimax",
-        "model": "MiniMax-M3",
+        "model": "MiniMax-M3.1-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1000000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -609,14 +624,14 @@
       },
       {
         "provider": "z.ai",
-        "model": "glm-5.3",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         },
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -758,11 +773,11 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -796,15 +811,17 @@
         ]
       },
       {
-        "provider": "kimicode",
-        "model": "k3-256k",
+        "provider": "agentrouter",
+        "model": "deepseek-v4-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
+        "supports_vision": false,
         "supports_tools": true,
-        "context_window": 262144,
+        "context_window": 1048576,
         "capabilities_autofilled": [
-          "context_window"
+          "context_window",
+          "supports_vision"
         ]
       },
       {
@@ -827,11 +844,11 @@
     ],
     "context_overflow_fallback": {
       "provider": "z.ai",
-      "model": "glm-5.2",
+      "model": "GLM-5.3-Flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {},
-      "supports_vision": false,
+      "supports_vision": true,
       "supports_tools": true,
       "context_window": 1048576,
       "capabilities_autofilled": [
@@ -851,13 +868,13 @@
     "fallback_models": [
       {
         "provider": "z.ai",
-        "model": "glm-5-turbo",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
-        "context_window": 202752,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -865,14 +882,14 @@
         ]
       },
       {
-        "provider": "openrouter",
-        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "provider": "routerai",
+        "model": "deepseek/deepseek-v4.1-flash-1017",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
-        "context_window": 262144,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -882,13 +899,13 @@
     ],
     "context_overflow_fallback": {
       "provider": "minimax",
-      "model": "MiniMax-M2.7-highspeed",
+      "model": "MiniMax-M3.1-Flash",
       "use_provider_order_as_fallback": false,
       "custom_body_params": {},
       "custom_headers": {},
       "supports_vision": true,
       "supports_tools": true,
-      "context_window": 1050000,
+      "context_window": 1000000,
       "capabilities_autofilled": [
         "context_window",
         "supports_tools",

@@ -105,6 +105,7 @@ def test_create_and_save_audio_speech_route(page: Page, server):
     page.fill("#audioSpeechList .target-path-input", "/audio/speech")
     page.locator("#audioSpeechList details.advanced-options summary").click()
     page.fill("#audioSpeechList .voices-target-path-input", "/voices")
+    page.select_option("#audioSpeechList .voice-input-select", "manual")
     page.fill("#audioSpeechList .retry-delay-input", "0.5")
     page.fill("#audioSpeechList .retry-count-input", "1")
     page.fill("#audioSpeechList .custom-body-params-input", '{"voice": "alloy"}')
@@ -122,6 +123,7 @@ def test_create_and_save_audio_speech_route(page: Page, server):
     expect(page.locator("#audioSpeechList .target-path-input")).to_have_value("/audio/speech")
     page.locator("#audioSpeechList details.advanced-options summary").click()
     expect(page.locator("#audioSpeechList .voices-target-path-input")).to_have_value("/voices")
+    expect(page.locator("#audioSpeechList .voice-input-select")).to_have_value("manual")
     expect(page.locator("#audioSpeechList .retry-delay-input")).to_have_value("0.5")
     expect(page.locator("#audioSpeechList .retry-count-input")).to_have_value("1")
     expect(page.locator("#audioSpeechList .custom-body-params-input")).to_have_value('{\n  "voice": "alloy"\n}')
@@ -230,3 +232,64 @@ def test_create_and_save_nvidia_audio_transcription_route(page: Page, server):
     expect(page.locator("#audioTranscriptionsList .custom-headers-input")).to_have_value(
         '{\n  "function-id": "func-123"\n}'
     )
+
+
+def test_playground_manual_voice_skips_catalog_and_requires_id(page: Page, server):
+    session = create_authenticated_session(server, "test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    page.route(
+        "**/v1/ui/playground/models",
+        lambda route: route.fulfill(json={
+            "audio_speech": ["manual-tts", "catalog-tts"],
+            "audio_speech_manual_voice": ["manual-tts"],
+        }),
+    )
+    voice_requests = []
+    speech_requests = []
+
+    def voices(route):
+        voice_requests.append(route.request.url)
+        route.fulfill(json={"data": [{"id": "catalog-voice", "name": "Catalog voice"}]})
+
+    def speech(route):
+        speech_requests.append(route.request.post_data_json)
+        route.fulfill(status=400, json={"detail": "Test response"})
+
+    page.route("**/v1/audio/voices?*", voices)
+    page.route("**/v1/audio/speech", speech)
+    page.goto(f"{server}/v1/ui/playground")
+    expect(page.locator("#audioSpeechModel")).to_have_value("manual-tts")
+    page.locator('[data-playground-section-tab="audio-speech"]').click()
+    voice_id = page.locator("#audioSpeechVoiceId")
+    expect(voice_id).to_be_visible()
+    expect(voice_id).to_have_attribute("required", "")
+    expect(page.locator("#audioSpeechVoice")).to_be_hidden()
+    page.fill("#audioSpeechInput", "Test speech")
+    page.locator("#audioSpeechForm .run-button").click()
+    assert speech_requests == []
+    voice_id.fill("   ")
+    page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator('[data-playground-section-panel="audio-speech"]')).to_contain_text("Enter a voice ID.")
+    assert speech_requests == []
+    assert voice_requests == []
+
+    voice_id.fill("fish-voice-id")
+    page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator("#audioSpeechForm .run-button")).to_be_enabled()
+    assert speech_requests[-1]["voice"] == "fish-voice-id"
+
+    page.select_option("#audioSpeechModel", "catalog-tts")
+    expect(page.locator("#audioSpeechVoice")).to_be_enabled()
+    expect(voice_id).to_be_hidden()
+    page.select_option("#audioSpeechVoice", "catalog-voice")
+    page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator("#audioSpeechForm .run-button")).to_be_enabled()
+    assert speech_requests[-1]["voice"] == "catalog-voice"
+    assert len(voice_requests) == 1
+
+    page.select_option("#audioSpeechModel", "manual-tts")
+    expect(voice_id).to_be_visible()
+    page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator("#audioSpeechForm .run-button")).to_be_enabled()
+    assert speech_requests[-1]["voice"] == "fish-voice-id"
+    assert len(voice_requests) == 1

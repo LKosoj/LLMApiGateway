@@ -74,6 +74,11 @@ from .chat_model_behavior import (
     detect_degenerate_non_stream_response,
     detect_upstream_provider_error_non_stream,
 )
+from .responses_upstream import (
+    chat_request_to_responses,
+    responses_response_to_chat,
+    responses_stream_to_chat,
+)
 from .chat_sanitizers import (
     expects_json_object_response as _expects_json_object_response,
     response_format_type as _response_format_type,
@@ -572,6 +577,9 @@ async def attempt_model_fallback_rule(
     if auth_material.upstream_key_fingerprint:
         upstream_key_fingerprint = auth_material.upstream_key_fingerprint
     is_anthropic_provider = getattr(provider_config, "type", "openai") == "anthropic"
+    models_metadata = getattr(provider_config, "models", None)
+    model_metadata = models_metadata.get(provider_model, {}) if isinstance(models_metadata, Mapping) else {}
+    is_responses_provider = isinstance(model_metadata, Mapping) and model_metadata.get("api_type") == "responses"
     client_expects_anthropic = isinstance(
         getattr(request.state, "llmgateway_original_anthropic_payload", None),
         dict,
@@ -679,7 +687,8 @@ async def attempt_model_fallback_rule(
             "X-Title": "LLMGateway",
             **auth_material.headers,
         }
-        target_url = f"{provider_base_url.rstrip('/')}/chat/completions"
+        target_path = "responses" if is_responses_provider else "chat/completions"
+        target_url = f"{provider_base_url.rstrip('/')}/{target_path}"
         provider_payload_template = copy.deepcopy(request_body_json)
         provider_payload_template["model"] = provider_model
         if provider_name == "openrouter" and "usage" not in provider_payload_template:
@@ -925,6 +934,9 @@ async def attempt_model_fallback_rule(
                 attempt_payload["provider"] = {"order": subproviders_ordering}
                 attempt_payload["allow_fallbacks"] = False
 
+            if is_responses_provider:
+                attempt_payload = chat_request_to_responses(attempt_payload)
+
             update_active_request(
                 request,
                 gateway_model=requested_model,
@@ -947,6 +959,15 @@ async def attempt_model_fallback_rule(
             )
             duration_ms = int((time.monotonic() - t0) * 1000)
             _record_rate_limit_observations(target_url, response_headers)
+
+            if response_data is not None and error_detail is None and is_responses_provider:
+                if is_streaming:
+                    response_data = responses_stream_to_chat(response_data, provider_model)
+                else:
+                    response_data = responses_response_to_chat(response_data)
+                    if response_data.get("error"):
+                        error_detail = str(response_data["error"])
+                        response_data = None
 
             if (
                 response_data
@@ -1128,6 +1149,8 @@ async def attempt_model_fallback_rule(
                     attempt_payload = copy.deepcopy(provider_payload_template)
                     attempt_payload["provider"] = {"order": [sub_provider]}
                     attempt_payload["allow_fallbacks"] = False
+                    if is_responses_provider:
+                        attempt_payload = chat_request_to_responses(attempt_payload)
 
                     update_active_request(
                         request,
@@ -1151,6 +1174,15 @@ async def attempt_model_fallback_rule(
                     )
                     duration_ms = int((time.monotonic() - t0) * 1000)
                     _record_rate_limit_observations(target_url, response_headers)
+
+                    if response_data is not None and error_detail is None and is_responses_provider:
+                        if is_streaming:
+                            response_data = responses_stream_to_chat(response_data, provider_model)
+                        else:
+                            response_data = responses_response_to_chat(response_data)
+                            if response_data.get("error"):
+                                error_detail = str(response_data["error"])
+                                response_data = None
 
                     if (
                         response_data

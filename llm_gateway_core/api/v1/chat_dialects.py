@@ -1129,7 +1129,7 @@ def _build_openai_usage_to_responses_usage(usage: object) -> dict:
     if not isinstance(completion_tokens_details, dict):
         completion_tokens_details = {}
 
-    return {
+    result = {
         "input_tokens": usage.get("prompt_tokens", 0),
         "input_tokens_details": {
             "cached_tokens": prompt_tokens_details.get("cached_tokens", 0),
@@ -1140,6 +1140,9 @@ def _build_openai_usage_to_responses_usage(usage: object) -> dict:
         },
         "total_tokens": usage.get("total_tokens", 0),
     }
+    if "cost" in usage:
+        result["cost"] = usage["cost"]
+    return result
 
 
 def _openai_message_content_to_responses_content(content: object) -> list[dict]:

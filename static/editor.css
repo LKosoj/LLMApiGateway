@@ -760,6 +760,14 @@ div[style*="position:relative"] {
     gap: 4px;
 }
 
+.model-api-types-section {
+    grid-column: 1 / -1;
+}
+
+.model-api-type-row.upstream-limit-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
 .upstream-limit-row .field-label {
     font-size: 0.78rem;
 }
@@ -793,6 +801,10 @@ div[style*="position:relative"] {
 }
 
 @media (max-width: 720px) {
+    .model-api-type-row.upstream-limit-row {
+        grid-template-columns: 1fr;
+    }
+
     .upstream-limit-row {
         grid-template-columns: 1fr 1fr;
     }

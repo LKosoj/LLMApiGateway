@@ -82,7 +82,8 @@
     "maxTokens": "Максимум токенов",
     "instructions": "Инструкции (эмоция и стиль)",
     "llmEnhance": "Улучшение речи через LLM (Silero / CosyVoice)",
-    "minDuration": "Мин. длительность сегмента, с"
+    "minDuration": "Мин. длительность сегмента, с",
+    "voiceId": "ID голоса"
   },
   "actions": {
     "sendMessage": "Отправить сообщение",
@@ -165,7 +166,8 @@
     "chatCancelled": "Сообщение отменено.",
     "assistantTyping": "Ассистент печатает…",
     "modelsLoadFailed": "Не удалось загрузить модели.",
-    "tooManyFiles": "Выберите не более {count, number} файлов для поля {field}."
+    "tooManyFiles": "Выберите не более {count, number} файлов для поля {field}.",
+    "voiceIdRequired": "Введите ID голоса."
   },
   "results": {
     "download": "Скачать",

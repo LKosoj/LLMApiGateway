@@ -1126,6 +1126,7 @@ export function registerCore(ctx) {
         ['Target Description', 'editor:fields.routerTargetDescription'],
         ['Cost Hint', 'editor:fields.routerCostHint'],
         ['Voices Target Path', 'editor:fields.voicesTargetPath'],
+        ['Voice Input', 'editor:fields.voiceInput'],
         ['Query Model (optional)', 'editor:fields.queryModelOptional'],
         ['Provider Name', 'editor:fields.providerName'],
         ['Base URL', 'editor:fields.baseUrl'],

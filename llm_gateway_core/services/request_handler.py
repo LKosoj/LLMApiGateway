@@ -1022,6 +1022,10 @@ def _extract_stream_error_detail(chunk_json: object) -> str | None:
     if not isinstance(chunk_json, dict):
         return None
 
+    if chunk_json.get("type") == "response.failed":
+        error = (chunk_json.get("response") or {}).get("error") or {}
+        return error.get("message") or "Responses upstream failed."
+
     if "error" in chunk_json:
         error = chunk_json.get("error")
         if isinstance(error, dict):
@@ -1203,6 +1207,14 @@ def _stream_chunk_has_response_content(chunk_json: object) -> bool:
     if not isinstance(chunk_json, dict):
         return False
 
+    if chunk_json.get("type") in {
+        "response.output_text.delta", "response.refusal.delta",
+        "response.reasoning_summary_text.delta", "response.function_call_arguments.delta",
+    }:
+        return bool(chunk_json.get("delta"))
+    if chunk_json.get("type") == "response.output_item.added":
+        return (chunk_json.get("item") or {}).get("type") == "function_call"
+
     choices = chunk_json.get("choices")
     if isinstance(choices, list):
         for choice in choices:
@@ -1312,6 +1324,11 @@ async def _make_streaming_request(
 
             if isinstance(chunk_json, dict) and "usage" in chunk_json:
                 tokens_usage = chunk_json.get("usage")
+            if isinstance(chunk_json, dict) and chunk_json.get("type") in {
+                "response.completed", "response.incomplete",
+            }:
+                tokens_usage = (chunk_json.get("response") or {}).get("usage")
+                upstream_done = True
             if _stream_chunk_has_finish_reason(chunk_json):
                 saw_finish_reason = True
             if _stream_chunk_has_response_content(chunk_json):
@@ -1723,6 +1740,9 @@ async def _make_json_request(
         logging.error(error_detail)
         return None, error_detail
 
+    if target_url.rstrip("/").endswith("/responses") and response_json.get("error") is None:
+        response_json.pop("error", None)
+
     if "error" in response_json or "detail" in response_json:
         if "error" in response_json:
             error = response_json.get("error")
@@ -1758,7 +1778,7 @@ async def make_llm_request(
     logging.debug(
         "make_llm_request(): Sending request for model '%s'. Payload: %s",
         request_payload.get("model"),
-        {k: v for k, v in request_payload.items() if k != "messages"},
+        {k: v for k, v in request_payload.items() if k not in {"messages", "input", "instructions"}},
     )
     if is_streaming:
         if stream_observation_capacity is None:

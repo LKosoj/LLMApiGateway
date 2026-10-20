@@ -1395,6 +1395,7 @@ export function registerOperations(ctx) {
         const targetPathInput = routeRow.querySelector('.target-path-input');
         const requestFormatSelect = routeRow.querySelector('.request-format-select');
         const voicesTargetPathInput = routeRow.querySelector('.voices-target-path-input');
+        const voiceInputSelect = routeRow.querySelector('.voice-input-select');
         const payloadTransformsInput = routeRow.querySelector('.payload-transforms-input');
         const retryDelayInput = routeRow.querySelector('.retry-delay-input');
         const retryCountInput = routeRow.querySelector('.retry-count-input');
@@ -1422,6 +1423,9 @@ export function registerOperations(ctx) {
         };
         if (request_format) {
             routePayload.request_format = request_format;
+        }
+        if (voiceInputSelect?.value) {
+            routePayload.voice_input = voiceInputSelect.value;
         }
         if (voices_target_path) {
             validateAudioTargetPath(voices_target_path, 'Voices target path');
@@ -1908,6 +1912,15 @@ export function registerOperations(ctx) {
             const voicesTargetPathInput = ctx.createTextInput('voices-target-path-input', '/voices');
             voicesTargetPathInput.value = initialData.voices_target_path || '';
             advancedGrid.appendChild(ctx.createFieldGroup('Voices Target Path', voicesTargetPathInput));
+            const voiceInputSelect = ctx.createSelect('voice-input-select');
+            for (const [value, key] of [['', 'catalog'], ['manual', 'manual']]) {
+                const option = document.createElement('option');
+                option.value = value;
+                ctx.bindLocalizedText(option, `editor:voiceInput.${key}`);
+                voiceInputSelect.appendChild(option);
+            }
+            voiceInputSelect.value = initialData.voice_input || '';
+            advancedGrid.appendChild(ctx.createFieldGroup('Voice Input', voiceInputSelect));
         }
         advancedGrid.appendChild(ctx.createFieldGroup('Retry Delay', retryDelayInput));
         advancedGrid.appendChild(ctx.createFieldGroup('Retry Count', retryCountInput));

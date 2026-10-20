@@ -497,6 +497,9 @@ async def _get_audio_voices_for_model(request: Request, requested_model: str) ->
             detail=f"No audio speech route configured for model '{requested_model}'.",
         )
 
+    if route.voice_input == "manual":
+        return []
+
     provider_config = config_loader_instance.providers_config.get(route.provider)
     if provider_config is None:
         logger.error(

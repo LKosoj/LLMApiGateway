@@ -263,6 +263,32 @@
           }
         }
       ]
+    },
+    {
+      "gateway_model_name": "llmgateway/drama-3",
+      "routes": [
+        {
+          "provider": "routerai",
+          "model": "fish-audio/drama-3",
+          "target_path": "/audio/speech",
+          "voice_input": "manual",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
+    },
+    {
+      "gateway_model_name": "llmgateway/espeech-tts",
+      "routes": [
+        {
+          "provider": "neuraldeep",
+          "model": "espeech-tts",
+          "target_path": "/audio/speech",
+          "voices_target_path": "/audio/voices",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
     }
   ],
   "audio_transcriptions": [

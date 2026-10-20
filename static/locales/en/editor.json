@@ -269,6 +269,8 @@
     "imageGenerationSize": "Image Generation Size",
     "field": "Field",
     "upstreamLimits": "Upstream Limits per Model",
+    "modelApiTypes": "Model API Exceptions",
+    "modelApiType": "API Type",
     "supportsVision": "Vision support",
     "supportsTools": "Tools support",
     "contextWindow": "Context window (tokens)",
@@ -276,7 +278,8 @@
     "routerTargetDescription": "Target Description",
     "routerCostHint": "Cost Hint",
     "transcriptionModel": "Transcription Model",
-    "diarizationModel": "Diarization Model"
+    "diarizationModel": "Diarization Model",
+    "voiceInput": "Voice Input"
   },
   "toggles": {
     "providerOrder": "Use provider order as fallback",
@@ -312,6 +315,7 @@
     "webImageModel": "Gateway image model used when image generation is enabled.",
     "webImageSize": "Passed through to the images endpoint as WIDTHxHEIGHT.",
     "providerMetadata": "Other provider-specific metadata. Upstream limits are managed above and merged on save.",
+    "modelApiTypes": "Configure only models that use a different API protocol. Leave empty to use the provider default.",
     "providerAvailableModels": "One model id per line; commas also work. If set, the gateway uses this list instead of the provider models endpoint.",
     "providerCustomHeaders": "JSON object of extra headers sent on every upstream request to this provider, including playground direct calls. Authorization, Cookie, and X-Api-Key are rejected.",
     "providerRouting": "Leave empty for default round-robin without session affinity. Session affinity requires an explicit request header such as X-Session-Id.",
@@ -332,6 +336,8 @@
     "routing": "Optional upstream-key routing policy with round-robin, fill-first, or priority strategy and opt-in session affinity.",
     "upstreamKeyPools": "Optional named upstream-key pools with strategy, session affinity, key ids, priorities, and enabled flags.",
     "upstreamLimits": "Per-model upstream quota ledger, separate from client virtual-key limits. The gateway skips keys that would exceed these caps.",
+    "modelApiTypes": "Small per-model exception list for the upstream API protocol.",
+    "modelApiType": "Protocol used for this model. Responses is unavailable for Anthropic providers.",
     "modelId": "Upstream model id exactly as the provider expects it.",
     "rpm": "Requests per minute allowed per upstream key. Leave empty to disable this cap.",
     "rpd": "Requests per day allowed per upstream key. Leave empty to disable this cap.",
@@ -376,7 +382,8 @@
     "notAvailable": "Not available",
     "unknown": "Unknown",
     "notApplicable": "n/a",
-    "noUpstreamLimits": "No upstream limits configured. Add a model to set per-key rpm/rpd/tpm/tpd."
+    "noUpstreamLimits": "No upstream limits configured. Add a model to set per-key rpm/rpd/tpm/tpd.",
+    "noModelApiTypes": "No model API exceptions configured. Add a model only when it needs another protocol."
   },
   "errors": {
     "genericInvalid": "The configuration is invalid.",
@@ -519,5 +526,9 @@
     "taskDetails": "Model answers per task",
     "stateFailed": "failed",
     "stateError": "error"
+  },
+  "voiceInput": {
+    "catalog": "Voice catalog",
+    "manual": "Enter voice ID manually"
   }
 }

@@ -207,6 +207,17 @@ class ProviderDetails(BaseModel):
         return value
 
     @model_validator(mode="after")
+    def validate_model_api_types(self) -> "ProviderDetails":
+        if isinstance(self.models, Mapping):
+            for model, metadata in self.models.items():
+                if isinstance(metadata, Mapping) and "api_type" in metadata:
+                    if metadata["api_type"] not in ("chat_completions", "responses"):
+                        raise ValueError(f"Model '{model}' api_type must be chat_completions or responses.")
+                    if self.type != "openai":
+                        raise ValueError(f"Model '{model}' api_type requires an openai provider.")
+        return self
+
+    @model_validator(mode="after")
     def validate_auth_material(self) -> "ProviderDetails":
         if self.apikey or self.upstream_key_pools:
             return self
@@ -697,6 +708,7 @@ class OperationRoute(BaseModel):
     model: str
     target_path: str
     voices_target_path: str | None = None
+    voice_input: Literal["manual"] | None = None
     custom_headers: Dict[str, Any] = Field(default_factory=dict)
     custom_body_params: Dict[str, Any] = Field(default_factory=dict)
     payload_transforms: PayloadTransformConfig | None = None

@@ -42,6 +42,7 @@
     ];
     const BLOB_URLS = new Map();
     const VOICE_CACHE = new Map();
+    let manualVoiceModels = new Set();
     const PROVIDER_MODEL_CACHE = new Map();
     let voiceRequestToken = 0;
     let providerModelsRequestToken = 0;
@@ -59,6 +60,7 @@
         providerDefault: "options.providerDefault",
         voiceCatalogEmpty: "status.voiceCatalogEmpty",
         voiceLoadFailed: "status.voiceLoadFailed",
+        voiceIdRequired: "status.voiceIdRequired",
         selectModelFirst: "status.selectModelFirst",
         selectProviderFirst: "status.selectProviderFirst",
         providerModelsLoadFailed: "status.providerModelsLoadFailed",
@@ -311,6 +313,20 @@
         );
         const modelSelect = document.getElementById("audioSpeechModel");
         const model = modelSelect && !modelSelect.disabled ? modelSelect.value : "";
+        const manual = manualVoiceModels.has(model);
+        const voiceSelect = document.getElementById("audioSpeechVoice");
+        const voiceId = document.getElementById("audioSpeechVoiceId");
+        document.querySelector('label[for="audioSpeechVoice"], label[for="audioSpeechVoiceId"]').htmlFor = manual
+            ? "audioSpeechVoiceId" : "audioSpeechVoice";
+        voiceSelect.hidden = manual;
+        voiceId.hidden = !manual;
+        voiceId.disabled = !manual;
+        voiceId.required = manual;
+        if (manual) {
+            voiceSelect.disabled = true;
+            clearStatus("audio-speech");
+            return;
+        }
         if (!model) {
             setVoiceSelectState(KEYS.modelsSelectFirst, true);
             return;
@@ -1520,6 +1536,13 @@
 
     async function submitAudioSpeechRequest(kind, url, form) {
         const body = readFormData(form);
+        if (manualVoiceModels.has(body.model)) {
+            body.voice = document.getElementById("audioSpeechVoiceId").value.trim();
+            if (!body.voice) {
+                setStatus(kind, KEYS.voiceIdRequired, true);
+                return;
+            }
+        }
         if (!body.model) {
             setStatus(kind, KEYS.selectModelFirst, true);
             return;
@@ -1799,6 +1822,7 @@
         try {
             const models = await loadModels();
             fusionModelNames = new Set(models.fusion || []);
+            manualVoiceModels = new Set(models.audio_speech_manual_voice || []);
             MODEL_SELECTS.forEach(({id, section}) => {
                 const select = document.getElementById(id);
                 if (select) populateSelect(select, models[section] || [], section === "chat" ? fusionModelNames : null);

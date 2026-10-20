@@ -2901,6 +2901,7 @@
       ["Target Description", "editor:fields.routerTargetDescription"],
       ["Cost Hint", "editor:fields.routerCostHint"],
       ["Voices Target Path", "editor:fields.voicesTargetPath"],
+      ["Voice Input", "editor:fields.voiceInput"],
       ["Query Model (optional)", "editor:fields.queryModelOptional"],
       ["Provider Name", "editor:fields.providerName"],
       ["Base URL", "editor:fields.baseUrl"],
@@ -5298,6 +5299,7 @@
       const targetPathInput = routeRow.querySelector(".target-path-input");
       const requestFormatSelect = routeRow.querySelector(".request-format-select");
       const voicesTargetPathInput = routeRow.querySelector(".voices-target-path-input");
+      const voiceInputSelect = routeRow.querySelector(".voice-input-select");
       const payloadTransformsInput = routeRow.querySelector(".payload-transforms-input");
       const retryDelayInput = routeRow.querySelector(".retry-delay-input");
       const retryCountInput = routeRow.querySelector(".retry-count-input");
@@ -5322,6 +5324,9 @@
       };
       if (request_format) {
         routePayload.request_format = request_format;
+      }
+      if (voiceInputSelect?.value) {
+        routePayload.voice_input = voiceInputSelect.value;
       }
       if (voices_target_path) {
         validateAudioTargetPath(voices_target_path, "Voices target path");
@@ -5736,6 +5741,15 @@
         const voicesTargetPathInput = ctx.createTextInput("voices-target-path-input", "/voices");
         voicesTargetPathInput.value = initialData.voices_target_path || "";
         advancedGrid.appendChild(ctx.createFieldGroup("Voices Target Path", voicesTargetPathInput));
+        const voiceInputSelect = ctx.createSelect("voice-input-select");
+        for (const [value, key] of [["", "catalog"], ["manual", "manual"]]) {
+          const option = document.createElement("option");
+          option.value = value;
+          ctx.bindLocalizedText(option, `editor:voiceInput.${key}`);
+          voiceInputSelect.appendChild(option);
+        }
+        voiceInputSelect.value = initialData.voice_input || "";
+        advancedGrid.appendChild(ctx.createFieldGroup("Voice Input", voiceInputSelect));
       }
       advancedGrid.appendChild(ctx.createFieldGroup("Retry Delay", retryDelayInput));
       advancedGrid.appendChild(ctx.createFieldGroup("Retry Count", retryCountInput));
@@ -6616,13 +6630,16 @@
       rpm: "editor:tooltips.rpm",
       rpd: "editor:tooltips.rpd",
       tpm: "editor:tooltips.tpm",
-      tpd: "editor:tooltips.tpd"
+      tpd: "editor:tooltips.tpd",
+      modelApiTypes: "editor:tooltips.modelApiTypes",
+      modelApiType: "editor:tooltips.modelApiType"
     };
     const UPSTREAM_LIMIT_KEYS = ["rpm", "rpd", "tpm", "tpd"];
     function splitProviderModelsMetadata(value) {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
-        return { upstreamLimits: [], extra: value === void 0 ? void 0 : value };
+        return { apiTypes: [], upstreamLimits: [], extra: value === void 0 ? void 0 : value };
       }
+      const apiTypes = [];
       const upstreamLimits = [];
       const extra = {};
       Object.entries(value).forEach(([modelId, modelMeta]) => {
@@ -6634,18 +6651,153 @@
           });
           upstreamLimits.push(row);
           const rest = { ...modelMeta };
+          if (Object.prototype.hasOwnProperty.call(rest, "api_type")) {
+            apiTypes.push({ modelId, apiType: rest.api_type });
+            delete rest.api_type;
+          }
           delete rest.upstream_limits;
           if (Object.keys(rest).length > 0) {
             extra[modelId] = rest;
           }
         } else {
-          extra[modelId] = modelMeta;
+          if (modelMeta && typeof modelMeta === "object" && !Array.isArray(modelMeta) && Object.prototype.hasOwnProperty.call(modelMeta, "api_type")) {
+            apiTypes.push({ modelId, apiType: modelMeta.api_type });
+            const rest = { ...modelMeta };
+            delete rest.api_type;
+            if (Object.keys(rest).length > 0) {
+              extra[modelId] = rest;
+            }
+          } else {
+            extra[modelId] = modelMeta;
+          }
         }
       });
       return {
+        apiTypes,
         upstreamLimits,
         extra: Object.keys(extra).length > 0 ? extra : void 0
       };
+    }
+    function buildModelApiTypesSection(initialModels, providerType) {
+      const container = document.createElement("div");
+      container.className = "upstream-limits-section model-api-types-section";
+      const header = document.createElement("div");
+      header.className = "upstream-limits-section-header model-api-types-section-header";
+      const title = document.createElement("div");
+      title.className = "model-api-types-title field-label";
+      ctx.bindLocalizedText(title, "editor:fields.modelApiTypes");
+      header.appendChild(title);
+      const titleFieldWrapper = { querySelector: () => title };
+      ctx.attachFieldTooltip(titleFieldWrapper, PROVIDER_FIELD_TOOLTIPS.modelApiTypes);
+      const addButton = document.createElement("button");
+      addButton.type = "button";
+      addButton.className = "secondary-button upstream-limit-add model-api-type-add";
+      ctx.bindKnownActionText(addButton, "Add Model");
+      header.appendChild(addButton);
+      container.appendChild(header);
+      const hint = document.createElement("div");
+      hint.className = "field-hint";
+      ctx.bindLocalizedText(hint, "editor:hints.modelApiTypes");
+      container.appendChild(hint);
+      const list = document.createElement("div");
+      list.className = "upstream-limits-list model-api-types-list";
+      container.appendChild(list);
+      const emptyState = document.createElement("div");
+      emptyState.className = "model-api-types-empty";
+      ctx.bindLocalizedText(emptyState, "editor:messages.noModelApiTypes");
+      container.appendChild(emptyState);
+      function refreshEmptyState() {
+        emptyState.hidden = list.children.length > 0;
+      }
+      function appendRow(initialRow) {
+        const row = document.createElement("div");
+        row.className = "upstream-limit-row model-api-type-row";
+        const modelInput = ctx.createTextInput("model-api-type-model", "gpt-6.1-sol");
+        modelInput.value = initialRow && initialRow.modelId ? initialRow.modelId : "";
+        const modelField = ctx.createFieldGroup("Model", modelInput, "upstream-limit-model-field model-api-type-model-field");
+        ctx.bindLocalizedText(modelField.querySelector(".field-label"), "editor:fields.model");
+        ctx.attachFieldTooltip(modelField, PROVIDER_FIELD_TOOLTIPS.modelId);
+        row.appendChild(modelField);
+        const apiTypeSelect = ctx.createSelect("model-api-type-select");
+        const apiTypeOptions = providerType === "anthropic" ? ["chat_completions"] : ["responses", "chat_completions"];
+        ctx.setSelectOptions(apiTypeSelect, apiTypeOptions, "Choose API type", initialRow && apiTypeOptions.includes(initialRow.apiType) ? initialRow.apiType : "");
+        if (initialRow && initialRow.apiType && !apiTypeOptions.includes(initialRow.apiType)) {
+          const invalidOption = document.createElement("option");
+          invalidOption.value = initialRow.apiType;
+          invalidOption.textContent = initialRow.apiType;
+          apiTypeSelect.appendChild(invalidOption);
+          apiTypeSelect.value = initialRow.apiType;
+        }
+        const apiTypeField = ctx.createFieldGroup("API Type", apiTypeSelect, "upstream-limit-rpm-field model-api-type-field");
+        ctx.bindLocalizedText(apiTypeField.querySelector(".field-label"), "editor:fields.modelApiType");
+        ctx.attachFieldTooltip(apiTypeField, PROVIDER_FIELD_TOOLTIPS.modelApiType);
+        row.appendChild(apiTypeField);
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "upstream-limit-remove model-api-type-remove";
+        ctx.bindKnownActionText(removeButton, "Remove");
+        removeButton.addEventListener("click", () => {
+          row.remove();
+          refreshEmptyState();
+        });
+        row.appendChild(removeButton);
+        list.appendChild(row);
+        refreshEmptyState();
+      }
+      const splitInitial = splitProviderModelsMetadata(initialModels);
+      splitInitial.apiTypes.forEach(appendRow);
+      refreshEmptyState();
+      addButton.addEventListener("click", () => appendRow());
+      function setProviderType(nextProviderType) {
+        const disabled = nextProviderType === "anthropic";
+        container.hidden = disabled;
+        addButton.disabled = disabled;
+        list.querySelectorAll("input, select, button").forEach((control) => {
+          control.disabled = disabled;
+        });
+      }
+      function getRows() {
+        return Array.from(list.querySelectorAll(".model-api-type-row")).map((row) => ({
+          modelId: row.querySelector(".model-api-type-model").value.trim(),
+          apiType: row.querySelector(".model-api-type-select").value.trim()
+        }));
+      }
+      setProviderType(providerType);
+      return { container, getRows, setProviderType };
+    }
+    function mergeModelApiTypesIntoModels(extraMetadata, rows, providerName, providerType) {
+      const merged = extraMetadata && typeof extraMetadata === "object" && !Array.isArray(extraMetadata) ? { ...extraMetadata } : {};
+      const seen = /* @__PURE__ */ new Set();
+      rows.forEach((row, index) => {
+        const modelId = row.modelId;
+        const apiType = row.apiType;
+        if (!modelId) {
+          if (apiType) {
+            throw new Error(`Provider '${providerName}' API type row #${index + 1} is missing a model id.`);
+          }
+          return;
+        }
+        if (!apiType) {
+          if (modelId) {
+            throw new Error(`Provider '${providerName}' model '${modelId}' must have an API type.`);
+          }
+          return;
+        }
+        if (!["responses", "chat_completions"].includes(apiType)) {
+          throw new Error(`Provider '${providerName}' model '${modelId}' has an invalid API type.`);
+        }
+        if (providerType === "anthropic") {
+          throw new Error(`Provider '${providerName}' cannot use a model API override with anthropic type.`);
+        }
+        if (seen.has(modelId)) {
+          throw new Error(`Provider '${providerName}' has duplicate API types for model '${modelId}'.`);
+        }
+        seen.add(modelId);
+        const base = merged[modelId] && typeof merged[modelId] === "object" && !Array.isArray(merged[modelId]) ? { ...merged[modelId] } : {};
+        base.api_type = apiType;
+        merged[modelId] = base;
+      });
+      return Object.keys(merged).length > 0 ? merged : void 0;
     }
     function buildUpstreamLimitsSection(initialModels) {
       const container = document.createElement("div");
@@ -6804,8 +6956,10 @@
         providerPayload.upstream_key_pools = upstreamKeyPools;
       }
       const extraModels = parseProviderModelsMetadata(modelsInput.value);
+      const modelApiTypeRows = providerCard._getModelApiTypeRows ? providerCard._getModelApiTypeRows() : [];
+      const modelsWithApiTypes = mergeModelApiTypesIntoModels(extraModels, modelApiTypeRows, name, type);
       const upstreamRows = providerCard._getUpstreamLimitsRows ? providerCard._getUpstreamLimitsRows() : [];
-      const mergedModels = mergeUpstreamLimitsIntoModels(extraModels, upstreamRows, name);
+      const mergedModels = mergeUpstreamLimitsIntoModels(modelsWithApiTypes, upstreamRows, name);
       if (mergedModels !== void 0) {
         providerPayload.models = mergedModels;
       } else if (extraModels !== void 0) {
@@ -6919,6 +7073,9 @@
       advancedDetails.appendChild(advancedSummary);
       const advancedGrid = document.createElement("div");
       advancedGrid.className = "advanced-grid";
+      const { container: modelApiTypesContainer, getRows: getModelApiTypeRows, setProviderType } = buildModelApiTypesSection(initialData.models, initialData.type || "openai");
+      advancedGrid.appendChild(modelApiTypesContainer);
+      typeSelect.addEventListener("change", () => setProviderType(typeSelect.value.trim()));
       const { container: upstreamLimitsContainer, getRows: getUpstreamLimitsRows } = buildUpstreamLimitsSection(initialData.models);
       advancedGrid.appendChild(upstreamLimitsContainer);
       const splitModels = splitProviderModelsMetadata(initialData.models);
@@ -6967,6 +7124,7 @@
       card.appendChild(cardHeader);
       card.appendChild(cardBody);
       card._getUpstreamLimitsRows = getUpstreamLimitsRows;
+      card._getModelApiTypeRows = getModelApiTypeRows;
       return card;
     }
     async function renderProviders(providers) {
@@ -7085,6 +7243,8 @@
       normalizeAvailableModels,
       splitProviderModelsMetadata,
       buildUpstreamLimitsSection,
+      buildModelApiTypesSection,
+      mergeModelApiTypesIntoModels,
       mergeUpstreamLimitsIntoModels,
       normalizeProviderCardForSave,
       getProvidersPayloadForSave,

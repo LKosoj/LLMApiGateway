@@ -82,7 +82,8 @@
     "maxTokens": "Max tokens",
     "instructions": "Instructions (emotion and style)",
     "llmEnhance": "Enhance speech with LLM (Silero / CosyVoice)",
-    "minDuration": "Min segment duration, s"
+    "minDuration": "Min segment duration, s",
+    "voiceId": "Voice ID"
   },
   "actions": {
     "sendMessage": "Send message",
@@ -165,7 +166,8 @@
     "chatCancelled": "Message cancelled.",
     "assistantTyping": "Assistant is typing…",
     "modelsLoadFailed": "Failed to load models.",
-    "tooManyFiles": "Select no more than {count, number} files for {field}."
+    "tooManyFiles": "Select no more than {count, number} files for {field}.",
+    "voiceIdRequired": "Enter a voice ID."
   },
   "results": {
     "download": "Download",

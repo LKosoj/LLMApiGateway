@@ -881,6 +881,10 @@ def _build_playground_models(config_loader) -> dict[str, list[str]]:
         "web_research": _names("web_research"),
         "web_deep_research": _names("web_deep_research"),
         "audio_speech": _names("audio_speech"),
+        "audio_speech_manual_voice": sorted(
+            name for name, config in (rules.get("audio_speech") or {}).items()
+            if config.get("routes") and config["routes"][0].get("voice_input") == "manual"
+        ),
         "audio_transcriptions": sorted(
             set(_names("audio_transcriptions")) | set(_names("audio_speaker_transcriptions"))
         ),
