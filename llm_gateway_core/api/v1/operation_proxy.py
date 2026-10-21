@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 RETRYABLE_OPERATION_STATUS_CODES = frozenset({408, 409, 429})
 
 
+class DownstreamHTTPException(HTTPException):
+    """An HTTP error returned by a provider, rather than local request validation."""
+
+
 def _response_body_length(response: httpx.Response) -> int | None:
     content = getattr(response, "content", None)
     if content is None:
@@ -148,7 +152,7 @@ async def proxy_json_to_downstream(
                         )
                         continue
 
-                    raise HTTPException(
+                    raise DownstreamHTTPException(
                         status_code=downstream_error_status_code(response.status_code),
                         detail=f"Downstream request failed with status {response.status_code}.",
                     )
@@ -200,7 +204,7 @@ async def proxy_json_to_downstream(
                     f"retryable downstream status {response.status_code}",
                 )
                 continue
-            raise HTTPException(status_code=downstream_error_status_code(response.status_code), detail=detail)
+            raise DownstreamHTTPException(status_code=downstream_error_status_code(response.status_code), detail=detail)
 
         try:
             return response.json(), response.status_code
@@ -262,7 +266,7 @@ async def proxy_json_raw_to_downstream(
                     f"retryable downstream status {response.status_code}",
                 )
                 continue
-            raise HTTPException(status_code=downstream_error_status_code(response.status_code), detail=detail)
+            raise DownstreamHTTPException(status_code=downstream_error_status_code(response.status_code), detail=detail)
 
         return response.content, response.status_code, response.headers.get("content-type")
 
@@ -324,7 +328,7 @@ async def proxy_multipart_to_downstream(
                     f"retryable downstream status {response.status_code}",
                 )
                 continue
-            raise HTTPException(
+            raise DownstreamHTTPException(
                 status_code=downstream_error_status_code(response.status_code),
                 detail=detail,
             )
@@ -396,7 +400,7 @@ async def proxy_multipart_raw_to_downstream(
                     f"retryable downstream status {response.status_code}",
                 )
                 continue
-            raise HTTPException(
+            raise DownstreamHTTPException(
                 status_code=downstream_error_status_code(response.status_code),
                 detail=detail,
             )

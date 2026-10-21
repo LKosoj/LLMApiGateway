@@ -36,6 +36,7 @@ from .audio_adapters import (
 )
 from .audio_speakers import merge_transcription_with_diarization
 from .operation_proxy import (
+    DownstreamHTTPException,
     extract_downstream_error_detail,
     proxy_json_raw_to_downstream,
     proxy_multipart_raw_to_downstream,
@@ -533,7 +534,7 @@ def _is_json_content_type(content_type: str | None) -> bool:
 
 
 def _should_try_next_route(exc: HTTPException, route_index: int, routes: list[OperationRoute]) -> bool:
-    return exc.status_code == 503 and route_index < len(routes) - 1
+    return (isinstance(exc, DownstreamHTTPException) or exc.status_code == 503) and route_index < len(routes) - 1
 
 
 def _log_route_fallback(

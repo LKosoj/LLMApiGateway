@@ -343,7 +343,7 @@ class ImagesEndpointTests(unittest.TestCase):
         )
         tokens_usage_db.insert_usage.assert_not_called()
 
-    def test_post_images_generations_falls_back_after_downstream_error_status(self):
+    def test_post_images_generations_falls_back_after_downstream_404(self):
         fallback_payload = {
             "created": 124,
             "data": [{"b64_json": "fallback-image-bytes"}],
@@ -351,7 +351,7 @@ class ImagesEndpointTests(unittest.TestCase):
 
         with self._client(
             [
-                _FakeDownstreamResponse({"error": {"message": "rate limited"}}, status_code=429),
+                _FakeDownstreamResponse({"error": {"message": "not found"}}, status_code=404),
                 _FakeDownstreamResponse(fallback_payload),
             ]
         ) as (client, _dispatcher, fake_http_client):

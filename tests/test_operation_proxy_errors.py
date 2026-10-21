@@ -3,10 +3,12 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+import pytest
 from fastapi import HTTPException
 
 from tests._async_compat import run_async
 from llm_gateway_core.api.v1.operation_proxy import (
+    DownstreamHTTPException,
     extract_downstream_error_detail,
     proxy_json_raw_to_downstream,
     proxy_json_to_downstream,
@@ -261,3 +263,32 @@ class OperationProxyErrorDisclosureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 413, 422, 429, 500, 502, 503])
+@pytest.mark.parametrize("transport", ["json", "stream", "raw_json", "multipart", "raw_multipart"])
+def test_provider_http_errors_are_distinct_from_local_errors(status, transport):
+    async def scenario():
+        calls = []
+
+        async def upstream(request):
+            calls.append(request)
+            return httpx.Response(status, json={"error": "upstream failure"})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            target = "https://provider.example/run"
+            with pytest.raises(DownstreamHTTPException) as exc_info:
+                if transport in ("json", "stream"):
+                    await proxy_json_to_downstream(
+                        target, {}, {"stream": transport == "stream"}, client,
+                    )
+                elif transport == "raw_json":
+                    await proxy_json_raw_to_downstream(target, {}, {}, client)
+                elif transport == "multipart":
+                    await proxy_multipart_to_downstream(target, {}, {}, [], client)
+                else:
+                    await proxy_multipart_raw_to_downstream(target, {}, {}, [], client)
+            assert exc_info.value.status_code == (503 if status == 429 or status >= 500 else status)
+            assert len(calls) == 1
+
+    run_async(scenario())

@@ -29,6 +29,7 @@ from .image_adapters import (
     normalize_downstream_image_response,
 )
 from .operation_proxy import (
+    DownstreamHTTPException,
     json_response,
     proxy_json_to_downstream,
     proxy_multipart_to_downstream,
@@ -80,7 +81,7 @@ def _get_operation_runtime(
 
 
 def _should_try_next_image_route(exc: HTTPException, route_index: int, routes: list[OperationRoute]) -> bool:
-    return exc.status_code in IMAGE_FALLBACK_STATUS_CODES and route_index < len(routes) - 1
+    return (isinstance(exc, DownstreamHTTPException) or exc.status_code in IMAGE_FALLBACK_STATUS_CODES) and route_index < len(routes) - 1
 
 
 def _log_image_route_fallback(

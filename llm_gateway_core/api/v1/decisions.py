@@ -98,8 +98,7 @@ async def call_decision_routes(request: Request, requested_model: str, payload: 
                 raise AccountingCostError(AccountingErrorCode.COST_UNAVAILABLE)
             observation = observe(downstream_json, route)
         except (HTTPException, AccountingError) as exc:
-            retryable = isinstance(exc, AccountingError) or exc.status_code in {502, 503}
-            if not retryable or route_index == len(routes) - 1:
+            if route_index == len(routes) - 1:
                 raise
             logger.warning(
                 "Decisions route failed for gateway model '%s'; trying next route. "

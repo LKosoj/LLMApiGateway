@@ -35,7 +35,7 @@ from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import normalize_retry_settings
 from ...utils.usage_tracking import extract_tokens_usage
 from .embeddings import apply_top_n, map_rerank_payload, normalize_rerank_response
-from .operation_proxy import proxy_json_to_downstream
+from .operation_proxy import DownstreamHTTPException, proxy_json_to_downstream
 from .web_adapters import (
     _UsageAccumulator,
     _call_internal_text_model,
@@ -874,7 +874,7 @@ def _articles_with_original_content(
 
 
 def _should_try_next_rerank_route(exc: HTTPException, route_index: int, routes: list[OperationRoute]) -> bool:
-    return exc.status_code == 503 and route_index < len(routes) - 1
+    return (isinstance(exc, DownstreamHTTPException) or exc.status_code == 503) and route_index < len(routes) - 1
 
 
 def _log_web_rerank_route_fallback(

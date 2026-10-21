@@ -38,6 +38,7 @@ from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from ...services.stream_observation import SSEEvent, parse_sse_json
 from .operation_proxy import (
+    DownstreamHTTPException,
     json_response,
     proxy_json_to_downstream,
     read_json_request_body,
@@ -318,7 +319,7 @@ def _should_try_next_route(
     route_index: int,
     routes: list[OperationRoute],
 ) -> bool:
-    retryable = isinstance(exc, AccountingError) or exc.status_code in RETRYABLE_ROUTE_STATUS_CODES
+    retryable = isinstance(exc, (AccountingError, DownstreamHTTPException)) or exc.status_code in RETRYABLE_ROUTE_STATUS_CODES
     return retryable and route_index < len(routes) - 1
 
 

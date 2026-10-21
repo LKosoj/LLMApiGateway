@@ -15,6 +15,7 @@ from llm_gateway_core.api.v1 import audio, images
 from llm_gateway_core.api.v1.audio_adapters import AudioAdapterResponse
 from llm_gateway_core.api.v1.image_adapters import ImageDownstreamResponseError
 from llm_gateway_core.api.v1.operation_runtime import ValidatedUpload
+from llm_gateway_core.api.v1.operation_proxy import DownstreamHTTPException
 from llm_gateway_core.config.loader import (
     OperationRoute,
     REQUEST_FORMAT_NVIDIA_RIVA_GRPC,
@@ -341,7 +342,8 @@ def test_image_endpoints_commit_normalized_success_with_flat_cost_precedence(
     run_async(scenario())
 
 
-def test_image_fallback_commits_once_from_final_success() -> None:
+@pytest.mark.parametrize("upstream_status", [400, 401, 403, 404, 413, 422, 429, 500, 502, 503])
+def test_image_fallback_commits_once_from_final_success(upstream_status: int) -> None:
     async def scenario() -> None:
         request, services = _request("/v1/images/generations")
         _install_successful_commit(services.accounting_service)
@@ -353,7 +355,7 @@ def test_image_fallback_commits_once_from_final_success() -> None:
         with _image_dependencies(
             {"model": "gateway-image", "prompt": "draw"},
             routes,
-            [HTTPException(status_code=503, detail="primary failed"), (final_payload, 202)],
+            [DownstreamHTTPException(upstream_status), (final_payload, 202)],
             {"data": [{"url": "https://example.test/image.png"}]},
         ) as (execute, _, prepare):
             response = await images.create_images_generation(request)
@@ -744,7 +746,8 @@ def test_audio_grpc_response_uses_synthesized_configured_cost() -> None:
     run_async(scenario())
 
 
-def test_audio_transcription_fallback_commits_only_final_success() -> None:
+@pytest.mark.parametrize("upstream_status", [400, 401, 403, 404, 413, 422, 429, 500, 502, 503])
+def test_audio_transcription_fallback_commits_only_final_success(upstream_status: int) -> None:
     async def scenario() -> None:
         request, services = _request("/v1/audio/transcriptions")
         _install_successful_commit(services.accounting_service)
@@ -756,7 +759,7 @@ def test_audio_transcription_fallback_commits_only_final_success() -> None:
         with _transcription_dependencies(
             routes,
             [
-                HTTPException(status_code=503, detail="primary failed"),
+                DownstreamHTTPException(upstream_status),
                 (json.dumps(payload).encode(), 200, "application/json"),
             ],
         ) as (_, dispatcher, proxy):

@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from llm_gateway_core.api.v1 import embeddings
 from llm_gateway_core.config.loader import OperationRoute
+from llm_gateway_core.api.v1.operation_proxy import DownstreamHTTPException
 from llm_gateway_core.middleware.accounting_admission import (
     ACCOUNTING_REQUEST_CONTEXT_STATE_KEY,
     AccountingRequestContext,
@@ -397,7 +398,8 @@ def test_rerank_normalization_failure_releases_without_commit() -> None:
     run_async(scenario())
 
 
-def test_embeddings_fallback_commits_only_final_route_identity() -> None:
+@pytest.mark.parametrize("upstream_status", [400, 401, 403, 404, 413, 422, 429, 500, 502, 503])
+def test_embeddings_fallback_commits_only_final_route_identity(upstream_status: int) -> None:
     async def scenario() -> None:
         request, services = _request("/v1/embeddings")
         _install_successful_commit(services.accounting_service)
@@ -412,7 +414,7 @@ def test_embeddings_fallback_commits_only_final_route_identity() -> None:
         with _endpoint_dependencies(
             {"model": "gateway-model", "input": ["hello"]},
             routes,
-            [HTTPException(status_code=503, detail="primary failed"), (downstream_payload, 200)],
+            [DownstreamHTTPException(upstream_status), (downstream_payload, 200)],
         ) as (_, downstream):
             response = await embeddings.create_embeddings(request)
 
@@ -486,6 +488,43 @@ def test_rerank_fallback_on_invalid_route_response() -> None:
             },
             routes,
             [(invalid_payload, 200), (valid_payload, 200)],
+        ) as (_, downstream):
+            response = await embeddings.create_rerank(request)
+
+        await _run_response(request, response)
+        assert response.status_code == 200
+        assert downstream.await_count == 2
+        event = services.accounting_service.commit.await_args.args[1]
+        assert event.provider == "provider-b"
+        assert event.model == "model-b"
+        services.accounting_service.commit.assert_awaited_once()
+        services.accounting_service.release.assert_not_awaited()
+        _assert_no_legacy_writes(services)
+
+    run_async(scenario())
+
+
+@pytest.mark.parametrize("upstream_status", [400, 401, 403, 404, 413, 422, 429, 500, 502, 503])
+def test_rerank_fallback_on_downstream_http_error(upstream_status: int) -> None:
+    async def scenario() -> None:
+        request, services = _request("/v1/rerank")
+        _install_successful_commit(services.accounting_service)
+        routes = [
+            _route("provider-a", "model-a"),
+            _route("provider-b", "model-b"),
+        ]
+        valid_payload = {
+            "results": [{"index": 0, "relevance_score": 0.9}],
+            "usage": {"prompt_tokens": 2, "total_tokens": 2, "cost": 0},
+        }
+        with _endpoint_dependencies(
+            {
+                "model": "gateway-rerank",
+                "query": "query",
+                "documents": ["document"],
+            },
+            routes,
+            [DownstreamHTTPException(upstream_status), (valid_payload, 200)],
         ) as (_, downstream):
             response = await embeddings.create_rerank(request)
 

@@ -72,7 +72,7 @@
         {
           "provider": "routerai",
           "model": "~typesafe/jev-latest",
-          "target_path": "https://routerai.ru/api",
+          "target_path": "https://routerai.ru/api/v1/decisions",
           "custom_headers": {},
           "custom_body_params": {}
         },

@@ -2918,7 +2918,7 @@ class WebApiTests(unittest.TestCase):
         ]
         self.assertEqual(rerank_payloads, [])
 
-    def test_web_research_rerank_uses_next_route_after_downstream_failure(self):
+    def test_web_research_rerank_uses_next_route_after_downstream_404(self):
         operation_rules = json.loads(self.operation_rules_path.read_text(encoding="utf-8"))
         operation_rules["rerank"][0]["routes"].append(
             {
@@ -2936,7 +2936,7 @@ class WebApiTests(unittest.TestCase):
             if isinstance(json, dict) and "text_1" in json and "text_2" in json:
                 rerank_calls.append((url, dict(json)))
                 if len(rerank_calls) == 1:
-                    return _FakeDownstreamResponse({"error": {"message": "primary-rerank-down"}}, status_code=503)
+                    return _FakeDownstreamResponse({"error": {"message": "primary-rerank-down"}}, status_code=404)
                 return _FakeDownstreamResponse(
                     {
                         "data": [{"index": 0, "score": 0.9}],

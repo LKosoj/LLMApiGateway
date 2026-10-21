@@ -285,7 +285,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         fake_http_client.post.assert_awaited_once()
         tokens_usage_db.insert_usage.assert_not_called()
 
-    def test_audio_transcriptions_falls_back_to_next_route_after_downstream_failure(self):
+    def test_audio_transcriptions_falls_back_to_next_route_after_downstream_401(self):
         operation_rules = json.loads(self.operation_rules_path.read_text(encoding="utf-8"))
         operation_rules["audio_transcriptions"][0]["routes"].append(
             {
@@ -306,7 +306,7 @@ class AudioTranscriptionsApiTests(unittest.TestCase):
         }
 
         downstream_responses = [
-            _FakeDownstreamResponse({"error": {"message": "primary-down"}}, status_code=503),
+            _FakeDownstreamResponse({"error": {"message": "primary-down"}}, status_code=401),
             _FakeDownstreamResponse(downstream_payload, status_code=200),
         ]
         forwarded_uploads = []

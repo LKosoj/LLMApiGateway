@@ -332,7 +332,7 @@ class EmbeddingsEndpointTests(unittest.TestCase):
             },
         )
 
-    def test_post_embeddings_does_not_fallback_after_non_retryable_downstream_4xx(self):
+    def test_post_embeddings_falls_back_after_downstream_4xx(self):
         operation_rules = json.loads(self.operation_rules_path.read_text(encoding="utf-8"))
         operation_rules["embeddings"][0]["routes"].append(
             {
@@ -355,10 +355,9 @@ class EmbeddingsEndpointTests(unittest.TestCase):
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "Downstream request failed with status 400.")
-        self.assertNotIn("bad request", response.text)
-        self.assertEqual(fake_http_client.post.await_count, 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"object": "list", "data": []})
+        self.assertEqual(fake_http_client.post.await_count, 2)
 
     def test_api_v1_router_registers_embeddings_router(self):
         app = FastAPI()

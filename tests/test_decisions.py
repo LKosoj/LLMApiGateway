@@ -94,13 +94,13 @@ def test_decisions_config_defaults_and_structured_roundtrip():
         ModelsOperationConfig.model_validate(bad)
 
 
-def _endpoint_case(monkeypatch, *, usage, rates=True, upstream_error=False, unknown=False, input_rate=2.0, upstream_errors=None, operation_rules=None):
+def _endpoint_case(monkeypatch, *, usage, rates=True, unknown=False, input_rate=2.0, upstream_errors=None, operation_rules=None):
     async def run():
         calls = []
 
         async def upstream(req):
             calls.append(json.loads(req.content))
-            status = (upstream_errors or {}).get(calls[-1]["model"], 400 if upstream_error else 200)
+            status = (upstream_errors or {}).get(calls[-1]["model"], 200)
             if status != 200:
                 return httpx.Response(status, json={"error": "upstream failed"})
             return httpx.Response(200, json={"model": "jev-snapshot", "answers": {"refund": {"type": "noul", "noul": 0.9}}, "usage": usage})
@@ -187,11 +187,35 @@ def test_decisions_does_not_replace_usd_with_rubles_or_default_cost(monkeypatch)
     service.release.assert_awaited_once()
 
 
-def test_decisions_upstream_error_does_not_try_next_route(monkeypatch):
-    status, _, calls, service = _endpoint_case(monkeypatch, usage={}, upstream_error=True)
-    assert status == 400
-    assert len(calls) == 1
-    service.release.assert_awaited_once()
+@pytest.mark.parametrize("upstream_status", [400, 401, 403, 404, 408, 422, 429, 500, 502, 503])
+def test_decisions_upstream_error_tries_next_route(monkeypatch, upstream_status):
+    status, _, calls, service = _endpoint_case(
+        monkeypatch, usage={"input_tokens": 1000, "cost": 0.000042},
+        upstream_errors={"jev-1.13": upstream_status},
+    )
+    assert status == 200
+    assert [call["model"] for call in calls] == ["jev-1.13", "other"]
+    service.commit.assert_awaited_once()
+    assert service.commit.call_args.args[1].model == "other"
+
+
+def test_decisions_configured_chain_reaches_aitunnel_after_429_and_404(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    rule = json.loads((root / "models_operation_rules.json").read_text())["decisions"][0]
+    rule["gateway_model_name"] = PAYLOAD["model"]
+    status, _, calls, service = _endpoint_case(
+        monkeypatch, usage={"input_tokens": 1000, "cost": 0.000042},
+        upstream_errors={"jev-1.13-free": 429, "~typesafe/jev-latest": 404},
+        operation_rules={"decisions": [rule]},
+    )
+    assert status == 200
+    assert [call["model"] for call in calls] == [
+        "jev-1.13-free", "~typesafe/jev-latest", "pplx-decider-v1.1-27b",
+    ]
+    service.commit.assert_awaited_once()
+    event = service.commit.call_args.args[1]
+    assert event.provider == "aitunnel"
+    assert event.model == "pplx-decider-v1.1-27b"
 
 
 def test_decisions_unknown_model_has_no_upstream_call(monkeypatch):
@@ -235,6 +259,9 @@ def test_configured_jev_route_registry_and_usage_record(monkeypatch):
     assert dispatcher.build_target_url(model.routes[0], ProviderDetails(**providers["opencode-zen"])) == (
         "https://opencode.ai/inference/systemone/v1/systemone"
     )
+    assert dispatcher.build_target_url(model.routes[1], ProviderDetails(**providers["routerai"])) == (
+        "https://routerai.ru/api/v1/decisions"
+    )
     status, _, _, service = _endpoint_case(
         monkeypatch, usage={"input_tokens": 1000, "cost_rub": 0.0084}, input_rate=rates.input_rate,
     )
@@ -260,11 +287,12 @@ def test_decisions_fallback_chain_records_only_successful_model(monkeypatch):
     assert event.usage.cost == 0.000042
 
 
-def test_decisions_exhausted_fallbacks_return_error_and_release(monkeypatch):
+@pytest.mark.parametrize("last_status", [400, 401, 404, 503])
+def test_decisions_exhausted_fallbacks_return_error_and_release(monkeypatch, last_status):
     status, _, calls, service = _endpoint_case(
-        monkeypatch, usage={}, upstream_errors={"jev-1.13": 503, "other": 503},
+        monkeypatch, usage={}, upstream_errors={"jev-1.13": 503, "other": last_status},
     )
-    assert status == 503
+    assert status == last_status
     assert [call["model"] for call in calls] == ["jev-1.13", "other"]
     service.commit.assert_not_called()
     service.release.assert_awaited_once()
