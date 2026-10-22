@@ -318,6 +318,8 @@ async def _call_internal_text_model(
             False,
             proxy_http_clients=runtime_snapshot.proxy_http_clients,
             upstream_routing_state=services.upstream_routing_state,
+            stream_observation_capacity=services.stream_observation_capacity,
+            stream_event_max_bytes=services.stream_event_max_bytes,
         )
         if isinstance(response_data, dict) and error_detail is None:
             choices = response_data.get("choices")

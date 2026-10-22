@@ -1,10 +1,13 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 
 from llm_gateway_core.api.v1 import web as web_api
 from llm_gateway_core.api.v1 import web_adapters as web_adapters_owner
+from llm_gateway_core.config.loader import ProviderDetails
 from llm_gateway_core.services.accounting import (
     AccountingError,
     AccountingUsage,
@@ -121,6 +124,56 @@ def test_internal_text_model_passes_captured_runtime_dependencies() -> None:
     assert call is not None
     assert call.kwargs["proxy_http_clients"] is snapshot.proxy_http_clients
     assert call.kwargs["upstream_routing_state"] is canonical_routing_state
+    assert call.kwargs["stream_observation_capacity"] is services.stream_observation_capacity
+    assert call.kwargs["stream_event_max_bytes"] == services.stream_event_max_bytes
+
+
+def test_internal_text_model_collects_opencode_zen_stream() -> None:
+    usage = {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+    events = [
+        {"id": "zen-test", "choices": [{"index": 0, "delta": {"content": "answer"}}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": usage},
+    ]
+    body = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+
+    class ResponseStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield body.encode()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["stream"] is True
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=ResponseStream())
+
+    async def exercise() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            services = make_app_services(http_client=client)
+            snapshot = make_runtime_snapshot(http_client=client)
+            snapshot.config_loader.providers_config = {
+                "opencode-zen": ProviderDetails(baseUrl="https://zen.example/v1", apikey="public"),
+            }
+            snapshot.config_loader.fallback_rules = {
+                "internal-model": {"fallback_models": [{"provider": "opencode-zen", "model": "test-free"}]},
+            }
+            request = _request(services=services, snapshot=snapshot)
+            request.headers = {}
+            accumulator = web_api._UsageAccumulator()
+
+            result = await web_api._call_internal_text_model(
+                request,
+                snapshot.config_loader,
+                client,
+                model="internal-model",
+                messages=[{"role": "user", "content": "question"}],
+                temperature=0.0,
+                max_tokens=100,
+                usage_accumulator=accumulator,
+            )
+
+            assert result == "answer"
+            for key, value in usage.items():
+                assert accumulator.usage[key] == value
+
+    run_async(exercise())
 
 
 def test_internal_text_model_observation_uses_final_route_and_frozen_rates() -> None:
