@@ -2,6 +2,7 @@ import asyncio
 import codecs
 import copy
 import hashlib
+import json
 import httpx
 import logging
 import time
@@ -34,7 +35,8 @@ from llm_gateway_core.services.stream_observation import (
     StreamObservationStateError,
     parse_sse_json,
 )
-from llm_gateway_core.utils.log_redaction import safe_exception_type_name
+from llm_gateway_core.utils.log_redaction import redact_payload_for_log, safe_exception_type_name
+from llm_gateway_core.utils.provider_error_redaction import redact_provider_error_text
 from llm_gateway_core.utils.text_sanitize import sanitize_payload
 
 DEFAULT_RETRY_COUNT = 0
@@ -690,11 +692,14 @@ class RequestErrorDetail(str):
     status that produced the failure (if applicable). ``retry_after_uncapped``
     holds the same hint before :data:`MAX_RETRY_AFTER_SECONDS` clamping, for
     callers (e.g. cooldown scheduling) that need the raw upstream value.
+    ``diagnostic_detail`` holds redacted provider text for logs and DB records,
+    separately from the message used for routing decisions.
     """
 
     retry_after: float | None
     retry_after_uncapped: float | None
     status_code: int | None
+    diagnostic_detail: str | None
 
     def __new__(
         cls,
@@ -703,11 +708,13 @@ class RequestErrorDetail(str):
         retry_after: float | None = None,
         retry_after_uncapped: float | None = None,
         status_code: int | None = None,
+        diagnostic_detail: str | None = None,
     ) -> "RequestErrorDetail":
         instance = super().__new__(cls, message)
         instance.retry_after = retry_after
         instance.retry_after_uncapped = retry_after_uncapped
         instance.status_code = status_code
+        instance.diagnostic_detail = diagnostic_detail
         return instance
 
 
@@ -1416,6 +1423,7 @@ async def _make_streaming_request(
 
         if response.status_code >= 400:
             error_body_length = 0
+            error_body_preview = bytearray()
             error_body_sha256 = hashlib.sha256()
             context_overflow_detector = _ContextOverflowStreamDetector()
             error_body_truncated = False
@@ -1439,6 +1447,7 @@ async def _make_streaming_request(
                     error_body_length += len(decoded.data)
                     error_body_sha256.update(decoded.data)
                     context_overflow_detector.feed(decoded.data)
+                    error_body_preview.extend(decoded.data[:max(0, 4096 - len(error_body_preview))])
                 finally:
                     decoded.lease.release_all()
                 if error_body_length >= stream_event_max_bytes:
@@ -1466,11 +1475,29 @@ async def _make_streaming_request(
                     f"Upstream request failed with HTTP status {response.status_code}: "
                     "context overflow."
                 )
+            diagnostic_detail = None
+            if error_body_preview:
+                error_text = error_body_preview.decode("utf-8", errors="replace")
+                try:
+                    error_payload = json.loads(error_text)
+                except ValueError:
+                    pass
+                else:
+                    error_text = json.dumps(redact_payload_for_log(error_payload), ensure_ascii=False)
+                diagnostic_detail = f"{client_error} Provider error: {redact_provider_error_text(error_text)}"
+                if error_body_truncated or error_body_length > len(error_body_preview):
+                    diagnostic_detail += " [truncated]"
+                logging.warning(
+                    "Upstream HTTP error request_id=%s: %s",
+                    _safe_stream_request_id(stream_request_id),
+                    diagnostic_detail,
+                )
             return None, RequestErrorDetail(
                 client_error,
                 retry_after=retry_after,
                 retry_after_uncapped=retry_after_uncapped,
                 status_code=response.status_code,
+                diagnostic_detail=diagnostic_detail,
             )
 
         # Prime until the first complete SSE event so empty/error streams fail closed.

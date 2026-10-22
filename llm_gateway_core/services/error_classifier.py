@@ -273,6 +273,10 @@ def _build_fallback_error_message(
     if not error_detail:
         return None
 
+    diagnostic_detail = getattr(error_detail, "diagnostic_detail", None)
+    if diagnostic_detail:
+        return diagnostic_detail
+
     is_generic_status_code_error = re.search(
         r"\brequest failed with status code (400|401|403|404|429|500|502|503)\b",
         error_detail,

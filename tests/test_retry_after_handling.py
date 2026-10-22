@@ -1439,6 +1439,39 @@ class MakeStreamingRequestTests(unittest.TestCase):
         self.assertEqual(capacity.snapshot.active_items, 0)
         self.assertEqual(capacity.snapshot.waiters, 0)
 
+    def test_streaming_http_error_preserves_provider_reason_for_diagnostics(self):
+        fake_client = _FakeStreamingClient(
+            [
+                b'{"error":{"message":"Unsupported parameter: ',
+                b'top_p","code":"invalid_parameter"},"api_key":"SECRET-KEY"}',
+            ],
+            status_code=400,
+        )
+        capacity = StreamObservationCapacity(max_items=2, max_bytes=1024)
+        with self.assertLogs(level="WARNING") as logs:
+            response_data, error_detail = run_async(
+                _make_streaming_request(
+                    fake_client,
+                    "https://upstream.example/v1/chat/completions",
+                    {},
+                    {},
+                    stream_observation_capacity=capacity,
+                    stream_event_max_bytes=1024,
+                    stream_request_id="diagnostic-request",
+                )
+            )
+
+        self.assertIsNone(response_data)
+        self.assertEqual(error_detail, "Upstream request failed with HTTP status 400.")
+        self.assertEqual(error_detail.status_code, 400)
+        self.assertIn("Unsupported parameter: top_p", error_detail.diagnostic_detail)
+        self.assertIn("invalid_parameter", error_detail.diagnostic_detail)
+        self.assertNotIn("SECRET-KEY", error_detail.diagnostic_detail)
+        self.assertIn(error_detail.diagnostic_detail, "\n".join(logs.output))
+        self.assertIn("request_id=diagnostic-request", "\n".join(logs.output))
+        self.assertEqual(capacity.snapshot.active_bytes, 0)
+        self.assertTrue(fake_client.context.closed)
+
     def test_streaming_http_error_is_bounded_and_credential_safe(self):
         secret = b"SECRET-UPSTREAM-CREDENTIAL"
         fake_client = _FakeStreamingClient(
@@ -1467,6 +1500,7 @@ class MakeStreamingRequestTests(unittest.TestCase):
         )
         self.assertEqual(error_detail.retry_after, 7.0)
         self.assertEqual(error_detail.status_code, 429)
+        self.assertIn("[truncated]", error_detail.diagnostic_detail)
         self.assertFalse(fake_client.response.aread_called)
         self.assertNotIn(secret.decode("ascii"), "\n".join(logs.output))
         self.assertIn("reason=upstream_http_error_truncated", "\n".join(logs.output))

@@ -124,6 +124,42 @@ class FallbackEventsDBTests(unittest.TestCase):
         self.db._batcher = None
         self.db._init_db()
 
+    def test_provider_diagnostic_is_saved_and_returned_with_attempt(self):
+        diagnostic = "Upstream request failed with HTTP status 400. Provider error: Unsupported parameter: top_p"
+        error = RequestErrorDetail(
+            "Upstream request failed with HTTP status 400.",
+            status_code=400,
+            diagnostic_detail=diagnostic,
+        )
+        self.db.insert_event(
+            request_id="req-diagnostic",
+            gateway_model="llmgateway/high",
+            attempt_number=1,
+            provider="test-provider",
+            model="test-model",
+            success=False,
+            error_type=classify_error(error),
+            error_message=_build_fallback_error_message(error, {}, is_streaming=True),
+            duration_ms=100,
+        )
+        self.db.insert_event(
+            request_id="req-diagnostic",
+            gateway_model="llmgateway/high",
+            attempt_number=2,
+            provider="other-provider",
+            model="other-model",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=100,
+        )
+
+        records, total = run_async(self.db.get_fallback_records(limit=25, offset=0))
+        self.assertEqual(total, 1)
+        attempt = records[0]["attempts"][0]
+        self.assertEqual(attempt["error_type"], "http_400")
+        self.assertEqual(attempt["error_message"], diagnostic)
+
     def test_insert_and_retrieve_events(self):
         self.db.insert_event(
             request_id="req-1",

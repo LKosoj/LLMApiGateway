@@ -417,8 +417,8 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
-        "provider": "anymodel",
-        "model": "cx/gpt-6.1-sol",
+        "provider": "agentrouter",
+        "model": "gpt-6.1-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -432,8 +432,8 @@
         ]
       },
       {
-        "provider": "agentrouter",
-        "model": "gpt-6.1-sol",
+        "provider": "anymodel",
+        "model": "cx/gpt-6.1-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
