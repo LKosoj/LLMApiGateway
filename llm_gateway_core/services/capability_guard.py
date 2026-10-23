@@ -71,7 +71,18 @@ def _output_reserve_tokens(request_body_json: Mapping[str, Any]) -> int:
 
 def estimate_request_tokens_for_routing(request_body_json: Mapping[str, Any]) -> int:
     """Rough prompt+image+output-reserve token estimate used only for routing decisions."""
-    prompt_tokens = estimate_prompt_tokens(json.dumps(request_body_json))
+    text_body = dict(request_body_json)
+    messages = request_body_json.get("messages")
+    if isinstance(messages, list):
+        text_body["messages"] = []
+        for message in messages:
+            if isinstance(message, Mapping) and isinstance(message.get("content"), list):
+                message = dict(message, content=[
+                    block for block in message["content"]
+                    if not (isinstance(block, Mapping) and block.get("type") == "image_url")
+                ])
+            text_body["messages"].append(message)
+    prompt_tokens = estimate_prompt_tokens(json.dumps(text_body))
     image_tokens = _count_image_blocks(request_body_json) * IMAGE_TOKEN_ESTIMATE
     return prompt_tokens + image_tokens + _output_reserve_tokens(request_body_json)
 

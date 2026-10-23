@@ -1,8 +1,10 @@
 import unittest
+from copy import deepcopy
 from unittest import mock
 
 from llm_gateway_core.services.capability_guard import (
     DEFAULT_OUTPUT_RESERVE_TOKENS,
+    IMAGE_TOKEN_ESTIMATE,
     OUTPUT_RESERVE_CAP_TOKENS,
     REASON_CONTEXT_WINDOW_EXCEEDED,
     REASON_TOOLS_UNSUPPORTED,
@@ -74,6 +76,42 @@ class OutputReserveTests(unittest.TestCase):
 
         self.assertEqual(at_cap, over_cap)
         self.assertLess(under_cap, at_cap)
+
+
+class ImageTokenEstimateTests(unittest.TestCase):
+    def test_image_data_is_not_counted_as_text_or_changed(self):
+        estimates = []
+        for url in ("https://example.com/a.png", "data:image/png;base64," + "abcd" * 10000):
+            request_body = {
+                "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": "Read this image"},
+                    {"type": "image_url", "image_url": {"url": url}},
+                    {"type": "image_url", "image_url": {"url": url}},
+                ]}],
+                "max_tokens": 256,
+            }
+            original = deepcopy(request_body)
+            estimates.append(estimate_request_tokens_for_routing(request_body))
+            candidates = [{"provider": "ocr", "model": "ocr", "context_window": 8192}]
+            kept, rejected = filter_capable_candidates(candidates, request_body, gateway_model="ocr")
+            self.assertEqual(kept, candidates)
+            self.assertEqual(rejected, [])
+            self.assertEqual(request_body, original)
+        self.assertEqual(estimates[0], estimates[1])
+        self.assertGreaterEqual(estimates[0], 2 * IMAGE_TOKEN_ESTIMATE + 256)
+
+    def test_long_text_with_image_still_exceeds_context_window(self):
+        request_body = {"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "long text " * 10000},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abcd"}},
+        ]}]}
+        kept, rejected = filter_capable_candidates(
+            [{"provider": "ocr", "model": "ocr", "context_window": 8192}],
+            request_body,
+            gateway_model="ocr",
+        )
+        self.assertEqual(kept, [])
+        self.assertEqual(rejected[0].reason, REASON_CONTEXT_WINDOW_EXCEEDED)
 
 
 class FilterCapableCandidatesTests(unittest.TestCase):

@@ -95,6 +95,7 @@ class ChatFallbackCapabilityGuardTests(unittest.TestCase):
                         "provider": "test-provider",
                         "model": "vision-model",
                         "use_provider_order_as_fallback": False,
+                        "context_window": 8192,
                     },
                 ],
                 "rotate_models": False,
@@ -110,18 +111,23 @@ class ChatFallbackCapabilityGuardTests(unittest.TestCase):
         async_client_ctor.return_value = fake_http_client
 
         make_llm_request_mock.return_value = (_valid_completion_response("vision-success"), None)
+        payload = self._vision_request_payload("gateway-model")
+        payload["messages"][0]["content"][1]["image_url"]["url"] = (
+            "data:image/png;base64," + "abcd" * 10000
+        )
 
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
             with TestClient(main.app) as client:
                 response = client.post(
                     "/v1/chat/completions",
-                    json=self._vision_request_payload("gateway-model"),
+                    json=payload,
                     headers={"Authorization": "Bearer test-gateway-key"},
                 )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), _valid_completion_response("vision-success"))
         self.assertEqual(make_llm_request_mock.await_count, 1)
+        self.assertEqual(make_llm_request_mock.await_args.args[3]["messages"], payload["messages"])
         self.assertEqual(
             make_llm_request_mock.await_args.args[3]["model"],
             "vision-model",
