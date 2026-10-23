@@ -56,14 +56,19 @@ def chat_request_to_responses(payload: dict) -> dict:
         result["max_output_tokens"] = result.pop("max_tokens")
     result.pop("stream_options", None)
     result.pop("frequency_penalty", None)
+    result.pop("presence_penalty", None)
     if "n" in result and result.pop("n") != 1:
         raise HTTPException(400, "Responses upstream supports n=1 only.")
     for field in (
         "stop",
         "logprobs",
         "top_logprobs",
-        "presence_penalty",
         "logit_bias",
+        "seed",
+        "audio",
+        "modalities",
+        "prediction",
+        "web_search_options",
         "functions",
         "function_call",
     ):
@@ -71,6 +76,8 @@ def chat_request_to_responses(payload: dict) -> dict:
             raise HTTPException(400, f"Responses upstream does not support '{field}'.")
     if "reasoning_effort" in result:
         result["reasoning"] = {**result.get("reasoning", {}), "effort": result.pop("reasoning_effort")}
+    if "verbosity" in result:
+        result["text"] = {**result.get("text", {}), "verbosity": result.pop("verbosity")}
     if "response_format" in result:
         fmt = result.pop("response_format")
         if fmt.get("type") == "json_schema":

@@ -47,6 +47,7 @@ from ...services.ratelimit_headers import parse_ratelimit_headers
 from ...services.request_handler import (
     LocalStreamObservationError,
     MAX_RETRY_AFTER_SECONDS,
+    RequestErrorDetail,
     SECURITY_HEADER_NAMES,
     normalize_retry_settings,
 )
@@ -908,6 +909,31 @@ async def attempt_model_fallback_rule(
         )
         return True
 
+    if is_responses_provider:
+        try:
+            provider_payload_template = chat_request_to_responses(provider_payload_template)
+        except HTTPException as exc:
+            error_detail = RequestErrorDetail(str(exc.detail), status_code=exc.status_code)
+            # A protocol mismatch rejects this candidate, without charging an
+            # upstream request or penalizing its key for a request never sent.
+            attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
+            if not isinstance(attempts, list):
+                attempts = []
+                request.state.llmgateway_fallback_attempts = attempts
+            attempts.append({
+                "provider": provider_name,
+                "model": provider_model,
+                "upstream_key_fingerprint": upstream_key_fingerprint,
+                "error_class": classify_error(error_detail),
+                "http_status": exc.status_code,
+            })
+            _record_event(False, error_detail, 0, provider_payload_template, upstream_key_fingerprint)
+            logging.warning(
+                "Responses request conversion failed for model '%s' in provider '%s': %s",
+                provider_model, provider_name, exc.detail,
+            )
+            return None, error_detail, attempt_number
+
     remaining_attempts = retry_count
     while remaining_attempts >= 0:
         if _budget_exhausted():
@@ -940,9 +966,6 @@ async def attempt_model_fallback_rule(
             if subproviders_ordering and not is_anthropic_provider:
                 attempt_payload["provider"] = {"order": subproviders_ordering}
                 attempt_payload["allow_fallbacks"] = False
-
-            if is_responses_provider:
-                attempt_payload = chat_request_to_responses(attempt_payload)
 
             update_active_request(
                 request,
@@ -1159,9 +1182,6 @@ async def attempt_model_fallback_rule(
                     attempt_payload = copy.deepcopy(provider_payload_template)
                     attempt_payload["provider"] = {"order": [sub_provider]}
                     attempt_payload["allow_fallbacks"] = False
-                    if is_responses_provider:
-                        attempt_payload = chat_request_to_responses(attempt_payload)
-
                     update_active_request(
                         request,
                         gateway_model=requested_model,

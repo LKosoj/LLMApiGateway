@@ -1,7 +1,7 @@
 import copy
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -16,6 +16,7 @@ from llm_gateway_core.api.v1.responses_upstream import (
     responses_usage_to_chat,
 )
 from llm_gateway_core.config.loader import ProviderDetails
+from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
 from llm_gateway_core.services.chat_accounting import build_direct_chat_terminal_observation
 from llm_gateway_core.services.request_handler import make_llm_request
 from llm_gateway_core.services.stream_observation import StreamObservationCapacity
@@ -81,8 +82,12 @@ def test_request_conversion_covers_messages_tools_and_does_not_mutate_input():
         "stop",
         "logprobs",
         "top_logprobs",
-        "presence_penalty",
         "logit_bias",
+        "seed",
+        "audio",
+        "modalities",
+        "prediction",
+        "web_search_options",
         "functions",
         "function_call",
     ],
@@ -101,13 +106,23 @@ def test_request_conversion_rejects_n_greater_than_one():
 
 @pytest.mark.parametrize("value", [0, 0.7, -1])
 @pytest.mark.parametrize("stream", [False, True])
-def test_request_conversion_removes_frequency_penalty_without_mutating_input(value, stream):
-    payload = {"messages": [], "frequency_penalty": value, "stream": stream}
+@pytest.mark.parametrize("field", ["frequency_penalty", "presence_penalty"])
+def test_request_conversion_removes_penalties_without_mutating_input(field, value, stream):
+    payload = {"messages": [], field: value, "stream": stream}
     original = copy.deepcopy(payload)
 
     result = chat_request_to_responses(payload)
 
     assert result == {"input": [], "stream": stream}
+    assert payload == original
+
+
+def test_request_conversion_moves_verbosity_into_text_without_losing_format():
+    payload = {"messages": [], "verbosity": "low", "text": {"format": {"type": "text"}}}
+    original = copy.deepcopy(payload)
+    result = chat_request_to_responses(payload)
+    assert result["text"] == {"format": {"type": "text"}, "verbosity": "low"}
+    assert "verbosity" not in result
     assert payload == original
 
 
@@ -308,6 +323,87 @@ def _request() -> Request:
     )
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider_order", [None, False, True])
+@pytest.mark.parametrize("incompatible", [{"stop": ["END"]}, {"n": 2}, {"seed": 42}])
+def test_conversion_failure_advances_to_chat_candidate(stream, provider_order, incompatible):
+    async def scenario():
+        request = _request()
+        routing_state = UpstreamRoutingState()
+        events = Mock()
+        providers = {
+            "p": ProviderDetails(
+                baseUrl="https://provider.example/v1",
+                apikey="key",
+                models={"responses-model": {"api_type": "responses"}},
+            )
+        }
+        first_rule = {"provider": "p", "model": "responses-model", "retry_count": 2}
+        if provider_order is not None:
+            first_rule.update(providers_order=["first", "second"], use_provider_order_as_fallback=provider_order)
+        request.state.runtime_snapshot = SimpleNamespace(
+            config_loader=SimpleNamespace(
+                providers_config=providers,
+                model_rules={},
+                fallback_rules={"gateway": {
+                    "fallback_models": [first_rule, {"provider": "p", "model": "chat-model"}],
+                    "rotate_models": False,
+                }},
+            ),
+            proxy_http_clients={},
+            cost_rate_registry={},
+        )
+        request.app.state.services = SimpleNamespace(
+            http_client=object(),
+            active_requests_registry=ActiveRequestsRegistry(),
+            fallback_events_db=events,
+            upstream_routing_state=routing_state,
+            stream_observation_capacity=StreamObservationCapacity(max_items=8, max_bytes=65536),
+            stream_event_max_bytes=4096,
+        )
+        payload = {
+            "model": "gateway", "messages": [{"role": "user", "content": "hi"}],
+            "presence_penalty": 0.7, "frequency_penalty": 0.5, "stream": stream, **incompatible,
+        }
+        original = copy.deepcopy(payload)
+        completion = {"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}
+        if stream:
+            async def chunks():
+                yield f"data: {json.dumps(completion)}\n\n".encode()
+                yield b"data: [DONE]\n\n"
+
+            response = StreamingResponse(chunks(), media_type="text/event-stream")
+        else:
+            response = completion
+        make_request = AsyncMock(return_value=(response, None))
+        with (
+            patch("llm_gateway_core.api.v1.chat.make_llm_request", new=make_request),
+            patch.object(routing_state, "record_failure", wraps=routing_state.record_failure) as record_failure,
+            patch.object(routing_state, "record_attempt_start", wraps=routing_state.record_attempt_start) as record_start,
+        ):
+            result = await chat_api._dispatch_chat_request(request, payload, enforce_model_access=False)
+            if stream:
+                assert b"ok" in await _body(result)
+            else:
+                assert result["choices"][0]["message"]["content"] == "ok"
+        assert payload == original
+        make_request.assert_awaited_once()
+        assert make_request.await_args.args[1] == "https://provider.example/v1/chat/completions"
+        sent = make_request.await_args.args[3]
+        assert sent["presence_penalty"] == 0.7 and sent["frequency_penalty"] == 0.5
+        for field, value in incompatible.items():
+            assert sent[field] == value
+        assert record_start.call_count == 1
+        record_failure.assert_not_called()
+        attempts = request.state.llmgateway_fallback_attempts
+        assert [entry["model"] for entry in attempts] == ["responses-model", "chat-model"]
+        assert attempts[0]["error_class"] == "http_400" and attempts[0]["http_status"] == 400
+        assert [call.kwargs["success"] for call in events.insert_event.call_args_list] == [False, True]
+        assert [call.kwargs["attempt_number"] for call in events.insert_event.call_args_list] == [1, 2]
+
+    run_async(scenario())
+
+
 def test_provider_schema_rejects_invalid_api_type_and_anthropic_override():
     with pytest.raises(ValueError, match="api_type"):
         ProviderDetails(baseUrl="https://x.example", apikey="key", models={"m": {"api_type": "other"}})
@@ -342,7 +438,10 @@ def test_fallback_selects_responses_url_payload_and_converts_response():
                 object(),
                 {"p": provider},
                 "gateway",
-                {"model": "gateway", "messages": [{"role": "user", "content": "hi"}]},
+                {
+                    "model": "gateway", "messages": [{"role": "user", "content": "hi"}],
+                    "frequency_penalty": 0.5, "presence_penalty": 0.7,
+                },
                 {"provider": "p", "model": "upstream"},
                 False,
                 proxy_http_clients={},
@@ -352,6 +451,8 @@ def test_fallback_selects_responses_url_payload_and_converts_response():
         assert result["choices"][0]["message"]["content"] == "ok"
         assert make_request.await_args.args[1].endswith("/responses")
         assert make_request.await_args.args[3]["input"] == [{"role": "user", "content": "hi"}]
+        assert "presence_penalty" not in make_request.await_args.args[3]
+        assert "frequency_penalty" not in make_request.await_args.args[3]
 
     run_async(scenario())
 
