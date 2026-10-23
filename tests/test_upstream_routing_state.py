@@ -19,6 +19,7 @@ from llm_gateway_core.services.upstream_routing_state import (
     fingerprint_api_key,
 )
 from tests.chat_accounting_test_support import install_main_chat_accounting_double
+from llm_gateway_core.config.schemas import UpstreamQuotaConfig
 
 
 class _Clock:
@@ -1307,6 +1308,25 @@ class UpstreamRoutingStateTests(unittest.TestCase):
 
         headers = make_llm_request.await_args_list[0].args[2]
         self.assertEqual(headers["Authorization"], "Bearer HIGH_POOL_SECRET")
+
+    def test_chat_skips_key_whose_shared_quota_was_used_by_another_model(self):
+        loader = _build_pool_chat_config_loader()
+        loader.providers_config["pool-provider"].upstream_limits = UpstreamQuotaConfig(rpm=1)
+        state = UpstreamRoutingState()
+        state.record_attempt_start("pool-provider", "another-model", fingerprint_api_key("HIGH_POOL_SECRET"))
+        response, upstream = _post_chat_with_loader(loader, upstream_state=state)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(upstream.await_args_list[0].args[2]["Authorization"], "Bearer LOW_POOL_SECRET")
+
+    def test_chat_skips_manually_paused_key(self):
+        state = UpstreamRoutingState()
+        state.pause_key(
+            "pool-provider", fingerprint_api_key("HIGH_POOL_SECRET"),
+            model=None, duration_seconds=60, reason="maintenance",
+        )
+        response, upstream = _post_chat_with_loader(_build_pool_chat_config_loader(), upstream_state=state)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(upstream.await_args_list[0].args[2]["Authorization"], "Bearer LOW_POOL_SECRET")
 
     def test_chat_session_affinity_reuses_bound_upstream_key(self):
         upstream_state = UpstreamRoutingState()

@@ -43,7 +43,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -282,7 +282,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -369,7 +369,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -485,7 +485,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -645,7 +645,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -950,7 +950,7 @@
       "custom_headers": {},
       "supports_vision": true,
       "supports_tools": true,
-      "context_window": 1000000,
+      "context_window": 1048576,
       "capabilities_autofilled": [
         "context_window",
         "supports_tools",

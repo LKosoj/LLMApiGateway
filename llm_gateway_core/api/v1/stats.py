@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from llm_gateway_core.config.loader import (
     ANTHROPIC_API_VERSION,
@@ -856,6 +857,66 @@ async def get_upstream_status(request: Request):
         raise HTTPException(status_code=403, detail="Upstream status is available only to the master API key.")
     upstream_state = _capture_app_services(request).upstream_routing_state
     return JSONResponse(content={"rows": upstream_state.get_status_rows()})
+
+
+class UpstreamPauseTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    provider: str = Field(min_length=1)
+    upstream_key_fingerprint: str = Field(min_length=1)
+    model: str | None = Field(default=None, min_length=1)
+
+
+class UpstreamPauseRequest(UpstreamPauseTarget):
+    duration_seconds: int = Field(strict=True, gt=0)
+    reason: str = Field(min_length=1)
+
+
+def _upstream_pause_targets(config_loader: "ConfigLoader") -> list[dict[str, str]]:
+    targets = []
+    for provider, config in config_loader.providers_config.items():
+        keys = split_api_keys(resolve_provider_api_key_value(config.apikey))
+        for pool in config.upstream_key_pools.values():
+            for key in pool.keys:
+                if key.enabled:
+                    keys.extend(split_api_keys(resolve_provider_api_key_value(key.apikey)))
+        for fingerprint in dict.fromkeys(fingerprint_api_key(key) for key in (keys or [None])):
+            targets.append({"provider": provider, "upstream_key_fingerprint": fingerprint})
+    return targets
+
+
+@stats_router.get("/admin/upstream-pauses", tags=["Upstream Analytics API"])
+async def get_upstream_pauses(request: Request):
+    if not _is_master_caller(request):
+        raise HTTPException(status_code=403, detail="Upstream pauses require the master API key.")
+    return {
+        "targets": _upstream_pause_targets(_capture_runtime_snapshot(request).config_loader),
+        "pauses": _capture_app_services(request).upstream_routing_state.get_manual_pauses(),
+    }
+
+
+@stats_router.post("/admin/upstream-pauses", tags=["Upstream Analytics API"])
+async def pause_upstream_key(request: Request, body: UpstreamPauseRequest):
+    if not _is_master_caller(request):
+        raise HTTPException(status_code=403, detail="Upstream pauses require the master API key.")
+    target = {"provider": body.provider, "upstream_key_fingerprint": body.upstream_key_fingerprint}
+    if target not in _upstream_pause_targets(_capture_runtime_snapshot(request).config_loader):
+        raise HTTPException(status_code=404, detail="Configured upstream key not found.")
+    upstream_state = _capture_app_services(request).upstream_routing_state
+    upstream_state.pause_key(
+        body.provider, body.upstream_key_fingerprint, model=body.model,
+        duration_seconds=body.duration_seconds, reason=body.reason,
+    )
+    return {"pauses": upstream_state.get_manual_pauses()}
+
+
+@stats_router.post("/admin/upstream-pauses/resume", tags=["Upstream Analytics API"])
+async def resume_upstream_key(request: Request, body: UpstreamPauseTarget):
+    if not _is_master_caller(request):
+        raise HTTPException(status_code=403, detail="Upstream pauses require the master API key.")
+    upstream_state = _capture_app_services(request).upstream_routing_state
+    upstream_state.resume_key(body.provider, body.upstream_key_fingerprint, model=body.model)
+    return {"pauses": upstream_state.get_manual_pauses()}
 
 
 @stats_router.post("/api/upstream-health/run", response_class=JSONResponse, tags=["Upstream Analytics API"])

@@ -55,13 +55,13 @@ def chat_request_to_responses(payload: dict) -> dict:
     elif "max_tokens" in result:
         result["max_output_tokens"] = result.pop("max_tokens")
     result.pop("stream_options", None)
+    result.pop("frequency_penalty", None)
     if "n" in result and result.pop("n") != 1:
         raise HTTPException(400, "Responses upstream supports n=1 only.")
     for field in (
         "stop",
         "logprobs",
         "top_logprobs",
-        "frequency_penalty",
         "presence_penalty",
         "logit_bias",
         "functions",

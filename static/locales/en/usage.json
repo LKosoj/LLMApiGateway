@@ -233,5 +233,19 @@
     "connectError": "Connect Error",
     "contextOverflow": "Context Overflow",
     "unknownLabel": "Unknown"
+  },
+  "pauses": {
+    "title": "Temporary key pauses",
+    "hint": "Pause a saved provider key for all chat models or one model. Running requests continue. Pauses are cleared on restart.",
+    "key": "Provider key",
+    "model": "Model (empty = all)",
+    "minutes": "Minutes",
+    "reason": "Reason",
+    "pause": "Pause",
+    "resume": "Resume",
+    "empty": "No active manual pauses.",
+    "allModels": "all models",
+    "entry": "{provider} · {key} · {model} · {reason} · {seconds} s remaining at last refresh",
+    "updated": "Manual pauses updated."
   }
 }

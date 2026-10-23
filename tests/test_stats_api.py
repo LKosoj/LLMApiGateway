@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.v1 import stats as stats_module
+from llm_gateway_core.config.loader import ConfigLoader, ProviderDetails
 from llm_gateway_core.middleware.auth import (
     ROLE_USER,
     SESSION_COOKIE_NAME,
@@ -17,6 +18,7 @@ from llm_gateway_core.middleware.auth import (
 )
 from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
+from llm_gateway_core.services.upstream_routing_state import fingerprint_api_key
 from tests.runtime_test_support import installed_runtime
 
 
@@ -239,6 +241,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         fake_fallback_events_db: _FakeFallbackEventsDB | None = None,
         fake_rejections_db: _FakeRejectionsDB | None = None,
         active_requests_registry: ActiveRequestsRegistry | None = None,
+        config_loader: ConfigLoader | None = None,
     ):
         fallback_events_db = fake_fallback_events_db or _FakeFallbackEventsDB()
         service_overrides = {
@@ -253,7 +256,7 @@ class StatsApiPaginationTests(unittest.TestCase):
 
         @asynccontextmanager
         async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-            async with installed_runtime(app, **service_overrides):
+            async with installed_runtime(app, config_loader=config_loader, **service_overrides):
                 yield
 
         app = FastAPI(lifespan=lifespan)
@@ -583,6 +586,59 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(rows[0]["provider"], "openrouter")
         self.assertEqual(rows[0]["upstream_key_fingerprint"], "abc123")
         self.assertEqual(rows[0]["health_status"], "healthy")
+
+    def test_upstream_pause_api_resolves_saved_keys_and_pauses_then_resumes(self):
+        loader = ConfigLoader()
+        loader.providers_config = {"provider": ProviderDetails(
+            baseUrl="https://provider.example", apikey="direct-secret",
+            upstream_key_pools={"main": {"keys": [{"apikey": "pool-secret"}]}},
+        )}
+        headers = {"Authorization": "Bearer test-gateway-key"}
+        target = {"provider": "provider", "upstream_key_fingerprint": fingerprint_api_key("pool-secret")}
+        with self._client(_FakeTokensUsageDB(), config_loader=loader) as client:
+            state = client.app.state.services.upstream_routing_state
+            listed = client.get("/v1/admin/upstream-pauses", headers=headers)
+            self.assertEqual(listed.status_code, 200)
+            self.assertIn(target, listed.json()["targets"])
+            self.assertNotIn("direct-secret", listed.text)
+            self.assertNotIn("pool-secret", listed.text)
+            paused = client.post("/v1/admin/upstream-pauses", headers=headers, json={
+                **target, "duration_seconds": 1800, "reason": "maintenance",
+            })
+            self.assertEqual(paused.status_code, 200)
+            self.assertEqual(paused.json()["pauses"][0]["reason"], "maintenance")
+            self.assertFalse(state.select_key("provider", "future-model", ["pool-secret"]).available)
+            self.assertTrue(state.select_key("provider", "future-model", ["direct-secret"]).available)
+            resumed = client.post("/v1/admin/upstream-pauses/resume", headers=headers, json=target)
+            self.assertEqual(resumed.status_code, 200)
+            self.assertEqual(resumed.json(), {"pauses": []})
+            self.assertTrue(state.select_key("provider", "future-model", ["pool-secret"]).available)
+
+    def test_upstream_pause_api_rejects_invalid_input_and_unknown_keys(self):
+        headers = {"Authorization": "Bearer test-gateway-key"}
+        target = {"provider": "unknown", "upstream_key_fingerprint": "unknown"}
+        with self._client(_FakeTokensUsageDB()) as client:
+            for extra in ({"duration_seconds": 0, "reason": "maintenance"},
+                          {"duration_seconds": 60, "reason": "   "},
+                          {"duration_seconds": 1.5, "reason": "maintenance"},
+                          {"duration_seconds": 60, "reason": "maintenance", "ttl": 5}):
+                with self.subTest(extra=extra):
+                    response = client.post("/v1/admin/upstream-pauses", headers=headers, json={**target, **extra})
+                    self.assertEqual(response.status_code, 422)
+            unknown = client.post("/v1/admin/upstream-pauses", headers=headers, json={
+                **target, "duration_seconds": 60, "reason": "maintenance",
+            })
+            self.assertEqual(unknown.status_code, 404)
+            self.assertEqual(client.app.state.services.upstream_routing_state.get_manual_pauses(), [])
+
+    def test_upstream_pause_api_is_master_only(self):
+        with self._client(_FakeTokensUsageDB(), _FakeApiKeysDB(valid_key_id=11)) as client:
+            client.cookies.set(SESSION_COOKIE_NAME, create_authenticated_session(role=ROLE_USER, key_id=11))
+            for method, path in (("GET", "/v1/admin/upstream-pauses"),
+                                 ("POST", "/v1/admin/upstream-pauses"),
+                                 ("POST", "/v1/admin/upstream-pauses/resume")):
+                with self.subTest(method=method, path=path):
+                    self.assertEqual(client.request(method, path).status_code, 403)
 
     def test_master_usage_dashboard_applies_filters_without_raw_keys(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()

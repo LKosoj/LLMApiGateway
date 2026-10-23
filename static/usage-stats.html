@@ -266,6 +266,21 @@
             </div>
 
             <div id="upstreamAnalyticsContent" class="fallback-sub-content" role="tabpanel">
+                <section class="analytics-panel" aria-labelledby="upstreamPausesTitle" data-master-only hidden>
+                    <h3 id="upstreamPausesTitle" data-i18n="usage:pauses.title">Temporary key pauses</h3>
+                    <p data-i18n="usage:pauses.hint">Pause a saved provider key for all chat models or one model. Running requests continue. Pauses are cleared on restart.</p>
+                    <button id="upstreamPausesRefresh" type="button" data-i18n="usage:actions.refreshAction">Refresh</button>
+                    <form id="upstreamPauseForm">
+                        <fieldset id="upstreamPauseFields" class="controls" disabled>
+                            <label><span data-i18n="usage:pauses.key">Provider key</span><select id="upstreamPauseKey" required></select></label>
+                            <label><span data-i18n="usage:pauses.model">Model (empty = all)</span><input id="upstreamPauseModel" type="text"></label>
+                            <label><span data-i18n="usage:pauses.minutes">Minutes</span><input id="upstreamPauseMinutes" type="number" min="1" step="1" value="30" required></label>
+                            <label><span data-i18n="usage:pauses.reason">Reason</span><input id="upstreamPauseReason" type="text" required></label>
+                            <button type="submit" data-i18n="usage:pauses.pause">Pause</button>
+                        </fieldset>
+                    </form>
+                    <div id="upstreamPausesList" aria-live="polite"></div>
+                </section>
                 <div class="controls">
                     <label for="upstreamPeriodSelector" data-i18n="usage:period.groupBy">Group by:</label>
                     <select id="upstreamPeriodSelector">

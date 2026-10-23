@@ -54,6 +54,7 @@ from ...services.stream_observation import StreamObservationCapacity
 from ...services.upstream_routing_state import (
     SelectedUpstreamKey,
     UpstreamKeyCandidate,
+    UpstreamQuotaLimits,
     UpstreamRoutingState,
     fingerprint_api_key,
     upstream_limits_for_model,
@@ -543,6 +544,8 @@ async def attempt_model_fallback_rule(
     affinity_ttl_seconds = _provider_key_routing_affinity_ttl(provider_config, key_pool_config)
     session_id = request.headers.get(affinity_header) if affinity_enabled else None
     affinity_scope = _affinity_scope_for_request(request) if affinity_enabled else None
+    shared_limits = getattr(provider_config, "upstream_limits", None)
+    key_limits = UpstreamQuotaLimits.from_mapping(shared_limits.model_dump() if shared_limits is not None else None)
 
     def _select_upstream_key() -> SelectedUpstreamKey:
         return upstream_routing_state.select_key_from_candidates(
@@ -550,6 +553,7 @@ async def attempt_model_fallback_rule(
             provider_model or "unknown",
             key_candidates,
             limits=upstream_limits_for_model(provider_config, provider_model or ""),
+            key_limits=key_limits,
             strategy=strategy,
             session_id=session_id,
             affinity_scope=affinity_scope,
@@ -790,7 +794,15 @@ async def attempt_model_fallback_rule(
     def _budget_exhausted() -> bool:
         return total_attempts_budget is not None and attempt_number > total_attempts_budget
 
-    def _track_attempt_start() -> dict[str, Any]:
+    def _track_attempt_start() -> dict[str, Any] | str:
+        blocked = upstream_routing_state.record_attempt_start(
+            provider_name or "unknown",
+            provider_model or "unknown",
+            upstream_key_fingerprint,
+            key_limits=key_limits,
+        )
+        if blocked:
+            return blocked
         request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
         attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
         if not isinstance(attempts, list):
@@ -804,11 +816,6 @@ async def attempt_model_fallback_rule(
             "http_status": None,
         }
         attempts.append(attempt_entry)
-        upstream_routing_state.record_attempt_start(
-            provider_name or "unknown",
-            provider_model or "unknown",
-            upstream_key_fingerprint,
-        )
         return attempt_entry
 
     def _track_attempt_result(
@@ -946,6 +953,9 @@ async def attempt_model_fallback_rule(
                 upstream_key_fingerprint=upstream_key_fingerprint,
             )
             attempt_entry = _track_attempt_start()
+            if isinstance(attempt_entry, str):
+                _record_event(False, attempt_entry, 0, upstream_key_fingerprint=upstream_key_fingerprint)
+                return None, attempt_entry, attempt_number
             t0 = time.monotonic()
             response_headers: dict[str, str] = {}
             response_data, error_detail = await make_llm_request(
@@ -1161,6 +1171,9 @@ async def attempt_model_fallback_rule(
                         upstream_key_fingerprint=upstream_key_fingerprint,
                     )
                     attempt_entry = _track_attempt_start()
+                    if isinstance(attempt_entry, str):
+                        _record_event(False, attempt_entry, 0, upstream_key_fingerprint=upstream_key_fingerprint)
+                        return None, attempt_entry, attempt_number
                     t0 = time.monotonic()
                     response_headers = {}
                     response_data, error_detail = await make_llm_request(

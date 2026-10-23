@@ -81,7 +81,6 @@ def test_request_conversion_covers_messages_tools_and_does_not_mutate_input():
         "stop",
         "logprobs",
         "top_logprobs",
-        "frequency_penalty",
         "presence_penalty",
         "logit_bias",
         "functions",
@@ -98,6 +97,18 @@ def test_request_conversion_rejects_n_greater_than_one():
     with pytest.raises(HTTPException) as exc:
         chat_request_to_responses({"messages": [], "n": 2})
     assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("value", [0, 0.7, -1])
+@pytest.mark.parametrize("stream", [False, True])
+def test_request_conversion_removes_frequency_penalty_without_mutating_input(value, stream):
+    payload = {"messages": [], "frequency_penalty": value, "stream": stream}
+    original = copy.deepcopy(payload)
+
+    result = chat_request_to_responses(payload)
+
+    assert result == {"input": [], "stream": stream}
+    assert payload == original
 
 
 @pytest.mark.parametrize("strict", [None, False, True])

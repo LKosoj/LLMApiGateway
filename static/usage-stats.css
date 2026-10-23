@@ -196,6 +196,37 @@ select {
     min-width: 150px;
 }
 
+#upstreamPauseFields {
+    border: 0;
+    padding: 0;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+#upstreamPauseFields label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+#upstreamPauseFields input, #upstreamPauseKey {
+    box-sizing: border-box;
+    max-width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font: inherit;
+}
+
+#upstreamPausesList .controls {
+    overflow-wrap: anywhere;
+    flex-wrap: wrap;
+}
+
 select:hover {
     border-color: var(--border-strong);
 }

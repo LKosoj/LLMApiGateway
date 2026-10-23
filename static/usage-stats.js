@@ -583,6 +583,104 @@ function initializeUsagePage() {
     const upstreamPeriodSelector = document.getElementById('upstreamPeriodSelector');
     const upstreamRefreshButton = document.getElementById('upstreamRefreshButton');
     const upstreamStatsArea = document.getElementById('upstreamStatsArea');
+    const pauseForm = document.getElementById('upstreamPauseForm');
+    const pauseFields = document.getElementById('upstreamPauseFields');
+    const pauseKey = document.getElementById('upstreamPauseKey');
+    const pauseList = document.getElementById('upstreamPausesList');
+    const pauseRefresh = document.getElementById('upstreamPausesRefresh');
+    let pauseSnapshot = null;
+    let pauseBusy = false;
+
+    const setPauseBusy = (busy) => {
+        pauseBusy = busy;
+        pauseFields.disabled = busy || !pauseSnapshot || pauseSnapshot.targets.length === 0;
+        pauseRefresh.disabled = busy;
+        pauseList.querySelectorAll('button').forEach(button => { button.disabled = busy; });
+    };
+
+    const renderPauses = () => {
+        if (!pauseSnapshot) return;
+        const selected = pauseKey.value;
+        pauseKey.replaceChildren();
+        pauseSnapshot.targets.forEach(target => {
+            const option = document.createElement('option');
+            option.value = JSON.stringify(target);
+            option.textContent = `${target.provider} · ${target.upstream_key_fingerprint}`;
+            pauseKey.appendChild(option);
+        });
+        if (Array.from(pauseKey.options).some(option => option.value === selected)) pauseKey.value = selected;
+        pauseList.replaceChildren();
+        if (!pauseSnapshot.pauses.length) {
+            const empty = document.createElement('p');
+            empty.textContent = t('usage:pauses.empty');
+            pauseList.appendChild(empty);
+        }
+        pauseSnapshot.pauses.forEach(pause => {
+            const row = document.createElement('div');
+            row.className = 'controls';
+            const text = document.createElement('span');
+            text.textContent = t('usage:pauses.entry', {
+                provider: pause.provider, key: pause.upstream_key_fingerprint,
+                model: pause.model || t('usage:pauses.allModels'),
+                reason: pause.reason, seconds: formatNumber(pause.remaining_seconds),
+            });
+            const resume = document.createElement('button');
+            resume.type = 'button';
+            resume.textContent = t('usage:pauses.resume');
+            resume.addEventListener('click', () => void mutatePause('/v1/admin/upstream-pauses/resume', {
+                provider: pause.provider, upstream_key_fingerprint: pause.upstream_key_fingerprint, model: pause.model,
+            }));
+            row.append(text, resume);
+            pauseList.appendChild(row);
+        });
+        setPauseBusy(pauseBusy);
+    };
+
+    const fetchPauses = async () => {
+        if (pauseBusy) return;
+        setPauseBusy(true);
+        try {
+            const response = await apiFetch('/v1/admin/upstream-pauses');
+            const data = await response.json();
+            if (!response.ok) { showApiError(data, response); return; }
+            pauseSnapshot = data;
+            renderPauses();
+        } catch (error) {
+            showApiError(null, null, error);
+        } finally {
+            setPauseBusy(false);
+        }
+    };
+
+    const mutatePause = async (url, body) => {
+        if (pauseBusy) return;
+        setPauseBusy(true);
+        try {
+            const response = await apiFetch(url, {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+            });
+            const data = await response.json();
+            if (!response.ok) { showApiError(data, response); return; }
+            pauseSnapshot = {...pauseSnapshot, pauses: data.pauses};
+            renderPauses();
+            showMessage(message('usage:pauses.updated'));
+        } catch (error) {
+            showApiError(null, null, error);
+        } finally {
+            setPauseBusy(false);
+        }
+    };
+    pauseForm.addEventListener('submit', event => {
+        event.preventDefault();
+        if (!pauseForm.reportValidity() || !pauseKey.value) return;
+        void mutatePause('/v1/admin/upstream-pauses', {
+            ...JSON.parse(pauseKey.value),
+            model: document.getElementById('upstreamPauseModel').value.trim() || null,
+            duration_seconds: Number(document.getElementById('upstreamPauseMinutes').value) * 60,
+            reason: document.getElementById('upstreamPauseReason').value.trim(),
+        });
+    });
+    pauseRefresh.addEventListener('click', () => void fetchPauses());
     const fallbackRecordsPerPage = 25;
     let fallbackCurrentPage = 1;
     let fallbackChainsActivationContext = null;
@@ -618,7 +716,7 @@ function initializeUsagePage() {
             fallbackChainsActivationContext = context;
             await fetchAndRenderFallbackChains(context);
         } else if (subtab === 'upstream') {
-            await fetchAndRenderUpstreamStats(context);
+            await Promise.all([fetchAndRenderUpstreamStats(context), fetchPauses()]);
         } else {
             await fetchAndRenderFallbackStats(context);
         }
@@ -1819,6 +1917,7 @@ function initializeUsagePage() {
             renderUpstreamSnapshot();
         }
         window.usageAnalyticsDashboard.rerenderLocale();
+        renderPauses();
         _topologyApi?.rerenderLocale();
         pageStatus.rerender();
         renderRequestId(currentRequestId);

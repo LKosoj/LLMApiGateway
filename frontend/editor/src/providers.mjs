@@ -761,6 +761,20 @@ export function registerProviders(ctx) {
         if (upstreamKeyPools) {
             providerPayload.upstream_key_pools = upstreamKeyPools;
         }
+        const sharedLimits = {};
+        UPSTREAM_LIMIT_KEYS.forEach(key => {
+            const input = providerCard.querySelector(`.provider-shared-limit-${key}`);
+            if (input.value.trim()) {
+                const value = Number(input.value);
+                if (!Number.isSafeInteger(value) || value <= 0) {
+                    throw new Error(`Provider '${name}' ${key.toUpperCase()} must be a positive integer.`);
+                }
+                sharedLimits[key] = value;
+            }
+        });
+        if (Object.keys(sharedLimits).length) {
+            providerPayload.upstream_limits = sharedLimits;
+        }
         const extraModels = parseProviderModelsMetadata(modelsInput.value);
         const modelApiTypeRows = providerCard._getModelApiTypeRows ? providerCard._getModelApiTypeRows() : [];
         const modelsWithApiTypes = mergeModelApiTypesIntoModels(extraModels, modelApiTypeRows, name, type);
@@ -905,6 +919,28 @@ export function registerProviders(ctx) {
         const { container: upstreamLimitsContainer, getRows: getUpstreamLimitsRows } =
             buildUpstreamLimitsSection(initialData.models);
         advancedGrid.appendChild(upstreamLimitsContainer);
+
+        const sharedLimitsSection = document.createElement('div');
+        sharedLimitsSection.className = 'upstream-limits-section';
+        const sharedLimitsTitle = document.createElement('div');
+        sharedLimitsTitle.className = 'field-label';
+        ctx.bindLocalizedText(sharedLimitsTitle, 'editor:fields.sharedKeyLimits');
+        sharedLimitsSection.appendChild(sharedLimitsTitle);
+        const sharedLimitsHint = document.createElement('div');
+        sharedLimitsHint.className = 'field-hint';
+        ctx.bindLocalizedText(sharedLimitsHint, 'editor:hints.sharedKeyLimits');
+        sharedLimitsSection.appendChild(sharedLimitsHint);
+        const sharedLimitsRow = document.createElement('div');
+        sharedLimitsRow.className = 'fields-grid';
+        UPSTREAM_LIMIT_KEYS.forEach(key => {
+            const input = ctx.createNumberInput(`provider-shared-limit-${key}`, '');
+            input.min = '1';
+            input.step = '1';
+            input.value = initialData.upstream_limits?.[key] ?? '';
+            sharedLimitsRow.appendChild(ctx.createFieldGroup(key.toUpperCase(), input));
+        });
+        sharedLimitsSection.appendChild(sharedLimitsRow);
+        advancedGrid.appendChild(sharedLimitsSection);
 
         const splitModels = splitProviderModelsMetadata(initialData.models);
         const modelsInput = ctx.createTextarea('provider-models-input', '{"pricing": {"input": 0.1}}');

@@ -136,6 +136,12 @@ class _AffinityBinding:
     expires_at: float
 
 
+@dataclass(frozen=True)
+class _ManualPause:
+    expires_at: float
+    reason: str
+
+
 class UpstreamRoutingState:
     """In-memory upstream health/cooldown/quota tracker.
 
@@ -150,6 +156,9 @@ class UpstreamRoutingState:
         self._states: dict[tuple[str, str, str], _RuntimeState] = {}
         self._request_windows: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
         self._token_windows: dict[tuple[str, str, str], deque[tuple[float, int]]] = defaultdict(deque)
+        self._key_request_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+        self._key_token_windows: dict[tuple[str, str], deque[tuple[float, int]]] = defaultdict(deque)
+        self._manual_pauses: dict[tuple[str, str, str | None], _ManualPause] = {}
         self._round_robin_indexes: dict[tuple[str, str, tuple[str, ...]], int] = {}
         self._session_affinity: dict[tuple[str, str, str, str], _AffinityBinding] = {}
         # All 429 hits in the trailing hour, used to detect exhaustion events.
@@ -180,6 +189,7 @@ class UpstreamRoutingState:
         api_keys: Iterable[str | None],
         *,
         limits: UpstreamQuotaLimits | None = None,
+        key_limits: UpstreamQuotaLimits | None = None,
         strategy: KeySelectionStrategy = "round-robin",
         session_id: str | None = None,
         affinity_scope: str | None = None,
@@ -195,6 +205,7 @@ class UpstreamRoutingState:
             model,
             candidates,
             limits=limits,
+            key_limits=key_limits,
             strategy=strategy,
             session_id=session_id,
             affinity_scope=affinity_scope,
@@ -209,6 +220,7 @@ class UpstreamRoutingState:
         candidates: Iterable[UpstreamKeyCandidate],
         *,
         limits: UpstreamQuotaLimits | None = None,
+        key_limits: UpstreamQuotaLimits | None = None,
         strategy: KeySelectionStrategy = "round-robin",
         session_id: str | None = None,
         affinity_scope: str | None = None,
@@ -228,6 +240,10 @@ class UpstreamRoutingState:
             for candidate in key_candidates:
                 fingerprint = candidate.fingerprint
                 ref = (provider, model, fingerprint)
+                pause = self._active_pause(provider, fingerprint, model, now)
+                if pause is not None:
+                    blocked_reasons.append(f"{fingerprint}: manually paused")
+                    continue
                 state = self._state_for(ref)
                 cooldown_remaining = self._cooldown_remaining(state, now)
                 if cooldown_remaining is not None:
@@ -236,6 +252,10 @@ class UpstreamRoutingState:
                 quota_reason = self._quota_block_reason(ref, limits, now)
                 if quota_reason:
                     blocked_reasons.append(f"{fingerprint}: {quota_reason}")
+                    continue
+                key_quota_reason = self._key_quota_block_reason(provider, fingerprint, key_limits, now)
+                if key_quota_reason:
+                    blocked_reasons.append(f"{fingerprint}: {key_quota_reason}")
                     continue
                 available.append((self._decayed_penalty(state, now), candidate))
 
@@ -299,12 +319,23 @@ class UpstreamRoutingState:
                 (provider, model, key_fingerprint), now
             ) is not None
 
-    def record_attempt_start(self, provider: str, model: str, key_fingerprint: str) -> None:
+    def record_attempt_start(
+        self, provider: str, model: str, key_fingerprint: str, *,
+        key_limits: UpstreamQuotaLimits | None = None,
+    ) -> str | None:
         ref = (provider, model, key_fingerprint)
         now = self._monotonic_func()
         with self._lock:
+            if self._active_pause(provider, key_fingerprint, model, now) is not None:
+                return "upstream key is manually paused"
+            blocked = self._key_quota_block_reason(provider, key_fingerprint, key_limits, now)
+            if blocked:
+                return blocked
             self._request_windows[ref].append(now)
             self._trim_numeric_window(self._request_windows[ref], now, 86400.0)
+            key_requests = self._key_request_windows[(provider, key_fingerprint)]
+            key_requests.append(now)
+            self._trim_numeric_window(key_requests, now, 86400.0)
             self._state_for(ref)
 
     def record_tokens(self, provider: str, model: str, key_fingerprint: str, total_tokens: int | None) -> None:
@@ -315,7 +346,73 @@ class UpstreamRoutingState:
         with self._lock:
             self._token_windows[ref].append((now, int(total_tokens)))
             self._trim_token_window(self._token_windows[ref], now, 86400.0)
+            key_tokens = self._key_token_windows[(provider, key_fingerprint)]
+            key_tokens.append((now, int(total_tokens)))
+            self._trim_token_window(key_tokens, now, 86400.0)
             self._state_for(ref)
+
+    def pause_key(
+        self, provider: str, key_fingerprint: str, *, model: str | None,
+        duration_seconds: int, reason: str,
+    ) -> None:
+        with self._lock:
+            self._manual_pauses[(provider, key_fingerprint, model)] = _ManualPause(
+                self._monotonic_func() + duration_seconds, reason,
+            )
+
+    def resume_key(self, provider: str, key_fingerprint: str, *, model: str | None) -> None:
+        with self._lock:
+            self._manual_pauses.pop((provider, key_fingerprint, model), None)
+
+    def get_manual_pauses(self) -> list[dict[str, Any]]:
+        now = self._monotonic_func()
+        with self._lock:
+            self._expire_manual_pauses(now)
+            return [
+                {
+                    "provider": provider, "upstream_key_fingerprint": fingerprint,
+                    "model": model, "reason": pause.reason,
+                    "remaining_seconds": max(0, int(pause.expires_at - now)),
+                }
+                for (provider, fingerprint, model), pause in self._manual_pauses.items()
+            ]
+
+    def _expire_manual_pauses(self, now: float) -> None:
+        for ref, pause in list(self._manual_pauses.items()):
+            if pause.expires_at <= now:
+                del self._manual_pauses[ref]
+
+    def _active_pause(
+        self, provider: str, fingerprint: str, model: str, now: float,
+    ) -> _ManualPause | None:
+        for scope in (None, model):
+            ref = (provider, fingerprint, scope)
+            pause = self._manual_pauses.get(ref)
+            if pause is not None:
+                if pause.expires_at > now:
+                    return pause
+                del self._manual_pauses[ref]
+        return None
+
+    def _key_quota_block_reason(
+        self, provider: str, fingerprint: str, limits: UpstreamQuotaLimits | None, now: float,
+    ) -> str | None:
+        if limits is None:
+            return None
+        ref = (provider, fingerprint)
+        requests = self._key_request_windows[ref]
+        tokens = self._key_token_windows[ref]
+        self._trim_numeric_window(requests, now, 86400.0)
+        self._trim_token_window(tokens, now, 86400.0)
+        for axis, seconds in (("rpm", 60.0), ("rpd", 86400.0), ("tpm", 60.0), ("tpd", 86400.0)):
+            limit = getattr(limits, axis)
+            if limit is None:
+                continue
+            used = (self._count_since(requests, now, seconds) if axis.startswith("r")
+                    else self._tokens_since(tokens, now, seconds))
+            if used >= limit:
+                return f"shared key {axis} quota exhausted"
+        return None
 
     def record_success(self, provider: str, model: str, key_fingerprint: str) -> None:
         self.mark_health(provider, model, key_fingerprint, "healthy", None)

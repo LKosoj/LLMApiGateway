@@ -58,6 +58,15 @@ class UpstreamRoutingConfig(BaseModel):
         return parsed
 
 
+class UpstreamQuotaConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rpm: int | None = Field(default=None, strict=True, gt=0)
+    rpd: int | None = Field(default=None, strict=True, gt=0)
+    tpm: int | None = Field(default=None, strict=True, gt=0)
+    tpd: int | None = Field(default=None, strict=True, gt=0)
+
+
 class UpstreamKeySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -151,6 +160,7 @@ class ProviderDetails(BaseModel):
     subscription_quota: Optional[SubscriptionQuotaConfig] = None
     routing: UpstreamRoutingConfig = Field(default_factory=UpstreamRoutingConfig)
     upstream_key_pools: Dict[str, UpstreamKeyPoolConfig] = Field(default_factory=dict)
+    upstream_limits: UpstreamQuotaConfig | None = None
 
     @model_validator(mode="before")
     @classmethod

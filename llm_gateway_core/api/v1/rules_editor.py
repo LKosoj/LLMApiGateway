@@ -22,6 +22,7 @@ from ...config.loader import (
     SubscriptionQuotaConfig,
 )
 from ...config.schema_validation import validate_custom_headers
+from ...config.schemas import UpstreamQuotaConfig
 from ...config.config_store import ConfigFile, ConfigSourceBundle
 from ...services.fallback_model_evals import FallbackModelEvalAlreadyRunning
 from ...services.openrouter_free_models import OpenRouterFreeModelsNotConfigured
@@ -120,6 +121,7 @@ class StructuredProviderItem(BaseModel):
     subscription_quota: SubscriptionQuotaConfig | None = None
     routing: dict[str, Any] | None = None
     upstream_key_pools: dict[str, Any] | None = None
+    upstream_limits: UpstreamQuotaConfig | None = None
     auth: dict[str, Any] | None = None
 
     @field_validator("name")
@@ -332,6 +334,8 @@ def _serialize_structured_providers(providers: list[StructuredProviderItem]) -> 
             provider_payload["routing"] = provider.routing
         if provider.upstream_key_pools is not None:
             provider_payload["upstream_key_pools"] = provider.upstream_key_pools
+        if provider.upstream_limits is not None:
+            provider_payload["upstream_limits"] = provider.upstream_limits.model_dump(exclude_none=True)
         if provider.auth is not None:
             provider_payload["auth"] = provider.auth
         payload.append({provider.name: provider_payload})

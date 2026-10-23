@@ -482,9 +482,11 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     expect(provider_card.locator(".provider-api-key-field .field-tooltip-button")).to_have_count(1)
     page.evaluate("() => window.gatewayI18n.changeLanguage('en')")
     provider_card.locator("details.advanced-options summary").click()
-    expect(provider_card.locator(".upstream-limits-section")).to_have_count(1)
+    expect(provider_card.locator(".upstream-limits-title")).to_have_count(1)
+    provider_card.locator(".provider-shared-limit-rpm").fill("100")
+    provider_card.locator(".provider-shared-limit-tpm").fill("200000")
     expect(provider_card.locator(".upstream-limits-empty")).to_be_visible()
-    provider_card.locator(".upstream-limit-add").click()
+    provider_card.locator(".upstream-limit-add:not(.model-api-type-add)").click()
     upstream_row = provider_card.locator(".upstream-limit-row").first
     upstream_row.locator(".upstream-limit-model").fill("deepseek/deepseek-r1:free")
     upstream_row.locator(".upstream-limit-rpm").fill("20")
@@ -507,6 +509,8 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     expect(saved_provider.locator(".provider-proxy-input")).to_have_value("http://proxy.local:8080")
     saved_provider.locator(".accordion-toggle").first.click()
     saved_provider.locator("details.advanced-options summary").click()
+    expect(saved_provider.locator(".provider-shared-limit-rpm")).to_have_value("100")
+    expect(saved_provider.locator(".provider-shared-limit-tpm")).to_have_value("200000")
     saved_row = saved_provider.locator(".upstream-limit-row").first
     expect(saved_row.locator(".upstream-limit-model")).to_have_value("deepseek/deepseek-r1:free")
     expect(saved_row.locator(".upstream-limit-rpm")).to_have_value("20")
@@ -516,6 +520,34 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     expect(saved_provider.locator(".provider-models-input")).to_have_value(
         '{\n  "deepseek/deepseek-r1:free": {\n    "pricing": {\n      "input": 0.1\n    }\n  }\n}'
     )
+
+
+def test_upstream_manual_pause_and_resume_in_browser(page: Page, server):
+    session = create_authenticated_session(server, "test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    _route_empty_analytics_dashboard(page, server)
+    page.goto(f"{server}/v1/ui/usage-stats")
+    page.click('button[data-tab="fallback"]')
+    page.click('button[data-subtab="upstream"]')
+    expect(page.locator("#upstreamPauseKey option")).to_have_count(1)
+    page.locator("#upstreamPauseModel").fill("test-model")
+    page.locator("#upstreamPauseMinutes").fill("15")
+    page.locator("#upstreamPauseReason").fill("maintenance <script>")
+    page.locator('#upstreamPauseForm button[type="submit"]').click()
+    expect(page.locator("#upstreamPausesList")).to_contain_text("maintenance <script>")
+    response = page.request.get(f"{server}/v1/admin/upstream-pauses")
+    assert response.ok
+    assert response.json()["pauses"][0]["model"] == "test-model"
+    assert 0 < response.json()["pauses"][0]["remaining_seconds"] <= 900
+    assert page.locator("#upstreamPausesList script").count() == 0
+    page.evaluate("() => window.gatewayI18n.changeLanguage('ru')")
+    expect(page.locator("#upstreamPausesTitle")).to_have_text("Временные паузы ключей")
+    expect(page.locator("#upstreamPausesList")).to_contain_text("maintenance <script>")
+    page.locator("#upstreamPausesList button").click()
+    expect(page.locator("#upstreamPausesList")).to_contain_text("Активных ручных пауз нет.")
+    assert page.request.get(f"{server}/v1/admin/upstream-pauses").json()["pauses"] == []
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.locator("#upstreamPauseFields").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
 
 
 def test_providers_editor_load_failure_disables_save_and_add_until_retry(page: Page, server):
