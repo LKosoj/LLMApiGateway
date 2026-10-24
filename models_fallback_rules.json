@@ -258,14 +258,14 @@
     "fallback_models": [
       {
         "provider": "z.ai",
-        "model": "glm-5.3",
+        "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {
           "User-Agent": "OpenClaw-Gateway/1.0",
           "Referer": "https://openclaw.ai"
         },
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -291,7 +291,7 @@
       },
       {
         "provider": "kimicode",
-        "model": "k3",
+        "model": "k3.1-pro",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {
           "temperature": 1
@@ -422,6 +422,14 @@
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
+        "payload_transforms": {
+          "defaults": {},
+          "overrides": {},
+          "filters": [
+            "temperature"
+          ],
+          "value_maps": {}
+        },
         "supports_vision": true,
         "supports_tools": true,
         "context_window": 1050000,
@@ -448,7 +456,7 @@
       },
       {
         "provider": "kimicode",
-        "model": "k3",
+        "model": "k3.1-pro",
         "use_provider_order_as_fallback": false,
         "retry_delay": 1,
         "retry_count": 2,
@@ -609,7 +617,7 @@
     "fallback_models": [
       {
         "provider": "kimicode",
-        "model": "k3",
+        "model": "k3.1-pro",
         "use_provider_order_as_fallback": false,
         "retry_delay": 1,
         "retry_count": 1,
@@ -623,7 +631,7 @@
         ]
       },
       {
-        "provider": "openai_codex",
+        "provider": "agentrouter",
         "model": "gpt-6.1-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},

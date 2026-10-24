@@ -98,7 +98,21 @@ def test_whole_key_and_model_pauses_are_independent():
     assert state.select_key("provider", "model", ["key"]).available
 
 
-@pytest.mark.parametrize("limits", [{"rpm": 0}, {"rpd": -1}, {"tpm": True}, {"tpd": 1.5}, {"rpmm": 10}])
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"rpm": 0},
+        {"rpd": -1},
+        {"tpm": True},
+        {"tpd": 1.5},
+        {"max_concurrency": 0},
+        {"max_concurrency": -1},
+        {"max_concurrency": True},
+        {"max_concurrency": 1.5},
+        {"max_concurrency": "1"},
+        {"rpmm": 10},
+    ],
+)
 def test_provider_shared_limits_reject_invalid_configuration(limits):
     with pytest.raises(ValueError):
         ProviderDetails(baseUrl="https://provider.example", apikey="key", upstream_limits=limits)
@@ -106,6 +120,12 @@ def test_provider_shared_limits_reject_invalid_configuration(limits):
 
 def test_provider_shared_limits_round_trip():
     provider = ProviderDetails(
-        baseUrl="https://provider.example", apikey="key", upstream_limits={"rpm": 10, "tpm": 1000},
+        baseUrl="https://provider.example",
+        apikey="key",
+        upstream_limits={"rpm": 10, "tpm": 1000, "max_concurrency": 2},
     )
-    assert provider.model_dump(exclude_none=True)["upstream_limits"] == {"rpm": 10, "tpm": 1000}
+    assert provider.model_dump(exclude_none=True)["upstream_limits"] == {
+        "rpm": 10,
+        "tpm": 1000,
+        "max_concurrency": 2,
+    }

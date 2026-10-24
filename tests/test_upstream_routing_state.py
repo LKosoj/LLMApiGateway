@@ -13,11 +13,13 @@ from llm_gateway_core.services.upstream_routing_state import (
     DEFAULT_COOLDOWN_SECONDS,
     RATE_LIMIT_ESCALATION_LADDER_SECONDS,
     RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS,
+    UPSTREAM_OVERLOAD_COOLDOWN_SECONDS,
     UpstreamKeyCandidate,
     UpstreamQuotaLimits,
     UpstreamRoutingState,
     fingerprint_api_key,
 )
+from llm_gateway_core.services.request_handler import RequestErrorDetail
 from tests.chat_accounting_test_support import install_main_chat_accounting_double
 from llm_gateway_core.config.schemas import UpstreamQuotaConfig
 
@@ -62,6 +64,13 @@ class _ServerError(str):
 
     def __new__(cls) -> "_ServerError":
         return super().__new__(cls, "internal server error, please retry")
+
+
+class _OverloadedServerError(str):
+    status_code = 503
+
+    def __new__(cls) -> "_OverloadedServerError":
+        return super().__new__(cls, "server overloaded")
 
 
 class _AccessDeniedError(str):
@@ -583,6 +592,120 @@ class UpstreamRoutingStateTests(unittest.TestCase):
             if row["model"] == "floor-high-provider-model"
         )
         self.assertAlmostEqual(high_row["cooldown_remaining_seconds"], 200.0, delta=0.01)
+
+    def test_confirmed_overload_uses_short_pause_without_growing_rate_limit_ladder(self):
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        fingerprint = fingerprint_api_key("sk-overload-secret")
+        error = _RateLimitErrorWithMessage("too many concurrent requests")
+
+        self.assertTrue(
+            state.record_failure(
+                "openrouter",
+                "provider-model",
+                fingerprint,
+                error,
+                temporary=True,
+                apply_penalty=False,
+                retry_after_floor_seconds=5.0,
+            )
+        )
+        row = state.get_status_rows()[0]
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], UPSTREAM_OVERLOAD_COOLDOWN_SECONDS, delta=0.01
+        )
+        self.assertEqual(row["cooldown_escalation_level"], 0)
+
+        clock.value += UPSTREAM_OVERLOAD_COOLDOWN_SECONDS + 0.1
+        self.assertTrue(state.select_key("openrouter", "provider-model", ["sk-overload-secret"]).available)
+
+        state.record_failure(
+            "openrouter", "provider-model", fingerprint, error, temporary=True, apply_penalty=False
+        )
+        self.assertEqual(state.get_status_rows()[0]["cooldown_escalation_level"], 0)
+
+    def test_confirmed_overload_does_not_learn_limit_hint(self):
+        state = UpstreamRoutingState()
+        fingerprint = fingerprint_api_key("sk-overload-limit-hint-secret")
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _RateLimitErrorWithMessage(
+                "too many concurrent requests; requests per minute limit: 5"
+            ),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        self.assertEqual(state.get_status_rows()[0]["observed_limits"], {})
+
+    def test_confirmed_overload_retry_after_is_a_floor_and_daily_quota_keeps_priority(self):
+        state = UpstreamRoutingState()
+        overload_fingerprint = fingerprint_api_key("sk-overload-floor-secret")
+        state.record_failure(
+            "openrouter",
+            "overload-model",
+            overload_fingerprint,
+            _RateLimitErrorWithMessage("concurrency limit reached"),
+            temporary=True,
+            apply_penalty=False,
+            retry_after_floor_seconds=45.0,
+        )
+        overload_row = next(row for row in state.get_status_rows() if row["model"] == "overload-model")
+        self.assertAlmostEqual(overload_row["cooldown_remaining_seconds"], 45.0, delta=0.01)
+
+        daily_fingerprint = fingerprint_api_key("sk-daily-overload-secret")
+        state.record_failure(
+            "openrouter",
+            "daily-model",
+            daily_fingerprint,
+            _RateLimitErrorWithMessage("daily quota exhausted; server overloaded"),
+            temporary=True,
+            apply_penalty=False,
+        )
+        daily_row = next(row for row in state.get_status_rows() if row["model"] == "daily-model")
+        self.assertGreater(daily_row["cooldown_remaining_seconds"], UPSTREAM_OVERLOAD_COOLDOWN_SECONDS)
+
+    def test_confirmed_503_overload_uses_short_pause_without_immediate_key_switch(self):
+        state = UpstreamRoutingState()
+        fingerprint = fingerprint_api_key("sk-503-overload-secret")
+
+        result = state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            _OverloadedServerError(),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        self.assertFalse(result)
+        remaining = state.cooldown_remaining_seconds("openrouter", "provider-model", fingerprint)
+        self.assertIsNotNone(remaining)
+        self.assertAlmostEqual(remaining, UPSTREAM_OVERLOAD_COOLDOWN_SECONDS, delta=0.01)
+
+    def test_daily_quota_in_diagnostic_detail_keeps_existing_429_behavior(self):
+        state = UpstreamRoutingState()
+        fingerprint = fingerprint_api_key("sk-diagnostic-daily-secret")
+
+        state.record_failure(
+            "openrouter",
+            "provider-model",
+            fingerprint,
+            RequestErrorDetail(
+                "request failed",
+                status_code=429,
+                diagnostic_detail="daily quota exhausted; server overloaded",
+            ),
+            temporary=True,
+            apply_penalty=False,
+        )
+
+        remaining = state.cooldown_remaining_seconds("openrouter", "provider-model", fingerprint)
+        self.assertIsNotNone(remaining)
+        self.assertAlmostEqual(remaining, RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS, delta=0.01)
 
     def test_daily_quota_cooldown_targets_next_utc_midnight_with_sixty_second_floor(self):
         near_midnight_epoch = datetime(2024, 3, 1, 23, 59, 30, tzinfo=timezone.utc).timestamp()

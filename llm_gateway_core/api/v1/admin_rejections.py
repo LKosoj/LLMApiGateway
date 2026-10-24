@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
+import asyncio
+from ipaddress import ip_address
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
@@ -72,3 +74,23 @@ async def list_rejections(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"items": items, "total": total}
+
+
+@admin_rejections_router.get("/admin/ip-blocks")
+async def list_permanent_ip_blocks(request: Request) -> dict[str, Any]:
+    _require_master(request)
+    guard = _capture_app_services(request).ip_block_guard
+    return {"items": guard.list_permanent_blocks() if guard is not None else []}
+
+
+@admin_rejections_router.delete("/admin/ip-blocks/{ip}")
+async def release_permanent_ip_block(request: Request, ip: str) -> dict[str, str]:
+    _require_master(request)
+    try:
+        ip_address(ip)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid IP address") from exc
+    guard = _capture_app_services(request).ip_block_guard
+    if guard is None or not await asyncio.to_thread(guard.unblock_permanent_ip, ip):
+        raise HTTPException(status_code=404, detail="Permanent IP block not found")
+    return {"client_ip": ip, "status": "unblocked"}

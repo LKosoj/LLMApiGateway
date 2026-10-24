@@ -65,6 +65,7 @@ class UpstreamQuotaConfig(BaseModel):
     rpd: int | None = Field(default=None, strict=True, gt=0)
     tpm: int | None = Field(default=None, strict=True, gt=0)
     tpd: int | None = Field(default=None, strict=True, gt=0)
+    max_concurrency: int | None = Field(default=None, strict=True, gt=0)
 
 
 class UpstreamKeySpec(BaseModel):

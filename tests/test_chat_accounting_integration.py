@@ -43,10 +43,22 @@ from llm_gateway_core.services.accounting import (
 from llm_gateway_core.services.chat_accounting import ChatTerminalObservation
 from llm_gateway_core.services.chat_accounting import ObservedChatResponse
 from llm_gateway_core.services.stream_observation import SSEFramer
+from llm_gateway_core.services.request_handler import _OwnedStreamingResponse, _StreamResourceOwner
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 from llm_gateway_core.utils.usage_tracking import ModelCostRates, estimate_prompt_tokens
 from tests._async_compat import run_async
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
+
+
+def _owned_test_stream(body: AsyncIterator[bytes]) -> StreamingResponse:
+    async def close() -> None:
+        return None
+
+    return _OwnedStreamingResponse(
+        body,
+        stream_owner=_StreamResourceOwner(close),
+        media_type="text/event-stream",
+    )
 
 
 def _context(
@@ -379,7 +391,7 @@ def test_direct_openai_stream_publishes_at_upstream_terminal_and_preserves_bytes
             yield expected[:57]
             yield expected[57:]
 
-        response = StreamingResponse(body(), media_type="text/event-stream")
+        response = _owned_test_stream(body())
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
@@ -388,6 +400,7 @@ def test_direct_openai_stream_publishes_at_upstream_terminal_and_preserves_bytes
         assert result is response
 
         received = b"".join([chunk async for chunk in result.body_iterator])
+        await result.aclose()
 
         assert received == expected
         _observe_handoff_stream(handoff, received)
@@ -433,7 +446,7 @@ def test_direct_native_anthropic_stream_publishes_actual_split_usage() -> None:
             "stream": True,
         }
         request = _direct_request(anthropic_payload=anthropic_payload)
-        response = StreamingResponse(body(), media_type="text/event-stream")
+        response = _owned_test_stream(body())
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
@@ -444,6 +457,7 @@ def test_direct_native_anthropic_stream_publishes_actual_split_usage() -> None:
         assert result is response
 
         received = b"".join([chunk async for chunk in result.body_iterator])
+        await result.aclose()
 
         assert received == frames
         _observe_handoff_stream(handoff, received)
@@ -469,7 +483,7 @@ def test_direct_responses_stream_preserves_bytes_for_client_wire_observer() -> N
 
         request = _direct_request()
         request.state.llmgateway_original_responses_payload = {"stream": True}
-        response = StreamingResponse(body(), media_type="text/event-stream")
+        response = _owned_test_stream(body())
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
@@ -478,6 +492,7 @@ def test_direct_responses_stream_preserves_bytes_for_client_wire_observer() -> N
 
         assert result is response
         received = b"".join([chunk async for chunk in response.body_iterator])
+        await response.aclose()
         assert received == frames
         _observe_handoff_stream(handoff, received)
         observation = handoff.take()
@@ -499,7 +514,7 @@ def test_direct_stream_without_actual_usage_commits_estimated_usage() -> None:
             yield b'data: {"choices":[{"finish_reason":"stop"}]}\n\n'
             yield b"data: [DONE]\n\n"
 
-        response = StreamingResponse(body(), media_type="text/event-stream")
+        response = _owned_test_stream(body())
         result, handoff = await _attempt_direct(
             response,
             streaming=True,
@@ -508,6 +523,7 @@ def test_direct_stream_without_actual_usage_commits_estimated_usage() -> None:
         assert result is response
 
         received = b"".join([chunk async for chunk in result.body_iterator])
+        await result.aclose()
         _observe_handoff_stream(handoff, received)
         observation = handoff.take()
 

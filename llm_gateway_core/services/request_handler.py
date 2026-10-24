@@ -561,6 +561,7 @@ class _OwnedStreamingResponse(StreamingResponse):
         "_close_exception",
         "_close_lock",
         "_close_task",
+        "_close_callbacks",
         "_source_iterators",
         "_stream_owner",
     )
@@ -573,6 +574,12 @@ class _OwnedStreamingResponse(StreamingResponse):
         self._close_exception: BaseException | None = None
         self._close_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
+        self._close_callbacks: list[Callable[[], Awaitable[None]]] = []
+
+    def add_close_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
+        if self._close_completed:
+            raise RuntimeError("cannot add a callback to a closed stream")
+        self._close_callbacks.append(callback)
 
     def replace_body_iterator(self, body_iterator: object) -> None:
         self._source_iterators.append(self.body_iterator)
@@ -600,11 +607,23 @@ class _OwnedStreamingResponse(StreamingResponse):
             await self._stream_owner.close()
         except BaseException as exc:
             if iterator_error is None:
-                raise
-            logging.warning(
-                "Owned stream cleanup failed after iterator failure type=%s",
-                safe_exception_type_name(exc),
-            )
+                iterator_error = exc
+            else:
+                logging.warning(
+                    "Owned stream cleanup failed after iterator failure type=%s",
+                    safe_exception_type_name(exc),
+                )
+        for callback in self._close_callbacks:
+            try:
+                await callback()
+            except BaseException as exc:
+                if iterator_error is None:
+                    iterator_error = exc
+                else:
+                    logging.warning(
+                        "Owned stream close callback failed type=%s",
+                        safe_exception_type_name(exc),
+                    )
         if iterator_error is not None:
             raise iterator_error
 
@@ -661,6 +680,31 @@ class _OwnedStreamingResponse(StreamingResponse):
                 )
             raise
         await self._close_owned_stream()
+
+    async def aclose(self) -> None:
+        await self._close_owned_stream()
+
+
+def attach_streaming_response_close_callback(
+    response: StreamingResponse,
+    callback: Callable[[], Awaitable[None]],
+) -> StreamingResponse:
+    """Attach cleanup to the response that owns the upstream stream.
+
+    Test doubles may provide a plain ``StreamingResponse``. Promote that
+    response to the same owner type instead of silently dropping cleanup.
+    """
+    if isinstance(response, _OwnedStreamingResponse):
+        response.add_close_callback(callback)
+        return response
+    return _OwnedStreamingResponse(
+        response.body_iterator,
+        stream_owner=_StreamResourceOwner(callback),
+        status_code=response.status_code,
+        headers=dict(response.headers),
+        media_type=response.media_type,
+        background=response.background,
+    )
 
 
 def replace_streaming_response_body(

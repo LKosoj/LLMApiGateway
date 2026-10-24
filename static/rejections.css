@@ -88,6 +88,23 @@
     overflow-wrap: anywhere;
 }
 
+.permanent-ip-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.permanent-ip-table th,
+.permanent-ip-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.permanent-ip-table button {
+    min-height: 44px;
+}
+
 .rej-title {
     max-width: 220px;
     overflow-wrap: anywhere;

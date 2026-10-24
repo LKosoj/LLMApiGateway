@@ -390,11 +390,29 @@ export function registerProviders(ctx) {
         rpd: 'editor:tooltips.rpd',
         tpm: 'editor:tooltips.tpm',
         tpd: 'editor:tooltips.tpd',
+        maxConcurrency: 'editor:tooltips.maxConcurrency',
         modelApiTypes: 'editor:tooltips.modelApiTypes',
         modelApiType: 'editor:tooltips.modelApiType',
     };
 
     const UPSTREAM_LIMIT_KEYS = ['rpm', 'rpd', 'tpm', 'tpd'];
+    const SHARED_UPSTREAM_LIMIT_KEYS = [...UPSTREAM_LIMIT_KEYS, 'max_concurrency'];
+
+    function parseSharedUpstreamLimits(values, providerName) {
+        const sharedLimits = {};
+        SHARED_UPSTREAM_LIMIT_KEYS.forEach(key => {
+            const raw = values[key];
+            if (!raw) {
+                return;
+            }
+            const value = Number(raw);
+            if (!Number.isSafeInteger(value) || value <= 0) {
+                throw new Error(`Provider '${providerName}' ${key.toUpperCase()} must be a positive integer.`);
+            }
+            sharedLimits[key] = value;
+        });
+        return sharedLimits;
+    }
 
     function splitProviderModelsMetadata(value) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -761,17 +779,12 @@ export function registerProviders(ctx) {
         if (upstreamKeyPools) {
             providerPayload.upstream_key_pools = upstreamKeyPools;
         }
-        const sharedLimits = {};
-        UPSTREAM_LIMIT_KEYS.forEach(key => {
+        const sharedLimitValues = {};
+        SHARED_UPSTREAM_LIMIT_KEYS.forEach(key => {
             const input = providerCard.querySelector(`.provider-shared-limit-${key}`);
-            if (input.value.trim()) {
-                const value = Number(input.value);
-                if (!Number.isSafeInteger(value) || value <= 0) {
-                    throw new Error(`Provider '${name}' ${key.toUpperCase()} must be a positive integer.`);
-                }
-                sharedLimits[key] = value;
-            }
+            sharedLimitValues[key] = input.value.trim();
         });
+        const sharedLimits = parseSharedUpstreamLimits(sharedLimitValues, name);
         if (Object.keys(sharedLimits).length) {
             providerPayload.upstream_limits = sharedLimits;
         }
@@ -932,12 +945,19 @@ export function registerProviders(ctx) {
         sharedLimitsSection.appendChild(sharedLimitsHint);
         const sharedLimitsRow = document.createElement('div');
         sharedLimitsRow.className = 'fields-grid';
-        UPSTREAM_LIMIT_KEYS.forEach(key => {
+        SHARED_UPSTREAM_LIMIT_KEYS.forEach(key => {
             const input = ctx.createNumberInput(`provider-shared-limit-${key}`, '');
             input.min = '1';
             input.step = '1';
             input.value = initialData.upstream_limits?.[key] ?? '';
-            sharedLimitsRow.appendChild(ctx.createFieldGroup(key.toUpperCase(), input));
+            const label = key === 'max_concurrency' ? 'Maximum Concurrent Requests per Key' : key.toUpperCase();
+            const field = ctx.createFieldGroup(label, input);
+            if (key === 'max_concurrency') {
+                ctx.bindLocalizedText(field.querySelector('.field-label-text'), 'editor:fields.maxConcurrency');
+                ctx.bindLocalizedAttribute(input, 'aria-label', 'editor:fields.maxConcurrency');
+                ctx.attachFieldTooltip(field, PROVIDER_FIELD_TOOLTIPS.maxConcurrency);
+            }
+            sharedLimitsRow.appendChild(field);
         });
         sharedLimitsSection.appendChild(sharedLimitsRow);
         advancedGrid.appendChild(sharedLimitsSection);
@@ -1126,6 +1146,7 @@ export function registerProviders(ctx) {
         normalizeProviderJsonObject,
         parseAvailableModels,
         normalizeAvailableModels,
+        parseSharedUpstreamLimits,
         splitProviderModelsMetadata,
         buildUpstreamLimitsSection,
         buildModelApiTypesSection,

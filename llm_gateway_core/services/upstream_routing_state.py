@@ -13,6 +13,7 @@ from llm_gateway_core.config.loader import (
 )
 from llm_gateway_core.services.error_classifier import (
     classify_error,
+    is_confirmed_upstream_overload_error,
     is_daily_quota_exhausted_error,
     parse_learned_limit_from_error,
 )
@@ -38,6 +39,7 @@ RATE_LIMIT_ESCALATION_LADDER_SECONDS: tuple[float, float, float, float] = (
 RATE_LIMIT_HIT_WINDOW_SECONDS = 3600.0
 RATE_LIMIT_EXHAUSTION_WINDOW_SECONDS = 86400.0
 DAILY_QUOTA_MIN_COOLDOWN_SECONDS = 60.0
+UPSTREAM_OVERLOAD_COOLDOWN_SECONDS = 15.0
 COOLDOWN_CEILING_SECONDS = 86400.0
 
 # 401/403 is an access problem (revoked key, model not on the plan), not a
@@ -73,6 +75,7 @@ class UpstreamQuotaLimits:
     rpd: int | None = None
     tpm: int | None = None
     tpd: int | None = None
+    max_concurrency: int | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | None) -> "UpstreamQuotaLimits | None":
@@ -93,6 +96,7 @@ class UpstreamQuotaLimits:
             rpd=_positive_int("rpd"),
             tpm=_positive_int("tpm"),
             tpd=_positive_int("tpd"),
+            max_concurrency=_positive_int("max_concurrency"),
         )
 
 
@@ -142,6 +146,28 @@ class _ManualPause:
     reason: str
 
 
+class UpstreamConcurrencyLease:
+    """One occupied upstream slot; releasing it twice is harmless."""
+
+    def __init__(self, state: "UpstreamRoutingState", provider: str, fingerprint: str) -> None:
+        self._state = state
+        self._provider = provider
+        self._fingerprint = fingerprint
+        self._released = False
+
+    def release(self) -> None:
+        with self._state._lock:
+            if self._released:
+                return
+            self._released = True
+            ref = (self._provider, self._fingerprint)
+            active = self._state._active_concurrency[ref]
+            if active <= 1:
+                self._state._active_concurrency.pop(ref, None)
+            else:
+                self._state._active_concurrency[ref] = active - 1
+
+
 class UpstreamRoutingState:
     """In-memory upstream health/cooldown/quota tracker.
 
@@ -158,6 +184,7 @@ class UpstreamRoutingState:
         self._token_windows: dict[tuple[str, str, str], deque[tuple[float, int]]] = defaultdict(deque)
         self._key_request_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
         self._key_token_windows: dict[tuple[str, str], deque[tuple[float, int]]] = defaultdict(deque)
+        self._active_concurrency: dict[tuple[str, str], int] = defaultdict(int)
         self._manual_pauses: dict[tuple[str, str, str | None], _ManualPause] = {}
         self._round_robin_indexes: dict[tuple[str, str, tuple[str, ...]], int] = {}
         self._session_affinity: dict[tuple[str, str, str, str], _AffinityBinding] = {}
@@ -328,7 +355,13 @@ class UpstreamRoutingState:
         with self._lock:
             if self._active_pause(provider, key_fingerprint, model, now) is not None:
                 return "upstream key is manually paused"
-            blocked = self._key_quota_block_reason(provider, key_fingerprint, key_limits, now)
+            blocked = self._key_quota_block_reason(
+                provider,
+                key_fingerprint,
+                key_limits,
+                now,
+                include_concurrency=False,
+            )
             if blocked:
                 return blocked
             self._request_windows[ref].append(now)
@@ -337,6 +370,21 @@ class UpstreamRoutingState:
             key_requests.append(now)
             self._trim_numeric_window(key_requests, now, 86400.0)
             self._state_for(ref)
+
+    def acquire_concurrency(
+        self,
+        provider: str,
+        key_fingerprint: str,
+        *,
+        max_concurrency: int | None,
+    ) -> UpstreamConcurrencyLease | None:
+        """Atomically occupy a provider-key slot, including while the limit is off."""
+        with self._lock:
+            ref = (provider, key_fingerprint)
+            if max_concurrency is not None and self._active_concurrency[ref] >= max_concurrency:
+                return None
+            self._active_concurrency[ref] += 1
+            return UpstreamConcurrencyLease(self, provider, key_fingerprint)
 
     def record_tokens(self, provider: str, model: str, key_fingerprint: str, total_tokens: int | None) -> None:
         if not total_tokens or total_tokens <= 0:
@@ -395,11 +443,23 @@ class UpstreamRoutingState:
         return None
 
     def _key_quota_block_reason(
-        self, provider: str, fingerprint: str, limits: UpstreamQuotaLimits | None, now: float,
+        self,
+        provider: str,
+        fingerprint: str,
+        limits: UpstreamQuotaLimits | None,
+        now: float,
+        *,
+        include_concurrency: bool = True,
     ) -> str | None:
         if limits is None:
             return None
         ref = (provider, fingerprint)
+        if (
+            include_concurrency
+            and limits.max_concurrency is not None
+            and self._active_concurrency[ref] >= limits.max_concurrency
+        ):
+            return "shared key max concurrency reached"
         requests = self._key_request_windows[ref]
         tokens = self._key_token_windows[ref]
         self._trim_numeric_window(requests, now, 86400.0)
@@ -435,10 +495,10 @@ class UpstreamRoutingState:
         are neither a 429 nor a daily-quota exhaustion it still replaces the
         default cooldown outright, unchanged from prior behavior.
 
-        ``retry_after_floor_seconds`` only applies to the new 429/daily-quota
-        branches below: it is a *floor* on the escalation-ladder cooldown
-        (never shortens it) and an *override* of the daily-quota
-        until-next-UTC-midnight calculation.
+        ``retry_after_floor_seconds`` only applies to the 429/daily-quota and
+        confirmed-overload branches below: it is a *floor* on the
+        escalation-ladder or short overload cooldown (never shortens it) and
+        an *override* of the daily-quota until-next-UTC-midnight calculation.
 
         A plain (non-429) temporary failure -- 5xx, timeout, connection error
         -- still sets a cooldown here so *future* requests skip this key, but
@@ -468,9 +528,20 @@ class UpstreamRoutingState:
                 error_type = classify_error(error_detail)
                 rate_limited = error_type == "http_429"
                 daily_quota = rate_limited and is_daily_quota_exhausted_error(error_detail)
+                overload = not daily_quota and is_confirmed_upstream_overload_error(error_detail)
                 if daily_quota:
                     cooldown_seconds = min(
                         self._daily_quota_cooldown_seconds(retry_after_floor_seconds),
+                        COOLDOWN_CEILING_SECONDS,
+                    )
+                elif overload:
+                    retry_after_floor = (
+                        retry_after_floor_seconds
+                        if retry_after_floor_seconds and retry_after_floor_seconds > 0
+                        else 0.0
+                    )
+                    cooldown_seconds = min(
+                        max(UPSTREAM_OVERLOAD_COOLDOWN_SECONDS, retry_after_floor),
                         COOLDOWN_CEILING_SECONDS,
                     )
                 elif rate_limited:
@@ -488,7 +559,7 @@ class UpstreamRoutingState:
                         if retry_after_seconds > 0:
                             cooldown_seconds = retry_after_seconds
                 state.cooldown_until = now + cooldown_seconds
-                if rate_limited:
+                if rate_limited and not overload:
                     self._maybe_learn_limit_from_error(ref, error_detail)
             elif access_denied:
                 state.cooldown_until = now + DEFAULT_COOLDOWN_SECONDS

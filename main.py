@@ -180,6 +180,7 @@ async def run_usage_stats_cleanup_loop(
     *,
     retention_days: int = USAGE_STATS_RETENTION_DAYS,
     interval_seconds: float = USAGE_STATS_CLEANUP_INTERVAL_SECONDS,
+    ip_block_guard: IpBlockGuard | None = None,
 ) -> None:
     logger.info(
         "Usage statistics cleanup task started. Interval: %s seconds. Retention: %s days.",
@@ -189,6 +190,8 @@ async def run_usage_stats_cleanup_loop(
     try:
         while True:
             try:
+                if ip_block_guard is not None:
+                    await run_cancellation_resistant_thread_worker(ip_block_guard.scan_permanent_blocks)
                 await run_cancellation_resistant_thread_worker(
                     tokens_usage_db.cleanup_old_records,
                     retention_days=retention_days,
@@ -215,9 +218,12 @@ def start_usage_stats_cleanup_task(
     rejections_db: RejectionsDB,
     *,
     supervisor: TaskSupervisor,
+    ip_block_guard: IpBlockGuard | None = None,
 ) -> asyncio.Task:
     return supervisor.create_task(
-        run_usage_stats_cleanup_loop(tokens_usage_db, fallback_events_db, rejections_db),
+        run_usage_stats_cleanup_loop(
+            tokens_usage_db, fallback_events_db, rejections_db, ip_block_guard=ip_block_guard,
+        ),
         name="usage-stats-cleanup",
     )
 
@@ -757,6 +763,7 @@ async def lifespan(app: FastAPI):
             IpBlockGuard(
                 max_failures=settings.ip_block_max_failures,
                 block_seconds=settings.ip_block_duration_minutes * 60,
+                rejections_db=rejections_db,
             )
             if settings.ip_block_enabled
             else None
@@ -928,6 +935,7 @@ async def lifespan(app: FastAPI):
             fallback_events_db,
             rejections_db,
             supervisor=task_supervisor,
+            ip_block_guard=ip_block_guard,
         )
         start_deep_research_images_cleanup_task(
             image_retention_service,

@@ -250,6 +250,29 @@ class OpenAiDegenerateCompletionTests(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_openai_reasoning_only_at_token_limit_is_empty_completion(self):
+        for finish_reason in ("length", "max_tokens"):
+            with self.subTest(finish_reason=finish_reason):
+                response_data = {
+                    "choices": [
+                        {
+                            "finish_reason": finish_reason,
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "reasoning_content": "I need more tokens to answer.",
+                            },
+                        }
+                    ]
+                }
+
+                result = detect_degenerate_non_stream_response(
+                    response_data, {}, is_anthropic_provider=False
+                )
+
+                self.assertIsInstance(result, ModelBehaviorFailureDetail)
+                self.assertEqual(result.behavior_class, "empty_completion")
+
     def test_openai_legacy_function_call_with_empty_content_is_not_degenerate(self):
         response_data = {
             "choices": [
@@ -334,6 +357,23 @@ class AnthropicDegenerateCompletionTests(unittest.TestCase):
         )
 
         self.assertIsNone(result)
+
+    def test_anthropic_thinking_only_at_token_limit_is_empty_completion(self):
+        for stop_reason in ("max_tokens", "length"):
+            with self.subTest(stop_reason=stop_reason):
+                response_data = {
+                    "content": [
+                        {"type": "thinking", "thinking": "I need more tokens to answer."},
+                    ],
+                    "stop_reason": stop_reason,
+                }
+
+                result = detect_degenerate_non_stream_response(
+                    response_data, {}, is_anthropic_provider=True
+                )
+
+                self.assertIsInstance(result, ModelBehaviorFailureDetail)
+                self.assertEqual(result.behavior_class, "empty_completion")
 
     def test_anthropic_thinking_block_does_not_mask_missing_json_when_format_requested(self):
         request_body_json = {"response_format": {"type": "json_object"}}

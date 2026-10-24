@@ -32,6 +32,7 @@ from ..middleware.auth import (
 )
 from ..db.rejections_db import record_rejection
 from ..utils.client_ip import get_client_ip
+from ..services.ip_blocklist import PERMANENT_BLOCK
 
 if TYPE_CHECKING:
     from ..services.ip_blocklist import IpBlockGuard
@@ -149,6 +150,13 @@ async def login_submit(request: Request):
         client_ip = get_client_ip(request)
         if client_ip:
             retry_after = guard.check_blocked(client_ip)
+            if retry_after == PERMANENT_BLOCK:
+                return error_response(
+                    request,
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="IP address is permanently blocked. Contact the administrator.",
+                    code="ip_permanently_blocked",
+                )
             if retry_after is not None:
                 return error_response(
                     request,

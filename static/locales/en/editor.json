@@ -280,7 +280,8 @@
     "transcriptionModel": "Transcription Model",
     "diarizationModel": "Diarization Model",
     "voiceInput": "Voice Input",
-    "sharedKeyLimits": "Shared limits per provider key"
+    "sharedKeyLimits": "Shared limits per provider key",
+    "maxConcurrency": "Maximum concurrent requests per key"
   },
   "toggles": {
     "providerOrder": "Use provider order as fallback",
@@ -324,7 +325,7 @@
     "routerRoutingPolicy": "Added to the selector system prompt and explains how to compare targets. Left empty, the selector picks without any criterion.",
     "routerTargetDescription": "What this target is best at. Only the selector model reads this text.",
     "routerCostHint": "Cost tier shown to the selector: free, cheap, standard or premium.",
-    "sharedKeyLimits": "Sum requests and tokens across all chat models for each key separately. RPM/RPD: requests per minute/day; TPM/TPD: tokens per minute/day. Empty fields disable the limit."
+    "sharedKeyLimits": "Sum requests and tokens across all chat models for each key separately. RPM/RPD: requests per minute/day; TPM/TPD: tokens per minute/day. Maximum concurrent requests is also shared by all chat models for the same key. Empty fields disable the limit."
   },
   "tooltips": {
     "providerName": "Unique provider id used in fallback rules and routes. It must be unique across the provider configuration.",
@@ -344,7 +345,8 @@
     "rpm": "Requests per minute allowed per upstream key. Leave empty to disable this cap.",
     "rpd": "Requests per day allowed per upstream key. Leave empty to disable this cap.",
     "tpm": "Prompt and completion tokens per minute allowed per upstream key. Leave empty to disable this cap.",
-    "tpd": "Prompt and completion tokens per day allowed per upstream key. Leave empty to disable this cap."
+    "tpd": "Prompt and completion tokens per day allowed per upstream key. Leave empty to disable this cap.",
+    "maxConcurrency": "Maximum simultaneous upstream requests for one provider key, shared by all chat models. Leave empty to disable this cap."
   },
   "placeholders": {
     "chooseGatewayModel": "Select a gateway model",

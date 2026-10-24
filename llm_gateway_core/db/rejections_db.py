@@ -1,6 +1,7 @@
 import logging
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
 
@@ -158,6 +159,15 @@ class RejectionsDB:
                 cursor.execute("ALTER TABLE rejection_events ADD COLUMN x_title TEXT")
 
             cursor.execute("""
+            CREATE TABLE IF NOT EXISTS permanent_ip_blocks (
+                client_ip TEXT PRIMARY KEY,
+                blocked_at TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                released_at TEXT
+            )
+            """)
+
+            cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_rejection_events_timestamp
             ON rejection_events (timestamp)
             """)
@@ -192,6 +202,47 @@ class RejectionsDB:
         finally:
             if conn:
                 conn.close()
+
+    def list_permanent_ip_blocks(self) -> list[dict]:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute(
+                "SELECT client_ip, blocked_at, reason FROM permanent_ip_blocks "
+                "WHERE released_at IS NULL ORDER BY blocked_at DESC, client_ip"
+            )]
+
+    def promote_repeat_ip_blocks(self, *, now: datetime | None = None) -> list[dict]:
+        now = now or datetime.now(timezone.utc)
+        since = (now - timedelta(days=1)).isoformat()
+        timestamp = now.isoformat()
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            candidates = conn.execute(
+                "SELECT e.client_ip, COUNT(*) FROM rejection_events e "
+                "LEFT JOIN permanent_ip_blocks b ON b.client_ip = e.client_ip "
+                "WHERE e.category = 'ip_blocked' AND e.timestamp >= ? AND e.timestamp <= ? "
+                "AND e.client_ip IS NOT NULL AND e.client_ip != '' "
+                "AND (b.client_ip IS NULL OR b.released_at IS NOT NULL) "
+                "AND (b.released_at IS NULL OR e.timestamp > b.released_at) "
+                "GROUP BY e.client_ip HAVING COUNT(*) >= 2",
+                (since, timestamp),
+            ).fetchall()
+            conn.executemany(
+                "INSERT INTO permanent_ip_blocks (client_ip, blocked_at, reason, released_at) "
+                "VALUES (?, ?, ?, NULL) ON CONFLICT(client_ip) DO UPDATE SET "
+                "blocked_at = excluded.blocked_at, reason = excluded.reason, released_at = NULL",
+                [(ip, timestamp, f"{count} temporary IP blocks in 24 hours") for ip, count in candidates],
+            )
+        return self.list_permanent_ip_blocks()
+
+    def release_permanent_ip_block(self, ip: str) -> bool:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn, conn:
+            result = conn.execute(
+                "UPDATE permanent_ip_blocks SET released_at = ? "
+                "WHERE client_ip = ? AND released_at IS NULL",
+                (datetime.now(timezone.utc).isoformat(), ip),
+            )
+            return result.rowcount > 0
 
     # ------------------------------------------------------------------
     # Writes — fire-and-forget via WriteBatcher (thread-safe, sync)

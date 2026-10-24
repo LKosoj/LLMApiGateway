@@ -45,6 +45,7 @@ from ...services.model_policy import resolve_model_name
 from ...services.payload_transform import apply_payload_transforms
 from ...services.ratelimit_headers import parse_ratelimit_headers
 from ...services.request_handler import (
+    attach_streaming_response_close_callback,
     LocalStreamObservationError,
     MAX_RETRY_AFTER_SECONDS,
     RequestErrorDetail,
@@ -55,13 +56,14 @@ from ...services.stream_observation import StreamObservationCapacity
 from ...services.upstream_routing_state import (
     SelectedUpstreamKey,
     UpstreamKeyCandidate,
+    UpstreamConcurrencyLease,
     UpstreamQuotaLimits,
     UpstreamRoutingState,
     fingerprint_api_key,
     upstream_limits_for_model,
 )
 from ...utils.api_keys import split_api_keys
-from ...utils.log_redaction import redact_payload_for_log
+from ...utils.log_redaction import redact_payload_for_log, safe_exception_type_name
 from ...utils.provider_error_redaction import redact_provider_error_text
 from ...utils.usage_tracking import ModelCostRates, estimate_prompt_tokens, extract_request_x_title
 from .chat_accounting import ChatStreamDialect, ChatTerminalHandoff
@@ -569,6 +571,11 @@ async def attempt_model_fallback_rule(
             f"and model '{provider_model}': {selected_key.blocked_reason}."
         )
         logging.warning(error_detail)
+        if selected_key.blocked_reason and all(
+            reason.endswith("shared key max concurrency reached")
+            for reason in selected_key.blocked_reason.split("; ")
+        ):
+            return None, error_detail, attempt_number
         _record_event(False, error_detail, 0, upstream_key_fingerprint=selected_key.fingerprint)
         return None, error_detail, attempt_number
     provider_api_key = selected_key.api_key
@@ -767,6 +774,46 @@ async def attempt_model_fallback_rule(
         if auth_material.upstream_key_fingerprint:
             upstream_key_fingerprint = auth_material.upstream_key_fingerprint
         headers.update(auth_material.headers)
+
+    async def _acquire_upstream_slot():
+        """Occupy a slot, retrying key selection if a concurrent request won it."""
+        nonlocal upstream_key_fingerprint
+        max_concurrency = key_limits.max_concurrency if key_limits is not None else None
+        for _ in key_candidates:
+            lease = upstream_routing_state.acquire_concurrency(
+                provider_name or "unknown",
+                upstream_key_fingerprint,
+                max_concurrency=max_concurrency,
+            )
+            if lease is not None:
+                return lease
+            selected = _select_upstream_key()
+            if not selected.available:
+                return None
+            await _apply_selected_key(selected)
+        return None
+
+    async def _attach_stream_slot(
+        response_data: object, lease: UpstreamConcurrencyLease
+    ) -> object:
+        if not isinstance(response_data, StreamingResponse):
+            lease.release()
+            return response_data
+
+        async def _release() -> None:
+            lease.release()
+
+        return attach_streaming_response_close_callback(response_data, _release)
+
+    async def _close_stream_after_postprocess_failure(response_data: object) -> None:
+        if isinstance(response_data, StreamingResponse):
+            try:
+                await response_data.aclose()
+            except Exception as cleanup_exc:
+                logging.warning(
+                    "Stream cleanup suppressed for primary postprocess failure type=%s",
+                    safe_exception_type_name(cleanup_exc),
+                )
 
     if not is_anthropic_provider:
         _normalize_provider_attempt_payload(provider_payload_template, provider_model=provider_model)
@@ -967,35 +1014,61 @@ async def attempt_model_fallback_rule(
                 attempt_payload["provider"] = {"order": subproviders_ordering}
                 attempt_payload["allow_fallbacks"] = False
 
-            update_active_request(
-                request,
-                gateway_model=requested_model,
-                operation=getattr(request.state, "llmgateway_operation", "chat"),
-                provider=provider_name,
-                model=provider_model,
-                upstream_key_fingerprint=upstream_key_fingerprint,
-            )
+            concurrency_lease = await _acquire_upstream_slot()
+            if concurrency_lease is None:
+                return (
+                    None,
+                    f"No upstream key is currently available for provider '{provider_name}' "
+                    f"and model '{provider_model}': shared key max concurrency reached.",
+                    attempt_number,
+                )
+
+            try:
+                update_active_request(
+                    request,
+                    gateway_model=requested_model,
+                    operation=getattr(request.state, "llmgateway_operation", "chat"),
+                    provider=provider_name,
+                    model=provider_model,
+                    upstream_key_fingerprint=upstream_key_fingerprint,
+                )
+            except BaseException:
+                concurrency_lease.release()
+                raise
             attempt_entry = _track_attempt_start()
             if isinstance(attempt_entry, str):
+                concurrency_lease.release()
                 _record_event(False, attempt_entry, 0, upstream_key_fingerprint=upstream_key_fingerprint)
                 return None, attempt_entry, attempt_number
             t0 = time.monotonic()
             response_headers: dict[str, str] = {}
-            response_data, error_detail = await make_llm_request(
-                http_client,
-                target_url,
-                headers,
-                attempt_payload,
-                is_streaming,
-                response_headers_sink=response_headers,
-                **stream_request_kwargs,
-            )
+            try:
+                response_data, error_detail = await make_llm_request(
+                    http_client,
+                    target_url,
+                    headers,
+                    attempt_payload,
+                    is_streaming,
+                    response_headers_sink=response_headers,
+                    **stream_request_kwargs,
+                )
+            except BaseException:
+                concurrency_lease.release()
+                raise
+            if is_streaming and response_data is not None and error_detail is None:
+                response_data = await _attach_stream_slot(response_data, concurrency_lease)
+            elif not is_streaming or response_data is None or error_detail is not None:
+                concurrency_lease.release()
             duration_ms = int((time.monotonic() - t0) * 1000)
             _record_rate_limit_observations(target_url, response_headers)
 
             if response_data is not None and error_detail is None and is_responses_provider:
                 if is_streaming:
-                    response_data = responses_stream_to_chat(response_data, provider_model)
+                    try:
+                        response_data = responses_stream_to_chat(response_data, provider_model)
+                    except BaseException:
+                        await _close_stream_after_postprocess_failure(response_data)
+                        raise
                 else:
                     response_data = responses_response_to_chat(response_data)
                     if response_data.get("error"):
@@ -1008,12 +1081,18 @@ async def attempt_model_fallback_rule(
                 and is_streaming
                 and isinstance(response_data, StreamingResponse)
             ):
-                response_data, error_detail = await detect_upstream_provider_error_stream(
-                    response_data,
-                    provider_model,
-                    is_anthropic_provider=is_anthropic_provider,
-                )
+                stream_response = response_data
+                try:
+                    response_data, error_detail = await detect_upstream_provider_error_stream(
+                        stream_response,
+                        provider_model,
+                        is_anthropic_provider=is_anthropic_provider,
+                    )
+                except BaseException:
+                    await _close_stream_after_postprocess_failure(stream_response)
+                    raise
                 if error_detail is not None:
+                    await _close_stream_after_postprocess_failure(stream_response)
                     logging.warning(
                         "Detected upstream-provider error response from model '%s' via provider '%s'.",
                         provider_model,
@@ -1061,7 +1140,12 @@ async def attempt_model_fallback_rule(
                         response_data = None
 
             if response_data and error_detail is None:
-                response_data = _observe_success(response_data)
+                try:
+                    response_data = _observe_success(response_data)
+                except BaseException:
+                    if is_streaming:
+                        await _close_stream_after_postprocess_failure(response_data)
+                    raise
                 if is_anthropic_provider:
                     if client_expects_anthropic:
                         # Native end-to-end Anthropic: skip the lossy OpenAI
@@ -1069,12 +1153,16 @@ async def attempt_model_fallback_rule(
                         # and forwards the payload/stream as-is.
                         request.state.llmgateway_response_is_anthropic_raw = True
                     elif is_streaming:
-                        response_data = _anthropic_stream_to_openai(
-                            request,
-                            response_data,
-                            requested_model,
-                            tool_name_reverse_map=anthropic_tool_name_reverse_map,
-                        )
+                        try:
+                            response_data = _anthropic_stream_to_openai(
+                                request,
+                                response_data,
+                                requested_model,
+                                tool_name_reverse_map=anthropic_tool_name_reverse_map,
+                            )
+                        except BaseException:
+                            await _close_stream_after_postprocess_failure(response_data)
+                            raise
                     else:
                         response_data = _anthropic_response_to_openai(
                             response_data,
@@ -1182,35 +1270,60 @@ async def attempt_model_fallback_rule(
                     attempt_payload = copy.deepcopy(provider_payload_template)
                     attempt_payload["provider"] = {"order": [sub_provider]}
                     attempt_payload["allow_fallbacks"] = False
-                    update_active_request(
-                        request,
-                        gateway_model=requested_model,
-                        operation=getattr(request.state, "llmgateway_operation", "chat"),
-                        provider=provider_name,
-                        model=provider_model,
-                        upstream_key_fingerprint=upstream_key_fingerprint,
-                    )
+                    concurrency_lease = await _acquire_upstream_slot()
+                    if concurrency_lease is None:
+                        return (
+                            None,
+                            f"No upstream key is currently available for provider '{provider_name}' "
+                            f"and model '{provider_model}': shared key max concurrency reached.",
+                            attempt_number,
+                        )
+                    try:
+                        update_active_request(
+                            request,
+                            gateway_model=requested_model,
+                            operation=getattr(request.state, "llmgateway_operation", "chat"),
+                            provider=provider_name,
+                            model=provider_model,
+                            upstream_key_fingerprint=upstream_key_fingerprint,
+                        )
+                    except BaseException:
+                        concurrency_lease.release()
+                        raise
                     attempt_entry = _track_attempt_start()
                     if isinstance(attempt_entry, str):
+                        concurrency_lease.release()
                         _record_event(False, attempt_entry, 0, upstream_key_fingerprint=upstream_key_fingerprint)
                         return None, attempt_entry, attempt_number
                     t0 = time.monotonic()
                     response_headers = {}
-                    response_data, error_detail = await make_llm_request(
-                        http_client,
-                        target_url,
-                        headers,
-                        attempt_payload,
-                        is_streaming,
-                        response_headers_sink=response_headers,
-                        **stream_request_kwargs,
-                    )
+                    try:
+                        response_data, error_detail = await make_llm_request(
+                            http_client,
+                            target_url,
+                            headers,
+                            attempt_payload,
+                            is_streaming,
+                            response_headers_sink=response_headers,
+                            **stream_request_kwargs,
+                        )
+                    except BaseException:
+                        concurrency_lease.release()
+                        raise
+                    if is_streaming and response_data is not None and error_detail is None:
+                        response_data = await _attach_stream_slot(response_data, concurrency_lease)
+                    elif not is_streaming or response_data is None or error_detail is not None:
+                        concurrency_lease.release()
                     duration_ms = int((time.monotonic() - t0) * 1000)
                     _record_rate_limit_observations(target_url, response_headers)
 
                     if response_data is not None and error_detail is None and is_responses_provider:
                         if is_streaming:
-                            response_data = responses_stream_to_chat(response_data, provider_model)
+                            try:
+                                response_data = responses_stream_to_chat(response_data, provider_model)
+                            except BaseException:
+                                await _close_stream_after_postprocess_failure(response_data)
+                                raise
                         else:
                             response_data = responses_response_to_chat(response_data)
                             if response_data.get("error"):
@@ -1223,12 +1336,18 @@ async def attempt_model_fallback_rule(
                         and is_streaming
                         and isinstance(response_data, StreamingResponse)
                     ):
-                        response_data, error_detail = await detect_upstream_provider_error_stream(
-                            response_data,
-                            provider_model,
-                            is_anthropic_provider=is_anthropic_provider,
-                        )
+                        stream_response = response_data
+                        try:
+                            response_data, error_detail = await detect_upstream_provider_error_stream(
+                                stream_response,
+                                provider_model,
+                                is_anthropic_provider=is_anthropic_provider,
+                            )
+                        except BaseException:
+                            await _close_stream_after_postprocess_failure(stream_response)
+                            raise
                         if error_detail is not None:
+                            await _close_stream_after_postprocess_failure(stream_response)
                             logging.warning(
                                 "Detected upstream-provider error response from model '%s' via provider '%s' sub-provider '%s'.",
                                 provider_model,
@@ -1280,7 +1399,12 @@ async def attempt_model_fallback_rule(
                                 response_data = None
 
                     if response_data and error_detail is None:
-                        response_data = _observe_success(response_data)
+                        try:
+                            response_data = _observe_success(response_data)
+                        except BaseException:
+                            if is_streaming:
+                                await _close_stream_after_postprocess_failure(response_data)
+                            raise
                         request.state.llmgateway_provider = provider_name
                         request.state.llmgateway_provider_model = provider_model
                         # This branch (sub-provider ordering loop) is structurally

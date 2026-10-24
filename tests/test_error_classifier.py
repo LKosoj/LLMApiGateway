@@ -3,9 +3,11 @@ import unittest
 from llm_gateway_core.api.v1.chat_model_behavior import ModelBehaviorFailureDetail
 from llm_gateway_core.services.error_classifier import (
     classify_error,
+    is_confirmed_upstream_overload_error,
     is_daily_quota_exhausted_error,
     parse_learned_limit_from_error,
 )
+from llm_gateway_core.services.request_handler import RequestErrorDetail
 
 
 class ErrorClassifierRegressionTests(unittest.TestCase):
@@ -50,6 +52,37 @@ class DailyQuotaExhaustedErrorTests(unittest.TestCase):
             is_daily_quota_exhausted_error("Your quota allocation has been increased.")
         )
         self.assertFalse(is_daily_quota_exhausted_error("rate limit exceeded"))
+
+
+class ConfirmedUpstreamOverloadErrorTests(unittest.TestCase):
+    def test_requires_429_or_503_and_explicit_overload_message(self):
+        self.assertTrue(
+            is_confirmed_upstream_overload_error(
+                RequestErrorDetail("request failed", status_code=429, diagnostic_detail="Concurrency limit reached.")
+            )
+        )
+        self.assertTrue(
+            is_confirmed_upstream_overload_error(
+                RequestErrorDetail("request failed", status_code=503, diagnostic_detail="Server overloaded.")
+            )
+        )
+        self.assertFalse(is_confirmed_upstream_overload_error("rate limit exceeded"))
+        self.assertFalse(
+            is_confirmed_upstream_overload_error(
+                RequestErrorDetail("request failed", status_code=401, diagnostic_detail="Server overloaded.")
+            )
+        )
+
+    def test_explicit_daily_or_monthly_quota_excludes_overload_branch(self):
+        self.assertFalse(
+            is_confirmed_upstream_overload_error(
+                RequestErrorDetail(
+                    "request failed",
+                    status_code=429,
+                    diagnostic_detail="Server overloaded; monthly quota exhausted.",
+                )
+            )
+        )
 
 
 class ParseLearnedLimitFromErrorTests(unittest.TestCase):

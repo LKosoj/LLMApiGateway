@@ -128,12 +128,17 @@ def _detect_degenerate_openai_completion(
         # the codebase already treats reasoning_content as real response
         # content (request_handler.py::_stream_chunk_has_response_content,
         # chat_dialects.py::_openai_response_to_responses). A non-empty
-        # reasoning_content therefore isn't itself a degenerate response —
-        # but it must not mask a JSON-mode request that got no JSON: the
-        # client only ever sees `content`, never the reasoning trace.
+        # reasoning_content therefore isn't itself a degenerate response,
+        # unless output ended because its token budget was exhausted. It also
+        # must not mask a JSON-mode request that got no JSON: the client only
+        # ever sees `content`, never the reasoning trace.
         reasoning_content = message.get("reasoning_content")
         has_reasoning = isinstance(reasoning_content, str) and bool(reasoning_content.strip())
-        if has_reasoning and not expects_json_object_response(request_body_json):
+        if (
+            has_reasoning
+            and finish_reason not in {"length", "max_tokens"}
+            and not expects_json_object_response(request_body_json)
+        ):
             return None
         return ModelBehaviorFailureDetail(
             "Model returned an empty completion with no tool call.",
@@ -227,13 +232,18 @@ def _detect_degenerate_anthropic_completion(
     text_content = _extract_anthropic_block_text(content_blocks, "text", "text").strip()
     if not text_content:
         # Mirrors the OpenAI-shape reasoning_content exception: extended
-        # thinking blocks (type=="thinking") are real model output, but the
-        # client only ever sees text blocks, so thinking must not mask a
-        # JSON-mode request that produced no JSON text.
+        # thinking blocks (type=="thinking") are real model output, unless
+        # output ended because its token budget was exhausted. The client only
+        # ever sees text blocks, so thinking must not mask a JSON-mode request
+        # that produced no JSON text.
         has_thinking = bool(
             _extract_anthropic_block_text(content_blocks, "thinking", "thinking").strip()
         )
-        if has_thinking and not expects_json_object_response(request_body_json):
+        if (
+            has_thinking
+            and stop_reason not in {"length", "max_tokens"}
+            and not expects_json_object_response(request_body_json)
+        ):
             return None
         return ModelBehaviorFailureDetail(
             "Model returned an empty completion with no tool_use block.",

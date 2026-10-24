@@ -1911,6 +1911,22 @@ def _degenerate_empty_completion_response(response_id: str) -> dict:
     }
 
 
+def _reasoning_only_token_limit_response(response_id: str, finish_reason: str) -> dict:
+    return {
+        "id": response_id,
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "I need more tokens to answer.",
+                },
+            }
+        ],
+    }
+
+
 def _valid_completion_response(response_id: str, content: str = "ok") -> dict:
     # A bare {"id": ...} response has no "choices" and would itself be
     # flagged as an empty_completion by the new degenerate-response
@@ -2044,6 +2060,72 @@ class ModelBehaviorFailoverTests(unittest.TestCase):
             attempted_models,
             ["first-model", "second-model", "first-model"],
         )
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
+    @patch("main.ConfigLoader")
+    def test_reasoning_only_token_limit_fails_over_without_cooldown_for_plain_and_provider_order(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+        request_payload = {
+            "model": "gateway-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        for use_provider_order in (False, True):
+            for finish_reason in ("length", "max_tokens"):
+                with self.subTest(
+                    use_provider_order=use_provider_order,
+                    finish_reason=finish_reason,
+                ):
+                    fake_config_loader = self._two_model_config_loader()
+                    first_rule = fake_config_loader.fallback_rules["gateway-model"]["fallback_models"][0]
+                    if use_provider_order:
+                        first_rule["providers_order"] = ["sub-a", "sub-b"]
+                        first_rule["use_provider_order_as_fallback"] = True
+                    config_loader_cls.return_value = fake_config_loader
+                    make_llm_request_mock.reset_mock()
+                    make_llm_request_mock.side_effect = [
+                        (_reasoning_only_token_limit_response("reasoning-only", finish_reason), None),
+                        (_valid_completion_response("second-provider-ok"), None),
+                        (_valid_completion_response("first-provider-ok-second-request"), None),
+                    ]
+
+                    with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+                        with TestClient(main.app) as client:
+                            first_response = client.post(
+                                "/v1/chat/completions",
+                                json=request_payload,
+                                headers={"Authorization": "Bearer test-gateway-key"},
+                            )
+                            second_response = client.post(
+                                "/v1/chat/completions",
+                                json=request_payload,
+                                headers={"Authorization": "Bearer test-gateway-key"},
+                            )
+
+                    self.assertEqual(first_response.status_code, 200)
+                    self.assertEqual(first_response.json()["id"], "second-provider-ok")
+                    self.assertEqual(second_response.status_code, 200)
+                    self.assertEqual(second_response.json()["id"], "first-provider-ok-second-request")
+                    self.assertEqual(make_llm_request_mock.await_count, 3)
+                    attempted_models = [
+                        call.args[3]["model"] for call in make_llm_request_mock.await_args_list
+                    ]
+                    self.assertEqual(attempted_models, ["first-model", "second-model", "first-model"])
+                    if use_provider_order:
+                        self.assertEqual(
+                            make_llm_request_mock.await_args_list[0].args[3]["provider"],
+                            {"order": ["sub-a"]},
+                        )
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
     @patch("main.TokensUsageDB")

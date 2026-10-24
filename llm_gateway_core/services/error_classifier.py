@@ -43,6 +43,12 @@ DOWNSTREAM_ERROR_PATTERN = re.compile(r"\bdownstream\s+error\s+(429|400|401|403|
 
 DAILY_QUOTA_DAY_MARKERS = ("daily", "per-day", "today", "24h")
 DAILY_QUOTA_QUOTA_MARKERS = ("allocation", "quota", "limit", "exhausted", "used up")
+MONTHLY_QUOTA_MARKERS = ("monthly", "per-month", "month")
+UPSTREAM_OVERLOAD_MARKERS = (
+    "concurrency limit",
+    "too many concurrent requests",
+    "server overloaded",
+)
 
 # Wording differs per vendor ("does not support being set to required or
 # object in thinking mode", "tool_choice must be one of auto, none", ...), so a
@@ -125,6 +131,27 @@ def is_daily_quota_exhausted_error(error_detail: object) -> bool:
         if has_day_marker and has_quota_marker:
             return True
     return False
+
+
+def is_confirmed_upstream_overload_error(error_detail: object) -> bool:
+    """True only for a 429/503 that explicitly identifies upstream overload."""
+    if classify_error(error_detail) not in {"http_429", "http_503"}:
+        return False
+
+    signals = _extract_error_signal_candidates(error_detail)
+    diagnostic_detail = getattr(error_detail, "diagnostic_detail", None)
+    if isinstance(diagnostic_detail, str):
+        signals.extend(_extract_error_signal_candidates(diagnostic_detail))
+
+    for signal in signals:
+        has_period_marker = any(marker in signal for marker in DAILY_QUOTA_DAY_MARKERS) or any(
+            marker in signal for marker in MONTHLY_QUOTA_MARKERS
+        )
+        has_quota_marker = any(marker in signal for marker in DAILY_QUOTA_QUOTA_MARKERS)
+        if has_period_marker and has_quota_marker:
+            return False
+
+    return any(marker in signal for signal in signals for marker in UPSTREAM_OVERLOAD_MARKERS)
 
 
 def parse_learned_limit_from_error(error_detail: object) -> tuple[str, int] | None:

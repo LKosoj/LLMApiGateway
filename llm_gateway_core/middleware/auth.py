@@ -49,7 +49,7 @@ from ..services.deep_research_accounting import (
     DEEP_RESEARCH_CONTEXT_TOKEN_PREFIX,
     DeepResearchContextError,
 )
-from ..services.ip_blocklist import IpBlockGuard
+from ..services.ip_blocklist import PERMANENT_BLOCK, IpBlockGuard
 from ..utils.client_ip import get_client_ip
 
 if TYPE_CHECKING:
@@ -732,6 +732,11 @@ _AUDITED_ADMISSION_REJECTION_CATEGORIES: dict[AccountingErrorCode, str] = {
 
 
 def _ip_blocked_response(retry_after: int) -> JSONResponse:
+    if retry_after == PERMANENT_BLOCK:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "IP address is permanently blocked. Contact the administrator."},
+        )
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={"detail": "Too many failed authentication attempts. Try again later."},

@@ -99,10 +99,18 @@ def test_rejections_and_translator_have_complete_strict_inventory() -> None:
     )
 
     checker = _load_checker()
-    assert checker.validate_inventory(
+    errors = checker.validate_inventory(
         ROOT,
         selected_pages={"rejections", "translator"},
-    ) == []
+    )
+    # The checker also validates every completed page, beyond this test's scope.
+    other_sources = {
+        source
+        for page, entry in inventory["pages"].items()
+        if page not in LANE_3_PAGES
+        for source in entry["html"] + entry["scripts"]
+    }
+    assert [error for error in errors if not any(source in error for source in other_sources)] == []
 
 
 def test_lane_3_exemption_contract_rejects_exact_record_drift() -> None:

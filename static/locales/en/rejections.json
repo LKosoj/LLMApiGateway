@@ -46,5 +46,16 @@
   },
   "row": {
     "open": "Open rejection {requestId} details"
+  },
+  "blocks": {
+    "heading": "Permanent IP blocks",
+    "intro": "Checked at startup and daily: two temporary blocks in 24 hours result in a permanent block.",
+    "error": "Could not update permanent blocks. Refresh and try again.",
+    "actions": "Actions",
+    "loading": "Loading permanent blocks...",
+    "reason": "Two or more temporary blocks in 24 hours",
+    "unblock": "Unblock",
+    "empty": "No permanent blocks.",
+    "confirm": "Unblock {ip}? Previous events will not be counted again."
   }
 }

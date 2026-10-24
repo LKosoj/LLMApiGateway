@@ -45,6 +45,74 @@ document.addEventListener('DOMContentLoaded', () => {
     let requestGeneration = 0;
     let unsubscribeLocale = null;
     let stopped = false;
+    let permanentBlocks = null;
+    let blocksGeneration = 0;
+    let unblocking = false;
+
+    function renderPermanentBlocks() {
+        if (permanentBlocks === null) return;
+        const rows = permanentBlocks.map((item) => {
+            const row = document.createElement('tr');
+            row.appendChild(createCell(item.client_ip));
+            row.appendChild(createCell(formatTime(item.blocked_at)));
+            row.appendChild(createCell(i18n.t('rejections:blocks.reason')));
+            const actions = document.createElement('td');
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = i18n.t('rejections:blocks.unblock');
+            button.disabled = unblocking;
+            button.addEventListener('click', () => void unblockIp(item.client_ip));
+            actions.appendChild(button);
+            row.appendChild(actions);
+            return row;
+        });
+        if (rows.length === 0) {
+            const row = document.createElement('tr');
+            const cell = createCell(i18n.t('rejections:blocks.empty'), 'rej-empty');
+            cell.colSpan = 4;
+            row.appendChild(cell);
+            rows.push(row);
+        }
+        document.getElementById('permanentBlocksBody').replaceChildren(...rows);
+    }
+
+    async function loadPermanentBlocks() {
+        const generation = ++blocksGeneration;
+        try {
+            const response = await apiFetch('/v1/admin/ip-blocks');
+            if (!response.ok) throw new Error('IP blocks request failed');
+            const data = await response.json();
+            if (!Array.isArray(data.items)) throw new Error('Invalid IP blocks response');
+            if (stopped || generation !== blocksGeneration) return;
+            permanentBlocks = data.items;
+            document.getElementById('blocksError').hidden = true;
+            renderPermanentBlocks();
+        } catch {
+            if (!stopped && generation === blocksGeneration) {
+                document.getElementById('blocksError').hidden = false;
+                if (permanentBlocks === null) {
+                    document.getElementById('permanentBlocksBody').replaceChildren();
+                }
+            }
+        }
+    }
+
+    async function unblockIp(ip) {
+        if (unblocking || !window.confirm(i18n.t('rejections:blocks.confirm', {ip}))) return;
+        unblocking = true;
+        blocksGeneration += 1;
+        renderPermanentBlocks();
+        try {
+            const response = await apiFetch(`/v1/admin/ip-blocks/${encodeURIComponent(ip)}`, {method: 'DELETE'});
+            if (!response.ok) throw new Error('IP unblock failed');
+            await loadPermanentBlocks();
+        } catch {
+            document.getElementById('blocksError').hidden = false;
+        } finally {
+            unblocking = false;
+            if (!stopped) renderPermanentBlocks();
+        }
+    }
 
     function currentLimit() {
         return Number.parseInt(els.limit.value, 10) || 50;
@@ -395,7 +463,10 @@ document.addEventListener('DOMContentLoaded', () => {
         syncUrlFromState(true);
         void loadRejections();
     });
-    els.refresh.addEventListener('click', () => void loadRejections());
+    els.refresh.addEventListener('click', () => {
+        void loadRejections();
+        void loadPermanentBlocks();
+    });
     els.reset.addEventListener('click', () => {
         els.category.value = '';
         els.keyId.value = '';
@@ -449,10 +520,12 @@ document.addEventListener('DOMContentLoaded', () => {
         unsubscribeLocale = i18n.subscribe(() => {
             const viewState = captureViewState();
             renderSnapshot();
+            renderPermanentBlocks();
             pageStatus.rerender();
             restoreViewState(viewState);
         });
         renderSnapshot();
         void loadRejections();
+        void loadPermanentBlocks();
     }).catch(() => undefined);
 });

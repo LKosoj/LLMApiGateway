@@ -99,6 +99,25 @@
 
         <div id="messageArea" class="error-banner" hidden></div>
         <pre id="messageDetail" data-i18n-raw-detail hidden></pre>
+
+        <section aria-labelledby="permanentBlocksTitle">
+            <h2 id="permanentBlocksTitle" data-i18n="rejections:blocks.heading">Permanent IP blocks</h2>
+            <p data-i18n="rejections:blocks.intro">Checked at startup and daily: two temporary blocks in 24 hours result in a permanent block.</p>
+            <p id="blocksError" role="alert" data-i18n="rejections:blocks.error" hidden>Could not update permanent blocks. Refresh and try again.</p>
+            <div class="rej-table-wrap">
+                <table class="permanent-ip-table">
+                    <thead><tr>
+                        <th data-i18n="rejections:table.clientIp">Client IP</th>
+                        <th data-i18n="rejections:table.time">Time</th>
+                        <th data-i18n="rejections:table.reason">Reason</th>
+                        <th data-i18n="rejections:blocks.actions">Actions</th>
+                    </tr></thead>
+                    <tbody id="permanentBlocksBody">
+                        <tr><td colspan="4" data-i18n="rejections:blocks.loading">Loading permanent blocks...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
     </div>
 
     <div id="rejDetailSheet" class="rej-sheet" hidden>
