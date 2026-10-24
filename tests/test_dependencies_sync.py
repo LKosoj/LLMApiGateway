@@ -327,7 +327,7 @@ def test_upstream_warning_filter_matches_only_the_full_message() -> None:
     assert fields[1] == UPSTREAM_WARNING_MESSAGE_PATTERN
     assert fields[2] == UPSTREAM_WARNING_CATEGORY == "DeprecationWarning"
     assert fields[3] == UPSTREAM_WARNING_MODULE_PATTERN
-    assert fields[3] == r"^gpt_researcher\.scraper\.arxiv\.arxiv$"
+    assert fields[3] == r"^gpt_researcher\.scraper\.pymupdf\.pymupdf$"
     assert r"\x3a" in fields[1]
     assert ":" not in fields[1]
     assert re.fullmatch(fields[1], UPSTREAM_WARNING_MESSAGE)

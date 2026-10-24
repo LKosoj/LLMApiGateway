@@ -159,6 +159,11 @@ class DeepResearchJob:
             "FAST_LLM": _as_gpt_researcher_llm(self.fast_model),
             "SMART_LLM": _as_gpt_researcher_llm(self.smart_model),
             "STRATEGIC_LLM": _as_gpt_researcher_llm(self.strategic_model),
+            # gpt-researcher 0.16 doubled its output-token defaults; keep the
+            # 0.15.1 budgets so the upgrade does not change report cost.
+            "FAST_TOKEN_LIMIT": "3000",
+            "SMART_TOKEN_LIMIT": "6000",
+            "STRATEGIC_TOKEN_LIMIT": "4000",
             "TOTAL_WORDS": str(self.max_words),
             "DEEP_RESEARCH_BREADTH": str(self.breadth),
             "DEEP_RESEARCH_DEPTH": str(self.depth),

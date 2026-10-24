@@ -473,7 +473,8 @@ class UpstreamRoutingStateTests(unittest.TestCase):
             temporary=True,
             apply_penalty=False,
         )
-        clock.value += 1
+        # Past the transient cooldown: a 429 during it would not count as a hit.
+        clock.value += RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS + 1
         state.record_failure(
             "openrouter",
             "provider-model",
@@ -495,12 +496,15 @@ class UpstreamRoutingStateTests(unittest.TestCase):
         key = "sk-escalation-secret"
         fingerprint = fingerprint_api_key(key)
 
+        # Each 429 arrives right after the previous cooldown expires. The hit
+        # after the hour-long rung is alone in the trailing hour, so it is a
+        # plain transient hit; the next one is the 4th exhaustion event.
         expected_cooldowns = [
             RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS,
             RATE_LIMIT_ESCALATION_LADDER_SECONDS[0],
             RATE_LIMIT_ESCALATION_LADDER_SECONDS[1],
             RATE_LIMIT_ESCALATION_LADDER_SECONDS[2],
-            RATE_LIMIT_ESCALATION_LADDER_SECONDS[3],
+            RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS,
             RATE_LIMIT_ESCALATION_LADDER_SECONDS[3],
         ]
 
@@ -518,7 +522,47 @@ class UpstreamRoutingStateTests(unittest.TestCase):
                 self.assertAlmostEqual(
                     row["cooldown_remaining_seconds"], expected_cooldown, delta=0.01
                 )
+            clock.value += expected_cooldown + 1
+
+    def test_rate_limit_hits_during_active_cooldown_do_not_climb_ladder(self):
+        # Replays the agentrouter burst: in-flight retries and concurrent
+        # requests kept answering 429 inside the cooldown and each one climbed
+        # a rung, turning a few minutes of throttling into a 24h block.
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        fingerprint = fingerprint_api_key("sk-burst-secret")
+
+        def hit(retry_after_floor_seconds=None):
+            state.record_failure(
+                "agentrouter",
+                "provider-model",
+                fingerprint,
+                _UpstreamError(),
+                temporary=True,
+                apply_penalty=False,
+                retry_after_floor_seconds=retry_after_floor_seconds,
+            )
+            return state.get_status_rows()[0]
+
+        hit()
+        clock.value += RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS + 1
+        row = hit()
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], RATE_LIMIT_ESCALATION_LADDER_SECONDS[0], delta=0.01
+        )
+
+        for _ in range(4):
             clock.value += 1
+            row = hit()
+            self.assertEqual(row["cooldown_escalation_level"], 1)
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], RATE_LIMIT_ESCALATION_LADDER_SECONDS[0] - 4, delta=0.01
+        )
+
+        # A Retry-After floor still extends the running cooldown.
+        row = hit(retry_after_floor_seconds=300.0)
+        self.assertAlmostEqual(row["cooldown_remaining_seconds"], 300.0, delta=0.01)
+        self.assertEqual(row["cooldown_escalation_level"], 1)
 
     def test_exhaustion_event_ages_out_of_24h_window_and_resets_ladder(self):
         clock = _Clock()
@@ -535,7 +579,8 @@ class UpstreamRoutingStateTests(unittest.TestCase):
                 temporary=True,
                 apply_penalty=False,
             )
-            clock.value += 1
+            # Longer than any cooldown set so far, still within the hit window.
+            clock.value += RATE_LIMIT_ESCALATION_LADDER_SECONDS[1] + 1
 
         row = state.get_status_rows()[0]
         self.assertEqual(row["cooldown_escalation_level"], 2)
@@ -1137,7 +1182,7 @@ class UpstreamRoutingStateTests(unittest.TestCase):
             temporary=True,
             apply_penalty=False,
         )
-        clock.value += 1
+        clock.value += RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS + 1
         state.record_failure(
             provider,
             model,

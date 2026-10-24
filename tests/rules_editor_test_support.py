@@ -19,7 +19,7 @@ with warnings.catch_warnings():
             r"toward standalone integration packages\.$"
         ),
         category=DeprecationWarning,
-        module=r"^gpt_researcher\.scraper\.arxiv\.arxiv$",
+        module=r"^gpt_researcher\.scraper\.pymupdf\.pymupdf$",
     )
     from llm_gateway_core.api.v1.rules_editor import editor_router
 from llm_gateway_core.config.loader import ConfigLoader

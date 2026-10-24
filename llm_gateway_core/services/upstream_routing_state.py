@@ -545,10 +545,26 @@ class UpstreamRoutingState:
                         COOLDOWN_CEILING_SECONDS,
                     )
                 elif rate_limited:
-                    cooldown_seconds = min(
-                        self._rate_limit_ladder_cooldown_seconds(ref, now, retry_after_floor_seconds),
-                        COOLDOWN_CEILING_SECONDS,
-                    )
+                    active_cooldown = self._cooldown_remaining(state, now)
+                    if active_cooldown is not None:
+                        # A 429 that lands while this key is already cooling
+                        # down belongs to the same rate-limit episode (an
+                        # in-flight retry or a concurrent request), not to a
+                        # fresh exhaustion, so it must not climb the ladder.
+                        retry_after_floor = (
+                            retry_after_floor_seconds
+                            if retry_after_floor_seconds and retry_after_floor_seconds > 0
+                            else 0.0
+                        )
+                        cooldown_seconds = min(
+                            max(active_cooldown, retry_after_floor),
+                            COOLDOWN_CEILING_SECONDS,
+                        )
+                    else:
+                        cooldown_seconds = min(
+                            self._rate_limit_ladder_cooldown_seconds(ref, now, retry_after_floor_seconds),
+                            COOLDOWN_CEILING_SECONDS,
+                        )
                 else:
                     cooldown_seconds = DEFAULT_COOLDOWN_SECONDS
                     if retry_after is not None:
@@ -580,7 +596,8 @@ class UpstreamRoutingState:
         this (provider, model, key) within the trailing hour. Exhaustion
         events are tracked over a trailing 24h window and pick the ladder
         rung by their count. ``retry_after_floor_seconds`` is a floor, not an
-        override, on whichever cooldown results.
+        override, on whichever cooldown results. Only called when the key is
+        not already cooling down: a 429 during an active cooldown is not a hit.
         """
         hits = self._rate_limit_hit_windows[ref]
         hits.append(now)

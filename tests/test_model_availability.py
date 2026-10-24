@@ -49,6 +49,31 @@ class CollectProviderModelPairsTests(unittest.TestCase):
         pairs = _collect_provider_model_pairs(None, operation_rules)
         self.assertEqual(pairs, {"p-emb": {"m-emb"}})
 
+    def test_skips_operation_routes_with_absolute_target_path(self):
+        operation_rules = {
+            "pdf_conversions": {
+                "gw-pdf": {
+                    "routes": [
+                        {
+                            "provider": "p-ext",
+                            "model": "converter",
+                            "target_path": "http://converter.local/pdf/api",
+                        },
+                        {"provider": "p-ext", "model": "m-rel", "target_path": "/embeddings"},
+                    ]
+                },
+            },
+            "rerank": {
+                "gw-score": {
+                    "provider": "p-score",
+                    "model": "m-score",
+                    "target_path": "https://scores.local/score",
+                },
+            },
+        }
+        pairs = _collect_provider_model_pairs(None, operation_rules)
+        self.assertEqual(pairs, {"p-ext": {"m-rel"}})
+
     def test_includes_legacy_flat_operation_rules(self):
         operation_rules = {
             "embeddings": {

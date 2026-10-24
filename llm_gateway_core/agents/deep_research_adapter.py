@@ -28,7 +28,7 @@ from ..services.deep_research_protocol import (
 )
 
 
-GPT_RESEARCHER_REQUIRED_VERSION = "0.15.1"
+GPT_RESEARCHER_REQUIRED_VERSION = "0.16.1"
 DEEP_RESEARCH_REPORT_MAX_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
 
@@ -217,22 +217,26 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
     import gpt_researcher.actions as actions_module
     import gpt_researcher.actions.query_processing as query_processing_module
     import gpt_researcher.agent as agent_module
+    import gpt_researcher.skills.context_manager as context_manager_module
     import gpt_researcher.skills.deep_research as deep_research_module
     import gpt_researcher.skills.researcher as researcher_module
+    from gpt_researcher.context.compression import ContextCompressor
 
     async def gateway_get_search_results(
         query: str,
         _retriever: Any,
         query_domains: list[str] | None = None,
         researcher: Any = None,
+        max_results: int | None = None,
     ) -> list[dict[str, str]]:
         del query_domains
-        max_results = 5
-        if researcher is not None:
-            max_results = int(
-                getattr(researcher.cfg, "max_search_results_per_query", max_results)
-            )
-        results = await ipc.search(query, max_results)
+        if max_results is None:
+            max_results = 5
+            if researcher is not None:
+                max_results = int(
+                    getattr(researcher.cfg, "max_search_results_per_query", max_results)
+                )
+        results = await ipc.search(query, int(max_results))
         return [
             {
                 "href": item["url"],
@@ -298,20 +302,52 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
         conductor: Any,
         query: str,
         query_domains: list[str] | None = None,
+        *,
+        initial_results: list[dict[str, str]] | None = None,
     ) -> tuple[list[str], list[dict[str, str]]]:
         del query_domains
-        max_results = int(
-            getattr(conductor.researcher.cfg, "max_search_results_per_query", 5)
-        )
-        results = await ipc.search(query, max_results)
-        new_urls = await conductor._get_new_urls(
-            [item["url"] for item in results if item.get("url")]
-        )
+        if initial_results is None:
+            max_results = int(
+                getattr(conductor.researcher.cfg, "max_search_results_per_query", 5)
+            )
+            results = await ipc.search(query, max_results)
+            urls = [item["url"] for item in results if item.get("url")]
+        else:
+            # 0.16.1 re-reads the planning search instead of searching again;
+            # those results come from gateway_get_search_results, keyed by href.
+            urls = [
+                item.get("href") or item.get("url")
+                for item in initial_results
+                if item.get("href") or item.get("url")
+            ]
+        new_urls = await conductor._get_new_urls(urls)
         random.shuffle(new_urls)
-        # 0.15.1 unpacks this into (urls to scrape, sources the retriever already
+        # 0.16.1 unpacks this into (urls to scrape, sources the retriever already
         # fetched). The gateway retriever only returns snippets, so nothing is
         # pre-fetched and every url still goes through the read callback.
         return new_urls, []
+
+    async def gateway_select_context(
+        query: str,
+        pages: list[dict],
+        cfg: Any,
+        *,
+        max_results: int = 10,
+        prompt_family: Any = None,
+        cost_callback: Any = None,
+        embeddings: Any = None,
+    ) -> str:
+        # 0.16.1 silently swaps embeddings for keyword ranking on any failure.
+        # Keep the 0.15.1 contract: always embeddings, and failures surface.
+        # The threshold is left unset like 0.15.1 did (SIMILARITY_THRESHOLD env).
+        del cfg
+        return await ContextCompressor(
+            documents=pages,
+            embeddings=embeddings(),
+            prompt_family=prompt_family,
+        ).async_get_context(
+            query=query, max_results=max_results, cost_callback=cost_callback
+        )
 
     original_values = (
         agent_module.get_retrievers,
@@ -322,6 +358,7 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
         deep_research_module.get_search_results,
         researcher_module.get_search_results,
         researcher_module.ResearchConductor._search_relevant_source_urls,
+        context_manager_module.select_context,
     )
     agent_module.get_retrievers = lambda _headers, _cfg: [GatewaySearchRetriever]
     agent_module.BrowserManager = GatewayReadBrowserManager
@@ -333,6 +370,7 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
     researcher_module.ResearchConductor._search_relevant_source_urls = (
         gateway_search_relevant_source_urls
     )
+    context_manager_module.select_context = gateway_select_context
     try:
         yield
     finally:
@@ -345,6 +383,7 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
             deep_research_module.get_search_results,
             researcher_module.get_search_results,
             researcher_module.ResearchConductor._search_relevant_source_urls,
+            context_manager_module.select_context,
         ) = original_values
 
 
@@ -474,7 +513,7 @@ def collect_public_result(
     research_result: object,
     generated_images: tuple[dict[str, str], ...] = (),
 ) -> DeepResearchResult:
-    """Read only the public 0.15.1 result getters and validate their schema."""
+    """Read only the public 0.16.1 result getters and validate their schema."""
     sources = _call_public_getter(researcher, "get_research_sources")
     source_urls = _call_public_getter(researcher, "get_source_urls")
     context = _call_public_getter(researcher, "get_research_context")
@@ -581,5 +620,5 @@ def run_deep_research_job(
 def _call_public_getter(researcher: object, name: str) -> object:
     getter = getattr(researcher, name, None)
     if not callable(getter):
-        raise ValueError(f"GPT Researcher 0.15.1 public method {name}() is unavailable.")
+        raise ValueError(f"GPT Researcher 0.16.1 public method {name}() is unavailable.")
     return getter()

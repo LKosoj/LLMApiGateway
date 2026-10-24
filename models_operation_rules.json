@@ -78,7 +78,7 @@
         },
         {
           "provider": "aitunnel",
-          "model": "pplx-decider-v1.1-27b",
+          "model": "pplx-decider-v1.2",
           "target_path": "/decisions",
           "custom_headers": {},
           "custom_body_params": {}

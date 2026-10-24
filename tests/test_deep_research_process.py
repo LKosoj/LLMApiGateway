@@ -191,9 +191,9 @@ def test_image_metadata_allows_path_word_but_rejects_local_filesystem_urls() -> 
             )
 
 
-def test_version_pinned_adapter_uses_real_0151_public_api() -> None:
+def test_version_pinned_adapter_uses_real_0161_public_api() -> None:
     factory = get_gpt_researcher_factory()
-    assert GPT_RESEARCHER_REQUIRED_VERSION == "0.15.1"
+    assert GPT_RESEARCHER_REQUIRED_VERSION == "0.16.1"
     assert factory.__name__ == "GPTResearcher"
     for getter in (
         "get_research_sources",
@@ -206,9 +206,9 @@ def test_version_pinned_adapter_uses_real_0151_public_api() -> None:
     with (
         patch(
             "llm_gateway_core.agents.deep_research_adapter.metadata.version",
-            return_value="0.15.2",
+            return_value="0.16.2",
         ),
-        pytest.raises(DeepResearchUnavailableError, match="required 0.15.1"),
+        pytest.raises(DeepResearchUnavailableError, match="required 0.16.1"),
     ):
         get_gpt_researcher_factory()
 
@@ -553,7 +553,7 @@ def test_installed_browse_urls_drops_refused_sources_and_keeps_the_rest() -> Non
 
 
 def test_installed_search_relevant_source_urls_returns_the_pair_the_package_unpacks() -> None:
-    """0.15.1 unpacks the override into (urls, prefetched); a bare list feeds browse_urls a string."""
+    """0.16.1 unpacks the override into (urls, prefetched); a bare list feeds browse_urls a string."""
     read_urls: list[str] = []
 
     class Ipc:
@@ -591,6 +591,158 @@ def test_installed_search_relevant_source_urls_returns_the_pair_the_package_unpa
         assert sorted(source["url"] for source in researcher.get_research_sources()) == expected
 
     run_async(scenario())
+
+
+def test_installed_initial_search_accepts_the_max_results_the_package_passes() -> None:
+    """0.16.1 calls get_search_results(..., max_results=...); the override must take it."""
+    import gpt_researcher.actions.query_processing as query_processing_module
+
+    calls: list[tuple[str, int]] = []
+
+    class Ipc:
+        async def search(self, query: str, max_results: int):
+            calls.append((query, max_results))
+            return [{"url": "https://example.com/a", "title": "T", "snippet": "S"}]
+
+    async def scenario() -> None:
+        environment = {
+            "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+            "OPENAI_API_KEY": "test",
+        }
+        with (
+            patch.dict(os.environ, environment),
+            adapter_module._gateway_research_tools(Ipc()),  # type: ignore[arg-type]
+        ):
+            researcher = get_gpt_researcher_factory()(
+                query="q",
+                report_type="research_report",
+                verbose=False,
+            )
+            results = await researcher.research_conductor._get_initial_search_results("q")
+            assert results == [{"href": "https://example.com/a", "title": "T", "body": "S"}]
+            assert calls == [("q", researcher.cfg.max_search_results_per_query)]
+
+            calls.clear()
+            await query_processing_module.get_search_results(
+                "explicit",
+                None,
+                researcher=SimpleNamespace(cfg=SimpleNamespace(max_search_results_per_query=7)),
+                max_results=2,
+            )
+            assert calls == [("explicit", 2)]
+
+    run_async(scenario())
+
+
+def test_installed_initial_results_are_read_without_a_second_search() -> None:
+    """0.16.1 hands the planning results back as initial_results instead of searching again."""
+    searches: list[str] = []
+    read_urls: list[str] = []
+
+    class Ipc:
+        async def search(self, query: str, max_results: int):
+            searches.append(query)
+            return [{"url": "https://example.com/other", "title": "T", "snippet": "S"}]
+
+        async def read(self, url: str):
+            read_urls.append(url)
+            return {"url": url, "title": "T", "content": "body " * 40}
+
+    initial_results = [
+        {"href": "https://example.com/plan", "title": "T", "body": "S"},
+        {"href": "", "title": "No url", "body": "S"},
+    ]
+
+    async def scenario() -> None:
+        environment = {
+            "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+            "OPENAI_API_KEY": "test",
+        }
+        with (
+            patch.dict(os.environ, environment),
+            adapter_module._gateway_research_tools(Ipc()),  # type: ignore[arg-type]
+        ):
+            researcher = get_gpt_researcher_factory()(
+                query="q",
+                report_type="research_report",
+                verbose=False,
+            )
+            scraped = await researcher.research_conductor._scrape_data_by_urls(
+                "q", initial_results=initial_results
+            )
+        assert searches == []
+        assert read_urls == ["https://example.com/plan"]
+        assert [page["url"] for page in scraped] == ["https://example.com/plan"]
+
+    run_async(scenario())
+
+
+def test_installed_context_selection_keeps_embeddings_and_surfaces_their_failure() -> None:
+    """0.16.1 would quietly fall back to BM25 here; the gateway keeps the 0.15.1 contract."""
+    import gpt_researcher.skills.context_manager as context_manager_module
+    from langchain_core.embeddings import Embeddings
+
+    original_select_context = context_manager_module.select_context
+
+    class FailingEmbeddings(Embeddings):
+        def embed_documents(self, texts):
+            raise RuntimeError("embedding route down")
+
+        async def aembed_documents(self, texts):
+            raise RuntimeError("embedding route down")
+
+        def embed_query(self, text):
+            raise RuntimeError("embedding route down")
+
+        async def aembed_query(self, text):
+            raise RuntimeError("embedding route down")
+
+    # Above COMPRESSION_THRESHOLD, so the pages really go through the filter.
+    pages = [
+        {"url": f"https://example.com/{index}", "title": "T", "raw_content": "answer " * 2000}
+        for index in range(2)
+    ]
+
+    async def scenario() -> None:
+        environment = {
+            "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+            "OPENAI_API_KEY": "test",
+        }
+        with (
+            patch.dict(os.environ, environment),
+            adapter_module._gateway_research_tools(object()),  # type: ignore[arg-type]
+        ):
+            researcher = get_gpt_researcher_factory()(
+                query="q",
+                report_type="research_report",
+                verbose=False,
+            )
+            researcher.memory.get_embeddings = FailingEmbeddings
+            with pytest.raises(RuntimeError, match="embedding route down"):
+                await researcher.context_manager.get_similar_content_by_query("q", pages)
+        assert context_manager_module.select_context is original_select_context
+
+    run_async(scenario())
+
+
+def test_job_environment_keeps_the_0151_output_token_limits() -> None:
+    environment = {
+        **_job().environment(),
+        "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+        "OPENAI_API_KEY": "test",
+    }
+    assert environment["FAST_TOKEN_LIMIT"] == "3000"
+    assert environment["SMART_TOKEN_LIMIT"] == "6000"
+    assert environment["STRATEGIC_TOKEN_LIMIT"] == "4000"
+    with patch.dict(os.environ, environment):
+        researcher = get_gpt_researcher_factory()(
+            query="q",
+            report_type="research_report",
+            verbose=False,
+        )
+    assert researcher.cfg.fast_token_limit == 3000
+    assert researcher.cfg.smart_token_limit == 6000
+    assert researcher.cfg.strategic_token_limit == 4000
 
 
 def test_installed_browse_urls_still_fails_on_a_broken_callback_channel() -> None:

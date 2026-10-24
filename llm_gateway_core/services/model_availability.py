@@ -68,6 +68,14 @@ def _collect_provider_model_pairs(
             if isinstance(context_overflow, Mapping):
                 _add(context_overflow.get("provider"), context_overflow.get("model"))
 
+    def _add_operation_route(route: Mapping[str, Any]) -> None:
+        # An absolute target_path sends the request past the provider's
+        # baseUrl, so the provider's /models catalog says nothing about it.
+        target_path = route.get("target_path")
+        if isinstance(target_path, str) and target_path.startswith(("http://", "https://")):
+            return
+        _add(route.get("provider"), route.get("model"))
+
     if isinstance(operation_rules, Mapping):
         for section in operation_rules.values():
             if not isinstance(section, Mapping):
@@ -79,9 +87,9 @@ def _collect_provider_model_pairs(
                 if isinstance(routes, Iterable) and not isinstance(routes, (str, bytes)):
                     for route in routes:
                         if isinstance(route, Mapping):
-                            _add(route.get("provider"), route.get("model"))
+                            _add_operation_route(route)
                     continue
-                _add(route_config.get("provider"), route_config.get("model"))
+                _add_operation_route(route_config)
 
     return pairs
 

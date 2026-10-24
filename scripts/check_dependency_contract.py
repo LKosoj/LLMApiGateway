@@ -143,7 +143,7 @@ UPSTREAM_WARNING_MESSAGE_PATTERN = (
     r"and migration guidance toward standalone integration packages\.$"
 )
 UPSTREAM_WARNING_CATEGORY = "DeprecationWarning"
-UPSTREAM_WARNING_MODULE_PATTERN = r"^gpt_researcher\.scraper\.arxiv\.arxiv$"
+UPSTREAM_WARNING_MODULE_PATTERN = r"^gpt_researcher\.scraper\.pymupdf\.pymupdf$"
 UPSTREAM_WARNING_POLICY_FILTER = (
     f"ignore:{UPSTREAM_WARNING_MESSAGE_PATTERN}"
     f":{UPSTREAM_WARNING_CATEGORY}:{UPSTREAM_WARNING_MODULE_PATTERN}"
