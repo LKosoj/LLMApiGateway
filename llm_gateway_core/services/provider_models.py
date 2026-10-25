@@ -65,18 +65,21 @@ class ProviderModelsService:
         self._cache.clear()
 
     def snapshot_cache_entry(
-        self, provider_name: str
+        self, provider_name: str, *, allow_stale: bool = False
     ) -> ProviderModelsCacheEntry | None:
         """Return a still-fresh cached entry for ``provider_name``, or ``None``.
 
         Used to graft a warm entry into another service (e.g. a candidate
         snapshot's fresh cache during a config update) without breaking
         encapsulation. Stale entries are ignored so the receiver never adopts
-        an expired snapshot.
+        an expired snapshot, unless ``allow_stale`` is set by a caller that
+        only wants a last-known catalog to fall back on.
         """
         entry = self._cache.get(provider_name)
         if entry is None:
             return None
+        if allow_stale:
+            return entry
         now = self._time_func()
         if now - entry.fetched_at >= self.ttl_seconds:
             return None

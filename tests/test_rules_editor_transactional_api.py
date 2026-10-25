@@ -1207,6 +1207,156 @@ def test_validate_candidate_reuses_base_cache_for_unchanged_provider(
     run_async(scenario())
 
 
+def _stale_cache_scenario(
+    tmp_path: Path,
+    *,
+    stale_models: list[str],
+    fetch_delay: float,
+    fetched_models: list[str],
+):
+    from llm_gateway_core.services.provider_models import (
+        ProviderModelsCacheEntry,
+    )
+
+    base_loader = _loader(tmp_path / "base", provider_name="shared")
+    base_loader._fallback_rules_base = {}
+    base_loader.fallback_rules = {}
+    candidate_loader = _loader(tmp_path / "candidate", provider_name="shared")
+    candidate_loader._fallback_rules_base = {
+        "gateway-shared": {
+            "fallback_models": [{"provider": "shared", "model": "model-a"}]
+        }
+    }
+    candidate_loader.fallback_rules = dict(candidate_loader._fallback_rules_base)
+
+    # Fetched long before "now": older than the 15-minute TTL.
+    base_catalog = ProviderModelsService(time_func=lambda: 10_000.0)
+    base_catalog.install_cache_entry(
+        "shared",
+        ProviderModelsCacheEntry(
+            models=stale_models,
+            entries={model: {"id": model} for model in stale_models},
+            fetched_at=0.0,
+        ),
+    )
+    candidate_catalog = ProviderModelsService(time_func=lambda: 10_000.0)
+
+    async def slow_fetch(*_a, **_kw):
+        await asyncio.sleep(fetch_delay)
+        return {model: {"id": model} for model in fetched_models}
+
+    candidate_catalog._fetch_model_entries = slow_fetch  # type: ignore[method-assign]
+
+    base_snapshot = make_runtime_snapshot(
+        generation=1,
+        config_loader=base_loader,
+        provider_models_service=base_catalog,
+    )
+    candidate_snapshot = make_runtime_snapshot(
+        generation=2,
+        config_loader=candidate_loader,
+        provider_models_service=candidate_catalog,
+    )
+    request = Mock()
+    request.headers = {}
+    request.state = Mock()
+    request.state.api_key_record = None
+    request.state.role = ROLE_MASTER
+    return request, base_snapshot, candidate_snapshot, candidate_catalog
+
+
+def test_validate_candidate_uses_stale_cache_when_provider_is_slow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        rules_editor, "PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS", 0.05
+    )
+
+    async def scenario() -> None:
+        request, base_snapshot, candidate_snapshot, candidate_catalog = (
+            _stale_cache_scenario(
+                tmp_path,
+                stale_models=["model-a"],
+                fetch_delay=0.3,
+                fetched_models=["model-a", "model-new"],
+            )
+        )
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await rules_editor._validate_candidate_provider_models(
+            request,
+            candidate_snapshot,
+            Mock(spec=httpx.AsyncClient),
+            base_snapshot=base_snapshot,
+        )
+        assert loop.time() - started < 0.25
+        assert "shared" not in candidate_catalog._cache
+
+        # The slow fetch keeps running and refreshes the candidate cache.
+        await asyncio.gather(*rules_editor._background_model_refreshes)
+        assert candidate_catalog._cache["shared"].models == [
+            "model-a",
+            "model-new",
+        ]
+        assert not rules_editor._background_model_refreshes
+
+    run_async(scenario())
+
+
+def test_validate_candidate_checks_slow_provider_against_stale_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        rules_editor, "PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS", 0.05
+    )
+
+    async def scenario() -> None:
+        request, base_snapshot, candidate_snapshot, _ = _stale_cache_scenario(
+            tmp_path,
+            stale_models=["model-old"],
+            fetch_delay=0.3,
+            fetched_models=["model-a"],
+        )
+        with pytest.raises(ValueError, match="model-a"):
+            await rules_editor._validate_candidate_provider_models(
+                request,
+                candidate_snapshot,
+                Mock(spec=httpx.AsyncClient),
+                base_snapshot=base_snapshot,
+            )
+        await asyncio.gather(*rules_editor._background_model_refreshes)
+
+    run_async(scenario())
+
+
+def test_validate_candidate_prefers_fresh_catalog_when_provider_is_fast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        rules_editor, "PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS", 1.0
+    )
+
+    async def scenario() -> None:
+        request, base_snapshot, candidate_snapshot, candidate_catalog = (
+            _stale_cache_scenario(
+                tmp_path,
+                stale_models=["model-old"],
+                fetch_delay=0.0,
+                fetched_models=["model-a"],
+            )
+        )
+        await rules_editor._validate_candidate_provider_models(
+            request,
+            candidate_snapshot,
+            Mock(spec=httpx.AsyncClient),
+            base_snapshot=base_snapshot,
+        )
+        assert candidate_catalog._cache["shared"].models == ["model-a"]
+        assert not rules_editor._background_model_refreshes
+
+    run_async(scenario())
+
+
 def test_validate_candidate_loads_all_providers_concurrently(
     tmp_path: Path,
 ) -> None:

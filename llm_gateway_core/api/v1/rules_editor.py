@@ -49,6 +49,12 @@ from .config_update_http import (
 )
 
 editor_router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# How long a Save waits for a fresh /models catalog before validating against
+# the last cached one. The fetch keeps running and refreshes the cache.
+PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS = 1.0
+_background_model_refreshes: set[asyncio.Task] = set()
 
 
 def _require_master(request: Request) -> None:
@@ -708,6 +714,8 @@ async def _validate_candidate_provider_models(
     # Graft still-fresh cache entries from the base snapshot for providers
     # whose config has not changed — a routine Save of Fallback Rules leaves
     # providers.json untouched, so we can skip the cold /models round-trip.
+    # An expired entry is kept aside: a slow provider must not stall the Save.
+    stale_entries: dict[str, Any] = {}
     if base_snapshot is not None:
         base_service = base_snapshot.provider_models_service
         base_providers = base_snapshot.config_loader.providers_config
@@ -722,8 +730,14 @@ async def _validate_candidate_provider_models(
                 candidate_service.install_cache_entry(
                     provider_name, warm_entry
                 )
+                continue
+            stale_entry = base_service.snapshot_cache_entry(
+                provider_name, allow_stale=True
+            )
+            if stale_entry is not None:
+                stale_entries[provider_name] = stale_entry
 
-    async def _load(provider_name: str, provider_config: Any) -> tuple[str, set[str]]:
+    async def _fetch(provider_name: str, provider_config: Any) -> list[str]:
         http_client = (
             candidate_snapshot.proxy_http_clients[provider_name]
             if provider_name in candidate_snapshot.proxy_http_clients
@@ -734,12 +748,34 @@ async def _validate_candidate_provider_models(
             provider_name=provider_name,
             provider_config=provider_config,
         )
-        models = await candidate_service.get_models(
+        return await candidate_service.get_models(
             provider_name,
             provider_config,
             http_client,
             auth_headers=auth_headers,
         )
+
+    async def _load(provider_name: str, provider_config: Any) -> tuple[str, set[str]]:
+        stale_entry = stale_entries.get(provider_name)
+        if stale_entry is None:
+            models = await _fetch(provider_name, provider_config)
+            return provider_name, set(models)
+        fetch_task = asyncio.create_task(_fetch(provider_name, provider_config))
+        try:
+            models = await asyncio.wait_for(
+                asyncio.shield(fetch_task),
+                timeout=PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS,
+            )
+        except TimeoutError:
+            _background_model_refreshes.add(fetch_task)
+            fetch_task.add_done_callback(_finish_background_model_refresh)
+            logger.warning(
+                "Provider '%s' /models did not answer within %.1fs; "
+                "validating against the cached catalog.",
+                provider_name,
+                PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS,
+            )
+            models = stale_entry.models
         return provider_name, set(models)
 
     load_results = await asyncio.gather(
@@ -766,6 +802,15 @@ async def _validate_candidate_provider_models(
                     f"fallback model '{model_name}' is not available from "
                     f"provider '{provider_name}'."
                 )
+
+
+def _finish_background_model_refresh(task: asyncio.Task) -> None:
+    _background_model_refreshes.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("Background /models refresh failed: %s", exc)
 
 
 def _iter_rule_targets(config: dict) -> list[dict]:
