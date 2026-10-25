@@ -82,6 +82,7 @@ class DispatcherInitializationTests(unittest.TestCase):
                     services.fallback_events_db,
                     services.rejections_db,
                     supervisor=services.task_supervisor,
+                    ip_block_guard=services.ip_block_guard,
                 )
 
         self.assertTrue(services.task_supervisor.closed)

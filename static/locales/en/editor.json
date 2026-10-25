@@ -1,7 +1,7 @@
 {
   "page": {
-    "title": "LLM Gateway - Configuration Editor",
-    "heading": "LLM Gateway - Configuration Editor",
+    "title": "LLM Gateway - Rules Editor",
+    "heading": "Rules Editor",
     "versionLabel": "Product version"
   },
   "panel": {
@@ -370,7 +370,6 @@
   },
   "messages": {
     "loading": "Loading {name}…",
-    "loaded": "{name} loaded successfully.",
     "saving": "Saving {name}…",
     "saved": "{name} updated successfully.",
     "imagesName": "Images Routes",

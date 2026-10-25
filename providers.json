@@ -91,7 +91,7 @@
   },
   {
     "gemini_cli": {
-      "baseUrl": "http://109.107.174.36:3000/gemini-cli-oauth/v1",
+      "baseUrl": "http://185.159.108.56:3001/gemini-antigravity/v1",
       "apikey": "${APIKEY_OPENAI_CODEX}",
       "routing": {
         "strategy": "round-robin",
@@ -526,9 +526,9 @@
       "apikey": "${APIKEY_AGENTROUTER}",
       "models": {
         "gpt-6.1-sol": {
-          "api_type": "responses",
           "input_rate": 2,
-          "output_rate": 10
+          "output_rate": 10,
+          "api_type": "responses"
         },
         "gpt-5.6-sol": {
           "input_rate": 2.5,

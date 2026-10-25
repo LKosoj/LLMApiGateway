@@ -2,7 +2,6 @@
   "page": {
     "documentTitle": "LLM Gateway - Playground",
     "heading": "Playground",
-    "adminTesting": "(admin testing)",
     "introBeforeConfig": "Runs configured operation routes from",
     "introAfterConfig": ": web, speech-to-text, text-to-speech, images and PDF conversion."
   },

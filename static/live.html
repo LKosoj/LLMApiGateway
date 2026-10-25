@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en" data-i18n-page="live">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="live:pageTitle">LLM Gateway - Live now</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/theme.css">
+    <link rel="stylesheet" href="/static/report.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
+    <script src="/static/theme.js"></script>
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
+        </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
+    </div>
+
+    <main class="rp-page">
+        <div class="rp-head">
+            <div>
+                <h1 data-i18n="live:heading">Live now</h1>
+                <p data-i18n="live:intro">What is running this minute, where the traffic goes and how close providers are to their limits.</p>
+            </div>
+            <div class="rp-actions">
+                <span id="updatedAt" class="rp-updated" aria-live="polite"></span>
+                <button id="pauseBtn" type="button" class="rp-btn" aria-pressed="false" data-i18n="live:actions.pause">Pause updates</button>
+                <button id="refreshBtn" type="button" class="rp-btn" data-i18n="live:actions.refresh">Refresh</button>
+            </div>
+        </div>
+
+        <div id="messageArea" class="error-banner" hidden></div>
+        <pre id="messageDetail" data-i18n-raw-detail hidden></pre>
+
+        <section class="rp-kpis">
+            <div class="rp-kpi" id="kpiRunning">
+                <div class="rp-kpi-label" data-i18n="live:kpis.running">Running now</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+            <div class="rp-kpi" id="kpiRpm">
+                <div class="rp-kpi-label" data-i18n="live:kpis.rpm">Model requests per minute</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+            <div class="rp-kpi" id="kpiTpm">
+                <div class="rp-kpi-label" data-i18n="live:kpis.tpm">Tokens per minute</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+            <div class="rp-kpi" id="kpiCost">
+                <div class="rp-kpi-label" data-i18n="live:kpis.cost">Spent in 24 h</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+        </section>
+
+        <div class="rp-grid">
+            <section class="rp-panel">
+                <div class="rp-panel-head">
+                    <h2 data-i18n="live:load.heading">Load over 24 hours</h2>
+                    <div class="rp-seg" id="loadMetric" role="group" aria-label="Metric" data-i18n-aria-label="live:load.metricLabel">
+                        <button type="button" data-value="requests" aria-pressed="true" data-i18n="live:load.requests">Requests</button>
+                        <button type="button" data-value="total_tokens" aria-pressed="false" data-i18n="live:load.tokens">Tokens</button>
+                        <button type="button" data-value="cost" aria-pressed="false" data-i18n="live:load.cost">Cost</button>
+                    </div>
+                </div>
+                <div class="rp-panel-body">
+                    <div id="loadChart"></div>
+                    <div class="rp-hint" data-i18n="live:load.hint">per hour · the bright bar is the current hour</div>
+                </div>
+            </section>
+
+            <section class="rp-panel">
+                <div class="rp-panel-head">
+                    <h2 data-i18n="live:who.heading">Who generates load</h2>
+                    <span class="rp-hint" data-i18n="live:who.hint">requests in 24 h</span>
+                </div>
+                <div class="rp-panel-body">
+                    <div class="rp-seg" id="whoGroup" role="group" aria-label="Breakdown" data-i18n-aria-label="live:who.groupLabel">
+                        <button type="button" data-value="keys" aria-pressed="true" data-i18n="live:who.keys">Keys</button>
+                        <button type="button" data-value="clients" aria-pressed="false" data-i18n="live:who.clients">Clients (X-Title)</button>
+                    </div>
+                    <div id="whoList"></div>
+                </div>
+            </section>
+        </div>
+
+        <section class="rp-panel">
+            <div class="rp-panel-head">
+                <h2 data-i18n="live:running.heading">Running right now</h2>
+                <span class="rp-hint" data-i18n="live:running.hint">requests longer than 30 s are highlighted</span>
+            </div>
+            <div class="rp-table-wrap">
+                <table class="rp-table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="live:running.columns.duration">Running for</th>
+                            <th data-i18n="live:running.columns.requested">Requested</th>
+                            <th data-i18n="live:running.columns.executes">Executes</th>
+                            <th data-i18n="live:running.columns.key">Key</th>
+                            <th data-i18n="live:running.columns.client">Client</th>
+                            <th data-i18n="live:running.columns.operation">Operation</th>
+                        </tr>
+                    </thead>
+                    <tbody id="runningBody"></tbody>
+                </table>
+            </div>
+            <div id="runningEmpty" class="rp-empty" data-i18n="live:running.empty" hidden>Nothing is running right now.</div>
+        </section>
+
+        <section class="rp-panel">
+            <div class="rp-panel-head">
+                <h2 data-i18n="live:targets.heading">Models under load</h2>
+                <span class="rp-hint" data-i18n="live:targets.hint">last minute · the bar shows the share of the provider limit, when the provider reports it</span>
+            </div>
+            <div class="rp-table-wrap">
+                <table class="rp-table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="live:targets.columns.model">Model</th>
+                            <th data-i18n="live:targets.columns.key">Provider key</th>
+                            <th data-i18n="live:targets.columns.rpm">Requests/min</th>
+                            <th class="rp-num" data-i18n="live:targets.columns.tpm">Tokens/min</th>
+                            <th class="rp-num" data-i18n="live:targets.columns.day">Requests in 24 h</th>
+                            <th data-i18n="live:targets.columns.status">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="targetsBody"></tbody>
+                </table>
+            </div>
+            <div id="targetsEmpty" class="rp-empty" data-i18n="live:targets.empty" hidden>No model received requests in the last 24 hours.</div>
+        </section>
+
+        <section class="rp-panel" id="modelDetail" aria-labelledby="modelDetailTitle" hidden>
+            <div class="rp-panel-head">
+                <h2 id="modelDetailTitle" tabindex="-1"></h2>
+                <span class="rp-hint" data-i18n="live:detail.hint">requests per hour over 24 hours</span>
+                <button id="modelDetailClose" type="button" class="rp-btn rp-detail-close" data-i18n="live:detail.close">Close</button>
+            </div>
+            <div class="rp-panel-body">
+                <div id="modelDetailChart"></div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
+    <script src="/static/report.js"></script>
+    <script src="/static/live.js"></script>
+</body>
+</html>

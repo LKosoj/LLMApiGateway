@@ -2,11 +2,13 @@ import registry from "../../../static/locales/registry.json" with { type: "json"
 
 import {
   AUTH_STATES,
+  BOTTOM_NAV_ITEMS,
   GatewayI18nError,
   NAV_ITEMS,
   STORAGE_KEY,
   applyRoleVisibility,
   createAuthController,
+  createBottomNavigation,
   createDialog,
   createGatewayI18n,
   createLocaleSelector,
@@ -29,9 +31,11 @@ export { GatewayI18nError, STORAGE_KEY, createGatewayI18n };
 
 export const gatewayUi = Object.freeze({
   AUTH_STATES,
+  BOTTOM_NAV_ITEMS,
   NAV_ITEMS,
   applyRoleVisibility,
   createAuthController,
+  createBottomNavigation,
   createDialog,
   createLocaleSelector,
   createNavigation,

@@ -8,7 +8,6 @@ const conflictMessage = document.getElementById('editorConflictMessage');
 const reloadEditorDocumentButton = document.getElementById('reloadEditorDocumentButton');
 const cancelBusyRetryButton = document.getElementById('cancelBusyRetryButton');
 const addRuleButton = document.getElementById('addRuleButton');
-const previewRulesButton = document.getElementById('previewRulesButton');
 const suggestEvalOrderButton = document.getElementById('suggestEvalOrderButton');
 const rulesPreviewArea = document.getElementById('rulesPreviewArea');
 const rulesList = document.getElementById('rulesList');
@@ -99,7 +98,6 @@ const modelRulesRawInput = document.getElementById('modelRulesRawInput');
         reloadEditorDocumentButton,
         cancelBusyRetryButton,
         addRuleButton,
-        previewRulesButton,
         suggestEvalOrderButton,
         rulesPreviewArea,
         rulesList,
@@ -279,7 +277,6 @@ export function registerCore(ctx) {
         for (const [pattern, key] of [
             [/^Loading (.+)\.\.\.$/, 'editor:messages.loading'],
             [/^Saving (.+)\.\.\.$/, 'editor:messages.saving'],
-            [/^(.+) loaded successfully\.$/, 'editor:messages.loaded'],
             [/^(.+) updated successfully\.$/, 'editor:messages.saved'],
         ]) {
             const match = typeof message === 'string' ? message.match(pattern) : null;
@@ -345,6 +342,7 @@ export function registerCore(ctx) {
             descriptor.rawDetail = rawDetail;
         }
         ctx.state.currentMessage = { type, ...descriptor };
+        delete ctx.elements.messageArea.dataset.loaded;
         ctx.elements.messageArea.className = type;
         ctx.elements.messageArea.textContent = t(descriptor.key, resolveDescriptorValues(descriptor));
         setRawDetail(descriptor.rawDetail);
@@ -355,6 +353,17 @@ export function registerCore(ctx) {
         if (type === 'error' || type === 'warning') {
             ctx.elements.messageArea.scrollIntoView({ block: 'nearest' });
         }
+    }
+
+    // A successful load is the normal state, so it only clears the notice
+    // bar: the user sees messages for problems only. data-loaded names the
+    // loaded configuration until the next message replaces it.
+    function showLoaded(name) {
+        ctx.state.currentMessage = null;
+        ctx.elements.messageArea.className = '';
+        ctx.elements.messageArea.textContent = '';
+        ctx.elements.messageArea.dataset.loaded = name;
+        setRawDetail('');
     }
 
     function rerenderLocale() {
@@ -2157,6 +2166,7 @@ export function registerCore(ctx) {
         typeForUnknownMessage,
         resolveDescriptorValues,
         showLocalizedMessage,
+        showLoaded,
         rerenderLocale,
         boundedSafeText,
         safeResponseError,
@@ -2374,7 +2384,7 @@ export function registerEntityPanel(ctx) {
 
     if (footerPreviewButton) {
         footerPreviewButton.addEventListener('click', () => {
-            ctx.elements.previewRulesButton?.click();
+            ctx.previewRulesChanges();
         });
     }
 

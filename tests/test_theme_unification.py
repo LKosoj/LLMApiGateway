@@ -7,6 +7,7 @@ Checks:
 - Legacy inline theme functions are removed from JS files.
 """
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,6 +46,27 @@ def _build_app(db: ApiKeysDB) -> FastAPI:
     app.include_router(translator_debug_router, prefix="/v1")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     return app
+
+
+def _contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(color: str) -> float:
+        channels = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+            for value in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _tint(color: str, alpha: float, background: str) -> str:
+    """The opaque colour of `color` at `alpha` over `background` (the *-soft tokens)."""
+    return "#" + "".join(
+        f"{round(int(color[i:i + 2], 16) * alpha + int(background[i:i + 2], 16) * (1 - alpha)):02x}"
+        for i in (1, 3, 5)
+    )
 
 
 class ThemeUnificationTests(unittest.TestCase):
@@ -205,6 +227,55 @@ class ThemeUnificationTests(unittest.TestCase):
         self.assertIn('/static/rejections.css', rejections_html)
         self.assertNotIn("<style>", api_keys_html)
         self.assertNotIn("<style>", rejections_html)
+
+    def test_admin_pages_load_console_css_after_their_page_css(self):
+        """console.css overrides the page card, so it must come after the page stylesheet;
+        the legacy analytics page keeps its own look."""
+        pages = {
+            "overview.html": "/static/overview.css",
+            "activity.html": "/static/activity.css",
+            "quota.html": "/static/quota.css",
+            "rejections.html": "/static/rejections.css",
+            "api-keys.html": "/static/api-keys.css",
+            "pricing.html": "/static/pricing.css",
+            "free-models.html": "/static/free-models.css",
+            "gateway-docs.html": "/static/gateway-docs.css",
+            "translator-debug.html": "/static/translator-debug.css",
+            "rules-editor.html": "/static/editor.css",
+            "web-playground.html": "/static/web-playground.css",
+        }
+        for name, page_css in pages.items():
+            html = (STATIC_DIR / name).read_text(encoding="utf-8")
+            self.assertIn("/static/console.css", html, name)
+            self.assertLess(html.index(page_css), html.index("/static/console.css"), name)
+        usage_html = (STATIC_DIR / "usage-stats.html").read_text(encoding="utf-8")
+        self.assertNotIn("/static/console.css", usage_html)
+
+    def test_light_theme_green_and_orange_text_meets_wcag_aa(self):
+        """console.css and report.css darken --success/--warning in the light theme:
+        the theme.css tones are about 3:1 on the page and card backgrounds."""
+        page_bg, card_bg = "#f4f6f9", "#ffffff"
+        # Base tones of the theme.css *-soft tints that notices sit on.
+        soft_base = {"--success": "#16a34a", "--warning": "#d97706"}
+        for name, scope in (("console.css", ".container"), ("report.css", ".rp-page")):
+            css = (STATIC_DIR / name).read_text(encoding="utf-8")
+            block = re.search(
+                r"body:not\(\.dark-mode\) " + re.escape(scope) + r" \{([^}]*)\}", css
+            )
+            self.assertIsNotNone(block, name)
+            for token, base in soft_base.items():
+                value = re.search(re.escape(token) + r": (#[0-9a-f]{6});", block.group(1))
+                self.assertIsNotNone(value, f"{name} {token}")
+                color = value.group(1)
+                for background in (
+                    page_bg,
+                    card_bg,
+                    _tint(base, 0.12, page_bg),
+                    _tint(base, 0.12, card_bg),
+                ):
+                    self.assertGreaterEqual(
+                        _contrast_ratio(color, background), 4.5, f"{name} {token} on {background}"
+                    )
 
     def test_responsive_scaffold_keeps_overflow_inside_controls(self):
         """Shared page CSS keeps wide navigation/tables scrollable inside their containers."""

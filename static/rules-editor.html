@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="editor:page.title">LLM Gateway - Configuration Editor</title>
+    <title data-i18n="editor:page.title">LLM Gateway - Rules Editor</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/editor.css">
+    <link rel="stylesheet" href="/static/console.css">
     <link rel="stylesheet" href="/static/shared-nav.css">
     <script src="/static/theme.js"></script>
 </head>
@@ -25,7 +26,7 @@
         <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
     </div>
     <div class="container">
-        <h1><span data-i18n="editor:page.heading">LLM Gateway - Configuration Editor</span> <span class="page-version" data-product-version aria-label="Product version" data-i18n-aria-label="editor:page.versionLabel"></span></h1>
+        <h1><span data-i18n="editor:page.heading">Rules Editor</span> <span class="page-version" data-product-version aria-label="Product version" data-i18n-aria-label="editor:page.versionLabel"></span></h1>
 
         <div class="editor-notice-bar" id="editorNoticeBar" aria-live="polite">
             <div
@@ -110,7 +111,6 @@
                             <span style="display:block; margin-top:4px; font-size:0.85em;" data-i18n="editor:sections.fallback.format">Format: JSON5 (supports // single-line and /* multi-line */ comments)</span>
                         </div>
                         <div class="rules-toolbar-actions">
-                            <button id="previewRulesButton" type="button" class="secondary-button" data-i18n="editor:actions.preview">Preview Changes</button>
                             <button id="suggestEvalOrderButton" type="button" class="secondary-button" data-i18n="editor:actions.suggestOrder">Suggest Eval Order</button>
                             <button id="addRuleButton" type="button" class="secondary-button" data-i18n="editor:actions.addGatewayModel">Add Gateway Model</button>
                         </div>

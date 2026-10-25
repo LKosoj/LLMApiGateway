@@ -605,6 +605,53 @@ class FallbackEventsDB:
                 )
                 error_types = [dict(row) for row in await cursor.fetchall()]
 
+                # A request is "rescued" when at least one attempt failed but a
+                # later one succeeded, and "failed" when no attempt succeeded.
+                cursor = await db.execute(
+                    f"""
+                    SELECT
+                        COUNT(*) as total,
+                        COALESCE(SUM(CASE WHEN has_error = 1 AND has_success = 1 THEN 1 ELSE 0 END), 0) as rescued,
+                        COALESCE(SUM(CASE WHEN has_success = 0 THEN 1 ELSE 0 END), 0) as failed
+                    FROM (
+                        SELECT
+                            request_id,
+                            MAX(CASE WHEN success = 0 THEN 1 ELSE 0 END) as has_error,
+                            MAX(CASE WHEN success = 1 THEN 1 ELSE 0 END) as has_success
+                        FROM fallback_events
+                        {where_clause}
+                        GROUP BY request_id
+                    )
+                    """,
+                    params,
+                )
+                row = await cursor.fetchone()
+                requests = {
+                    "total": int(row["total"] or 0) if row else 0,
+                    "rescued": int(row["rescued"] or 0) if row else 0,
+                    "failed": int(row["failed"] or 0) if row else 0,
+                }
+
+                cursor = await db.execute(
+                    f"""
+                    SELECT
+                        provider,
+                        model,
+                        COALESCE(upstream_key_fingerprint, 'unknown') as upstream_key_fingerprint,
+                        COALESCE(error_type, 'unknown') as error_type,
+                        COUNT(*) as errors
+                    FROM fallback_events
+                    {failed_where_clause}
+                    GROUP BY provider, model, upstream_key_fingerprint, error_type
+                    ORDER BY errors DESC, error_type ASC
+                    """,
+                    failed_params,
+                )
+                top_error_types: dict[tuple[str, str, str], str] = {}
+                for error_row in await cursor.fetchall():
+                    ref = (error_row["provider"], error_row["model"], error_row["upstream_key_fingerprint"])
+                    top_error_types.setdefault(ref, error_row["error_type"])
+
                 cursor = await db.execute(
                     f"""
                     SELECT
@@ -627,6 +674,10 @@ class FallbackEventsDB:
                     params,
                 )
                 upstream = [dict(row) for row in await cursor.fetchall()]
+                for upstream_row in upstream:
+                    upstream_row["top_error_type"] = top_error_types.get(
+                        (upstream_row["provider"], upstream_row["model"], upstream_row["upstream_key_fingerprint"])
+                    )
 
                 # Outcome aggregates keyed the same way as the usage breakdowns
                 # (provider and "provider / model"), without the top-20 cut, so
@@ -655,6 +706,7 @@ class FallbackEventsDB:
 
                 return {
                     "summary": summary,
+                    "requests": requests,
                     "series": series,
                     "error_types": error_types,
                     "upstream": upstream,
@@ -674,6 +726,7 @@ class FallbackEventsDB:
                     "avg_duration_ms": None,
                     "max_duration_ms": None,
                 },
+                "requests": {"total": 0, "rescued": 0, "failed": 0},
                 "series": [],
                 "error_types": [],
                 "upstream": [],

@@ -88,7 +88,7 @@ def test_create_and_save_embedding_route(page: Page, server):
     page.click('[data-entity-target="embeddings"]')
     
     # Wait for loading to finish
-    expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Embeddings Routes")
     
     # Click Add Embedding Model
     page.click("#addEmbeddingButton")
@@ -117,7 +117,7 @@ def test_validation_error_display(page: Page, server):
     page.click('[data-entity-target="embeddings"]')
     
     # Wait for loading to finish
-    expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Embeddings Routes")
     
     # Add a rule with empty name
     page.click("#addEmbeddingButton")
@@ -154,7 +154,7 @@ def test_edit_embedding_route(page: Page, server):
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="embeddings"]')
 
-    expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Embeddings Routes")
 
     page.click("#addEmbeddingButton")
     page.fill("#editor-container-embeddings .gateway-model-input", "my-emb-model")
@@ -182,7 +182,7 @@ def test_create_and_save_embedding_route_with_retry_settings(page: Page, server)
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="embeddings"]')
-    expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Embeddings Routes")
 
     page.click("#addEmbeddingButton")
     page.fill("#editor-container-embeddings .gateway-model-input", "my-emb-retry-model")
@@ -245,7 +245,7 @@ def test_saving_embeddings_uses_loaded_operation_base_and_if_match(page: Page, s
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="embeddings"]')
-    expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Embeddings Routes")
 
     page.click("#addEmbeddingButton")
     page.fill("#editor-container-embeddings .gateway-model-input", "my-emb-model")

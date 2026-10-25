@@ -75,7 +75,7 @@ def test_create_and_save_image_generation_and_edit_routes(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="images"]')
-    expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Images Routes")
 
     page.click("#addImageGenerationButton")
     page.fill("#imageGenerationList .gateway-model-input", "my-image-generation-model")
@@ -103,7 +103,7 @@ def test_create_and_save_image_generation_and_edit_routes(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="images"]')
-    expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Images Routes")
 
     assert "collapsed" in (page.locator("#imageGenerationList .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#imageGenerationList")

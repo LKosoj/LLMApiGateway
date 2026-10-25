@@ -263,7 +263,7 @@ class RejectionsUiMasterOnlyTests(unittest.TestCase):
         resp = self.client.get("/v1/ui/rejections", headers={"Accept": "text/html"})
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/html", resp.headers["content-type"])
-        self.assertIn("Rejections Audit", resp.text)
+        self.assertIn("LLM Gateway - Rejections", resp.text)
         self.assertIn("X-Title", resp.text)
 
     def test_non_master_session_is_redirected_from_rejections_ui(self):

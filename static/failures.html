@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en" data-i18n-page="failures">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="failures:pageTitle">LLM Gateway - Model failures</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/theme.css">
+    <link rel="stylesheet" href="/static/report.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
+    <script src="/static/theme.js"></script>
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
+        </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
+    </div>
+
+    <main class="rp-page">
+        <div class="rp-head">
+            <div>
+                <h1 data-i18n="failures:heading">Model failures</h1>
+                <p data-i18n="failures:intro">Which models and provider keys failed, why, and whether switching to a backup model rescued the requests.</p>
+            </div>
+            <div class="rp-actions">
+                <span id="updatedAt" class="rp-updated" aria-live="polite"></span>
+                <select id="rangeSelect" class="rp-select" aria-label="Period" data-i18n-aria-label="failures:rangeLabel">
+                    <option value="24h" data-i18n="failures:ranges.24h">Last 24 hours</option>
+                    <option value="7d" data-i18n="failures:ranges.7d">Last 7 days</option>
+                </select>
+                <button id="checkAllBtn" type="button" class="rp-btn" data-i18n="failures:actions.checkAll">Check all models</button>
+            </div>
+        </div>
+
+        <div id="messageArea" class="error-banner" hidden></div>
+        <pre id="messageDetail" data-i18n-raw-detail hidden></pre>
+
+        <section class="rp-kpis">
+            <div class="rp-kpi" id="kpiUnavailable">
+                <div class="rp-kpi-label" data-i18n="failures:kpis.unavailable">Unavailable now</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+            <div class="rp-kpi" id="kpiNotRescued">
+                <div class="rp-kpi-label" data-i18n="failures:kpis.notRescued">Requests not rescued</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+            <div class="rp-kpi" id="kpiRescued">
+                <div class="rp-kpi-label" data-i18n="failures:kpis.rescued">Rescued by switching</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+            <div class="rp-kpi" id="kpiFailedAttempts">
+                <div class="rp-kpi-label" data-i18n="failures:kpis.failedAttempts">Failed attempts</div>
+                <div class="rp-kpi-value" data-kpi-value>—</div>
+                <div class="rp-kpi-note" data-kpi-note></div>
+            </div>
+        </section>
+
+        <section class="rp-panel">
+            <div class="rp-panel-head">
+                <h2 data-i18n="failures:down.heading">Unavailable right now</h2>
+                <span class="rp-hint" data-i18n="failures:down.hint">a model is skipped while it cools down after errors, is failing or is paused manually</span>
+            </div>
+            <div id="downList" class="rp-down-list"></div>
+            <div id="downEmpty" class="rp-empty" data-i18n="failures:down.empty" hidden>All models are available.</div>
+            <details id="pauseDetails" class="rp-pause">
+                <summary data-i18n="failures:pause.heading">Pause a model</summary>
+                <form id="pauseForm" class="rp-pause-form">
+                    <label class="rp-field">
+                        <span data-i18n="failures:pause.key">Provider key</span>
+                        <select id="pauseKey" class="rp-select" required></select>
+                    </label>
+                    <label class="rp-field">
+                        <span data-i18n="failures:pause.model">Model</span>
+                        <input id="pauseModel" class="rp-input" list="pauseModels" autocomplete="off" placeholder="all models of the key" data-i18n-placeholder="failures:pause.allModels">
+                        <datalist id="pauseModels"></datalist>
+                    </label>
+                    <label class="rp-field">
+                        <span data-i18n="failures:pause.minutes">Minutes</span>
+                        <input id="pauseMinutes" class="rp-input" type="number" min="1" step="1" value="30" required>
+                    </label>
+                    <label class="rp-field rp-field-wide">
+                        <span data-i18n="failures:pause.reason">Reason</span>
+                        <input id="pauseReason" class="rp-input" required>
+                    </label>
+                    <button id="pauseSubmit" type="submit" class="rp-btn rp-btn-primary" data-i18n="failures:pause.submit">Pause</button>
+                    <p class="rp-hint rp-field-wide" data-i18n="failures:pause.hint">Pauses live in memory: a service restart clears them.</p>
+                </form>
+            </details>
+        </section>
+
+        <div class="rp-grid">
+            <section class="rp-panel">
+                <div class="rp-panel-head">
+                    <h2 data-i18n="failures:errors.heading">Errors over time</h2>
+                    <span id="errorsHint" class="rp-hint"></span>
+                </div>
+                <div class="rp-panel-body">
+                    <div id="errorsChart"></div>
+                </div>
+            </section>
+
+            <section class="rp-panel">
+                <div class="rp-panel-head">
+                    <h2 data-i18n="failures:why.heading">Why requests fail</h2>
+                    <span class="rp-hint" data-i18n="failures:why.hint">failed attempts by reason</span>
+                </div>
+                <div class="rp-panel-body">
+                    <div id="whyList"></div>
+                </div>
+            </section>
+        </div>
+
+        <section class="rp-panel">
+            <div class="rp-panel-head">
+                <h2 data-i18n="failures:reliability.heading">Model reliability</h2>
+                <span class="rp-hint" data-i18n="failures:reliability.hint">worst first</span>
+            </div>
+            <div class="rp-table-wrap">
+                <table class="rp-table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="failures:reliability.columns.model">Model · provider</th>
+                            <th data-i18n="failures:reliability.columns.key">Provider key</th>
+                            <th data-i18n="failures:reliability.columns.success">Successful attempts</th>
+                            <th class="rp-num" data-i18n="failures:reliability.columns.errors">Errors</th>
+                            <th class="rp-num" data-i18n="failures:reliability.columns.attempts">Attempts</th>
+                            <th data-i18n="failures:reliability.columns.topError">Main reason</th>
+                            <th class="rp-num" data-i18n="failures:reliability.columns.duration">Average attempt</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reliabilityBody"></tbody>
+                </table>
+            </div>
+            <div id="reliabilityEmpty" class="rp-empty" data-i18n="failures:reliability.empty" hidden>No attempts in this period.</div>
+        </section>
+
+        <section class="rp-panel" id="modelDetail" aria-labelledby="modelDetailTitle" hidden>
+            <div class="rp-panel-head">
+                <h2 id="modelDetailTitle" tabindex="-1"></h2>
+                <span id="modelDetailHint" class="rp-hint"></span>
+                <button id="modelDetailClose" type="button" class="rp-btn rp-detail-close" data-i18n="failures:detail.close">Close</button>
+            </div>
+            <div class="rp-panel-body rp-detail-body">
+                <div id="modelDetailChart"></div>
+                <div id="modelDetailWhy"></div>
+            </div>
+        </section>
+
+        <section class="rp-panel">
+            <div class="rp-panel-head">
+                <h2 data-i18n="failures:chains.heading">Recent switches</h2>
+                <span class="rp-hint" data-i18n="failures:chains.hint">requests where the first model did not cope</span>
+            </div>
+            <div class="rp-table-wrap">
+                <table class="rp-table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="failures:chains.columns.time">Time</th>
+                            <th data-i18n="failures:chains.columns.requested">Requested</th>
+                            <th data-i18n="failures:chains.columns.chain">Attempts</th>
+                        </tr>
+                    </thead>
+                    <tbody id="chainsBody"></tbody>
+                </table>
+            </div>
+            <div id="chainsEmpty" class="rp-empty" data-i18n="failures:chains.empty" hidden>No switches yet.</div>
+        </section>
+    </main>
+
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
+    <script src="/static/report.js"></script>
+    <script src="/static/failures.js"></script>
+</body>
+</html>

@@ -250,7 +250,7 @@ def test_operation_cost_calculators_round_trip_across_rules_editor_tabs(
     page.goto(f"{base_url}/v1/ui/rules-editor")
 
     page.click('[data-entity-target="images"]')
-    expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Images Routes")
     _expand_first_card(page, "#imageGenerationList")
     image_rate = page.locator("#imageGenerationList .cost-calculator-rate-input")
     expect(image_rate).to_have_attribute("min", "0")
@@ -264,7 +264,7 @@ def test_operation_cost_calculators_round_trip_across_rules_editor_tabs(
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
     _expand_first_card(page, "#audioSpeechList")
     speech_rate = page.locator("#audioSpeechList .cost-calculator-rate-input")
     expect(speech_rate).to_have_value("0.6")
@@ -273,7 +273,7 @@ def test_operation_cost_calculators_round_trip_across_rules_editor_tabs(
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.click('[data-entity-target="web"]')
-    expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Web Services")
     _expand_first_card(page, "#webSearchList")
     search_rate = page.locator("#webSearchList .cost-calculator-rate-input")
     expect(search_rate).to_have_value("0.05")
@@ -285,19 +285,19 @@ def test_operation_cost_calculators_round_trip_across_rules_editor_tabs(
 
     page.reload()
     page.click('[data-entity-target="images"]')
-    expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Images Routes")
     _expand_first_card(page, "#imageGenerationList")
     expect(page.locator("#imageGenerationList .cost-calculator-rate-input")).to_have_value("0.4")
     _expand_first_card(page, "#imageEditList")
     expect(page.locator("#imageEditList .cost-calculator-rate-input")).to_have_value("0")
 
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
     _expand_first_card(page, "#audioSpeechList")
     expect(page.locator("#audioSpeechList .cost-calculator-rate-input")).to_have_value("")
 
     page.click('[data-entity-target="web"]')
-    expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Web Services")
     _expand_first_card(page, "#webSearchList")
     expect(page.locator("#webSearchList .cost-calculator-rate-input")).to_have_value("0.15")
 

@@ -1,7 +1,7 @@
 {
   "page": {
-    "title": "LLM Gateway — редактор конфигурации",
-    "heading": "LLM Gateway — редактор конфигурации",
+    "title": "LLM Gateway — Редактор правил",
+    "heading": "Редактор правил",
     "versionLabel": "Версия продукта"
   },
   "panel": {
@@ -370,7 +370,6 @@
   },
   "messages": {
     "loading": "Загрузка: {name}…",
-    "loaded": "{name}: загрузка завершена.",
     "saving": "Сохранение: {name}…",
     "saved": "{name}: изменения сохранены.",
     "imagesName": "Маршруты изображений",

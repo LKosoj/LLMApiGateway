@@ -779,7 +779,7 @@
           return true;
         }
         if (ctx.state.activeEditor === "rules") {
-          ctx.showLocalizedMessage("success", "Fallback Rules loaded successfully.");
+          ctx.showLoaded("Fallback Rules");
         }
         return true;
       } catch (error) {
@@ -1873,7 +1873,7 @@
         }
         ctx.state.originalFusionContent = getNormalizedFusionContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Fusion Models loaded successfully.");
+        ctx.showLoaded("Fusion Models");
         return true;
       } catch (error) {
         console.error("Error fetching Fusion Models:", error);
@@ -1950,7 +1950,6 @@
     const reloadEditorDocumentButton = document.getElementById("reloadEditorDocumentButton");
     const cancelBusyRetryButton = document.getElementById("cancelBusyRetryButton");
     const addRuleButton = document.getElementById("addRuleButton");
-    const previewRulesButton = document.getElementById("previewRulesButton");
     const suggestEvalOrderButton = document.getElementById("suggestEvalOrderButton");
     const rulesPreviewArea = document.getElementById("rulesPreviewArea");
     const rulesList = document.getElementById("rulesList");
@@ -2036,7 +2035,6 @@
       reloadEditorDocumentButton,
       cancelBusyRetryButton,
       addRuleButton,
-      previewRulesButton,
       suggestEvalOrderButton,
       rulesPreviewArea,
       rulesList,
@@ -2204,7 +2202,6 @@
       for (const [pattern, key] of [
         [/^Loading (.+)\.\.\.$/, "editor:messages.loading"],
         [/^Saving (.+)\.\.\.$/, "editor:messages.saving"],
-        [/^(.+) loaded successfully\.$/, "editor:messages.loaded"],
         [/^(.+) updated successfully\.$/, "editor:messages.saved"]
       ]) {
         const match = typeof message === "string" ? message.match(pattern) : null;
@@ -2259,12 +2256,20 @@
         descriptor.rawDetail = rawDetail;
       }
       ctx.state.currentMessage = { type, ...descriptor };
+      delete ctx.elements.messageArea.dataset.loaded;
       ctx.elements.messageArea.className = type;
       ctx.elements.messageArea.textContent = t(descriptor.key, resolveDescriptorValues(descriptor));
       setRawDetail(descriptor.rawDetail);
       if (type === "error" || type === "warning") {
         ctx.elements.messageArea.scrollIntoView({ block: "nearest" });
       }
+    }
+    function showLoaded(name) {
+      ctx.state.currentMessage = null;
+      ctx.elements.messageArea.className = "";
+      ctx.elements.messageArea.textContent = "";
+      ctx.elements.messageArea.dataset.loaded = name;
+      setRawDetail("");
     }
     function rerenderLocale() {
       Array.from(ctx.state.localizedBindings).forEach(renderLocalizedBinding);
@@ -3823,6 +3828,7 @@
       typeForUnknownMessage,
       resolveDescriptorValues,
       showLocalizedMessage,
+      showLoaded,
       rerenderLocale,
       boundedSafeText,
       safeResponseError,
@@ -4011,7 +4017,7 @@
     }
     if (footerPreviewButton) {
       footerPreviewButton.addEventListener("click", () => {
-        ctx.elements.previewRulesButton?.click();
+        ctx.previewRulesChanges();
       });
     }
     const entityAvailabilityObserver = new MutationObserver(() => {
@@ -4326,7 +4332,7 @@
         }
         ctx.state.originalDecisionsContent = getNormalizedDecisionsContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Decisions Routes loaded successfully.");
+        ctx.showLoaded("Decisions Routes");
         return true;
       } catch (error) {
         console.error("Error fetching Decisions Routes:", error);
@@ -4419,7 +4425,7 @@
         }
         ctx.state.originalEmbeddingsContent = getNormalizedEmbeddingsContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Embeddings Routes loaded successfully.");
+        ctx.showLoaded("Embeddings Routes");
         return true;
       } catch (error) {
         console.error("Error fetching Embeddings Routes:", error);
@@ -4600,7 +4606,7 @@
         }
         ctx.state.originalRerankContent = getNormalizedRerankContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Rerank Routes loaded successfully.");
+        ctx.showLoaded("Rerank Routes");
         return true;
       } catch (error) {
         console.error("Error fetching Rerank Routes:", error);
@@ -5223,7 +5229,7 @@
         }
         ctx.state.originalImagesContent = getNormalizedImagesContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Images Routes loaded successfully.");
+        ctx.showLoaded("Images Routes");
         return true;
       } catch (error) {
         console.error("Error fetching Images Routes:", error);
@@ -5454,7 +5460,7 @@
         }
         ctx.state.originalAudioContent = getNormalizedAudioContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Audio Routes loaded successfully.");
+        ctx.showLoaded("Audio Routes");
         return true;
       } catch (error) {
         console.error("Error fetching Audio Routes:", error);
@@ -6062,7 +6068,7 @@
         }
         ctx.state.originalWebContent = getNormalizedWebContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Web Services loaded successfully.");
+        ctx.showLoaded("Web Services");
         return true;
       } catch (error) {
         console.error("Error fetching Web Services:", error);
@@ -6155,7 +6161,7 @@
         }
         ctx.state.originalModelRulesContent = ctx.elements.modelRulesRawInput.value;
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Model Rules loaded successfully.");
+        ctx.showLoaded("Model Rules");
         return true;
       } catch (error) {
         console.error("Error fetching Model Rules:", error);
@@ -7220,7 +7226,7 @@
         }
         ctx.state.originalProvidersContent = getProvidersSnapshotContent();
         ctx.setProvidersLoadState("ready");
-        ctx.showLocalizedMessage("success", "Providers loaded successfully.");
+        ctx.showLoaded("Providers");
         return true;
       } catch (error) {
         if (requestId !== ctx.state.providersLoadRequestId) {
@@ -7560,7 +7566,7 @@
         }
         ctx.state.originalRouterContent = getNormalizedRouterContent();
         ctx.updateSaveButtonDisabledState();
-        ctx.showLocalizedMessage("success", "Router Models loaded successfully.");
+        ctx.showLoaded("Router Models");
         return true;
       } catch (error) {
         console.error("Error fetching Router Models:", error);
@@ -7756,9 +7762,6 @@
       ruleCard.classList.remove("collapsed");
       ctx.elements.rulesList.appendChild(ruleCard);
       ctx.refreshRulesEmptyState();
-    });
-    ctx.elements.previewRulesButton.addEventListener("click", () => {
-      ctx.previewRulesChanges();
     });
     ctx.elements.suggestEvalOrderButton.addEventListener("click", () => {
       void ctx.renderSuggestedFallbackOrder();

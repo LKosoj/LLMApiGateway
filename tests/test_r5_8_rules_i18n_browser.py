@@ -49,17 +49,17 @@ def test_rules_locale_change_preserves_editor_and_eval_state_without_requests(
     page.goto(f"{server_url}/v1/ui/rules-editor")
     page.wait_for_timeout(250)
     assert page_errors == []
-    expect(page.locator("#messageArea")).to_contain_text(
-        "Fallback Rules loaded successfully"
-    )
-    page.locator("#previewRulesButton").click()
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
+    # A normal load shows no banner, and Preview lives only in the footer.
+    expect(page.locator("#messageArea")).to_be_hidden()
+    expect(page.locator("#messageArea")).to_have_text("")
+    expect(page.get_by_role("button", name="Preview Changes")).to_have_count(1)
+    page.locator("#footerPreviewButton").click()
     expect(page.locator("#rulesPreviewArea strong")).to_have_text(
         "Fallback Rules Preview"
     )
     page.locator('[data-entity-target="images"]').click()
-    expect(page.locator("#messageArea")).to_contain_text(
-        "Images Routes loaded successfully"
-    )
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Images Routes")
     page.locator("#addImageGenerationButton").click()
 
     card = page.locator("#imageGenerationList .rule-card").last
@@ -136,7 +136,7 @@ def test_rules_locale_change_preserves_editor_and_eval_state_without_requests(
     page.evaluate(
         """() => {
             document.getElementById('addRuleButton').click();
-            document.getElementById('previewRulesButton').click();
+            document.getElementById('footerPreviewButton').click();
         }"""
     )
     expect(page.locator("#messageArea")).to_have_text(

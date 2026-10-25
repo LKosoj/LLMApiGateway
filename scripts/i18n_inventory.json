@@ -6,6 +6,7 @@
       "status": "complete",
       "html": [],
       "scripts": [
+        "static/report.js",
         "static/shared-auth.js",
         "static/shared-nav.js",
         "static/theme.js"
@@ -138,6 +139,33 @@
         "static/activity.js",
         "static/request-drawer.js"
       ]
+    },
+    "live": {
+      "status": "complete",
+      "html": [
+        "static/live.html"
+      ],
+      "scripts": [
+        "static/live.js"
+      ]
+    },
+    "failures": {
+      "status": "complete",
+      "html": [
+        "static/failures.html"
+      ],
+      "scripts": [
+        "static/failures.js"
+      ]
+    },
+    "my-key": {
+      "status": "complete",
+      "html": [
+        "static/my-key.html"
+      ],
+      "scripts": [
+        "static/my-key.js"
+      ]
     }
   },
   "exemptions": [
@@ -145,7 +173,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 38,
+      "line": 39,
       "column": 50,
       "text": "auth_invalid",
       "classification": "protocol"
@@ -154,7 +182,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 39,
+      "line": 40,
       "column": 50,
       "text": "key_disabled",
       "classification": "protocol"
@@ -163,7 +191,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 40,
+      "line": 41,
       "column": 55,
       "text": "model_not_allowed",
       "classification": "protocol"
@@ -172,7 +200,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 41,
+      "line": 42,
       "column": 54,
       "text": "budget_exhausted",
       "classification": "protocol"
@@ -181,7 +209,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 42,
+      "line": 43,
       "column": 50,
       "text": "rate_limited",
       "classification": "protocol"
@@ -190,7 +218,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 43,
+      "line": 44,
       "column": 49,
       "text": "master_only",
       "classification": "protocol"
@@ -199,7 +227,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 44,
+      "line": 45,
       "column": 50,
       "text": "unauthorized",
       "classification": "protocol"
@@ -208,7 +236,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 45,
+      "line": 46,
       "column": 48,
       "text": "ip_blocked",
       "classification": "protocol"
@@ -217,7 +245,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 59,
+      "line": 60,
       "column": 40,
       "text": "25",
       "classification": "protocol"
@@ -226,7 +254,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 60,
+      "line": 61,
       "column": 49,
       "text": "50",
       "classification": "protocol"
@@ -235,7 +263,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 61,
+      "line": 62,
       "column": 41,
       "text": "100",
       "classification": "protocol"
@@ -244,7 +272,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 62,
+      "line": 63,
       "column": 41,
       "text": "200",
       "classification": "protocol"
@@ -253,7 +281,7 @@
       "page": "rejections",
       "file": "static/rejections.html",
       "kind": "html-text",
-      "line": 83,
+      "line": 84,
       "column": 29,
       "text": "X-Title",
       "classification": "protocol"
@@ -262,7 +290,7 @@
       "page": "activity",
       "file": "static/activity.html",
       "kind": "html-text",
-      "line": 61,
+      "line": 62,
       "column": 40,
       "text": "25",
       "classification": "protocol"
@@ -271,7 +299,7 @@
       "page": "activity",
       "file": "static/activity.html",
       "kind": "html-text",
-      "line": 62,
+      "line": 63,
       "column": 49,
       "text": "50",
       "classification": "protocol"
@@ -280,7 +308,7 @@
       "page": "activity",
       "file": "static/activity.html",
       "kind": "html-text",
-      "line": 63,
+      "line": 64,
       "column": 41,
       "text": "100",
       "classification": "protocol"
@@ -289,7 +317,7 @@
       "page": "activity",
       "file": "static/activity.html",
       "kind": "html-text",
-      "line": 64,
+      "line": 65,
       "column": 41,
       "text": "200",
       "classification": "protocol"
@@ -298,7 +326,7 @@
       "page": "translator",
       "file": "static/translator-debug.html",
       "kind": "html-text",
-      "line": 39,
+      "line": 40,
       "column": 44,
       "text": "OpenAI",
       "classification": "protocol"
@@ -307,16 +335,7 @@
       "page": "translator",
       "file": "static/translator-debug.html",
       "kind": "html-text",
-      "line": 40,
-      "column": 47,
-      "text": "Anthropic",
-      "classification": "protocol"
-    },
-    {
-      "page": "translator",
-      "file": "static/translator-debug.html",
-      "kind": "html-text",
-      "line": 45,
+      "line": 41,
       "column": 47,
       "text": "Anthropic",
       "classification": "protocol"
@@ -326,6 +345,15 @@
       "file": "static/translator-debug.html",
       "kind": "html-text",
       "line": 46,
+      "column": 47,
+      "text": "Anthropic",
+      "classification": "protocol"
+    },
+    {
+      "page": "translator",
+      "file": "static/translator-debug.html",
+      "kind": "html-text",
+      "line": 47,
       "column": 44,
       "text": "OpenAI",
       "classification": "protocol"
@@ -334,7 +362,7 @@
       "page": "translator",
       "file": "static/translator-debug.html",
       "kind": "html-attribute",
-      "line": 50,
+      "line": 51,
       "column": 87,
       "text": "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}",
       "classification": "sample"
@@ -361,7 +389,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 32,
+      "line": 33,
       "column": 40,
       "text": "LLM Gateway",
       "classification": "protocol"
@@ -370,7 +398,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 35,
+      "line": 36,
       "column": 94,
       "text": "model",
       "classification": "code"
@@ -379,7 +407,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 53,
+      "line": 54,
       "column": 128,
       "text": "GATEWAY_API_KEY",
       "classification": "code"
@@ -388,7 +416,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 59,
+      "line": 60,
       "column": 72,
       "text": "curl -s",
       "classification": "pre"
@@ -397,7 +425,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 59,
+      "line": 60,
       "column": 112,
       "text": "/chat/completions \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/chat\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello!\"}] }'",
       "classification": "pre"
@@ -406,7 +434,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 75,
+      "line": 76,
       "column": 72,
       "text": "from openai import OpenAI client = OpenAI(base_url=\"",
       "classification": "pre"
@@ -415,7 +443,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 77,
+      "line": 78,
       "column": 59,
       "text": "\", api_key=\"$GATEWAY_API_KEY\") response = client.chat.completions.create( model=\"llmgateway/chat\", messages=[{\"role\": \"user\", \"content\": \"Hello!\"}], ) print(response.choices[0].message.content)",
       "classification": "pre"
@@ -424,7 +452,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 143,
+      "line": 144,
       "column": 43,
       "text": "Base URL",
       "classification": "code"
@@ -433,7 +461,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 144,
+      "line": 145,
       "column": 43,
       "text": "Authorization",
       "classification": "code"
@@ -442,7 +470,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 144,
+      "line": 145,
       "column": 241,
       "text": "Authorization: Bearer <GATEWAY_API_KEY или lgk_...>",
       "classification": "code"
@@ -451,7 +479,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 145,
+      "line": 146,
       "column": 43,
       "text": "GET /models",
       "classification": "code"
@@ -460,7 +488,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 153,
+      "line": 154,
       "column": 43,
       "text": "Endpoint",
       "classification": "code"
@@ -469,7 +497,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 153,
+      "line": 154,
       "column": 236,
       "text": "POST /v1/messages",
       "classification": "code"
@@ -478,7 +506,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 154,
+      "line": 155,
       "column": 43,
       "text": "X-Api-Key",
       "classification": "code"
@@ -487,7 +515,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 155,
+      "line": 156,
       "column": 43,
       "text": "anthropic-version",
       "classification": "code"
@@ -496,7 +524,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 169,
+      "line": 170,
       "column": 25,
       "text": "POST /v1/chat/completions",
       "classification": "protocol"
@@ -505,7 +533,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 172,
+      "line": 173,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -514,27 +542,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 173,
+      "line": 174,
       "column": 43,
       "text": "messages",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 174,
-      "column": 43,
-      "text": "stream",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 174,
-      "column": 218,
-      "text": "true",
       "classification": "code"
     },
     {
@@ -543,7 +553,16 @@
       "kind": "html-code",
       "line": 175,
       "column": 43,
-      "text": "temperature",
+      "text": "stream",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 175,
+      "column": 218,
+      "text": "true",
       "classification": "code"
     },
     {
@@ -552,7 +571,7 @@
       "kind": "html-code",
       "line": 176,
       "column": 43,
-      "text": "max_tokens",
+      "text": "temperature",
       "classification": "code"
     },
     {
@@ -561,7 +580,7 @@
       "kind": "html-code",
       "line": 177,
       "column": 43,
-      "text": "response_format",
+      "text": "max_tokens",
       "classification": "code"
     },
     {
@@ -570,7 +589,7 @@
       "kind": "html-code",
       "line": 178,
       "column": 43,
-      "text": "tools",
+      "text": "response_format",
       "classification": "code"
     },
     {
@@ -579,7 +598,7 @@
       "kind": "html-code",
       "line": 179,
       "column": 43,
-      "text": "tool_choice",
+      "text": "tools",
       "classification": "code"
     },
     {
@@ -587,6 +606,15 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 180,
+      "column": 43,
+      "text": "tool_choice",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 181,
       "column": 191,
       "text": "choices[]",
       "classification": "code"
@@ -595,7 +623,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 180,
+      "line": 181,
       "column": 268,
       "text": "usage",
       "classification": "code"
@@ -604,7 +632,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 185,
+      "line": 186,
       "column": 25,
       "text": "POST /v1/responses",
       "classification": "protocol"
@@ -613,18 +641,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 188,
-      "column": 43,
-      "text": "model",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
       "line": 189,
       "column": 43,
-      "text": "input",
+      "text": "model",
       "classification": "code"
     },
     {
@@ -633,7 +652,7 @@
       "kind": "html-code",
       "line": 190,
       "column": 43,
-      "text": "instructions",
+      "text": "input",
       "classification": "code"
     },
     {
@@ -642,7 +661,7 @@
       "kind": "html-code",
       "line": 191,
       "column": 43,
-      "text": "text.format",
+      "text": "instructions",
       "classification": "code"
     },
     {
@@ -651,7 +670,7 @@
       "kind": "html-code",
       "line": 192,
       "column": 43,
-      "text": "tools",
+      "text": "text.format",
       "classification": "code"
     },
     {
@@ -660,7 +679,7 @@
       "kind": "html-code",
       "line": 193,
       "column": 43,
-      "text": "tool_choice",
+      "text": "tools",
       "classification": "code"
     },
     {
@@ -669,7 +688,7 @@
       "kind": "html-code",
       "line": 194,
       "column": 43,
-      "text": "max_output_tokens",
+      "text": "tool_choice",
       "classification": "code"
     },
     {
@@ -678,6 +697,15 @@
       "kind": "html-code",
       "line": 195,
       "column": 43,
+      "text": "max_output_tokens",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 196,
+      "column": 43,
       "text": "stream",
       "classification": "code"
     },
@@ -685,7 +713,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 195,
+      "line": 196,
       "column": 218,
       "text": "true",
       "classification": "code"
@@ -694,7 +722,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 201,
+      "line": 202,
       "column": 25,
       "text": "POST /v1/messages",
       "classification": "protocol"
@@ -703,18 +731,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 204,
-      "column": 43,
-      "text": "model",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
       "line": 205,
       "column": 43,
-      "text": "messages",
+      "text": "model",
       "classification": "code"
     },
     {
@@ -723,7 +742,7 @@
       "kind": "html-code",
       "line": 206,
       "column": 43,
-      "text": "max_tokens",
+      "text": "messages",
       "classification": "code"
     },
     {
@@ -732,7 +751,7 @@
       "kind": "html-code",
       "line": 207,
       "column": 43,
-      "text": "system",
+      "text": "max_tokens",
       "classification": "code"
     },
     {
@@ -741,16 +760,7 @@
       "kind": "html-code",
       "line": 208,
       "column": 43,
-      "text": "stream",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 208,
-      "column": 218,
-      "text": "true",
+      "text": "system",
       "classification": "code"
     },
     {
@@ -759,7 +769,16 @@
       "kind": "html-code",
       "line": 209,
       "column": 43,
-      "text": "temperature",
+      "text": "stream",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 209,
+      "column": 218,
+      "text": "true",
       "classification": "code"
     },
     {
@@ -768,16 +787,7 @@
       "kind": "html-code",
       "line": 210,
       "column": 43,
-      "text": "top_p",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 210,
-      "column": 64,
-      "text": "top_k",
+      "text": "temperature",
       "classification": "code"
     },
     {
@@ -786,6 +796,24 @@
       "kind": "html-code",
       "line": 211,
       "column": 43,
+      "text": "top_p",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 211,
+      "column": 64,
+      "text": "top_k",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 212,
+      "column": 43,
       "text": "stop_sequences",
       "classification": "code"
     },
@@ -793,7 +821,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 226,
+      "line": 227,
       "column": 25,
       "text": "POST /v1/rerank",
       "classification": "protocol"
@@ -802,18 +830,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 230,
-      "column": 43,
-      "text": "model",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
       "line": 231,
       "column": 43,
-      "text": "query",
+      "text": "model",
       "classification": "code"
     },
     {
@@ -822,7 +841,7 @@
       "kind": "html-code",
       "line": 232,
       "column": 43,
-      "text": "documents",
+      "text": "query",
       "classification": "code"
     },
     {
@@ -831,7 +850,7 @@
       "kind": "html-code",
       "line": 233,
       "column": 43,
-      "text": "top_n",
+      "text": "documents",
       "classification": "code"
     },
     {
@@ -839,6 +858,15 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 234,
+      "column": 43,
+      "text": "top_n",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 235,
       "column": 43,
       "text": "return_documents",
       "classification": "code"
@@ -847,7 +875,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 234,
+      "line": 235,
       "column": 230,
       "text": "true",
       "classification": "code"
@@ -856,7 +884,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 235,
+      "line": 236,
       "column": 103,
       "text": "data[]",
       "classification": "code"
@@ -865,7 +893,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 235,
+      "line": 236,
       "column": 179,
       "text": "index",
       "classification": "code"
@@ -874,7 +902,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 235,
+      "line": 236,
       "column": 199,
       "text": "score",
       "classification": "code"
@@ -883,7 +911,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 235,
+      "line": 236,
       "column": 289,
       "text": "document",
       "classification": "code"
@@ -892,7 +920,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 241,
+      "line": 242,
       "column": 37,
       "text": "curl -s",
       "classification": "pre"
@@ -901,7 +929,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 241,
+      "line": 242,
       "column": 77,
       "text": "/rerank \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/rerank\", \"query\": \"документ про маршрутизацию моделей\", \"documents\": [ \"Gateway models are called through a single API.\", \"Images are generated through /v1/images/generations.\", \"Usage statistics are grouped by day and month.\" ], \"top_n\": 2, \"return_documents\": true }'",
       "classification": "pre"
@@ -910,7 +938,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 259,
+      "line": 260,
       "column": 143,
       "text": "results[]",
       "classification": "code"
@@ -919,7 +947,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 269,
+      "line": 270,
       "column": 25,
       "text": "POST /v1/embeddings",
       "classification": "protocol"
@@ -928,7 +956,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 272,
+      "line": 273,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -937,36 +965,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 273,
+      "line": 274,
       "column": 43,
       "text": "input",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 274,
-      "column": 43,
-      "text": "encoding_format",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 274,
-      "column": 253,
-      "text": "float",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 274,
-      "column": 334,
-      "text": "base64",
       "classification": "code"
     },
     {
@@ -975,7 +976,25 @@
       "kind": "html-code",
       "line": 275,
       "column": 43,
-      "text": "dimensions",
+      "text": "encoding_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 275,
+      "column": 253,
+      "text": "float",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 275,
+      "column": 334,
+      "text": "base64",
       "classification": "code"
     },
     {
@@ -984,7 +1003,7 @@
       "kind": "html-code",
       "line": 276,
       "column": 43,
-      "text": "user",
+      "text": "dimensions",
       "classification": "code"
     },
     {
@@ -992,6 +1011,15 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 277,
+      "column": 43,
+      "text": "user",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 278,
       "column": 201,
       "text": "data[]",
       "classification": "code"
@@ -1000,7 +1028,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 277,
+      "line": 278,
       "column": 281,
       "text": "usage",
       "classification": "code"
@@ -1009,7 +1037,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 341,
+      "line": 342,
       "column": 25,
       "text": "POST /v1/images/generations",
       "classification": "protocol"
@@ -1018,7 +1046,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 341,
+      "line": 342,
       "column": 56,
       "text": "POST /v1/images",
       "classification": "protocol"
@@ -1027,7 +1055,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 294,
+      "line": 295,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -1036,27 +1064,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 345,
+      "line": 346,
       "column": 43,
       "text": "prompt",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 346,
-      "column": 43,
-      "text": "size",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 346,
-      "column": 242,
-      "text": "1024x1024",
       "classification": "code"
     },
     {
@@ -1065,7 +1075,16 @@
       "kind": "html-code",
       "line": 347,
       "column": 43,
-      "text": "n",
+      "text": "size",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 347,
+      "column": 242,
+      "text": "1024x1024",
       "classification": "code"
     },
     {
@@ -1074,7 +1093,7 @@
       "kind": "html-code",
       "line": 348,
       "column": 43,
-      "text": "response_format",
+      "text": "n",
       "classification": "code"
     },
     {
@@ -1082,6 +1101,15 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 349,
+      "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 350,
       "column": 43,
       "text": "quality",
       "classification": "code"
@@ -1090,7 +1118,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 349,
+      "line": 350,
       "column": 66,
       "text": "style",
       "classification": "code"
@@ -1099,7 +1127,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 350,
+      "line": 351,
       "column": 192,
       "text": "data[]",
       "classification": "code"
@@ -1108,7 +1136,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 355,
+      "line": 356,
       "column": 25,
       "text": "POST /v1/images/edits",
       "classification": "protocol"
@@ -1117,7 +1145,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 344,
+      "line": 345,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -1126,36 +1154,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 359,
+      "line": 360,
       "column": 43,
       "text": "prompt",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 360,
-      "column": 43,
-      "text": "images",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 360,
-      "column": 283,
-      "text": "image",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 360,
-      "column": 360,
-      "text": "image[]",
       "classification": "code"
     },
     {
@@ -1164,7 +1165,25 @@
       "kind": "html-code",
       "line": 361,
       "column": 43,
-      "text": "mask",
+      "text": "images",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 361,
+      "column": 283,
+      "text": "image",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 361,
+      "column": 360,
+      "text": "image[]",
       "classification": "code"
     },
     {
@@ -1173,7 +1192,7 @@
       "kind": "html-code",
       "line": 362,
       "column": 43,
-      "text": "size",
+      "text": "mask",
       "classification": "code"
     },
     {
@@ -1182,7 +1201,7 @@
       "kind": "html-code",
       "line": 363,
       "column": 43,
-      "text": "n",
+      "text": "size",
       "classification": "code"
     },
     {
@@ -1191,7 +1210,7 @@
       "kind": "html-code",
       "line": 364,
       "column": 43,
-      "text": "response_format",
+      "text": "n",
       "classification": "code"
     },
     {
@@ -1199,6 +1218,15 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 365,
+      "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 366,
       "column": 192,
       "text": "data[]",
       "classification": "code"
@@ -1207,7 +1235,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 379,
+      "line": 380,
       "column": 25,
       "text": "POST /v1/audio/speech",
       "classification": "protocol"
@@ -1216,7 +1244,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 382,
+      "line": 383,
       "column": 43,
       "text": "Content-Type",
       "classification": "code"
@@ -1225,7 +1253,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 382,
+      "line": 383,
       "column": 241,
       "text": "application/json",
       "classification": "code"
@@ -1234,18 +1262,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 358,
+      "line": 359,
       "column": 43,
       "text": "model",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 384,
-      "column": 43,
-      "text": "input",
       "classification": "code"
     },
     {
@@ -1254,7 +1273,7 @@
       "kind": "html-code",
       "line": 385,
       "column": 43,
-      "text": "voice",
+      "text": "input",
       "classification": "code"
     },
     {
@@ -1263,25 +1282,7 @@
       "kind": "html-code",
       "line": 386,
       "column": 43,
-      "text": "response_format",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 386,
-      "column": 246,
-      "text": "mp3",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 386,
-      "column": 320,
-      "text": "wav",
+      "text": "voice",
       "classification": "code"
     },
     {
@@ -1290,6 +1291,33 @@
       "kind": "html-code",
       "line": 387,
       "column": 43,
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 387,
+      "column": 246,
+      "text": "mp3",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 387,
+      "column": 320,
+      "text": "wav",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 388,
+      "column": 43,
       "text": "speed",
       "classification": "code"
     },
@@ -1297,7 +1325,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 390,
+      "line": 391,
       "column": 185,
       "text": "content-type",
       "classification": "code"
@@ -1306,7 +1334,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 395,
+      "line": 396,
       "column": 25,
       "text": "GET /v1/audio/voices",
       "classification": "protocol"
@@ -1315,7 +1343,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 383,
+      "line": 384,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -1324,7 +1352,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 399,
+      "line": 400,
       "column": 217,
       "text": "gender",
       "classification": "code"
@@ -1333,7 +1361,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 399,
+      "line": 400,
       "column": 292,
       "text": "language",
       "classification": "code"
@@ -1342,7 +1370,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 404,
+      "line": 405,
       "column": 25,
       "text": "POST /v1/audio/transcriptions",
       "classification": "protocol"
@@ -1351,7 +1379,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 407,
+      "line": 408,
       "column": 43,
       "text": "Content-Type",
       "classification": "code"
@@ -1360,7 +1388,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 407,
+      "line": 408,
       "column": 241,
       "text": "multipart/form-data",
       "classification": "code"
@@ -1369,7 +1397,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 408,
+      "line": 409,
       "column": 43,
       "text": "file",
       "classification": "code"
@@ -1378,18 +1406,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 398,
+      "line": 399,
       "column": 43,
       "text": "model",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 410,
-      "column": 43,
-      "text": "language",
       "classification": "code"
     },
     {
@@ -1398,7 +1417,7 @@
       "kind": "html-code",
       "line": 411,
       "column": 43,
-      "text": "prompt",
+      "text": "language",
       "classification": "code"
     },
     {
@@ -1407,43 +1426,7 @@
       "kind": "html-code",
       "line": 412,
       "column": 43,
-      "text": "response_format",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 412,
-      "column": 247,
-      "text": "json",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 412,
-      "column": 266,
-      "text": "text",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 412,
-      "column": 285,
-      "text": "srt",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 412,
-      "column": 359,
-      "text": "vtt",
+      "text": "prompt",
       "classification": "code"
     },
     {
@@ -1452,7 +1435,43 @@
       "kind": "html-code",
       "line": 413,
       "column": 43,
-      "text": "temperature",
+      "text": "response_format",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 413,
+      "column": 247,
+      "text": "json",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 413,
+      "column": 266,
+      "text": "text",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 413,
+      "column": 285,
+      "text": "srt",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 413,
+      "column": 359,
+      "text": "vtt",
       "classification": "code"
     },
     {
@@ -1461,6 +1480,15 @@
       "kind": "html-code",
       "line": 414,
       "column": 43,
+      "text": "temperature",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 415,
+      "column": 43,
       "text": "timestamp_granularities[]",
       "classification": "code"
     },
@@ -1468,7 +1496,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 443,
+      "line": 444,
       "column": 25,
       "text": "POST /v1/pdf/convert",
       "classification": "protocol"
@@ -1477,7 +1505,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 424,
+      "line": 425,
       "column": 43,
       "text": "Content-Type",
       "classification": "code"
@@ -1486,7 +1514,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 446,
+      "line": 447,
       "column": 239,
       "text": "multipart/form-data",
       "classification": "code"
@@ -1495,7 +1523,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 425,
+      "line": 426,
       "column": 43,
       "text": "file",
       "classification": "code"
@@ -1504,7 +1532,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 409,
+      "line": 410,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -1513,7 +1541,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 449,
+      "line": 450,
       "column": 43,
       "text": "output",
       "classification": "code"
@@ -1522,7 +1550,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 449,
+      "line": 450,
       "column": 231,
       "text": "both",
       "classification": "code"
@@ -1531,7 +1559,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 449,
+      "line": 450,
       "column": 250,
       "text": "docx",
       "classification": "code"
@@ -1540,7 +1568,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 449,
+      "line": 450,
       "column": 323,
       "text": "md",
       "classification": "code"
@@ -1549,7 +1577,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 449,
+      "line": 450,
       "column": 416,
       "text": "both",
       "classification": "code"
@@ -1558,7 +1586,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 450,
+      "line": 451,
       "column": 43,
       "text": "language",
       "classification": "code"
@@ -1567,7 +1595,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 450,
+      "line": 451,
       "column": 262,
       "text": "rus+eng",
       "classification": "code"
@@ -1576,7 +1604,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 451,
+      "line": 452,
       "column": 43,
       "text": "target_language",
       "classification": "code"
@@ -1585,7 +1613,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 451,
+      "line": 452,
       "column": 286,
       "text": "English",
       "classification": "code"
@@ -1594,7 +1622,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 451,
+      "line": 452,
       "column": 362,
       "text": "Russian",
       "classification": "code"
@@ -1603,7 +1631,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 452,
+      "line": 453,
       "column": 43,
       "text": "math_ocr_provider",
       "classification": "code"
@@ -1612,7 +1640,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 452,
+      "line": 453,
       "column": 255,
       "text": "off",
       "classification": "code"
@@ -1621,7 +1649,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 452,
+      "line": 453,
       "column": 292,
       "text": "mathpix",
       "classification": "code"
@@ -1630,7 +1658,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 452,
+      "line": 453,
       "column": 368,
       "text": "local_im2latex",
       "classification": "code"
@@ -1639,7 +1667,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 453,
+      "line": 454,
       "column": 43,
       "text": "formulas_max_pages",
       "classification": "code"
@@ -1648,7 +1676,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 454,
+      "line": 455,
       "column": 43,
       "text": "max_pages",
       "classification": "code"
@@ -1657,7 +1685,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 455,
+      "line": 456,
       "column": 43,
       "text": "password",
       "classification": "code"
@@ -1666,7 +1694,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 456,
+      "line": 457,
       "column": 43,
       "text": "ocr_preprocess_save",
       "classification": "code"
@@ -1675,7 +1703,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 299,
+      "line": 300,
       "column": 338,
       "text": "true",
       "classification": "code"
@@ -1684,7 +1712,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 465,
+      "line": 466,
       "column": 43,
       "text": "POST /v1/pdf/jobs",
       "classification": "code"
@@ -1693,7 +1721,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 465,
+      "line": 466,
       "column": 190,
       "text": "/v1/pdf/convert",
       "classification": "code"
@@ -1702,7 +1730,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 466,
+      "line": 467,
       "column": 43,
       "text": "GET /v1/pdf/jobs/{job_id}",
       "classification": "code"
@@ -1711,7 +1739,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 426,
+      "line": 427,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -1720,7 +1748,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 466,
+      "line": 467,
       "column": 271,
       "text": "progress",
       "classification": "code"
@@ -1729,7 +1757,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 466,
+      "line": 467,
       "column": 294,
       "text": "eta_seconds",
       "classification": "code"
@@ -1738,7 +1766,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 466,
+      "line": 467,
       "column": 320,
       "text": "message",
       "classification": "code"
@@ -1747,7 +1775,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 466,
+      "line": 467,
       "column": 401,
       "text": "events[]",
       "classification": "code"
@@ -1756,7 +1784,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 467,
+      "line": 468,
       "column": 43,
       "text": "GET /v1/pdf/jobs/{job_id}/result",
       "classification": "code"
@@ -1765,7 +1793,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 466,
+      "line": 467,
       "column": 163,
       "text": "model",
       "classification": "code"
@@ -1774,7 +1802,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 467,
+      "line": 468,
       "column": 296,
       "text": "docx",
       "classification": "code"
@@ -1783,7 +1811,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 467,
+      "line": 468,
       "column": 315,
       "text": "md",
       "classification": "code"
@@ -1792,7 +1820,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 467,
+      "line": 468,
       "column": 411,
       "text": "preprocessed-pdf",
       "classification": "code"
@@ -1801,7 +1829,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 468,
+      "line": 469,
       "column": 43,
       "text": "GET /v1/pdf/jobs/{job_id}/download/{artifact}",
       "classification": "code"
@@ -1810,7 +1838,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 468,
+      "line": 469,
       "column": 192,
       "text": "docx",
       "classification": "code"
@@ -1819,7 +1847,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 468,
+      "line": 469,
       "column": 211,
       "text": "md",
       "classification": "code"
@@ -1828,7 +1856,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 468,
+      "line": 469,
       "column": 282,
       "text": "preprocessed-pdf",
       "classification": "code"
@@ -1837,7 +1865,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 467,
+      "line": 468,
       "column": 177,
       "text": "model",
       "classification": "code"
@@ -1846,7 +1874,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 476,
+      "line": 477,
       "column": 41,
       "text": "curl -s",
       "classification": "pre"
@@ -1855,7 +1883,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 476,
+      "line": 477,
       "column": 81,
       "text": "/pdf/jobs \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -F \"model=llmgateway/pdf-converter\" \\ -F \"file=@document.pdf;type=application/pdf\" \\ -F \"output=both\" \\ -F \"language=rus+eng\" \\ -F \"target_language=English\" \\ -F \"math_ocr_provider=mathpix\" \\ -F \"formulas_max_pages=10\" \\ -F \"max_pages=47\" \\ -F \"ocr_preprocess_save=true\"",
       "classification": "pre"
@@ -1864,7 +1892,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 493,
+      "line": 494,
       "column": 27,
       "text": "/v1/pdf/jobs/{job_id}/download/{artifact}?model=llmgateway/pdf-converter",
       "classification": "code"
@@ -1873,7 +1901,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 500,
+      "line": 501,
       "column": 40,
       "text": "web*",
       "classification": "protocol"
@@ -1882,7 +1910,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 505,
+      "line": 506,
       "column": 25,
       "text": "POST /v1/web/search",
       "classification": "protocol"
@@ -1891,7 +1919,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 468,
+      "line": 469,
       "column": 374,
       "text": "model",
       "classification": "code"
@@ -1900,18 +1928,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 509,
-      "column": 43,
-      "text": "query",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
       "line": 510,
       "column": 43,
-      "text": "max_results",
+      "text": "query",
       "classification": "code"
     },
     {
@@ -1920,7 +1939,7 @@
       "kind": "html-code",
       "line": 511,
       "column": 43,
-      "text": "num_queries",
+      "text": "max_results",
       "classification": "code"
     },
     {
@@ -1928,6 +1947,15 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 512,
+      "column": 43,
+      "text": "num_queries",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 513,
       "column": 43,
       "text": "language",
       "classification": "code"
@@ -1936,7 +1964,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 512,
+      "line": 513,
       "column": 240,
       "text": "ru",
       "classification": "code"
@@ -1945,7 +1973,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 513,
+      "line": 514,
       "column": 43,
       "text": "include_raw_content",
       "classification": "code"
@@ -1954,7 +1982,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 456,
+      "line": 457,
       "column": 230,
       "text": "true",
       "classification": "code"
@@ -1963,7 +1991,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 513,
+      "line": 514,
       "column": 273,
       "text": "markdown",
       "classification": "code"
@@ -1972,7 +2000,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 513,
+      "line": 514,
       "column": 350,
       "text": "text",
       "classification": "code"
@@ -1981,7 +2009,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 513,
+      "line": 514,
       "column": 499,
       "text": "raw_content",
       "classification": "code"
@@ -1990,7 +2018,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 513,
+      "line": 514,
       "column": 592,
       "text": "data[]",
       "classification": "code"
@@ -1999,7 +2027,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 514,
+      "line": 515,
       "column": 43,
       "text": "read_model",
       "classification": "code"
@@ -2008,7 +2036,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 514,
+      "line": 515,
       "column": 234,
       "text": "web_read",
       "classification": "code"
@@ -2017,7 +2045,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 514,
+      "line": 515,
       "column": 322,
       "text": "raw_content",
       "classification": "code"
@@ -2026,18 +2054,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 514,
+      "line": 515,
       "column": 419,
       "text": "include_raw_content",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 515,
-      "column": 43,
-      "text": "include_domains",
       "classification": "code"
     },
     {
@@ -2046,7 +2065,7 @@
       "kind": "html-code",
       "line": 516,
       "column": 43,
-      "text": "exclude_domains",
+      "text": "include_domains",
       "classification": "code"
     },
     {
@@ -2055,6 +2074,15 @@
       "kind": "html-code",
       "line": 517,
       "column": 43,
+      "text": "exclude_domains",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 518,
+      "column": 43,
       "text": "include_images",
       "classification": "code"
     },
@@ -2062,7 +2090,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 513,
+      "line": 514,
       "column": 254,
       "text": "true",
       "classification": "code"
@@ -2071,7 +2099,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 517,
+      "line": 518,
       "column": 334,
       "text": "data[]",
       "classification": "code"
@@ -2080,7 +2108,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 517,
+      "line": 518,
       "column": 419,
       "text": "images[]",
       "classification": "code"
@@ -2089,7 +2117,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 518,
+      "line": 519,
       "column": 103,
       "text": "data[]",
       "classification": "code"
@@ -2098,7 +2126,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 518,
+      "line": 519,
       "column": 200,
       "text": "usage",
       "classification": "code"
@@ -2107,7 +2135,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 518,
+      "line": 519,
       "column": 337,
       "text": "raw_content",
       "classification": "code"
@@ -2116,7 +2144,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 518,
+      "line": 519,
       "column": 415,
       "text": "images[]",
       "classification": "code"
@@ -2125,7 +2153,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 523,
+      "line": 524,
       "column": 25,
       "text": "POST /v1/web/read",
       "classification": "protocol"
@@ -2134,7 +2162,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 448,
+      "line": 449,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -2143,7 +2171,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 527,
+      "line": 528,
       "column": 43,
       "text": "url",
       "classification": "code"
@@ -2152,7 +2180,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 528,
+      "line": 529,
       "column": 43,
       "text": "format",
       "classification": "code"
@@ -2161,7 +2189,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 528,
+      "line": 529,
       "column": 231,
       "text": "markdown",
       "classification": "code"
@@ -2170,7 +2198,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 528,
+      "line": 529,
       "column": 308,
       "text": "text",
       "classification": "code"
@@ -2179,7 +2207,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 528,
+      "line": 529,
       "column": 391,
       "text": "markdown",
       "classification": "code"
@@ -2188,7 +2216,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 529,
+      "line": 530,
       "column": 43,
       "text": "include_images",
       "classification": "code"
@@ -2197,7 +2225,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 517,
+      "line": 518,
       "column": 249,
       "text": "true",
       "classification": "code"
@@ -2206,7 +2234,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 529,
+      "line": 530,
       "column": 324,
       "text": "images[]",
       "classification": "code"
@@ -2215,7 +2243,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 530,
+      "line": 531,
       "column": 103,
       "text": "url",
       "classification": "code"
@@ -2224,7 +2252,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 530,
+      "line": 531,
       "column": 121,
       "text": "title",
       "classification": "code"
@@ -2233,7 +2261,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 530,
+      "line": 531,
       "column": 204,
       "text": "content",
       "classification": "code"
@@ -2242,7 +2270,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 530,
+      "line": 531,
       "column": 226,
       "text": "usage",
       "classification": "code"
@@ -2251,7 +2279,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 530,
+      "line": 531,
       "column": 310,
       "text": "images[]",
       "classification": "code"
@@ -2260,7 +2288,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 535,
+      "line": 536,
       "column": 25,
       "text": "POST /v1/tavily/search",
       "classification": "protocol"
@@ -2269,7 +2297,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 538,
+      "line": 539,
       "column": 43,
       "text": "query",
       "classification": "code"
@@ -2278,7 +2306,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 508,
+      "line": 509,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -2287,7 +2315,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 539,
+      "line": 540,
       "column": 229,
       "text": "web_search",
       "classification": "code"
@@ -2296,7 +2324,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 540,
+      "line": 541,
       "column": 43,
       "text": "max_results",
       "classification": "code"
@@ -2305,7 +2333,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 541,
+      "line": 542,
       "column": 43,
       "text": "include_raw_content",
       "classification": "code"
@@ -2314,7 +2342,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 541,
+      "line": 542,
       "column": 255,
       "text": "results[]",
       "classification": "code"
@@ -2323,35 +2351,8 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 541,
+      "line": 542,
       "column": 338,
-      "text": "raw_content",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 542,
-      "column": 43,
-      "text": "read_model",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 542,
-      "column": 234,
-      "text": "web_read",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 542,
-      "column": 311,
       "text": "raw_content",
       "classification": "code"
     },
@@ -2361,7 +2362,25 @@
       "kind": "html-code",
       "line": 543,
       "column": 43,
-      "text": "include_domains",
+      "text": "read_model",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 543,
+      "column": 234,
+      "text": "web_read",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 543,
+      "column": 311,
+      "text": "raw_content",
       "classification": "code"
     },
     {
@@ -2370,7 +2389,7 @@
       "kind": "html-code",
       "line": 544,
       "column": 43,
-      "text": "exclude_domains",
+      "text": "include_domains",
       "classification": "code"
     },
     {
@@ -2379,6 +2398,15 @@
       "kind": "html-code",
       "line": 545,
       "column": 43,
+      "text": "exclude_domains",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 546,
+      "column": 43,
       "text": "include_images",
       "classification": "code"
     },
@@ -2386,7 +2414,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 529,
+      "line": 530,
       "column": 225,
       "text": "true",
       "classification": "code"
@@ -2395,7 +2423,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 545,
+      "line": 546,
       "column": 334,
       "text": "images[]",
       "classification": "code"
@@ -2404,7 +2432,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 545,
+      "line": 546,
       "column": 409,
       "text": "images[]",
       "classification": "code"
@@ -2413,7 +2441,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 546,
+      "line": 547,
       "column": 181,
       "text": "results[]",
       "classification": "code"
@@ -2422,7 +2450,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 546,
+      "line": 547,
       "column": 205,
       "text": "failed_results[]",
       "classification": "code"
@@ -2431,7 +2459,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 546,
+      "line": 547,
       "column": 236,
       "text": "answer",
       "classification": "code"
@@ -2440,7 +2468,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 546,
+      "line": 547,
       "column": 257,
       "text": "images[]",
       "classification": "code"
@@ -2449,7 +2477,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 546,
+      "line": 547,
       "column": 280,
       "text": "response_time",
       "classification": "code"
@@ -2458,7 +2486,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 546,
+      "line": 547,
       "column": 308,
       "text": "usage",
       "classification": "code"
@@ -2467,7 +2495,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 546,
+      "line": 547,
       "column": 380,
       "text": "request_id",
       "classification": "code"
@@ -2476,7 +2504,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 551,
+      "line": 552,
       "column": 25,
       "text": "POST /v1/tavily/extract",
       "classification": "protocol"
@@ -2485,7 +2513,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 554,
+      "line": 555,
       "column": 43,
       "text": "urls",
       "classification": "code"
@@ -2494,7 +2522,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 526,
+      "line": 527,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -2503,7 +2531,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 555,
+      "line": 556,
       "column": 229,
       "text": "web_read",
       "classification": "code"
@@ -2512,7 +2540,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 556,
+      "line": 557,
       "column": 43,
       "text": "format",
       "classification": "code"
@@ -2521,7 +2549,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 556,
+      "line": 557,
       "column": 242,
       "text": "markdown",
       "classification": "code"
@@ -2530,7 +2558,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 556,
+      "line": 557,
       "column": 319,
       "text": "text",
       "classification": "code"
@@ -2539,7 +2567,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 556,
+      "line": 557,
       "column": 402,
       "text": "markdown",
       "classification": "code"
@@ -2548,7 +2576,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 557,
+      "line": 558,
       "column": 43,
       "text": "extract_depth",
       "classification": "code"
@@ -2557,7 +2585,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 558,
+      "line": 559,
       "column": 43,
       "text": "include_images",
       "classification": "code"
@@ -2566,7 +2594,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 545,
+      "line": 546,
       "column": 225,
       "text": "true",
       "classification": "code"
@@ -2575,7 +2603,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 558,
+      "line": 559,
       "column": 310,
       "text": "results[]",
       "classification": "code"
@@ -2584,7 +2612,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 558,
+      "line": 559,
       "column": 393,
       "text": "images[]",
       "classification": "code"
@@ -2593,7 +2621,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 559,
+      "line": 560,
       "column": 181,
       "text": "results[]",
       "classification": "code"
@@ -2602,7 +2630,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 559,
+      "line": 560,
       "column": 205,
       "text": "failed_results[]",
       "classification": "code"
@@ -2611,7 +2639,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 559,
+      "line": 560,
       "column": 236,
       "text": "images[]",
       "classification": "code"
@@ -2620,7 +2648,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 559,
+      "line": 560,
       "column": 329,
       "text": "response_time",
       "classification": "code"
@@ -2629,7 +2657,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 559,
+      "line": 560,
       "column": 357,
       "text": "usage",
       "classification": "code"
@@ -2638,7 +2666,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 559,
+      "line": 560,
       "column": 429,
       "text": "request_id",
       "classification": "code"
@@ -2647,7 +2675,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 592,
+      "line": 593,
       "column": 25,
       "text": "POST /v1/web/research",
       "classification": "protocol"
@@ -2656,7 +2684,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 539,
+      "line": 540,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -2665,7 +2693,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 596,
+      "line": 597,
       "column": 43,
       "text": "query",
       "classification": "code"
@@ -2674,7 +2702,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 597,
+      "line": 598,
       "column": 43,
       "text": "language",
       "classification": "code"
@@ -2683,7 +2711,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 597,
+      "line": 598,
       "column": 236,
       "text": "all",
       "classification": "code"
@@ -2692,7 +2720,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 597,
+      "line": 598,
       "column": 254,
       "text": "ru",
       "classification": "code"
@@ -2701,7 +2729,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 597,
+      "line": 598,
       "column": 271,
       "text": "en",
       "classification": "code"
@@ -2710,7 +2738,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 597,
+      "line": 598,
       "column": 288,
       "text": "zh",
       "classification": "code"
@@ -2719,7 +2747,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 597,
+      "line": 598,
       "column": 394,
       "text": "all",
       "classification": "code"
@@ -2728,7 +2756,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 598,
+      "line": 599,
       "column": 43,
       "text": "num_queries",
       "classification": "code"
@@ -2737,26 +2765,8 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 599,
-      "column": 43,
-      "text": "max_results_per_lang",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
       "line": 600,
       "column": 43,
-      "text": "max_results",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 600,
-      "column": 284,
       "text": "max_results_per_lang",
       "classification": "code"
     },
@@ -2766,7 +2776,16 @@
       "kind": "html-code",
       "line": 601,
       "column": 43,
-      "text": "max_articles",
+      "text": "max_results",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 601,
+      "column": 284,
+      "text": "max_results_per_lang",
       "classification": "code"
     },
     {
@@ -2774,6 +2793,15 @@
       "file": "static/gateway-docs.html",
       "kind": "html-code",
       "line": 602,
+      "column": 43,
+      "text": "max_articles",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 603,
       "column": 43,
       "text": "output_language",
       "classification": "code"
@@ -2782,7 +2810,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 602,
+      "line": 603,
       "column": 257,
       "text": "ru",
       "classification": "code"
@@ -2791,7 +2819,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 603,
+      "line": 604,
       "column": 43,
       "text": "format",
       "classification": "code"
@@ -2800,7 +2828,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 603,
+      "line": 604,
       "column": 250,
       "text": "markdown",
       "classification": "code"
@@ -2809,7 +2837,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 604,
+      "line": 605,
       "column": 103,
       "text": "output",
       "classification": "code"
@@ -2818,7 +2846,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 604,
+      "line": 605,
       "column": 185,
       "text": "sources",
       "classification": "code"
@@ -2827,7 +2855,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 604,
+      "line": 605,
       "column": 270,
       "text": "articles",
       "classification": "code"
@@ -2836,7 +2864,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 604,
+      "line": 605,
       "column": 345,
       "text": "usage",
       "classification": "code"
@@ -2845,7 +2873,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 609,
+      "line": 610,
       "column": 25,
       "text": "POST /v1/web/deep-research",
       "classification": "protocol"
@@ -2854,18 +2882,9 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 555,
+      "line": 556,
       "column": 43,
       "text": "model",
-      "classification": "code"
-    },
-    {
-      "page": "docs",
-      "file": "static/gateway-docs.html",
-      "kind": "html-code",
-      "line": 613,
-      "column": 43,
-      "text": "query",
       "classification": "code"
     },
     {
@@ -2874,7 +2893,7 @@
       "kind": "html-code",
       "line": 614,
       "column": 43,
-      "text": "max_words",
+      "text": "query",
       "classification": "code"
     },
     {
@@ -2883,7 +2902,7 @@
       "kind": "html-code",
       "line": 615,
       "column": 43,
-      "text": "breadth",
+      "text": "max_words",
       "classification": "code"
     },
     {
@@ -2892,7 +2911,7 @@
       "kind": "html-code",
       "line": 616,
       "column": 43,
-      "text": "depth",
+      "text": "breadth",
       "classification": "code"
     },
     {
@@ -2901,7 +2920,7 @@
       "kind": "html-code",
       "line": 617,
       "column": 43,
-      "text": "concurrency",
+      "text": "depth",
       "classification": "code"
     },
     {
@@ -2910,6 +2929,15 @@
       "kind": "html-code",
       "line": 618,
       "column": 43,
+      "text": "concurrency",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 619,
+      "column": 43,
       "text": "language",
       "classification": "code"
     },
@@ -2917,7 +2945,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 618,
+      "line": 619,
       "column": 250,
       "text": "ru",
       "classification": "code"
@@ -2926,7 +2954,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 619,
+      "line": 620,
       "column": 43,
       "text": "format",
       "classification": "code"
@@ -2935,7 +2963,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 619,
+      "line": 620,
       "column": 250,
       "text": "markdown",
       "classification": "code"
@@ -2944,7 +2972,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 620,
+      "line": 621,
       "column": 43,
       "text": "image_generation",
       "classification": "code"
@@ -2953,7 +2981,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 558,
+      "line": 559,
       "column": 225,
       "text": "true",
       "classification": "code"
@@ -2962,7 +2990,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 620,
+      "line": 621,
       "column": 367,
       "text": "images[]",
       "classification": "code"
@@ -2971,7 +2999,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 299,
+      "line": 300,
       "column": 356,
       "text": "false",
       "classification": "code"
@@ -2980,7 +3008,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 621,
+      "line": 622,
       "column": 103,
       "text": "output",
       "classification": "code"
@@ -2989,7 +3017,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 621,
+      "line": 622,
       "column": 185,
       "text": "sources",
       "classification": "code"
@@ -2998,7 +3026,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 621,
+      "line": 622,
       "column": 207,
       "text": "source_urls",
       "classification": "code"
@@ -3007,7 +3035,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 621,
+      "line": 622,
       "column": 292,
       "text": "context",
       "classification": "code"
@@ -3016,7 +3044,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 621,
+      "line": 622,
       "column": 314,
       "text": "images",
       "classification": "code"
@@ -3025,7 +3053,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 621,
+      "line": 622,
       "column": 387,
       "text": "usage",
       "classification": "code"
@@ -3034,7 +3062,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 634,
+      "line": 635,
       "column": 45,
       "text": "curl -s",
       "classification": "pre"
@@ -3043,7 +3071,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 634,
+      "line": 635,
       "column": 85,
       "text": "/web/search \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-search\", \"query\": \"новости рынка LLM API\", \"max_results\": 10, \"language\": \"ru\", \"include_images\": true }'",
       "classification": "pre"
@@ -3052,7 +3080,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 652,
+      "line": 653,
       "column": 45,
       "text": "curl -s",
       "classification": "pre"
@@ -3061,7 +3089,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 652,
+      "line": 653,
       "column": 85,
       "text": "/web/read \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-read\", \"url\": \"https://example.com/article\", \"format\": \"markdown\", \"include_images\": true }'",
       "classification": "pre"
@@ -3070,7 +3098,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 669,
+      "line": 670,
       "column": 45,
       "text": "curl -s",
       "classification": "pre"
@@ -3079,7 +3107,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 669,
+      "line": 670,
       "column": 85,
       "text": "/web/research \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-research\", \"query\": \"сравнение API для web search\", \"language\": \"all\", \"max_results_per_lang\": 10, \"max_articles\": 8, \"output_language\": \"ru\" }'",
       "classification": "pre"
@@ -3088,7 +3116,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 688,
+      "line": 689,
       "column": 45,
       "text": "curl -s",
       "classification": "pre"
@@ -3097,7 +3125,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 688,
+      "line": 689,
       "column": 85,
       "text": "/tavily/search \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-search\", \"read_model\": \"llmgateway/web-read\", \"query\": \"LLM gateway web search\", \"max_results\": 5, \"include_raw_content\": \"markdown\", \"include_domains\": [\"example.com\"], \"include_images\": true }'",
       "classification": "pre"
@@ -3106,7 +3134,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 708,
+      "line": 709,
       "column": 45,
       "text": "curl -s",
       "classification": "pre"
@@ -3115,7 +3143,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 708,
+      "line": 709,
       "column": 85,
       "text": "/tavily/extract \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-read\", \"urls\": [\"https://example.com/article\"], \"format\": \"markdown\", \"include_images\": true }'",
       "classification": "pre"
@@ -3124,7 +3152,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 750,
+      "line": 751,
       "column": 45,
       "text": "curl -s",
       "classification": "pre"
@@ -3133,7 +3161,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 750,
+      "line": 751,
       "column": 85,
       "text": "/web/deep-research \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"model\": \"llmgateway/web-deep-research\", \"query\": \"как устроены современные rerank модели\", \"max_words\": 2500, \"breadth\": 4, \"depth\": 2, \"concurrency\": 6, \"language\": \"ru\", \"format\": \"markdown\", \"image_generation\": true }'",
       "classification": "pre"
@@ -3142,7 +3170,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 778,
+      "line": 779,
       "column": 108,
       "text": "/v1/ui/playground",
       "classification": "code"
@@ -3151,7 +3179,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 779,
+      "line": 780,
       "column": 66,
       "text": "/v1/ui/web-playground",
       "classification": "code"
@@ -3160,7 +3188,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 786,
+      "line": 787,
       "column": 120,
       "text": "/v1/web/search",
       "classification": "code"
@@ -3169,7 +3197,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 786,
+      "line": 787,
       "column": 149,
       "text": "/v1/web/read",
       "classification": "code"
@@ -3178,7 +3206,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 787,
+      "line": 788,
       "column": 131,
       "text": "POST /v1/audio/transcriptions",
       "classification": "code"
@@ -3187,7 +3215,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 787,
+      "line": 788,
       "column": 238,
       "text": "multipart/form-data",
       "classification": "code"
@@ -3196,7 +3224,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 788,
+      "line": 789,
       "column": 131,
       "text": "GET /v1/audio/voices",
       "classification": "code"
@@ -3205,7 +3233,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 788,
+      "line": 789,
       "column": 259,
       "text": "POST /v1/audio/speech",
       "classification": "code"
@@ -3214,7 +3242,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 789,
+      "line": 790,
       "column": 123,
       "text": "/v1/images/generations",
       "classification": "code"
@@ -3223,7 +3251,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 789,
+      "line": 790,
       "column": 219,
       "text": "/v1/images/edits",
       "classification": "code"
@@ -3232,7 +3260,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 789,
+      "line": 790,
       "column": 403,
       "text": "image[]",
       "classification": "code"
@@ -3241,7 +3269,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 790,
+      "line": 791,
       "column": 120,
       "text": "POST /v1/pdf/jobs",
       "classification": "code"
@@ -3250,7 +3278,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 790,
+      "line": 791,
       "column": 250,
       "text": "output=both|docx|md",
       "classification": "code"
@@ -3259,7 +3287,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 790,
+      "line": 791,
       "column": 284,
       "text": "language",
       "classification": "code"
@@ -3268,7 +3296,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 790,
+      "line": 791,
       "column": 378,
       "text": "target_language",
       "classification": "code"
@@ -3277,7 +3305,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 790,
+      "line": 791,
       "column": 525,
       "text": "ocr_preprocess_save",
       "classification": "code"
@@ -3286,7 +3314,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 803,
+      "line": 804,
       "column": 92,
       "text": "lgk_...",
       "classification": "code"
@@ -3295,7 +3323,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 804,
+      "line": 805,
       "column": 23,
       "text": "allowed_models",
       "classification": "code"
@@ -3304,7 +3332,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 804,
+      "line": 805,
       "column": 160,
       "text": "web_research",
       "classification": "code"
@@ -3313,7 +3341,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 805,
+      "line": 806,
       "column": 77,
       "text": "web_deep_research",
       "classification": "code"
@@ -3322,7 +3350,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 595,
+      "line": 596,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -3331,7 +3359,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 806,
+      "line": 807,
       "column": 53,
       "text": "include_raw_content",
       "classification": "code"
@@ -3340,7 +3368,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 807,
+      "line": 808,
       "column": 23,
       "text": "read_model",
       "classification": "code"
@@ -3493,7 +3521,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-code",
-      "line": 32,
+      "line": 33,
       "column": 19,
       "text": "models_operation_rules.json",
       "classification": "code"
@@ -3502,7 +3530,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-code",
-      "line": 76,
+      "line": 77,
       "column": 144,
       "text": "include_details",
       "classification": "code"
@@ -3511,7 +3539,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 134,
+      "line": 135,
       "column": 83,
       "text": "latest EU AI Act updates",
       "classification": "sample"
@@ -3520,7 +3548,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 159,
+      "line": 160,
       "column": 54,
       "text": "markdown",
       "classification": "protocol"
@@ -3529,7 +3557,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 160,
+      "line": 161,
       "column": 50,
       "text": "text",
       "classification": "protocol"
@@ -3538,7 +3566,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 171,
+      "line": 172,
       "column": 106,
       "text": "example.com, docs.example.com",
       "classification": "sample"
@@ -3547,7 +3575,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 175,
+      "line": 176,
       "column": 106,
       "text": "spam.example",
       "classification": "sample"
@@ -3556,7 +3584,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 194,
+      "line": 195,
       "column": 76,
       "text": "https://example.com/article",
       "classification": "sample"
@@ -3565,7 +3593,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 199,
+      "line": 200,
       "column": 59,
       "text": "markdown",
       "classification": "protocol"
@@ -3574,7 +3602,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 200,
+      "line": 201,
       "column": 46,
       "text": "text",
       "classification": "protocol"
@@ -3583,7 +3611,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 229,
+      "line": 230,
       "column": 89,
       "text": "LLM gateway web search",
       "classification": "sample"
@@ -3592,7 +3620,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 244,
+      "line": 245,
       "column": 54,
       "text": "markdown",
       "classification": "protocol"
@@ -3601,7 +3629,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 245,
+      "line": 246,
       "column": 50,
       "text": "text",
       "classification": "protocol"
@@ -3610,7 +3638,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 256,
+      "line": 257,
       "column": 112,
       "text": "example.com, docs.example.com",
       "classification": "sample"
@@ -3619,7 +3647,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 260,
+      "line": 261,
       "column": 112,
       "text": "spam.example",
       "classification": "sample"
@@ -3628,7 +3656,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 279,
+      "line": 280,
       "column": 107,
       "text": "https://example.com/article https://example.com/another",
       "classification": "sample"
@@ -3637,7 +3665,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 285,
+      "line": 286,
       "column": 63,
       "text": "markdown",
       "classification": "protocol"
@@ -3646,18 +3674,9 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 286,
+      "line": 287,
       "column": 50,
       "text": "text",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 404,
-      "column": 48,
-      "text": "ru",
       "classification": "protocol"
     },
     {
@@ -3666,7 +3685,7 @@
       "kind": "html-text",
       "line": 405,
       "column": 48,
-      "text": "en",
+      "text": "ru",
       "classification": "protocol"
     },
     {
@@ -3675,6 +3694,15 @@
       "kind": "html-text",
       "line": 406,
       "column": 48,
+      "text": "en",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 407,
+      "column": 48,
       "text": "zh",
       "classification": "protocol"
     },
@@ -3682,18 +3710,9 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 413,
+      "line": 414,
       "column": 57,
       "text": "ru",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 414,
-      "column": 48,
-      "text": "en",
       "classification": "protocol"
     },
     {
@@ -3702,60 +3721,6 @@
       "kind": "html-text",
       "line": 415,
       "column": 48,
-      "text": "zh",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 422,
-      "column": 63,
-      "text": "markdown",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 423,
-      "column": 50,
-      "text": "text",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 472,
-      "column": 63,
-      "text": "markdown",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 473,
-      "column": 50,
-      "text": "text",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 526,
-      "column": 52,
-      "text": "ru",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 527,
-      "column": 52,
       "text": "en",
       "classification": "protocol"
     },
@@ -3763,8 +3728,8 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 528,
-      "column": 52,
+      "line": 416,
+      "column": 48,
       "text": "zh",
       "classification": "protocol"
     },
@@ -3772,54 +3737,36 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 529,
-      "column": 52,
-      "text": "de",
+      "line": 423,
+      "column": 63,
+      "text": "markdown",
       "classification": "protocol"
     },
     {
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 530,
-      "column": 52,
-      "text": "fr",
+      "line": 424,
+      "column": 50,
+      "text": "text",
       "classification": "protocol"
     },
     {
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 531,
-      "column": 52,
-      "text": "es",
+      "line": 473,
+      "column": 63,
+      "text": "markdown",
       "classification": "protocol"
     },
     {
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 532,
-      "column": 52,
-      "text": "it",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 533,
-      "column": 52,
-      "text": "pt",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 534,
-      "column": 52,
-      "text": "ja",
+      "line": 474,
+      "column": 50,
+      "text": "text",
       "classification": "protocol"
     },
     {
@@ -3828,69 +3775,6 @@
       "kind": "html-text",
       "line": 535,
       "column": 52,
-      "text": "ko",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 541,
-      "column": 62,
-      "text": "mp3",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 542,
-      "column": 53,
-      "text": "wav",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 543,
-      "column": 54,
-      "text": "opus",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 544,
-      "column": 54,
-      "text": "flac",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 545,
-      "column": 53,
-      "text": "aac",
-      "classification": "protocol"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-attribute",
-      "line": 550,
-      "column": 129,
-      "text": "1",
-      "classification": "sample"
-    },
-    {
-      "page": "playground",
-      "file": "static/web-playground.html",
-      "kind": "html-text",
-      "line": 578,
-      "column": 52,
       "text": "ru",
       "classification": "protocol"
     },
@@ -3898,7 +3782,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 579,
+      "line": 536,
       "column": 52,
       "text": "en",
       "classification": "protocol"
@@ -3907,7 +3791,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 580,
+      "line": 537,
       "column": 52,
       "text": "zh",
       "classification": "protocol"
@@ -3916,7 +3800,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 581,
+      "line": 538,
       "column": 52,
       "text": "de",
       "classification": "protocol"
@@ -3925,7 +3809,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 582,
+      "line": 539,
       "column": 52,
       "text": "fr",
       "classification": "protocol"
@@ -3934,7 +3818,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 583,
+      "line": 540,
       "column": 52,
       "text": "es",
       "classification": "protocol"
@@ -3943,7 +3827,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 584,
+      "line": 541,
       "column": 52,
       "text": "it",
       "classification": "protocol"
@@ -3952,7 +3836,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 585,
+      "line": 542,
       "column": 52,
       "text": "pt",
       "classification": "protocol"
@@ -3961,7 +3845,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 586,
+      "line": 543,
       "column": 52,
       "text": "ja",
       "classification": "protocol"
@@ -3970,7 +3854,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 587,
+      "line": 544,
       "column": 52,
       "text": "ko",
       "classification": "protocol"
@@ -3979,7 +3863,151 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
+      "line": 550,
+      "column": 62,
+      "text": "mp3",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 551,
+      "column": 53,
+      "text": "wav",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 552,
+      "column": 54,
+      "text": "opus",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 553,
+      "column": 54,
+      "text": "flac",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 554,
+      "column": 53,
+      "text": "aac",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-attribute",
+      "line": 559,
+      "column": 129,
+      "text": "1",
+      "classification": "sample"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 587,
+      "column": 52,
+      "text": "ru",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 588,
+      "column": 52,
+      "text": "en",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 589,
+      "column": 52,
+      "text": "zh",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 590,
+      "column": 52,
+      "text": "de",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 591,
+      "column": 52,
+      "text": "fr",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 592,
+      "column": 52,
+      "text": "es",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
       "line": 593,
+      "column": 52,
+      "text": "it",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 594,
+      "column": 52,
+      "text": "pt",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 595,
+      "column": 52,
+      "text": "ja",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 596,
+      "column": 52,
+      "text": "ko",
+      "classification": "protocol"
+    },
+    {
+      "page": "playground",
+      "file": "static/web-playground.html",
+      "kind": "html-text",
+      "line": 602,
       "column": 63,
       "text": "json",
       "classification": "protocol"
@@ -3988,7 +4016,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 594,
+      "line": 603,
       "column": 54,
       "text": "text",
       "classification": "protocol"
@@ -3997,7 +4025,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 595,
+      "line": 604,
       "column": 53,
       "text": "srt",
       "classification": "protocol"
@@ -4006,7 +4034,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 596,
+      "line": 605,
       "column": 53,
       "text": "vtt",
       "classification": "protocol"
@@ -4015,7 +4043,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 601,
+      "line": 610,
       "column": 145,
       "text": "0",
       "classification": "sample"
@@ -4024,7 +4052,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 666,
+      "line": 675,
       "column": 59,
       "text": "1024x1024",
       "classification": "protocol"
@@ -4033,7 +4061,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 667,
+      "line": 676,
       "column": 59,
       "text": "1024x1536",
       "classification": "protocol"
@@ -4042,7 +4070,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 668,
+      "line": 677,
       "column": 59,
       "text": "1536x1024",
       "classification": "protocol"
@@ -4051,7 +4079,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 669,
+      "line": 678,
       "column": 57,
       "text": "512x512",
       "classification": "protocol"
@@ -4060,7 +4088,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 670,
+      "line": 679,
       "column": 57,
       "text": "768x768",
       "classification": "protocol"
@@ -4069,7 +4097,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 681,
+      "line": 690,
       "column": 53,
       "text": "url",
       "classification": "protocol"
@@ -4078,7 +4106,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 682,
+      "line": 691,
       "column": 58,
       "text": "b64_json",
       "classification": "protocol"
@@ -4087,7 +4115,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 721,
+      "line": 730,
       "column": 59,
       "text": "1024x1024",
       "classification": "protocol"
@@ -4096,7 +4124,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 722,
+      "line": 731,
       "column": 59,
       "text": "1024x1536",
       "classification": "protocol"
@@ -4105,7 +4133,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 723,
+      "line": 732,
       "column": 59,
       "text": "1536x1024",
       "classification": "protocol"
@@ -4114,7 +4142,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 724,
+      "line": 733,
       "column": 57,
       "text": "512x512",
       "classification": "protocol"
@@ -4123,7 +4151,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 725,
+      "line": 734,
       "column": 57,
       "text": "768x768",
       "classification": "protocol"
@@ -4132,7 +4160,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 736,
+      "line": 745,
       "column": 53,
       "text": "url",
       "classification": "protocol"
@@ -4141,7 +4169,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 737,
+      "line": 746,
       "column": 58,
       "text": "b64_json",
       "classification": "protocol"
@@ -4150,7 +4178,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 765,
+      "line": 774,
       "column": 63,
       "text": "DOCX + MD",
       "classification": "protocol"
@@ -4159,7 +4187,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 766,
+      "line": 775,
       "column": 54,
       "text": "DOCX",
       "classification": "protocol"
@@ -4168,7 +4196,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 767,
+      "line": 776,
       "column": 52,
       "text": "MD",
       "classification": "protocol"
@@ -4177,7 +4205,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 788,
+      "line": 797,
       "column": 62,
       "text": "off",
       "classification": "protocol"
@@ -4186,7 +4214,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 790,
+      "line": 799,
       "column": 57,
       "text": "mathpix",
       "classification": "protocol"
@@ -4195,7 +4223,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 791,
+      "line": 800,
       "column": 64,
       "text": "local_im2latex",
       "classification": "protocol"
@@ -4204,7 +4232,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 805,
+      "line": 806,
       "column": 204,
       "text": "model",
       "classification": "code"
@@ -4213,7 +4241,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 620,
+      "line": 621,
       "column": 227,
       "text": "true",
       "classification": "code"
@@ -4222,7 +4250,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 298,
+      "line": 299,
       "column": 43,
       "text": "instructions",
       "classification": "code"
@@ -4231,7 +4259,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 297,
+      "line": 298,
       "column": 268,
       "text": "score",
       "classification": "code"
@@ -4240,7 +4268,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 299,
+      "line": 300,
       "column": 551,
       "text": "score",
       "classification": "code"
@@ -4249,7 +4277,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 291,
+      "line": 292,
       "column": 25,
       "text": "POST /v1/decisions",
       "classification": "protocol"
@@ -4258,7 +4286,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 294,
+      "line": 295,
       "column": 253,
       "text": "llmgateway/jev-1.13",
       "classification": "code"
@@ -4267,7 +4295,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 295,
+      "line": 296,
       "column": 43,
       "text": "state",
       "classification": "code"
@@ -4276,7 +4304,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 296,
+      "line": 297,
       "column": 43,
       "text": "questions",
       "classification": "code"
@@ -4285,7 +4313,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 296,
+      "line": 297,
       "column": 246,
       "text": "question-name -> {type, instructions, criteria}",
       "classification": "code"
@@ -4294,7 +4322,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 297,
+      "line": 298,
       "column": 43,
       "text": "type",
       "classification": "code"
@@ -4303,7 +4331,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 297,
+      "line": 298,
       "column": 168,
       "text": "noul",
       "classification": "code"
@@ -4312,7 +4340,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 299,
+      "line": 300,
       "column": 224,
       "text": "noul",
       "classification": "code"
@@ -4321,7 +4349,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 297,
+      "line": 298,
       "column": 187,
       "text": "choice",
       "classification": "code"
@@ -4330,7 +4358,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 299,
+      "line": 300,
       "column": 437,
       "text": "choice",
       "classification": "code"
@@ -4339,7 +4367,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 299,
+      "line": 300,
       "column": 43,
       "text": "criteria",
       "classification": "code"
@@ -4348,7 +4376,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 620,
+      "line": 621,
       "column": 454,
       "text": "false",
       "classification": "code"
@@ -4357,7 +4385,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 300,
+      "line": 301,
       "column": 103,
       "text": "answers",
       "classification": "code"
@@ -4366,7 +4394,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 300,
+      "line": 301,
       "column": 125,
       "text": "usage.input_tokens",
       "classification": "code"
@@ -4375,7 +4403,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 300,
+      "line": 301,
       "column": 158,
       "text": "usage.output_tokens",
       "classification": "code"
@@ -4384,7 +4412,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 300,
+      "line": 301,
       "column": 250,
       "text": "usage.cost_rub",
       "classification": "code"
@@ -4393,7 +4421,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 300,
+      "line": 301,
       "column": 341,
       "text": "cost_rub",
       "classification": "code"
@@ -4402,7 +4430,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 305,
+      "line": 306,
       "column": 420,
       "text": "cost_rub",
       "classification": "code"
@@ -4411,7 +4439,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 304,
+      "line": 305,
       "column": 133,
       "text": "pplx-decider-v1-27b",
       "classification": "code"
@@ -4420,7 +4448,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 304,
+      "line": 305,
       "column": 251,
       "text": "502",
       "classification": "code"
@@ -4429,7 +4457,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 304,
+      "line": 305,
       "column": 268,
       "text": "503",
       "classification": "code"
@@ -4438,7 +4466,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 304,
+      "line": 305,
       "column": 430,
       "text": "400",
       "classification": "code"
@@ -4447,7 +4475,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 305,
+      "line": 306,
       "column": 122,
       "text": "usage.cost",
       "classification": "code"
@@ -4456,7 +4484,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 305,
+      "line": 306,
       "column": 265,
       "text": "providers.json",
       "classification": "code"
@@ -4465,7 +4493,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 309,
+      "line": 310,
       "column": 227,
       "text": "curl -X POST \"",
       "classification": "pre"
@@ -4474,7 +4502,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 314,
+      "line": 315,
       "column": 227,
       "text": "curl -X POST \"",
       "classification": "pre"
@@ -4483,7 +4511,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 319,
+      "line": 320,
       "column": 227,
       "text": "curl -X POST \"",
       "classification": "pre"
@@ -4492,7 +4520,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 309,
+      "line": 310,
       "column": 273,
       "text": "/decisions\" \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{\"model\":\"llmgateway/jev-1.13\",\"state\":\"A customer asks for a refund.\",\"questions\":{\"refund_allowed\":{\"type\":\"noul\",\"instructions\":\"Decide whether a refund is allowed.\",\"criteria\":{\"true\":\"Refund is allowed\",\"false\":\"Refund is not allowed\"}}}}'",
       "classification": "pre"
@@ -4501,7 +4529,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 314,
+      "line": 315,
       "column": 273,
       "text": "/decisions\" \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{\"model\":\"llmgateway/jev-1.13\",\"state\":{\"order_total\":120,\"currency\":\"USD\"},\"questions\":{\"risk_level\":{\"type\":\"choice\",\"instructions\":\"Classify the risk level.\",\"criteria\":{\"low\":\"Low risk\",\"high\":\"High risk\"}}}}'",
       "classification": "pre"
@@ -4510,7 +4538,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 319,
+      "line": 320,
       "column": 273,
       "text": "/decisions\" \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Content-Type: application/json\" \\ -d '{\"model\":\"llmgateway/jev-1.13\",\"state\":[\"The package arrived late.\",\"The customer requests compensation.\"],\"questions\":{\"service_score\":{\"type\":\"score\",\"instructions\":\"Score the service quality.\",\"criteria\":[1,2,3,4,5]}}}'",
       "classification": "pre"
@@ -4519,7 +4547,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 323,
+      "line": 324,
       "column": 66,
       "text": "{ \"answers\": { \"refund_allowed\": {\"type\": \"noul\", \"noul\": 0.91}, \"risk_level\": {\"type\": \"choice\", \"choice\": \"low\", \"confidence\": 0.68, \"probabilities\": {\"low\": 0.84, \"high\": 0.16}}, \"service_score\": {\"type\": \"score\", \"score\": 2, \"confidence\": 1, \"probabilities\": {\"0\": 0, \"1\": 0, \"2\": 1, \"3\": 0, \"4\": 0}, \"legend\": {\"0\": 1, \"1\": 2, \"2\": 3, \"3\": 4, \"4\": 5}} }, \"usage\": {\"input_tokens\": 120, \"output_tokens\": 42, \"cost_rub\": 0.37} }",
       "classification": "pre"
@@ -4528,7 +4556,16 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 452,
+      "line": 385,
+      "column": 295,
+      "text": "[{\"text\": \"...\", \"voice\": \"...\"}]",
+      "classification": "code"
+    },
+    {
+      "page": "docs",
+      "file": "static/gateway-docs.html",
+      "kind": "html-code",
+      "line": 453,
       "column": 273,
       "text": "auto",
       "classification": "code"
@@ -4537,7 +4574,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 789,
+      "line": 798,
       "column": 54,
       "text": "auto",
       "classification": "protocol"
@@ -4546,7 +4583,7 @@
       "page": "playground",
       "file": "static/web-playground.js",
       "kind": "js-sink",
-      "line": 1710,
+      "line": 1757,
       "column": 35,
       "text": "\n            <label for=\"pdfConversionMdImages\" data-playground-i18n=\"labels.mdImages\">${escapeHtml(translate(\"labels.mdImages\"))}</label>\n            <select id=\"pdfConversionMdImages\" name=\"md_images\">\n                <option value=\"true\" selected data-playground-i18n=\"options.withImages\">${escapeHtml(translate(\"options.withImages\"))}</option>\n                <option value=\"false\" data-playground-i18n=\"options.withoutImages\">${escapeHtml(translate(\"options.withoutImages\"))}</option>\n            </select>",
       "classification": "code"
@@ -4555,7 +4592,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 638,
+      "line": 647,
       "column": 136,
       "text": "0.3",
       "classification": "sample"
@@ -4564,7 +4601,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 632,
+      "line": 641,
       "column": 63,
       "text": "json",
       "classification": "protocol"
@@ -4573,7 +4610,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 633,
+      "line": 642,
       "column": 54,
       "text": "rttm",
       "classification": "protocol"
@@ -4582,7 +4619,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 416,
+      "line": 417,
       "column": 491,
       "text": "json",
       "classification": "code"
@@ -4591,7 +4628,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 427,
+      "line": 428,
       "column": 43,
       "text": "response_format",
       "classification": "code"
@@ -4600,7 +4637,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 388,
+      "line": 389,
       "column": 43,
       "text": "instructions",
       "classification": "code"
@@ -4609,7 +4646,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 416,
+      "line": 417,
       "column": 202,
       "text": "audio_speaker_transcriptions",
       "classification": "code"
@@ -4618,7 +4655,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 446,
+      "line": 447,
       "column": 43,
       "text": "Content-Type",
       "classification": "code"
@@ -4627,7 +4664,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 416,
+      "line": 417,
       "column": 386,
       "text": "SPEAKER_0: ...",
       "classification": "code"
@@ -4636,7 +4673,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 424,
+      "line": 425,
       "column": 241,
       "text": "multipart/form-data",
       "classification": "code"
@@ -4645,7 +4682,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 429,
+      "line": 430,
       "column": 222,
       "text": "end",
       "classification": "code"
@@ -4654,7 +4691,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 421,
+      "line": 422,
       "column": 25,
       "text": "POST /v1/audio/diarize",
       "classification": "protocol"
@@ -4663,7 +4700,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 447,
+      "line": 448,
       "column": 43,
       "text": "file",
       "classification": "code"
@@ -4672,7 +4709,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 428,
+      "line": 429,
       "column": 43,
       "text": "min_duration",
       "classification": "code"
@@ -4681,7 +4718,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 612,
+      "line": 613,
       "column": 43,
       "text": "model",
       "classification": "code"
@@ -4690,7 +4727,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 429,
+      "line": 430,
       "column": 182,
       "text": "speaker",
       "classification": "code"
@@ -4699,7 +4736,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 429,
+      "line": 430,
       "column": 203,
       "text": "start",
       "classification": "code"
@@ -4708,7 +4745,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 416,
+      "line": 417,
       "column": 593,
       "text": "text",
       "classification": "code"
@@ -4717,7 +4754,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 427,
+      "line": 428,
       "column": 245,
       "text": "rttm",
       "classification": "code"
@@ -4726,7 +4763,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 416,
+      "line": 417,
       "column": 510,
       "text": "verbose_json",
       "classification": "code"
@@ -4735,7 +4772,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 427,
+      "line": 428,
       "column": 170,
       "text": "json",
       "classification": "code"
@@ -4744,7 +4781,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 389,
+      "line": 390,
       "column": 43,
       "text": "llm_enhance",
       "classification": "protocol"
@@ -4753,7 +4790,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 564,
+      "line": 565,
       "column": 25,
       "text": "GET /v1/jina/extract",
       "classification": "protocol"
@@ -4762,7 +4799,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 568,
+      "line": 569,
       "column": 43,
       "text": "url",
       "classification": "protocol"
@@ -4771,7 +4808,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 569,
+      "line": 570,
       "column": 43,
       "text": "model",
       "classification": "protocol"
@@ -4780,7 +4817,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 570,
+      "line": 571,
       "column": 43,
       "text": "respondWith",
       "classification": "protocol"
@@ -4789,7 +4826,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 571,
+      "line": 572,
       "column": 43,
       "text": "Accept",
       "classification": "protocol"
@@ -4798,7 +4835,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-text",
-      "line": 577,
+      "line": 578,
       "column": 25,
       "text": "GET /v1/jina/search",
       "classification": "protocol"
@@ -4807,7 +4844,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 581,
+      "line": 582,
       "column": 43,
       "text": "q",
       "classification": "protocol"
@@ -4816,7 +4853,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 582,
+      "line": 583,
       "column": 43,
       "text": "model / read_model",
       "classification": "protocol"
@@ -4825,7 +4862,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 583,
+      "line": 584,
       "column": 43,
       "text": "num / count",
       "classification": "protocol"
@@ -4834,7 +4871,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 584,
+      "line": 585,
       "column": 43,
       "text": "site / hl",
       "classification": "protocol"
@@ -4843,7 +4880,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-code",
-      "line": 585,
+      "line": 586,
       "column": 43,
       "text": "respondWith",
       "classification": "protocol"
@@ -4852,7 +4889,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 725,
+      "line": 726,
       "column": 45,
       "text": "curl -sG",
       "classification": "pre"
@@ -4861,7 +4898,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 725,
+      "line": 726,
       "column": 86,
       "text": "/jina/extract \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Accept: application/json\" \\ --data-urlencode \"url=https://example.com/article\"",
       "classification": "pre"
@@ -4870,7 +4907,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 737,
+      "line": 738,
       "column": 45,
       "text": "curl -sG",
       "classification": "pre"
@@ -4879,7 +4916,7 @@
       "page": "docs",
       "file": "static/gateway-docs.html",
       "kind": "html-pre",
-      "line": 737,
+      "line": 738,
       "column": 86,
       "text": "/jina/search \\ -H \"Authorization: Bearer $GATEWAY_API_KEY\" \\ -H \"Accept: application/json\" \\ --data-urlencode \"q=example domain\" \\ --data-urlencode \"num=5\"",
       "classification": "pre"
@@ -4888,7 +4925,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-attribute",
-      "line": 329,
+      "line": 330,
       "column": 89,
       "text": "example.com, docs.example.com",
       "classification": "protocol"
@@ -4897,7 +4934,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 335,
+      "line": 336,
       "column": 59,
       "text": "markdown",
       "classification": "protocol"
@@ -4906,7 +4943,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 336,
+      "line": 337,
       "column": 46,
       "text": "text",
       "classification": "protocol"
@@ -4915,7 +4952,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 360,
+      "line": 361,
       "column": 59,
       "text": "markdown",
       "classification": "protocol"
@@ -4924,7 +4961,7 @@
       "page": "playground",
       "file": "static/web-playground.html",
       "kind": "html-text",
-      "line": 361,
+      "line": 362,
       "column": 46,
       "text": "text",
       "classification": "protocol"

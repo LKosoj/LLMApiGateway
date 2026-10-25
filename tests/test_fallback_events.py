@@ -474,6 +474,41 @@ class FallbackEventsDBTests(unittest.TestCase):
         self.assertEqual(targets["openrouter / qwen"]["attempts"], 2)
         self.assertEqual(targets["devbox / glm"]["success_rate"], 100.0)
 
+    def test_dashboard_fallback_counts_rescued_and_failed_requests(self):
+        attempts = [
+            ("req-rescued", 1, "kimi", False, "http_429"),
+            ("req-rescued", 2, "gemini", True, None),
+            ("req-failed", 1, "kimi", False, "http_429"),
+            ("req-failed", 2, "kimi", False, "read_timeout"),
+            ("req-clean", 1, "gemini", True, None),
+        ]
+        for request_id, attempt_number, model, success, error_type in attempts:
+            self.db.insert_event(
+                request_id=request_id,
+                gateway_model="gateway-fast",
+                attempt_number=attempt_number,
+                provider="openrouter",
+                model=model,
+                success=success,
+                error_type=error_type,
+                error_message=None if success else "failed",
+                duration_ms=100,
+                upstream_key_fingerprint="fp-1",
+            )
+
+        data = run_async(
+            self.db.get_dashboard_fallback(
+                "day",
+                datetime.now(timezone.utc) - timedelta(minutes=1),
+                datetime.now(timezone.utc) + timedelta(minutes=1),
+            )
+        )
+
+        self.assertEqual(data["requests"], {"total": 3, "rescued": 1, "failed": 1})
+        upstream = {row["model"]: row for row in data["upstream"]}
+        self.assertEqual(upstream["kimi"]["top_error_type"], "http_429")
+        self.assertIsNone(upstream["gemini"]["top_error_type"])
+
     def test_insert_event_timestamp_matches_utc_stats_window(self):
         self.db.insert_event(
             request_id="req-utc",

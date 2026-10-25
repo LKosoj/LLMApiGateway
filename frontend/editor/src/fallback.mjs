@@ -925,7 +925,7 @@ export function registerFallback(ctx) {
                 return true;
             }
             if (ctx.state.activeEditor === 'rules') {
-                ctx.showLocalizedMessage('success', 'Fallback Rules loaded successfully.');
+                ctx.showLoaded('Fallback Rules');
             }
             return true;
         } catch (error) {

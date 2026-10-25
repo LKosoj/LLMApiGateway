@@ -52,6 +52,9 @@ def test_r5_1_registry_has_equal_ru_en_catalog_topology() -> None:
         "free_models",
         "overview",
         "activity",
+        "live",
+        "failures",
+        "my_key",
     }
     for locale in registry["locales"]:
         for namespace in registry["namespaces"]:

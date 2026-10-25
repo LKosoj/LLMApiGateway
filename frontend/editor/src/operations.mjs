@@ -253,7 +253,7 @@ export function registerOperations(ctx) {
             }
             ctx.state.originalDecisionsContent = getNormalizedDecisionsContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Decisions Routes loaded successfully.');
+            ctx.showLoaded('Decisions Routes');
             return true;
         } catch (error) {
             console.error('Error fetching Decisions Routes:', error);
@@ -362,7 +362,7 @@ export function registerOperations(ctx) {
             }
             ctx.state.originalEmbeddingsContent = getNormalizedEmbeddingsContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Embeddings Routes loaded successfully.');
+            ctx.showLoaded('Embeddings Routes');
             return true;
         } catch (error) {
             console.error('Error fetching Embeddings Routes:', error);
@@ -584,7 +584,7 @@ export function registerOperations(ctx) {
             }
             ctx.state.originalRerankContent = getNormalizedRerankContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Rerank Routes loaded successfully.');
+            ctx.showLoaded('Rerank Routes');
             return true;
         } catch (error) {
             console.error('Error fetching Rerank Routes:', error);
@@ -1312,7 +1312,7 @@ export function registerOperations(ctx) {
             }
             ctx.state.originalImagesContent = getNormalizedImagesContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Images Routes loaded successfully.');
+            ctx.showLoaded('Images Routes');
             return true;
         } catch (error) {
             console.error('Error fetching Images Routes:', error);
@@ -1570,7 +1570,7 @@ export function registerOperations(ctx) {
             }
             ctx.state.originalAudioContent = getNormalizedAudioContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Audio Routes loaded successfully.');
+            ctx.showLoaded('Audio Routes');
             return true;
         } catch (error) {
             console.error('Error fetching Audio Routes:', error);
@@ -2271,7 +2271,7 @@ export function registerOperations(ctx) {
             }
             ctx.state.originalWebContent = getNormalizedWebContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Web Services loaded successfully.');
+            ctx.showLoaded('Web Services');
             return true;
         } catch (error) {
             console.error('Error fetching Web Services:', error);
@@ -2370,7 +2370,7 @@ export function registerOperations(ctx) {
             }
             ctx.state.originalModelRulesContent = ctx.elements.modelRulesRawInput.value;
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Model Rules loaded successfully.');
+            ctx.showLoaded('Model Rules');
             return true;
         } catch (error) {
             console.error('Error fetching Model Rules:', error);

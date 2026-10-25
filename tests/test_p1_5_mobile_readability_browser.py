@@ -128,13 +128,12 @@ def test_rejections_mobile_shows_priority_columns_and_detail_sheet(
         expect(page.locator("#rejTableBody tr")).to_have_count(1)
 
         # No nested horizontal scroller at 390px.
-        overflow = page.locator(".rej-table-wrap").evaluate(
-            "(el) => el.scrollWidth - el.clientWidth"
-        )
+        table_wrap = page.locator(".rej-table-wrap", has=page.locator("#rejTableBody"))
+        overflow = table_wrap.evaluate("(el) => el.scrollWidth - el.clientWidth")
         assert overflow <= 1
 
         # Only the highest-priority columns are visible in the table.
-        visible = page.locator("thead th").evaluate_all(
+        visible = table_wrap.locator("thead th").evaluate_all(
             "(ths) => ths.map((th) => th.offsetParent !== null)"
         )
         assert visible == [True, True, True, False, False, False, False, False, False]

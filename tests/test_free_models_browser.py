@@ -268,7 +268,7 @@ def test_vision_and_tools_badges_render_only_for_supported_models(
         context.close()
 
 
-def test_unavailable_state_shows_message_and_error_without_rendering_list(
+def test_unavailable_state_shows_error_once_without_rendering_list(
     browser: Browser,
     free_models_server: str,
 ) -> None:
@@ -279,13 +279,17 @@ def test_unavailable_state_shows_message_and_error_without_rendering_list(
         expect(page.locator("#free-models-list")).to_have_attribute(
             "data-free-models-state", "unavailable"
         )
-        expect(page.locator('[data-free-models-field="state-message"]')).to_have_text(
+        expect(page.locator("#free-models-status")).to_contain_text(
             "Free-tier catalog data is unavailable."
         )
+        expect(page.get_by_text("Free-tier catalog data is unavailable.")).to_have_count(1)
+        expect(page.locator('[data-free-models-field="state-message"]')).to_have_count(0)
+        expect(page.locator("#free-models-controls")).to_be_hidden()
         expect(page.locator(".free-models-provider")).to_have_count(0)
         expect(page.locator("#free-models-error-detail")).to_have_text(
             UNAVAILABLE_SNAPSHOT["lastError"]
         )
+        expect(page.locator("#free-models-retry")).to_be_visible()
     finally:
         context.close()
 

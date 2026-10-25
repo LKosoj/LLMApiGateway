@@ -284,7 +284,7 @@ export function registerRouter(ctx) {
             }
             ctx.state.originalRouterContent = getNormalizedRouterContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Router Models loaded successfully.');
+            ctx.showLoaded('Router Models');
             return true;
         } catch (error) {
             console.error('Error fetching Router Models:', error);

@@ -184,9 +184,7 @@ def _open_editor(
         page.locator(f'[data-entity-target="{entity_target}"]').click()
     assert loaded_response.value.status == 200
     etag = loaded_response.value.headers["etag"]
-    expect(page.locator("#messageArea")).to_contain_text(
-        f"{message} loaded successfully"
-    )
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", message)
     assert catalog_requests == []
     return page, operation_requests, etag
 
@@ -525,9 +523,7 @@ def test_lazy_catalog_retry_locale_and_stale_response_isolation(
         assert len(pending_primary) == 1
 
         page.locator('[data-entity-target="providers"]').click()
-        expect(page.locator("#messageArea")).to_contain_text(
-            "Providers loaded successfully"
-        )
+        expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
         with page.expect_response(
             lambda response: response.url.endswith(
                 "/v1/config/providers/structured"
@@ -545,9 +541,7 @@ def test_lazy_catalog_retry_locale_and_stale_response_isolation(
             and response.request.method == "GET"
         ):
             page.locator('[data-entity-target="embeddings"]').click()
-        expect(page.locator("#messageArea")).to_contain_text(
-            "Embeddings Routes loaded successfully"
-        )
+        expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Embeddings Routes")
         _expand_first_card(page, "embeddings")
         rows = page.locator(
             "#editor-container-embeddings .fallback-list > .fallback-row"

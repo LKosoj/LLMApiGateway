@@ -1,0 +1,135 @@
+{
+  "pageTitle": "LLM Gateway - Model failures",
+  "heading": "Model failures",
+  "intro": "Which models and provider keys failed, why, and whether switching to a backup model rescued the requests.",
+  "rangeLabel": "Period",
+  "ranges": {
+    "24h": "Last 24 hours",
+    "7d": "Last 7 days"
+  },
+  "actions": {
+    "checkAll": "Check all models",
+    "checking": "Checking…",
+    "resume": "Remove pause",
+    "checkNow": "Check now",
+    "pause": "Pause"
+  },
+  "updated": "Updated {time}",
+  "checkDone": "Checked {count, plural, one {# model} other {# models}}.",
+  "kpis": {
+    "unavailable": "Unavailable now",
+    "unavailableValue": "{count} of {total}",
+    "unavailableNote": "{cooldown} cooling down · {error} failing · {paused} paused",
+    "notRescued": "Requests not rescued",
+    "notRescuedNote": "the client received an error",
+    "rescued": "Rescued by switching",
+    "rescuedNote": "of {total, plural, one {# request} other {# requests}} with a failed attempt",
+    "failedAttempts": "Failed attempts",
+    "failedAttemptsNote": "{share} of all attempts"
+  },
+  "down": {
+    "heading": "Unavailable right now",
+    "hint": "a model is skipped while it cools down after errors, is failing or is paused manually",
+    "empty": "All models are available.",
+    "badge": {
+      "cooldown": "cooling down · {time}",
+      "error": "failing",
+      "invalid": "key rejected",
+      "paused": "paused · {time}"
+    },
+    "why": {
+      "cooldown": "Skipped after repeated errors, will be retried automatically",
+      "error": "The last request or check failed",
+      "invalid": "The provider rejects the key: check it in the provider settings",
+      "paused": "Paused manually: {reason}"
+    },
+    "allModels": "all models of the key",
+    "keyFingerprint": "key …{fingerprint}",
+    "escalation": "cooldown level {level}",
+    "checked": "checked {time}"
+  },
+  "errors": {
+    "heading": "Errors over time",
+    "hintHour": "failed attempts per hour",
+    "hintDay": "failed attempts per day",
+    "aria": "Failed attempts over time",
+    "tooltip": "{period}: {value}"
+  },
+  "why": {
+    "heading": "Why requests fail",
+    "hint": "failed attempts by reason",
+    "empty": "No failed attempts in this period."
+  },
+  "reliability": {
+    "heading": "Model reliability",
+    "hint": "worst first",
+    "columns": {
+      "model": "Model · provider",
+      "key": "Provider key",
+      "success": "Successful attempts",
+      "errors": "Errors",
+      "attempts": "Attempts",
+      "topError": "Main reason",
+      "duration": "Average attempt"
+    },
+    "empty": "No attempts in this period."
+  },
+  "chains": {
+    "heading": "Recent switches",
+    "hint": "requests where the first model did not cope",
+    "columns": {
+      "time": "Time",
+      "requested": "Requested",
+      "chain": "Attempts"
+    },
+    "rescuedBadge": "rescued",
+    "notRescuedBadge": "not rescued",
+    "total": "{client} · {duration} in total",
+    "empty": "No switches yet."
+  },
+  "delta": {
+    "up": "▲ {percent} vs the previous period",
+    "down": "▼ {percent} vs the previous period",
+    "same": "same as the previous period",
+    "new": "the previous period had 0"
+  },
+  "pause": {
+    "heading": "Pause a model",
+    "key": "Provider key",
+    "model": "Model",
+    "allModels": "all models of the key",
+    "minutes": "Minutes",
+    "reason": "Reason",
+    "submit": "Pause",
+    "hint": "Pauses live in the service memory: a restart clears them."
+  },
+  "detail": {
+    "heading": "{model} · {provider} · key …{fingerprint}",
+    "close": "Close",
+    "loading": "Loading…",
+    "aria": "Failed attempts of {model} over time"
+  },
+  "reasons": {
+    "http_429": "Rate limit",
+    "http_400": "Request rejected",
+    "http_401": "Key rejected",
+    "http_403": "Access denied",
+    "http_404": "Model not found",
+    "http_5xx": "Provider server error",
+    "read_timeout": "Response timeout",
+    "connect_timeout": "Connection timeout",
+    "connect_error": "No connection",
+    "context_overflow": "Request too long for the model",
+    "empty_completion": "Empty answer",
+    "format_ignored": "Answer format ignored",
+    "unparsed_tool_call_dialect": "Unreadable tool call",
+    "upstream_provider_error": "Provider returned an error as text",
+    "unknown": "Other error"
+  },
+  "values": {
+    "notAvailable": "—",
+    "percent": "{value}%",
+    "seconds": "{value} s",
+    "never": "not checked yet"
+  }
+}

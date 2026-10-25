@@ -112,7 +112,10 @@ async def _build_quota_snapshot(
                 "budget": {
                     "spent_usd": round(key.spent_usd, 6),
                     "limit_usd": key.budget_usd,
+                    "period": key.budget_period,
+                    "reset_at": key.budget_reset_at,
                 },
+                "allowed_models": list(key.allowed_models),
                 "fallback_events_24h": fallback_counts.get(key.id, 0),
             }
         )
@@ -161,3 +164,18 @@ async def get_quota_keys(request: Request) -> JSONResponse:
         raise HTTPException(status_code=500, detail="Could not retrieve quota data.")
 
     return JSONResponse(content=data)
+
+
+@quota_router.get("/ui/my-key", response_class=HTMLResponse, tags=["Quota Dashboard UI"])
+async def get_my_key_page(request: Request) -> HTMLResponse:
+    """Serve the virtual-key owner's "My key" HTML page."""
+    html_path = STATIC_DIR / "my-key.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="My key page not found.")
+    try:
+        return HTMLResponse(content=await get_template(html_path))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Error reading my key HTML: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load my key page.")

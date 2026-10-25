@@ -202,6 +202,7 @@ h1 {
     font-size: 15px;
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius-md);
+    background: var(--bg-elevated);
 }
 
 .ov-empty[hidden] {

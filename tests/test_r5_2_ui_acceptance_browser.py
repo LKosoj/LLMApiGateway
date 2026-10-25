@@ -29,6 +29,8 @@ AXE_PATH = (
     / "axe.min.js"
 )
 MASTER_PAGES = (
+    "/v1/ui/live",
+    "/v1/ui/failures",
     "/v1/ui/overview",
     "/v1/ui/activity",
     "/v1/ui/docs",
@@ -43,6 +45,7 @@ MASTER_PAGES = (
     "/v1/ui/free-models",
 )
 USER_PAGES = (
+    "/v1/ui/my-key",
     "/v1/ui/overview",
     "/v1/ui/activity",
     "/v1/ui/docs",

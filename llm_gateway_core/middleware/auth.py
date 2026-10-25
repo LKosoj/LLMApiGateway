@@ -121,6 +121,8 @@ MASTER_ONLY_PREFIXES = (
     "/v1/ui/translator-debug",
     "/v1/ui/pricing",
     "/v1/ui/rejections",
+    "/v1/ui/live",
+    "/v1/ui/failures",
     "/v1/ui/providers-config",
     "/v1/config/",
     "/v1/openrouter/free-models",

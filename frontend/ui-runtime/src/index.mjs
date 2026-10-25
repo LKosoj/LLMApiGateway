@@ -12,7 +12,9 @@ export {
 export { createDialog } from "./dialog.mjs";
 export { createLocaleSelector } from "./locale-selector.mjs";
 export {
+  BOTTOM_NAV_ITEMS,
   NAV_ITEMS,
+  createBottomNavigation,
   createNavigation,
   measureNavigationOverflow,
   normalizePathname,

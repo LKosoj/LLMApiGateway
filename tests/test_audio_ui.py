@@ -94,7 +94,7 @@ def test_create_and_save_audio_speech_route(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
 
     page.click("#addAudioSpeechButton")
     expect(page.locator("#audioSpeechList .add-fallback-button")).to_have_text("Add Route")
@@ -115,7 +115,7 @@ def test_create_and_save_audio_speech_route(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
 
     assert "collapsed" in (page.locator("#audioSpeechList .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#audioSpeechList")
@@ -149,7 +149,7 @@ def test_create_and_save_audio_transcription_route(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
 
     page.click("#addAudioTranscriptionButton")
     expect(page.locator("#audioTranscriptionsList .add-fallback-button")).to_have_text("Add Fallback Route")
@@ -170,7 +170,7 @@ def test_create_and_save_audio_transcription_route(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
 
     assert "collapsed" in (page.locator("#audioTranscriptionsList .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#audioTranscriptionsList")
@@ -207,7 +207,7 @@ def test_create_and_save_nvidia_audio_transcription_route(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
 
     page.click("#addAudioTranscriptionButton")
     page.fill("#audioTranscriptionsList .gateway-model-input", "my-nvidia-audio-model")
@@ -223,7 +223,7 @@ def test_create_and_save_nvidia_audio_transcription_route(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="audio"]')
-    expect(page.locator("#messageArea")).to_contain_text("Audio Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Audio Routes")
 
     expand_first_card(page, "#audioTranscriptionsList")
     page.locator("#audioTranscriptionsList details.advanced-options summary").click()

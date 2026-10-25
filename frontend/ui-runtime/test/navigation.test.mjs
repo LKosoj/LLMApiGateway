@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  BOTTOM_NAV_ITEMS,
   NAV_ITEMS,
+  createBottomNavigation,
   createNavigation,
   measureNavigationOverflow,
   normalizePathname,
@@ -136,6 +138,13 @@ function renderedLinks(root) {
 
 const LABELS = Object.freeze({
   "common:navigation.label": "Primary navigation",
+  "common:navigation.live": "Live now",
+  "common:navigation.failures": "Model failures",
+  "common:navigation.myKey": "My key",
+  "common:navigation.groups.monitoring": "Monitoring",
+  "common:navigation.groups.settings": "Settings",
+  "common:navigation.groups.tools": "Tools",
+  "common:navigation.groups.help": "Help",
   "common:navigation.overview": "Overview",
   "common:navigation.activity": "Activity",
   "common:navigation.docs": "Docs",
@@ -148,6 +157,13 @@ const LABELS = Object.freeze({
   "common:navigation.translator": "Translator Check",
   "common:navigation.pricing": "Pricing",
   "common:navigation.freeModels": "Free LLM Catalog",
+  "common:navigation.bottomLabel": "Quick sections",
+  "common:navigation.short.live": "Live",
+  "common:navigation.short.failures": "Failures",
+  "common:navigation.short.myKey": "My key",
+  "common:navigation.short.activity": "Activity",
+  "common:navigation.short.docs": "Docs",
+  "common:navigation.short.menu": "Menu",
 });
 
 function translate(key) {
@@ -155,22 +171,25 @@ function translate(key) {
   return LABELS[key];
 }
 
-test("NAV_ITEMS is an immutable twelve-route role contract", () => {
+test("NAV_ITEMS is an immutable grouped fifteen-route role contract", () => {
   assert.deepEqual(
-    NAV_ITEMS.map(({ id, href, labelKey, roles }) => ({ id, href, labelKey, roles })),
+    NAV_ITEMS.map(({ id, href, labelKey, group, roles }) => ({ id, href, labelKey, group, roles })),
     [
-      { id: "overview", href: "/v1/ui/overview", labelKey: "common:navigation.overview", roles: ["master", "user"] },
-      { id: "activity", href: "/v1/ui/activity", labelKey: "common:navigation.activity", roles: ["master", "user"] },
-      { id: "docs", href: "/v1/ui/docs", labelKey: "common:navigation.docs", roles: ["master", "user"] },
-      { id: "usage", href: "/v1/ui/usage-stats", labelKey: "common:navigation.usage", roles: ["master"] },
-      { id: "quota", href: "/v1/ui/quota", labelKey: "common:navigation.quota", roles: ["master", "user"] },
-      { id: "rules", href: "/v1/ui/rules-editor", labelKey: "common:navigation.rules", roles: ["master"] },
-      { id: "playground", href: "/v1/ui/playground", labelKey: "common:navigation.playground", roles: ["master"] },
-      { id: "api-keys", href: "/v1/ui/api-keys", labelKey: "common:navigation.apiKeys", roles: ["master"] },
-      { id: "rejections", href: "/v1/ui/rejections", labelKey: "common:navigation.rejections", roles: ["master"] },
-      { id: "translator", href: "/v1/ui/translator-debug", labelKey: "common:navigation.translator", roles: ["master"] },
-      { id: "pricing", href: "/v1/ui/pricing", labelKey: "common:navigation.pricing", roles: ["master"] },
-      { id: "free-models", href: "/v1/ui/free-models", labelKey: "common:navigation.freeModels", roles: ["master", "user"] },
+      { id: "live", href: "/v1/ui/live", labelKey: "common:navigation.live", group: "monitoring", roles: ["master"] },
+      { id: "failures", href: "/v1/ui/failures", labelKey: "common:navigation.failures", group: "monitoring", roles: ["master"] },
+      { id: "my-key", href: "/v1/ui/my-key", labelKey: "common:navigation.myKey", group: "monitoring", roles: ["user"] },
+      { id: "overview", href: "/v1/ui/overview", labelKey: "common:navigation.overview", group: "monitoring", roles: ["master", "user"] },
+      { id: "activity", href: "/v1/ui/activity", labelKey: "common:navigation.activity", group: "monitoring", roles: ["master", "user"] },
+      { id: "usage", href: "/v1/ui/usage-stats", labelKey: "common:navigation.usage", group: "monitoring", roles: ["master"] },
+      { id: "quota", href: "/v1/ui/quota", labelKey: "common:navigation.quota", group: "monitoring", roles: ["master", "user"] },
+      { id: "rejections", href: "/v1/ui/rejections", labelKey: "common:navigation.rejections", group: "monitoring", roles: ["master"] },
+      { id: "rules", href: "/v1/ui/rules-editor", labelKey: "common:navigation.rules", group: "settings", roles: ["master"] },
+      { id: "api-keys", href: "/v1/ui/api-keys", labelKey: "common:navigation.apiKeys", group: "settings", roles: ["master"] },
+      { id: "pricing", href: "/v1/ui/pricing", labelKey: "common:navigation.pricing", group: "settings", roles: ["master"] },
+      { id: "playground", href: "/v1/ui/playground", labelKey: "common:navigation.playground", group: "tools", roles: ["master"] },
+      { id: "translator", href: "/v1/ui/translator-debug", labelKey: "common:navigation.translator", group: "tools", roles: ["master"] },
+      { id: "free-models", href: "/v1/ui/free-models", labelKey: "common:navigation.freeModels", group: "tools", roles: ["master", "user"] },
+      { id: "docs", href: "/v1/ui/docs", labelKey: "common:navigation.docs", group: "help", roles: ["master", "user"] },
     ],
   );
   assert(Object.isFrozen(NAV_ITEMS));
@@ -188,10 +207,10 @@ test("path normalization ignores query and trailing slashes", () => {
 });
 
 test("navigation role filtering is fail-closed", () => {
-  assert.equal(visibleNavigationItems("master").length, 12);
+  assert.equal(visibleNavigationItems("master").length, 14);
   assert.deepEqual(
     visibleNavigationItems("user").map((item) => item.id),
-    ["overview", "activity", "docs", "quota", "free-models"],
+    ["my-key", "overview", "activity", "quota", "free-models", "docs"],
   );
   assert.deepEqual(visibleNavigationItems("pending"), []);
   assert.deepEqual(visibleNavigationItems("unknown"), []);
@@ -208,12 +227,13 @@ test("navigation renders safe SVG nodes and exactly one normalized current route
   const links = renderedLinks(root);
 
   assert.equal(root.hidden, false);
-  assert.equal(links.length, 12);
+  assert.equal(links.length, 14);
+  assert.equal(links.every((link) => link.tagName === "A"), true);
   assert.equal(links.filter((link) => link.getAttribute("aria-current") === "page").length, 1);
-  assert.equal(links[7].getAttribute("aria-current"), "page");
-  assert.equal(links[7].classList.contains("active"), true);
-  assert.equal(links[7].children[1].textContent, "API Keys");
-  assert.deepEqual(links[7].scrollIntoViewCalls, [{ block: "nearest", inline: "nearest" }]);
+  assert.equal(links[8].getAttribute("aria-current"), "page");
+  assert.equal(links[8].classList.contains("active"), true);
+  assert.equal(links[8].children[1].textContent, "API Keys");
+  assert.deepEqual(links[8].scrollIntoViewCalls, [{ block: "nearest", inline: "nearest" }]);
   assert.equal(document.created.some((element) => element.namespaceURI?.includes("svg")), true);
   assert.equal(document.created.reduce((total, element) => total + element.innerHTMLWrites, 0), 0);
   assert.equal(document.created.some((element) => ["BUTTON", "SELECT"].includes(element.tagName)), false);
@@ -241,7 +261,7 @@ test("navigation remains hidden until a recognized role is supplied", () => {
 
   controller.update({ role: "user" });
   assert.equal(root.hidden, false);
-  assert.equal(renderedLinks(root).length, 5);
+  assert.equal(renderedLinks(root).length, 6);
 
   controller.update({ role: "unknown" });
   assert.equal(root.hidden, true);
@@ -308,16 +328,35 @@ test('layout "list" renders links directly under root without a scroller wrapper
   });
 
   assert.equal(root.classList.contains("gateway-nav-list"), true);
-  assert.equal(root.children.length, 5);
-  assert.equal(root.children.every((child) => child.tagName === "A"), true);
+  const links = root.children.filter((child) => child.tagName === "A");
   assert.deepEqual(
-    root.children.map((child) => child.getAttribute("data-nav-id")),
-    ["overview", "activity", "docs", "quota", "free-models"],
+    links.map((child) => child.getAttribute("data-nav-id")),
+    ["my-key", "overview", "activity", "quota", "free-models", "docs"],
   );
-  assert.equal(root.children[3].classList.contains("active"), true);
-  assert.equal(root.children[3].getAttribute("aria-current"), "page");
+  assert.equal(links[3].classList.contains("active"), true);
+  assert.equal(links[3].getAttribute("aria-current"), "page");
   assert.equal(root.attributes.has("data-overflow-start"), false);
   assert.equal(root.attributes.has("data-overflow-end"), false);
+
+  controller.destroy();
+});
+
+test('layout "list" renders one translated group label before each group of links', () => {
+  const { root } = makeRoot();
+  const controller = createNavigation(root, {
+    role: "user",
+    pathname: "/v1/ui/my-key",
+    layout: "list",
+    translate,
+  });
+
+  assert.deepEqual(
+    root.children.map((child) => child.getAttribute("data-nav-group") ?? child.getAttribute("data-nav-id")),
+    ["monitoring", "my-key", "overview", "activity", "quota", "tools", "free-models", "help", "docs"],
+  );
+  const groupLabels = root.children.filter((child) => child.tagName === "DIV");
+  assert.deepEqual(groupLabels.map((label) => label.textContent), ["Monitoring", "Tools", "Help"]);
+  assert.equal(groupLabels.every((label) => label.classList.contains("gateway-nav-group")), true);
 
   controller.destroy();
 });
@@ -344,7 +383,7 @@ test('layout "list" supports ArrowUp/ArrowDown roving focus with wraparound', ()
     layout: "list",
     translate,
   });
-  const links = root.children;
+  const links = root.children.filter((child) => child.tagName === "A");
   const keydown = root.listeners.get("keydown");
   assert.equal(typeof keydown, "function");
 
@@ -378,7 +417,7 @@ test('layout "list" supports Home/End roving focus', () => {
     layout: "list",
     translate,
   });
-  const links = root.children;
+  const links = root.children.filter((child) => child.tagName === "A");
   const keydown = root.listeners.get("keydown");
 
   keydown({ key: "End", target: links[2], preventDefault: () => {} });
@@ -389,4 +428,52 @@ test('layout "list" supports Home/End roving focus', () => {
 
   controller.destroy();
   assert.equal(root.listeners.has("keydown"), false);
+});
+
+test("bottom navigation shows three role sections plus a menu button", () => {
+  const { root } = makeRoot();
+  let menuOpened = 0;
+  const controller = createBottomNavigation(root, {
+    role: "master",
+    pathname: "/v1/ui/failures/",
+    translate,
+    onMenu: () => {
+      menuOpened += 1;
+    },
+  });
+
+  assert.equal(root.hidden, false);
+  assert.equal(root.getAttribute("aria-label"), "Quick sections");
+  const entries = root.children;
+  assert.deepEqual(entries.map((entry) => entry.tagName), ["A", "A", "A", "BUTTON"]);
+  assert.deepEqual(entries.slice(0, 3).map((link) => link.getAttribute("data-nav-id")), ["live", "failures", "activity"]);
+  assert.deepEqual(entries.map((entry) => entry.children[1].textContent), ["Live", "Failures", "Activity", "Menu"]);
+  assert.equal(entries.every((entry) => entry.classList.contains("gateway-bottom-nav-link")), true);
+  assert.equal(entries.some((entry) => entry.classList.contains("nav-button")), false);
+  assert.deepEqual(entries.map((entry) => entry.getAttribute("aria-current")), [null, "page", null, null]);
+
+  entries[3].listeners.get("click")();
+  assert.equal(menuOpened, 1);
+
+  controller.update({ role: "user", pathname: "/v1/ui/my-key" });
+  assert.deepEqual(root.children.slice(0, 3).map((link) => link.getAttribute("href")), [
+    "/v1/ui/my-key",
+    "/v1/ui/activity",
+    "/v1/ui/docs",
+  ]);
+  assert.equal(root.children[0].getAttribute("aria-current"), "page");
+});
+
+test("bottom navigation items exist in NAV_ITEMS for the same role", () => {
+  for (const [role, ids] of Object.entries(BOTTOM_NAV_ITEMS)) {
+    const visible = visibleNavigationItems(role).map((item) => item.id);
+    ids.forEach((id) => assert.equal(visible.includes(id), true, `${role}: ${id}`));
+  }
+});
+
+test("bottom navigation stays hidden for an unknown role", () => {
+  const { root } = makeRoot();
+  createBottomNavigation(root, { role: "pending", translate });
+  assert.equal(root.hidden, true);
+  assert.deepEqual(root.children, []);
 });

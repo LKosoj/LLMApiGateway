@@ -365,7 +365,7 @@
 /* Toast */
 .pricing-toast {
     position: fixed;
-    bottom: 24px;
+    bottom: calc(24px + var(--gateway-bottom-nav-space, 0px));
     right: 24px;
     padding: 10px 18px;
     border-radius: var(--radius-md);

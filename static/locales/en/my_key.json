@@ -1,0 +1,91 @@
+{
+  "pageTitle": "LLM Gateway - My key",
+  "heading": "My key",
+  "headingNamed": "{name}",
+  "intro": "Your access key: how much is spent, what the limits are and what to do when requests are rejected.",
+  "masterNote": "You are signed in with the master key. Limits and budgets of all keys are on the Quota page.",
+  "masterLink": "Go to Quota",
+  "callout": {
+    "disabledTitle": "The key is disabled",
+    "disabledText": "Requests with this key are rejected. Ask the gateway administrator to enable it.",
+    "exhaustedTitle": "The budget is used up",
+    "exhaustedText": "Requests are rejected until {date}. Ask the gateway administrator if you need more.",
+    "exhaustedNoReset": "Requests are rejected until the administrator raises the budget.",
+    "lowTitle": "The budget is almost used up: {left} left",
+    "lowTitleDays": "The budget is almost used up: {left} left, about {days, plural, one {# day} other {# days}} at the current pace",
+    "lowText": "When the budget runs out, requests will be rejected until {date}.",
+    "lowNoReset": "When the budget runs out, requests will be rejected until the administrator raises it."
+  },
+  "budget": {
+    "heading": "Budget",
+    "periods": {
+      "none": "Total budget",
+      "daily": "Daily budget",
+      "monthly": "Monthly budget"
+    },
+    "resetsAt": "resets {date}",
+    "of": "of {limit}",
+    "unlimited": "no budget limit",
+    "left": "{left} left",
+    "leftDays": "{left} left, about {days, plural, one {# day} other {# days}} at the current pace"
+  },
+  "facts": {
+    "rpm": "Requests per minute",
+    "tpm": "Tokens per minute",
+    "today": "Requests today",
+    "ofLimit": "{current} of {limit}",
+    "noLimit": "{current} · no limit"
+  },
+  "connect": {
+    "heading": "How to connect",
+    "baseUrl": "API address",
+    "models": "Available models",
+    "allModels": "all gateway models",
+    "copy": "Copy",
+    "copied": "Copied",
+    "docs": "Examples for Python and curl"
+  },
+  "spend": {
+    "heading": "Spending by day",
+    "hint": "last 14 days · the bright bar is today",
+    "aria": "Spending by day",
+    "tooltip": "{day}: {value}",
+    "empty": "No spending in the last 14 days."
+  },
+  "rejections": {
+    "heading": "Rejected requests",
+    "hint": "{count, plural, one {# in 30 days} other {# in 30 days}}",
+    "columns": {
+      "time": "Time",
+      "what": "What happened",
+      "reason": "Details",
+      "action": "What to do"
+    },
+    "empty": "No rejected requests in 30 days.",
+    "categories": {
+      "auth_invalid": "Key not recognised",
+      "key_disabled": "Key disabled",
+      "model_not_allowed": "Model not available to the key",
+      "budget_exhausted": "Budget used up",
+      "rate_limited": "Too many requests",
+      "master_only": "Master key only",
+      "unauthorized": "No key in the request",
+      "ip_blocked": "Address blocked",
+      "other": "Rejected"
+    },
+    "actions": {
+      "auth_invalid": "Check that the request sends the key exactly as issued",
+      "key_disabled": "Ask the administrator to enable the key",
+      "model_not_allowed": "Use a model from the list above or ask the administrator for access",
+      "budget_exhausted": "Wait for the budget reset or ask the administrator to raise it",
+      "rate_limited": "Slow down: add a pause between requests",
+      "master_only": "This action is available only to the gateway administrator",
+      "unauthorized": "Send the key in the Authorization: Bearer header",
+      "ip_blocked": "Too many failed sign-ins from your address: wait and try again",
+      "other": "Contact the gateway administrator"
+    }
+  },
+  "values": {
+    "notAvailable": "—"
+  }
+}

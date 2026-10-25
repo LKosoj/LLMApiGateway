@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en" data-i18n-page="my-key">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="my_key:pageTitle">LLM Gateway - My key</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/theme.css">
+    <link rel="stylesheet" href="/static/report.css">
+    <link rel="stylesheet" href="/static/shared-nav.css">
+    <script src="/static/theme.js"></script>
+</head>
+<body>
+    <div class="top-nav">
+        <div class="top-nav-content">
+            <nav class="gateway-nav-mount" data-gateway-nav hidden></nav>
+            <div class="gateway-nav-actions">
+                <label class="gateway-locale-label" for="localeSelect" data-i18n="common:languageLabel">Language</label>
+                <select id="localeSelect" class="gateway-locale-select" data-locale-select></select>
+                <button id="darkModeToggle" type="button" aria-label="Switch to dark mode" data-i18n-aria-label="common:theme.switchToDark" class="theme-toggle">
+                    <span class="icon-placeholder"></span>
+                </button>
+            </div>
+        </div>
+        <div class="gateway-locale-error" role="alert" data-locale-error hidden></div>
+    </div>
+
+    <main class="rp-page">
+        <div class="rp-head">
+            <div>
+                <h1 id="keyHeading" data-i18n="my_key:heading">My key</h1>
+                <p data-i18n="my_key:intro">Your access key: how much is spent, what the limits are and what to do when requests are rejected.</p>
+            </div>
+        </div>
+
+        <div id="messageArea" class="error-banner" hidden></div>
+        <pre id="messageDetail" data-i18n-raw-detail hidden></pre>
+
+        <section id="masterNote" class="rp-callout" hidden>
+            <p data-i18n="my_key:masterNote">You are signed in with the master key. Limits and budgets of all keys are on the Quota page.</p>
+            <p><a class="rp-link" href="/v1/ui/quota" data-i18n="my_key:masterLink">Go to Quota</a></p>
+        </section>
+
+        <div id="keyContent" hidden>
+            <section id="callout" class="rp-callout" role="status" hidden>
+                <b id="calloutTitle"></b>
+                <p id="calloutText"></p>
+            </section>
+
+            <div class="rp-grid">
+                <section class="rp-panel">
+                    <div class="rp-panel-head">
+                        <h2 id="budgetHeading" data-i18n="my_key:budget.heading">Budget</h2>
+                        <span id="budgetReset" class="rp-hint"></span>
+                    </div>
+                    <div class="rp-panel-body">
+                        <div id="budgetValue" class="rp-budget-value"></div>
+                        <div id="budgetMeter"></div>
+                        <div id="budgetLeft" class="rp-muted"></div>
+                        <div class="rp-facts">
+                            <div><span data-i18n="my_key:facts.rpm">Requests per minute</span><b id="factRpm"></b></div>
+                            <div><span data-i18n="my_key:facts.tpm">Tokens per minute</span><b id="factTpm"></b></div>
+                            <div><span data-i18n="my_key:facts.today">Requests today</span><b id="factToday"></b></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="rp-panel">
+                    <div class="rp-panel-head">
+                        <h2 data-i18n="my_key:connect.heading">How to connect</h2>
+                    </div>
+                    <div class="rp-panel-body rp-copy-list">
+                        <div class="rp-muted" data-i18n="my_key:connect.baseUrl">API address</div>
+                        <div class="rp-copy-line">
+                            <code id="baseUrl"></code>
+                            <button type="button" class="rp-btn rp-btn-sm" data-copy="baseUrl" data-i18n="my_key:connect.copy">Copy</button>
+                        </div>
+                        <div class="rp-muted" data-i18n="my_key:connect.models">Available models</div>
+                        <div class="rp-copy-line">
+                            <code id="modelList"></code>
+                            <button type="button" class="rp-btn rp-btn-sm" data-copy="modelList" data-i18n="my_key:connect.copy">Copy</button>
+                        </div>
+                        <a class="rp-link" href="/v1/ui/docs#docs-quickstart" data-i18n="my_key:connect.docs">Examples for Python and curl</a>
+                    </div>
+                </section>
+            </div>
+
+            <section class="rp-panel">
+                <div class="rp-panel-head">
+                    <h2 data-i18n="my_key:spend.heading">Spending by day</h2>
+                    <span class="rp-hint" data-i18n="my_key:spend.hint">last 14 days · the bright bar is today</span>
+                </div>
+                <div class="rp-panel-body">
+                    <div id="spendChart"></div>
+                </div>
+            </section>
+
+            <section class="rp-panel">
+                <div class="rp-panel-head">
+                    <h2 data-i18n="my_key:rejections.heading">Rejected requests</h2>
+                    <span id="rejectionsHint" class="rp-hint"></span>
+                </div>
+                <div class="rp-table-wrap">
+                    <table class="rp-table">
+                        <thead>
+                            <tr>
+                                <th data-i18n="my_key:rejections.columns.time">Time</th>
+                                <th data-i18n="my_key:rejections.columns.what">What happened</th>
+                                <th data-i18n="my_key:rejections.columns.reason">Details</th>
+                                <th data-i18n="my_key:rejections.columns.action">What to do</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rejectionsBody"></tbody>
+                    </table>
+                </div>
+                <div id="rejectionsEmpty" class="rp-empty" data-i18n="my_key:rejections.empty" hidden>No rejected requests in 30 days.</div>
+            </section>
+        </div>
+    </main>
+
+    <script src="/static/vendor/ui-runtime.bundle.js"></script>
+    <script src="/static/shared-auth.js"></script>
+    <script src="/static/shared-nav.js"></script>
+    <script src="/static/report.js"></script>
+    <script src="/static/my-key.js"></script>
+</body>
+</html>

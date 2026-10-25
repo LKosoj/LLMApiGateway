@@ -1063,7 +1063,7 @@ export function registerProviders(ctx) {
             }
             ctx.state.originalProvidersContent = getProvidersSnapshotContent();
             ctx.setProvidersLoadState('ready');
-            ctx.showLocalizedMessage('success', 'Providers loaded successfully.');
+            ctx.showLoaded('Providers');
             return true;
         } catch (error) {
             if (requestId !== ctx.state.providersLoadRequestId) {

@@ -224,14 +224,15 @@ def test_free_models_theme_switch_updates_status_surface_without_color_transitio
             """
             () => {
                 Theme.set('dark');
-                const container = document.querySelector('.container');
+                // The status text lies on the page background (no page card).
+                const surface = document.body;
                 const probe = document.createElement('div');
-                probe.style.backgroundColor = 'var(--bg-elevated)';
+                probe.style.backgroundColor = 'var(--bg)';
                 probe.style.position = 'fixed';
                 probe.style.visibility = 'hidden';
                 document.body.appendChild(probe);
                 const result = {
-                    actual: getComputedStyle(container).backgroundColor,
+                    actual: getComputedStyle(surface).backgroundColor,
                     expected: getComputedStyle(probe).backgroundColor,
                 };
                 probe.remove();

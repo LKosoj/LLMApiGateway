@@ -47,7 +47,25 @@
     "rejections": "Rejections",
     "translator": "Translator Check",
     "pricing": "Pricing",
-    "freeModels": "Free LLM Catalog"
+    "freeModels": "Free LLM Catalog",
+    "live": "Live now",
+    "failures": "Model failures",
+    "myKey": "My key",
+    "short": {
+      "live": "Live",
+      "failures": "Failures",
+      "myKey": "My key",
+      "activity": "Activity",
+      "docs": "Docs",
+      "menu": "Menu"
+    },
+    "bottomLabel": "Quick sections",
+    "groups": {
+      "monitoring": "Monitoring",
+      "settings": "Settings",
+      "tools": "Tools",
+      "help": "Help"
+    }
   },
   "access": {
     "denied": {

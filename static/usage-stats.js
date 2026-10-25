@@ -612,21 +612,21 @@ function initializeUsagePage() {
         pauseList.replaceChildren();
         if (!pauseSnapshot.pauses.length) {
             const empty = document.createElement('p');
-            empty.textContent = t('usage:pauses.empty');
+            empty.textContent = gatewayI18n.t('usage:pauses.empty');
             pauseList.appendChild(empty);
         }
         pauseSnapshot.pauses.forEach(pause => {
             const row = document.createElement('div');
             row.className = 'controls';
             const text = document.createElement('span');
-            text.textContent = t('usage:pauses.entry', {
+            text.textContent = gatewayI18n.t('usage:pauses.entry', {
                 provider: pause.provider, key: pause.upstream_key_fingerprint,
-                model: pause.model || t('usage:pauses.allModels'),
+                model: pause.model || gatewayI18n.t('usage:pauses.allModels'),
                 reason: pause.reason, seconds: formatNumber(pause.remaining_seconds),
             });
             const resume = document.createElement('button');
             resume.type = 'button';
-            resume.textContent = t('usage:pauses.resume');
+            resume.textContent = gatewayI18n.t('usage:pauses.resume');
             resume.addEventListener('click', () => void mutatePause('/v1/admin/upstream-pauses/resume', {
                 provider: pause.provider, upstream_key_fingerprint: pause.upstream_key_fingerprint, model: pause.model,
             }));

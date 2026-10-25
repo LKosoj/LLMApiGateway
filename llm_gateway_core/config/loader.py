@@ -58,6 +58,7 @@ from .schemas import (  # noqa: F401
     UpstreamKeyPoolConfig,
     UpstreamKeySpec,
     UpstreamModelPoolConfig,
+    UpstreamQuotaConfig,
     UpstreamRoutingConfig,
     WebDeepResearchModelConfig,
     WebReadModelConfig,

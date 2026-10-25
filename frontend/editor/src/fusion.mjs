@@ -467,7 +467,7 @@ export function registerFusion(ctx) {
             }
             ctx.state.originalFusionContent = getNormalizedFusionContent();
             ctx.updateSaveButtonDisabledState();
-            ctx.showLocalizedMessage('success', 'Fusion Models loaded successfully.');
+            ctx.showLoaded('Fusion Models');
             return true;
         } catch (error) {
             console.error('Error fetching Fusion Models:', error);

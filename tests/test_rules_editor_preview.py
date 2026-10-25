@@ -78,7 +78,7 @@ def test_preview_and_suggest_do_not_autosave_rules():
 
     preview_body = _extract_function_body(content, "previewRulesChanges")
     suggest_body = _extract_function_body(content, "renderSuggestedFallbackOrder")
-    preview_listener = _extract_click_listener(content, "previewRulesButton")
+    preview_listener = _extract_click_listener(content, "footerPreviewButton")
     suggest_listener = _extract_click_listener(content, "suggestEvalOrderButton")
 
     for block in (preview_body, suggest_body, preview_listener, suggest_listener):

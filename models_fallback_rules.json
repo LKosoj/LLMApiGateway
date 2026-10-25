@@ -123,6 +123,21 @@
         ]
       },
       {
+        "provider": "gemini_cli",
+        "model": "gemini-3.8-flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
         "provider": "routerai",
         "model": "deepseek/deepseek-v4.1-flash-1017",
         "use_provider_order_as_fallback": false,
@@ -426,7 +441,8 @@
           "defaults": {},
           "overrides": {},
           "filters": [
-            "temperature"
+            "temperature",
+            "seed"
           ],
           "value_maps": {}
         },

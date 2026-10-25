@@ -210,12 +210,12 @@ def test_decisions_configured_chain_reaches_aitunnel_after_429_and_404(monkeypat
     )
     assert status == 200
     assert [call["model"] for call in calls] == [
-        "jev-1.13-free", "~typesafe/jev-latest", "pplx-decider-v1.1-27b",
+        "jev-1.13-free", "~typesafe/jev-latest", "pplx-decider-v1.2",
     ]
     service.commit.assert_awaited_once()
     event = service.commit.call_args.args[1]
     assert event.provider == "aitunnel"
-    assert event.model == "pplx-decider-v1.1-27b"
+    assert event.model == "pplx-decider-v1.2"
 
 
 def test_decisions_unknown_model_has_no_upstream_call(monkeypatch):
@@ -247,7 +247,7 @@ def test_configured_jev_route_registry_and_usage_record(monkeypatch):
     assert [(route.provider, route.model) for route in model.routes] == [
         ("opencode-zen", "jev-1.13-free"),
         ("routerai", "~typesafe/jev-latest"),
-        ("aitunnel", "pplx-decider-v1.1-27b"),
+        ("aitunnel", "pplx-decider-v1.2"),
     ]
     assert (model.routes[0].provider, model.routes[0].model, model.routes[0].target_path) == (
         "opencode-zen", "jev-1.13-free", "https://opencode.ai/inference/systemone/v1/systemone",

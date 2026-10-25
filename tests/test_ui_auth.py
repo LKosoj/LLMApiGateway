@@ -17,6 +17,9 @@ AUTHENTICATED_PAGES = {
     "translator-debug.html": "translator",
     "overview.html": "overview",
     "activity.html": "activity",
+    "live.html": "live",
+    "failures.html": "failures",
+    "my-key.html": "my-key",
 }
 
 

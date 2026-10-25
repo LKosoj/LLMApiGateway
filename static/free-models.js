@@ -306,7 +306,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pageState === 'loading') {
             renderStateMessage(i18n.t('free_models:loading'));
         } else if (pageState === 'unavailable') {
-            renderStateMessage(i18n.t('free_models:unavailable'));
+            // The status row below already shows this error with Retry.
+            freeModelsList.replaceChildren();
         } else if (pageState === 'empty') {
             renderStateMessage(i18n.t('free_models:empty'));
         } else {

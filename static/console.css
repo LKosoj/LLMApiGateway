@@ -1,0 +1,120 @@
+/* Common console look of the admin pages, matching the report pages
+   (report.css): content lies on the flat theme background instead of one big
+   card on a striped backdrop. Loaded after the page stylesheet. The legacy
+   analytics page (usage-stats.html) does not load it and keeps its look. */
+
+body,
+body.dark-mode,
+body.docs-page,
+body.dark-mode.docs-page {
+    background: var(--bg);
+    /* The page background is now the surface under the text: switch it with
+       the theme at once, as the card did, so text never sits on the old colour. */
+    transition: color var(--transition-base);
+}
+
+.container {
+    padding: 20px 0 64px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+/* Muted and error text now lie on --bg, not on the white card: in the light
+   theme the defaults (#64748b, #dc2626) are about 4.4:1 there, below WCAG AA;
+   these tones are about 5:1. Green and orange text (#16a34a, #d97706) are
+   about 3:1 even on white; these darker tones are about 6:1, also on the
+   tinted notice backgrounds. */
+body:not(.dark-mode) .container {
+    --text-muted: #5f6b7e;
+    --error: #c81e1e;
+    --success: #166534;
+    --warning: #92400e;
+}
+
+.container h1 {
+    margin: 0 0 20px;
+    color: var(--text-strong);
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+/* The one-line page description sits right under the heading. */
+.container h1:has(+ p) {
+    margin-bottom: 4px;
+}
+
+.container > h1 + p {
+    margin: 0 0 20px;
+    text-align: start;
+    max-width: 70ch;
+    color: var(--text);
+    font-size: 14px;
+}
+
+/* Plain text links in the interface colour instead of the browser blue. */
+:where(.container a:not([class])) {
+    color: var(--accent-text);
+    text-decoration: none;
+}
+
+:where(.container a:not([class]):hover) {
+    text-decoration: underline;
+}
+
+/* Buttons without a page class get the report button instead of the grey
+   browser default. :where() keeps these rules below any page-specific one. */
+:where(.container button:not([class])) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: var(--control-min-height);
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text-strong);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+    transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+:where(.container button:not([class]):hover:not(:disabled)) {
+    background: var(--bg-sunken);
+    border-color: var(--border-strong);
+}
+
+:where(.container button:not([class]):disabled) {
+    cursor: not-allowed;
+    opacity: 0.55;
+    box-shadow: none;
+}
+
+/* The main action of a toolbar ("Apply", "Create"): accent like
+   .rp-btn-primary. One class weight, so it beats a bare `button` rule. */
+:where(.container button).primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--control-min-height);
+    padding: 0 14px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+:where(.container button).primary:hover:not(:disabled) {
+    border-color: var(--accent-hover);
+    background: var(--accent-hover);
+}

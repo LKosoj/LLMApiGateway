@@ -43,9 +43,6 @@ function startEditor(ctx) {
         ctx.elements.rulesList.appendChild(ruleCard);
         ctx.refreshRulesEmptyState();
     });
-    ctx.elements.previewRulesButton.addEventListener('click', () => {
-        ctx.previewRulesChanges();
-    });
     ctx.elements.suggestEvalOrderButton.addEventListener('click', () => {
         void ctx.renderSuggestedFallbackOrder();
     });

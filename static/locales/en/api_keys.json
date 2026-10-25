@@ -1,7 +1,7 @@
 {
   "page": {
     "documentTitle": "LLM Gateway - API Keys",
-    "heading": "LLM Gateway - API Keys",
+    "heading": "API Keys",
     "description": "Manage virtual API keys. Each key may define its own budget (USD), RPM/TPM rate limits, and an optional list of allowed gateway models."
   },
   "toolbar": {

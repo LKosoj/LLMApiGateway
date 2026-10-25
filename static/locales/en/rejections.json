@@ -23,10 +23,10 @@
     "perPage": "Per page",
     "sinceUtc": "Since (UTC)"
   },
-  "heading": "LLM Gateway - Rejections Audit",
+  "heading": "Rejections",
   "intro": "Persistent log of governance rejections the gateway itself returned (401/403/429), not upstream provider errors. Use it to spot abuse, diagnose why clients are blocked, and audit access decisions.",
   "loading": "Loading rejections…",
-  "pageTitle": "LLM Gateway - Rejections Audit",
+  "pageTitle": "LLM Gateway - Rejections",
   "pagination": {
     "empty": "0 of 0",
     "newer": "← Newer",

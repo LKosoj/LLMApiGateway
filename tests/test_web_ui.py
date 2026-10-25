@@ -504,8 +504,13 @@ def test_admin_navigation_is_consistent_across_ui_pages(page: Page, server):
     add_session(page, server)
     route_empty_analytics_dashboard(page, server)
 
-    expected_labels = ["Overview", "Activity", "Docs", "Analytics (legacy)", "Quota", "Rules Editor", "Playground", "API Keys", "Rejections", "Translator Check", "Pricing", "Free LLM Catalog"]
+    expected_labels = [
+        "Live now", "Model failures", "Overview", "Activity", "Analytics (legacy)", "Quota", "Rejections",
+        "Rules Editor", "API Keys", "Pricing", "Playground", "Translator Check", "Free LLM Catalog", "Docs",
+    ]
     pages = [
+        ("/v1/ui/live", "Live now"),
+        ("/v1/ui/failures", "Model failures"),
         ("/v1/ui/overview", "Overview"),
         ("/v1/ui/activity", "Activity"),
         ("/v1/ui/docs", "Docs"),
@@ -554,7 +559,7 @@ def test_create_and_save_web_services(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="web"]')
-    expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Web Services")
 
     page.click("#addWebSearchButton")
     page.fill("#webSearchList .gateway-model-input", "llmgateway/web-search-test")
@@ -599,7 +604,7 @@ def test_create_and_save_web_services(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="web"]')
-    expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Web Services")
 
     assert "collapsed" in (page.locator("#webSearchList .rule-card").first.get_attribute("class") or "")
     expand_first_card(page, "#webSearchList")
@@ -631,7 +636,7 @@ def test_create_and_save_fusion_reserve_models(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="fusion"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fusion Models loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fusion Models")
 
     page.click("#addFusionButton")
     card = page.locator("#fusionList .fusion-card").first
@@ -656,7 +661,7 @@ def test_create_and_save_fusion_reserve_models(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="fusion"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fusion Models loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fusion Models")
 
     expand_first_card(page, "#fusionList")
     card = page.locator("#fusionList .fusion-card").first
@@ -686,7 +691,7 @@ def test_playground_page_renders_sections_and_populates_model_selects(page: Page
     # /v1/ui/playground/models вернул непустые списки.
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="web"]')
-    expect(page.locator("#messageArea")).to_contain_text("Web Services loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Web Services")
 
     page.click("#addWebSearchButton")
     page.fill("#webSearchList .gateway-model-input", "llmgateway/web-search-test")
@@ -1087,7 +1092,7 @@ def test_fallback_row_capability_fields_save_and_reload(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
 
     expand_first_card(page, "#rulesList")
     row = page.locator("#rulesList .fallback-row").first
@@ -1102,7 +1107,7 @@ def test_fallback_row_capability_fields_save_and_reload(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
 
     expand_first_card(page, "#rulesList")
     row = page.locator("#rulesList .fallback-row").first
@@ -1118,7 +1123,7 @@ def test_tool_call_rescue_checkbox_saves_and_reloads(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
 
     expand_first_card(page, "#rulesList")
     card = page.locator("#rulesList .rule-card").first
@@ -1131,7 +1136,7 @@ def test_tool_call_rescue_checkbox_saves_and_reloads(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
 
     expand_first_card(page, "#rulesList")
     card = page.locator("#rulesList .rule-card").first

@@ -46,7 +46,6 @@ def test_playground_catalogs_and_html_cover_all_forms_and_actions() -> None:
     required = {
         "page.documentTitle",
         "page.heading",
-        "page.adminTesting",
         "tabs.web",
         "tabs.chat",
         "tabs.audioTranscription",

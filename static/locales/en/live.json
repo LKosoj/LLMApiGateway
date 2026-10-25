@@ -1,0 +1,99 @@
+{
+  "pageTitle": "LLM Gateway - Live now",
+  "heading": "Live now",
+  "intro": "What is running this minute, where the traffic goes and how close providers are to their limits.",
+  "actions": {
+    "refresh": "Refresh",
+    "pause": "Pause updates",
+    "resume": "Resume updates"
+  },
+  "updated": "Updated {time}",
+  "updatedPaused": "Paused · updated {time}",
+  "kpis": {
+    "running": "Running now",
+    "runningNote": "longest — {duration} · {model}",
+    "runningNone": "nothing is running",
+    "rpm": "Model requests per minute",
+    "rpmNote": "{requests} in 24 h · peak {peak}/h at {hour}",
+    "rpmNoteNoPeak": "{requests} in 24 h",
+    "tpm": "Tokens per minute",
+    "tpmNote": "{tokens} in 24 h",
+    "cost": "Spent in 24 h",
+    "costNote": "most — {model}, {cost}",
+    "costNone": "nothing spent yet"
+  },
+  "load": {
+    "heading": "Load over 24 hours",
+    "metricLabel": "Metric",
+    "requests": "Requests",
+    "tokens": "Tokens",
+    "cost": "Cost",
+    "hint": "per hour · the bright bar is the current hour",
+    "aria": "Load per hour for the last 24 hours",
+    "tooltip": "{hour}: {value}"
+  },
+  "who": {
+    "heading": "Who generates load",
+    "groupLabel": "Breakdown",
+    "keys": "Keys",
+    "clients": "Clients (X-Title)",
+    "hint": "requests in 24 h",
+    "masterKey": "Master key",
+    "unknownClient": "No X-Title",
+    "empty": "No requests in the last 24 hours."
+  },
+  "running": {
+    "heading": "Running right now",
+    "hint": "requests longer than 30 s are highlighted",
+    "columns": {
+      "duration": "Running for",
+      "requested": "Requested",
+      "executes": "Executes",
+      "key": "Key",
+      "client": "Client",
+      "operation": "Operation"
+    },
+    "notChosen": "model not chosen yet",
+    "empty": "Nothing is running right now."
+  },
+  "targets": {
+    "heading": "Models under load",
+    "hint": "last minute · the bar shows the share of the provider limit, when the provider reports it",
+    "columns": {
+      "model": "Model",
+      "key": "Provider key",
+      "rpm": "Requests/min",
+      "tpm": "Tokens/min",
+      "day": "Requests in 24 h",
+      "status": "Status"
+    },
+    "rpmOf": "{current} of {limit}",
+    "keyFingerprint": "…{fingerprint}",
+    "status": {
+      "ok": "Working",
+      "cooldown": "Cooling down · {time}",
+      "error": "Error",
+      "invalid": "Key rejected",
+      "unknown": "Not checked"
+    },
+    "empty": "No model received requests in the last 24 hours."
+  },
+  "delta": {
+    "up": "▲ {percent} vs the previous 24 hours",
+    "down": "▼ {percent} vs the previous 24 hours",
+    "same": "same as the previous 24 hours",
+    "new": "the previous 24 hours had 0"
+  },
+  "detail": {
+    "heading": "{model} · {provider}",
+    "hint": "requests per hour over 24 hours",
+    "close": "Close",
+    "loading": "Loading…",
+    "aria": "Requests to {model} per hour over 24 hours"
+  },
+  "values": {
+    "notAvailable": "—",
+    "seconds": "{value} s",
+    "minutes": "{value} min"
+  }
+}

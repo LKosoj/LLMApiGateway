@@ -101,6 +101,10 @@
     overflow-wrap: anywhere;
 }
 
+.permanent-ip-table th {
+    color: var(--text);
+}
+
 .permanent-ip-table button {
     min-height: 44px;
 }

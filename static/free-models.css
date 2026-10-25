@@ -159,6 +159,10 @@ h1 {
     margin: 0 0 20px;
 }
 
+.free-models-controls[hidden] {
+    display: none;
+}
+
 .free-models-search-wrap {
     position: relative;
     flex: 1 1 260px;

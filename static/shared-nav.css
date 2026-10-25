@@ -356,6 +356,20 @@
     color: var(--accent-text, #4338ca);
 }
 
+.gateway-nav-list .gateway-nav-group {
+    flex: 0 0 auto;
+    padding: 12px 12px 2px;
+    color: var(--text-muted, #64748b);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.gateway-nav-list .gateway-nav-group:first-child {
+    padding-top: 4px;
+}
+
 .gateway-sidebar-footer {
     flex: 0 0 auto;
     padding: 12px;
@@ -587,6 +601,10 @@
         height: 18px;
     }
 
+    .gateway-sidebar[data-collapsed] .gateway-nav-group {
+        display: none;
+    }
+
     .gateway-sidebar[data-collapsed] .nav-button-label {
         position: absolute;
         width: 1px;
@@ -661,5 +679,76 @@
         width: 40px;
         height: 40px;
         padding: 0;
+    }
+}
+
+/* Phone bottom bar: the main sections plus a "Menu" button for the drawer.
+ * Pages that pin something to the viewport bottom offset it by
+ * --gateway-bottom-nav-space so the bar does not cover it. */
+.gateway-bottom-nav {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    body[data-gateway-bottom-nav] {
+        --gateway-bottom-nav-space: calc(56px + env(safe-area-inset-bottom, 0px));
+        /* border-box: pages whose body is the scroller (height: 100%) must
+         * not grow past the viewport and get a second scrollbar. */
+        box-sizing: border-box;
+        padding-bottom: var(--gateway-bottom-nav-space);
+    }
+
+    .gateway-bottom-nav:not([hidden]) {
+        position: fixed;
+        z-index: var(--z-nav, 100);
+        inset-inline: 0;
+        bottom: 0;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        /* A shadow, not a border: the bar stays exactly 56px tall. */
+        box-shadow: 0 -1px 0 var(--border, #e2e8f0);
+        background: var(--bg-elevated, #ffffff);
+    }
+
+    .gateway-bottom-nav-link {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        gap: 3px;
+        min-height: 56px;
+        padding: 4px 2px;
+        border: 0;
+        background: none;
+        color: var(--text, #334155);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+    }
+
+    .gateway-bottom-nav-link span {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .gateway-bottom-nav-link .nav-button-icon {
+        width: 20px;
+        height: 20px;
+    }
+
+    .gateway-bottom-nav-link[aria-current="page"] {
+        color: var(--accent-text, #1d4ed8);
+        box-shadow: inset 0 2px 0 var(--accent, #2563eb);
+    }
+
+    .gateway-bottom-nav-link:focus-visible {
+        outline: 2px solid var(--accent, #2563eb);
+        outline-offset: -2px;
     }
 }

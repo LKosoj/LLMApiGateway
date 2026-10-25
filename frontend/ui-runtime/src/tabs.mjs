@@ -121,8 +121,23 @@ function focusItem(items, item) {
   }
 }
 
+// Reveal the tab horizontally inside the strip that scrolls it. Not
+// scrollIntoView: it also scrolls the page when the strip sits below the fold.
 function scrollItem(item) {
-  item.tab.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  const tab = item.tab;
+  const page = tab.ownerDocument;
+  let strip = tab.parentElement;
+  while (strip && strip.scrollWidth <= strip.clientWidth) {
+    strip = strip.parentElement;
+  }
+  if (!strip || strip === page?.body || strip === page?.documentElement) return;
+  const tabBox = tab.getBoundingClientRect();
+  const stripBox = strip.getBoundingClientRect();
+  if (tabBox.left < stripBox.left) {
+    strip.scrollLeft -= stripBox.left - tabBox.left;
+  } else if (tabBox.right > stripBox.right) {
+    strip.scrollLeft += tabBox.right - stripBox.right;
+  }
 }
 
 function operationContext(item, previous, controller, signal, sequence, reason, isCurrent) {

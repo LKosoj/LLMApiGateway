@@ -9,6 +9,8 @@
     }
 
     let navigation = null;
+    let bottomNavigation = null;
+    let bottomNavRoot = null;
     let localeSelector = null;
     let unsubscribeLocale = null;
     let unbindDocument = null;
@@ -63,6 +65,12 @@
             pathname: global.location.pathname,
             translate,
         });
+        bottomNavigation?.update({ pathname: global.location.pathname, translate });
+    }
+
+    function openSidebar() {
+        sidebarDialog.open();
+        navToggleButton.setAttribute('aria-expanded', 'true');
     }
 
     function applyCurrentThemeLabels() {
@@ -225,6 +233,13 @@
         navToggleButton.appendChild(toggleIcon);
         topNavContent.insertBefore(navToggleButton, topNavContent.firstChild);
 
+        // Phone-only bottom bar (see shared-nav.css); mounted before the
+        // drawer dialog so the open drawer makes it inert like the page.
+        bottomNavRoot = document.createElement('nav');
+        bottomNavRoot.className = 'gateway-bottom-nav';
+        bottomNavRoot.hidden = true;
+        document.body.appendChild(bottomNavRoot);
+
         sidebarDialog = ui.createDialog({
             overlay: sidebarOverlay,
             dialog: sidebarPanel,
@@ -239,8 +254,7 @@
             if (sidebarDialog.state === 'open') {
                 sidebarDialog.close('cancel');
             } else {
-                sidebarDialog.open();
-                navToggleButton.setAttribute('aria-expanded', 'true');
+                openSidebar();
             }
         });
 
@@ -345,6 +359,13 @@
                 layout: 'list',
                 translate,
             });
+            bottomNavigation = ui.createBottomNavigation(bottomNavRoot, {
+                pathname: global.location.pathname,
+                role: identity.role,
+                translate,
+                onMenu: openSidebar,
+            });
+            document.body.toggleAttribute('data-gateway-bottom-nav', !bottomNavRoot.hidden);
             applyCurrentSidebarLabels();
         }
 
@@ -376,6 +397,8 @@
         sidebarDialog?.destroy();
         desktopMediaQuery?.removeEventListener('change', handleDesktopMediaChange);
         document.body.removeAttribute('data-gateway-sidebar-collapsed');
+        document.body.removeAttribute('data-gateway-bottom-nav');
+        bottomNavRoot?.remove();
     }
 
     global.gatewayNav = Object.freeze({

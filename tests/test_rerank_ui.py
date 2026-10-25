@@ -75,7 +75,7 @@ def test_create_and_save_rerank_route(page: Page, server):
     page.click('[data-entity-target="rerank"]')
     
     # Wait for loading to finish
-    expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Rerank Routes")
     
     # Click Add Rerank Model
     page.click("#addRerankButton")
@@ -116,7 +116,7 @@ def test_create_and_save_rerank_route_with_absolute_target_url(page: Page, serve
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="rerank"]')
 
-    expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Rerank Routes")
 
     page.click("#addRerankButton")
     page.fill("#editor-container-rerank .gateway-model-input", "my-absolute-rerank-model")
@@ -154,7 +154,7 @@ def test_rerank_validation_error_invalid_target_path(page: Page, server):
     page.click('[data-entity-target="rerank"]')
     
     # Wait for loading to finish
-    expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Rerank Routes")
     
     page.click("#addRerankButton")
     
@@ -188,7 +188,7 @@ def test_create_and_save_rerank_route_with_retry_settings(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="rerank"]')
-    expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Rerank Routes")
 
     page.click("#addRerankButton")
     page.fill("#editor-container-rerank .gateway-model-input", "my-rerank-retry-model")
@@ -217,7 +217,7 @@ def test_create_and_save_rerank_route_with_jina_output_format(page: Page, server
 
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="rerank"]')
-    expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Rerank Routes")
 
     page.click("#addRerankButton")
     page.fill("#editor-container-rerank .gateway-model-input", "my-rerank-jina-output-model")

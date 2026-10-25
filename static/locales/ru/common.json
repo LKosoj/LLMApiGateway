@@ -47,7 +47,25 @@
     "rejections": "Отклонения",
     "translator": "Проверка транслятора",
     "pricing": "Тарифы",
-    "freeModels": "Бесплатные модели"
+    "freeModels": "Бесплатные модели",
+    "live": "Сейчас на сервере",
+    "failures": "Сбои моделей",
+    "myKey": "Мой ключ",
+    "short": {
+      "live": "Сейчас",
+      "failures": "Сбои",
+      "myKey": "Мой ключ",
+      "activity": "Активность",
+      "docs": "Документация",
+      "menu": "Меню"
+    },
+    "bottomLabel": "Быстрые разделы",
+    "groups": {
+      "monitoring": "Мониторинг",
+      "settings": "Настройка",
+      "tools": "Инструменты",
+      "help": "Справка"
+    }
   },
   "access": {
     "denied": {

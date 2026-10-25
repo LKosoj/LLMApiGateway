@@ -169,6 +169,7 @@ class _FakeFallbackEventsDB:
                 "avg_duration_ms": 120,
                 "max_duration_ms": 300,
             },
+            "requests": {"total": 2, "rescued": 1, "failed": 0},
             "series": [{"time_period": "2026-05-31", "attempts": 3, "successes": 2, "errors": 1}],
             "error_types": [{"label": "http_429", "errors": 1}],
             "upstream": [{"label": "openrouter / qwen", "provider": "openrouter", "model": "qwen", "upstream_key_fingerprint": "fp-1", "attempts": 3}],
@@ -785,6 +786,70 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertNotIn("upstream_key_fingerprint", payload["recent_records"][0])
         self.assertEqual(fake_tokens_usage_db.dashboard_calls[0]["api_key_id"], 11)
         self.assertEqual(fake_fallback_events_db.dashboard_calls[0]["api_key_id"], 11)
+
+    def test_analytics_dashboard_compares_with_the_previous_window_of_same_length(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+        fake_fallback_events_db = _FakeFallbackEventsDB()
+
+        with self._client(
+            fake_tokens_usage_db,
+            _FakeApiKeysDB(valid_key_id=7),
+            fake_fallback_events_db=fake_fallback_events_db,
+        ) as client:
+            response = client.get(
+                "/v1/api/analytics-dashboard?range=24h&compare=previous&provider=openrouter&model=qwen",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        current_usage, previous_usage = fake_tokens_usage_db.dashboard_calls
+        self.assertEqual(previous_usage["end_date"], current_usage["start_date"])
+        self.assertEqual(
+            current_usage["start_date"] - previous_usage["start_date"],
+            current_usage["end_date"] - current_usage["start_date"],
+        )
+        self.assertEqual(previous_usage["provider"], "openrouter")
+        self.assertEqual(previous_usage["model"], "qwen")
+        current_fallback, previous_fallback = fake_fallback_events_db.dashboard_calls
+        self.assertEqual(previous_fallback["start_date"], previous_usage["start_date"])
+        self.assertEqual(previous_fallback["end_date"], current_fallback["start_date"])
+        self.assertEqual(previous_fallback["model"], "qwen")
+        previous = response.json()["previous"]
+        self.assertEqual(previous["totals"], {"requests": 2, "total_tokens": 30, "cost": 0.06})
+        self.assertEqual(previous["fallback"]["summary"]["errors"], 1)
+        self.assertEqual(previous["fallback"]["requests"], {"total": 2, "rescued": 1, "failed": 0})
+
+    def test_analytics_dashboard_skips_the_previous_window_unless_asked(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+
+        with self._client(fake_tokens_usage_db, _FakeApiKeysDB(valid_key_id=7)) as client:
+            plain = client.get(
+                "/v1/api/analytics-dashboard?range=24h",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            invalid = client.get(
+                "/v1/api/analytics-dashboard?range=24h&compare=last-year",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(plain.status_code, 200)
+        self.assertIsNone(plain.json()["previous"])
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(len(fake_tokens_usage_db.dashboard_calls), 1)
+
+    def test_virtual_key_previous_window_hides_master_only_fallback_requests(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+
+        with self._client(fake_tokens_usage_db, _FakeApiKeysDB(valid_key_id=11)) as client:
+            client.cookies.set(
+                SESSION_COOKIE_NAME,
+                create_authenticated_session(role=ROLE_USER, key_id=11),
+            )
+            response = client.get("/v1/api/analytics-dashboard?range=7d&compare=previous")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(fake_tokens_usage_db.dashboard_calls[1]["api_key_id"], 11)
+        self.assertEqual(set(response.json()["previous"]["fallback"]), {"summary"})
 
     def test_usage_dashboard_rejects_invalid_scope_and_filters(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()

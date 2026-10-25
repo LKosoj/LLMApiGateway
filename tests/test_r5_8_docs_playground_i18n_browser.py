@@ -72,6 +72,9 @@ def test_docs_and_playground_locale_switch_preserves_snapshots_without_requests(
     page.evaluate(
         "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
     )
+    # The tab strip is below the fold here: selecting the initial tab must not
+    # scroll the page.
+    assert page.evaluate("window.scrollY") == 0
     docs_scroll = page.evaluate(
         """() => {
             const chip = document.querySelector('#modelCatalog .model-chip');

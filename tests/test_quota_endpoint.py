@@ -187,6 +187,25 @@ class QuotaEndpointTests(unittest.TestCase):
         self.assertEqual(card["budget"]["limit_usd"], 5.0)
         self.assertAlmostEqual(card["budget"]["spent_usd"], updated.spent_usd, places=4)
 
+    def test_budget_period_reset_and_allowed_models(self):
+        """The card exposes the budget period, next reset and allowed models."""
+        rec = self.db.create(
+            name="monthly",
+            budget_usd=5.0,
+            budget_period="monthly",
+            allowed_models=["llmgateway/chat"],
+        )
+
+        app = _build_app(self.db)
+        client = TestClient(app)
+        resp = client.get("/v1/api/quota/keys", headers=self._master_headers())
+        self.assertEqual(resp.status_code, 200)
+        card = next(d for d in resp.json() if d["key_id"] == rec.id)
+        self.assertEqual(card["budget"]["period"], "monthly")
+        self.assertEqual(card["budget"]["reset_at"], self.db.get_by_id(rec.id).budget_reset_at)
+        self.assertIsNotNone(card["budget"]["reset_at"])
+        self.assertEqual(card["allowed_models"], ["llmgateway/chat"])
+
     def test_quota_empty_no_keys(self):
         """Empty database returns an empty list."""
         app = _build_app(self.db)

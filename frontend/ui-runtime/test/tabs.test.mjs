@@ -88,7 +88,10 @@ class TestElement {
     this._hidden = false;
     this._disabled = false;
     this._inert = false;
-    this.scrollCalls = [];
+    this.scrollWidth = 0;
+    this.clientWidth = 0;
+    this.scrollLeft = 0;
+    this.box = { left: 0, right: 0 };
     this.listeners = new Map();
     if (role) this.setAttribute("role", role);
   }
@@ -212,8 +215,8 @@ class TestElement {
     this.ownerDocument.activeElement = this;
   }
 
-  scrollIntoView(options) {
-    this.scrollCalls.push(options);
+  getBoundingClientRect() {
+    return this.box;
   }
 }
 
@@ -260,6 +263,10 @@ test("createTabs builds a stable ARIA graph and one roving tab stop", () => {
   const { tablist, tabs, panels } = createFixture();
   tabs[1].id = "existing-tab";
   panels[1].id = "existing-panel";
+  tablist.scrollWidth = 400;
+  tablist.clientWidth = 100;
+  tablist.box = { left: 0, right: 100 };
+  tabs[1].box = { left: 150, right: 250 };
 
   const controller = createTabs(tablist, {
     initialKey: "tab-2",
@@ -278,7 +285,7 @@ test("createTabs builds a stable ARIA graph and one roving tab stop", () => {
     assert.equal(panels[index].getAttribute("role"), "tabpanel");
     assert.equal(panels[index].hidden, index !== 1);
   }
-  assert.deepEqual(tabs[1].scrollCalls.at(-1), { block: "nearest", inline: "nearest" });
+  assert.equal(tablist.scrollLeft, 150);
 });
 
 test("generated IDs avoid document collisions and colliding existing IDs are rejected", () => {

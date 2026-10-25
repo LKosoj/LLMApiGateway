@@ -253,6 +253,38 @@ async def get_overview_page(request: Request):
         raise HTTPException(status_code=500, detail="Could not load overview page.")
 
 
+@stats_router.get("/ui/live", response_class=HTMLResponse, tags=["Usage Stats UI"])
+async def get_live_page(request: Request):
+    """Serves the HTML page for the live server load report."""
+    live_html_path = HTML_DIR / "live.html"
+    if not live_html_path.exists():
+        logging.error(f"Live HTML file not found at {live_html_path}")
+        raise HTTPException(status_code=404, detail="Live page not found.")
+    try:
+        return HTMLResponse(content=await get_template(live_html_path))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error reading live HTML file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load live page.")
+
+
+@stats_router.get("/ui/failures", response_class=HTMLResponse, tags=["Usage Stats UI"])
+async def get_failures_page(request: Request):
+    """Serves the HTML page for the model failures report."""
+    failures_html_path = HTML_DIR / "failures.html"
+    if not failures_html_path.exists():
+        logging.error(f"Failures HTML file not found at {failures_html_path}")
+        raise HTTPException(status_code=404, detail="Failures page not found.")
+    try:
+        return HTMLResponse(content=await get_template(failures_html_path))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error reading failures HTML file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load failures page.")
+
+
 @stats_router.get("/ui/activity", response_class=HTMLResponse, tags=["Usage Stats UI"])
 async def get_activity_page(request: Request):
     """Serves the HTML page for the unified request activity journal."""
@@ -408,6 +440,7 @@ async def get_analytics_dashboard(
     estimated: str | None = None,
     rejection_category: str | None = None,
     rejection_status_code: int | None = None,
+    compare: str | None = None,
 ):
     """Return a full scoped analytics payload for the usage statistics UI."""
     services = _capture_app_services(request)
@@ -442,6 +475,9 @@ async def get_analytics_dashboard(
         )
     if rejection_status_code is not None and rejection_status_code <= 0:
         raise HTTPException(status_code=400, detail="rejection_status_code must be a positive integer.")
+    compare_filter = _optional_query_value(compare)
+    if compare_filter is not None and compare_filter != "previous":
+        raise HTTPException(status_code=400, detail="compare must be 'previous'.")
 
     warnings: list[str] = []
     routing_filters_active = any(
@@ -518,6 +554,38 @@ async def get_analytics_dashboard(
         )
     if is_master:
         gather_tasks.append(tokens_usage_db.get_lifetime_totals())
+    if compare_filter:
+        # The window of the same length right before the requested one.
+        previous_start = start_date - (end_date - start_date)
+        usage_filters = {
+            "api_key_id": api_key_id_filter,
+            "api_key_unattributed": api_key_unattributed,
+            "operation": operation_filter,
+            "gateway_model": gateway_model_filter,
+            "provider": provider_filter,
+            "model": model_filter,
+            "upstream_key_fingerprint": upstream_key_filter,
+        }
+        gather_tasks.append(
+            tokens_usage_db.get_dashboard_usage(
+                resolved_bucket,
+                previous_start,
+                start_date,
+                **usage_filters,
+                usage_source=usage_source_filter,
+                x_title=x_title_filter,
+                is_estimated=estimated_filter,
+                recent_limit=0,
+            )
+        )
+        gather_tasks.append(
+            fallback_events_db.get_dashboard_fallback(
+                resolved_bucket,
+                previous_start,
+                start_date,
+                **usage_filters,
+            )
+        )
     results = await asyncio.gather(*gather_tasks)
     usage_data, filter_options, fallback_data = results[:3]
     next_index = 3
@@ -527,6 +595,20 @@ async def get_analytics_dashboard(
     else:
         rejection_data = _empty_rejection_dashboard()
     lifetime_data = results[next_index] if is_master else None
+    previous_payload = None
+    if compare_filter:
+        previous_usage, previous_fallback = results[-2:]
+        previous_summary = previous_usage["summary"]
+        previous_payload = {
+            "totals": {
+                "requests": previous_summary.get("requests", 0),
+                "total_tokens": previous_summary.get("total_tokens", 0),
+                "cost": previous_summary.get("cost", 0.0),
+            },
+            "fallback": {"summary": previous_fallback["summary"]},
+        }
+        if is_master:
+            previous_payload["fallback"]["requests"] = previous_fallback["requests"]
 
     active_records = active_requests_registry.list_records(
         api_key_id=api_key_id_filter if not api_key_unattributed else None
@@ -638,6 +720,7 @@ async def get_analytics_dashboard(
             "cost_per_million_tokens": cost_per_million_tokens,
         },
         "lifetime": lifetime_data,
+        "previous": previous_payload,
         "series": {
             "usage": usage_data["series"],
             "fallback": fallback_payload["series"],
@@ -867,6 +950,16 @@ class UpstreamPauseTarget(BaseModel):
     model: str | None = Field(default=None, min_length=1)
 
 
+class UpstreamHealthRunFilter(BaseModel):
+    """Optional narrowing of a health run; omitted fields match every target."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    provider: str | None = Field(default=None, min_length=1)
+    model: str | None = Field(default=None, min_length=1)
+    upstream_key_fingerprint: str | None = Field(default=None, min_length=1)
+
+
 class UpstreamPauseRequest(UpstreamPauseTarget):
     duration_seconds: int = Field(strict=True, gt=0)
     reason: str = Field(min_length=1)
@@ -920,7 +1013,7 @@ async def resume_upstream_key(request: Request, body: UpstreamPauseTarget):
 
 
 @stats_router.post("/api/upstream-health/run", response_class=JSONResponse, tags=["Upstream Analytics API"])
-async def run_upstream_health_checks(request: Request):
+async def run_upstream_health_checks(request: Request, body: UpstreamHealthRunFilter | None = None):
     if not _is_master_caller(request):
         raise HTTPException(status_code=403, detail="Upstream health checks are available only to the master API key.")
 
@@ -932,6 +1025,14 @@ async def run_upstream_health_checks(request: Request):
         runtime_snapshot.proxy_http_clients,
         services.http_client,
     )
+    if body is not None:
+        wanted = body.model_dump(exclude_none=True)
+        targets = [
+            target for target in targets
+            if all(getattr(target, field) == value for field, value in wanted.items())
+        ]
+        if wanted and not targets:
+            raise HTTPException(status_code=404, detail="No configured health target matches the filter.")
 
     checked_rows: list[dict] = []
     for target in targets:

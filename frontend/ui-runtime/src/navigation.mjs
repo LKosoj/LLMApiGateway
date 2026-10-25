@@ -4,6 +4,23 @@ const SVG_TAGS = new Set(["circle", "line", "path", "polyline"]);
 const SVG_ATTRIBUTES = new Set(["cx", "cy", "d", "points", "r", "x1", "x2", "y1", "y2"]);
 
 const ICONS = Object.freeze({
+  menu: Object.freeze([
+    ["line", { x1: "4", x2: "20", y1: "6", y2: "6" }],
+    ["line", { x1: "4", x2: "20", y1: "12", y2: "12" }],
+    ["line", { x1: "4", x2: "20", y1: "18", y2: "18" }],
+  ]),
+  live: Object.freeze([
+    ["path", { d: "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" }],
+  ]),
+  failures: Object.freeze([
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "m15 9-6 6" }],
+    ["path", { d: "m9 9 6 6" }],
+  ]),
+  "my-key": Object.freeze([
+    ["path", { d: "M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" }],
+    ["path", { d: "M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" }],
+  ]),
   overview: Object.freeze([
     ["path", { d: "m12 14 4-4" }],
     ["path", { d: "M3.34 19a10 10 0 1 1 17.32 0" }],
@@ -60,30 +77,56 @@ const ICONS = Object.freeze({
   ]),
 });
 
-function navigationItem(id, href, labelKey, roles) {
+function navigationItem(id, href, labelKey, group, roles) {
   return Object.freeze({
     id,
     href,
     labelKey,
     icon: id,
+    group,
     roles: Object.freeze([...roles]),
   });
 }
 
+const NAV_GROUPS = Object.freeze({
+  monitoring: "common:navigation.groups.monitoring",
+  settings: "common:navigation.groups.settings",
+  tools: "common:navigation.groups.tools",
+  help: "common:navigation.groups.help",
+});
+
 export const NAV_ITEMS = Object.freeze([
-  navigationItem("overview", "/v1/ui/overview", "common:navigation.overview", ["master", "user"]),
-  navigationItem("activity", "/v1/ui/activity", "common:navigation.activity", ["master", "user"]),
-  navigationItem("docs", "/v1/ui/docs", "common:navigation.docs", ["master", "user"]),
-  navigationItem("usage", "/v1/ui/usage-stats", "common:navigation.usage", ["master"]),
-  navigationItem("quota", "/v1/ui/quota", "common:navigation.quota", ["master", "user"]),
-  navigationItem("rules", "/v1/ui/rules-editor", "common:navigation.rules", ["master"]),
-  navigationItem("playground", "/v1/ui/playground", "common:navigation.playground", ["master"]),
-  navigationItem("api-keys", "/v1/ui/api-keys", "common:navigation.apiKeys", ["master"]),
-  navigationItem("rejections", "/v1/ui/rejections", "common:navigation.rejections", ["master"]),
-  navigationItem("translator", "/v1/ui/translator-debug", "common:navigation.translator", ["master"]),
-  navigationItem("pricing", "/v1/ui/pricing", "common:navigation.pricing", ["master"]),
-  navigationItem("free-models", "/v1/ui/free-models", "common:navigation.freeModels", ["master", "user"]),
+  navigationItem("live", "/v1/ui/live", "common:navigation.live", "monitoring", ["master"]),
+  navigationItem("failures", "/v1/ui/failures", "common:navigation.failures", "monitoring", ["master"]),
+  navigationItem("my-key", "/v1/ui/my-key", "common:navigation.myKey", "monitoring", ["user"]),
+  navigationItem("overview", "/v1/ui/overview", "common:navigation.overview", "monitoring", ["master", "user"]),
+  navigationItem("activity", "/v1/ui/activity", "common:navigation.activity", "monitoring", ["master", "user"]),
+  navigationItem("usage", "/v1/ui/usage-stats", "common:navigation.usage", "monitoring", ["master"]),
+  navigationItem("quota", "/v1/ui/quota", "common:navigation.quota", "monitoring", ["master", "user"]),
+  navigationItem("rejections", "/v1/ui/rejections", "common:navigation.rejections", "monitoring", ["master"]),
+  navigationItem("rules", "/v1/ui/rules-editor", "common:navigation.rules", "settings", ["master"]),
+  navigationItem("api-keys", "/v1/ui/api-keys", "common:navigation.apiKeys", "settings", ["master"]),
+  navigationItem("pricing", "/v1/ui/pricing", "common:navigation.pricing", "settings", ["master"]),
+  navigationItem("playground", "/v1/ui/playground", "common:navigation.playground", "tools", ["master"]),
+  navigationItem("translator", "/v1/ui/translator-debug", "common:navigation.translator", "tools", ["master"]),
+  navigationItem("free-models", "/v1/ui/free-models", "common:navigation.freeModels", "tools", ["master", "user"]),
+  navigationItem("docs", "/v1/ui/docs", "common:navigation.docs", "help", ["master", "user"]),
 ]);
+
+// Phone bottom bar: the most used sections per role, the rest stays in the
+// drawer behind the "Menu" button.
+export const BOTTOM_NAV_ITEMS = Object.freeze({
+  master: Object.freeze(["live", "failures", "activity"]),
+  user: Object.freeze(["my-key", "activity", "docs"]),
+});
+
+const BOTTOM_NAV_LABELS = Object.freeze({
+  live: "common:navigation.short.live",
+  failures: "common:navigation.short.failures",
+  "my-key": "common:navigation.short.myKey",
+  activity: "common:navigation.short.activity",
+  docs: "common:navigation.short.docs",
+});
 
 export function normalizePathname(value) {
   if (typeof value !== "string" || value.length === 0) return "";
@@ -102,6 +145,14 @@ export function normalizePathname(value) {
 export function visibleNavigationItems(role) {
   if (role !== "master" && role !== "user") return [];
   return NAV_ITEMS.filter((item) => item.roles.includes(role));
+}
+
+function translatedText(translate, key) {
+  const translated = translate(key);
+  if (typeof translated !== "string") {
+    throw new TypeError(`Navigation label must be a string: ${key}`);
+  }
+  return translated;
 }
 
 function createIcon(document, iconName) {
@@ -130,6 +181,18 @@ function createIcon(document, iconName) {
     icon.appendChild(child);
   }
   return icon;
+}
+
+function createGroupLabel(document, group, translate) {
+  const label = document.createElement("div");
+  label.classList.add("gateway-nav-group");
+  label.setAttribute("data-nav-group", group);
+  const translated = translate(NAV_GROUPS[group]);
+  if (typeof translated !== "string") {
+    throw new TypeError(`Navigation group label must be a string: ${group}`);
+  }
+  label.textContent = translated;
+  return label;
 }
 
 function createLink(document, item, currentPath, translate) {
@@ -262,7 +325,18 @@ export function createNavigation(root, options = {}) {
     links = items.map((item) => createLink(document, item, currentPath, config.translate));
 
     if (config.layout === "list") {
-      root.replaceChildren(...links);
+      // Group labels are plain text between links: roving focus and
+      // overflow handling keep working on the links array only.
+      const children = [];
+      let currentGroup = null;
+      items.forEach((item, index) => {
+        if (item.group !== currentGroup) {
+          currentGroup = item.group;
+          children.push(createGroupLabel(document, item.group, config.translate));
+        }
+        children.push(links[index]);
+      });
+      root.replaceChildren(...children);
     } else {
       scroller = document.createElement("div");
       scroller.classList.add("gateway-nav-scroller");
@@ -310,6 +384,73 @@ export function createNavigation(root, options = {}) {
       disconnectObservers();
     },
     refreshOverflow,
+    update(next = {}) {
+      config = { ...config, ...next };
+      render();
+      return controller;
+    },
+  });
+  render();
+  return controller;
+}
+
+function createBottomEntry(document, tagName, iconName, label) {
+  const entry = document.createElement(tagName);
+  entry.classList.add("gateway-bottom-nav-link");
+  entry.appendChild(createIcon(document, iconName));
+  const text = document.createElement("span");
+  text.textContent = label;
+  entry.appendChild(text);
+  return entry;
+}
+
+// `onMenu` opens the full navigation (the sidebar drawer on phones).
+export function createBottomNavigation(root, options = {}) {
+  if (!root?.ownerDocument || typeof root.replaceChildren !== "function") {
+    throw new TypeError("A bottom navigation mount element is required");
+  }
+
+  let config = {
+    pathname: "/",
+    role: "pending",
+    translate: null,
+    onMenu: null,
+    ...options,
+  };
+  function render() {
+    const ids = BOTTOM_NAV_ITEMS[config.role] ?? [];
+    root.hidden = ids.length === 0;
+    root.replaceChildren();
+    if (ids.length === 0) return;
+    if (typeof config.translate !== "function") {
+      throw new TypeError("A navigation translator is required");
+    }
+
+    const document = root.ownerDocument;
+    const currentPath = normalizePathname(config.pathname);
+    const links = ids.map((id) => {
+      const item = NAV_ITEMS.find((candidate) => candidate.id === id);
+      const link = createBottomEntry(document, "a", item.icon, translatedText(config.translate, BOTTOM_NAV_LABELS[id]));
+      link.setAttribute("href", item.href);
+      link.setAttribute("data-nav-id", item.id);
+      if (normalizePathname(item.href) === currentPath) link.setAttribute("aria-current", "page");
+      return link;
+    });
+    const menuButton = createBottomEntry(
+      document,
+      "button",
+      "menu",
+      translatedText(config.translate, "common:navigation.short.menu"),
+    );
+    menuButton.type = "button";
+    menuButton.setAttribute("data-bottom-nav-menu", "");
+    menuButton.setAttribute("aria-haspopup", "dialog");
+    menuButton.addEventListener("click", () => config.onMenu?.());
+    root.replaceChildren(...links, menuButton);
+    root.setAttribute("aria-label", translatedText(config.translate, "common:navigation.bottomLabel"));
+  }
+
+  const controller = Object.freeze({
     update(next = {}) {
       config = { ...config, ...next };
       render();

@@ -230,3 +230,67 @@ def test_invalid_health_target_prevents_all_posts():
 
     run_async(scenario())
     assert client.calls == []
+
+
+def _two_target_health_request(client):
+    loader = _health_loader(
+        {
+            "first": ProviderDetails(baseUrl="https://first.example", apikey="FIRST"),
+            "second": ProviderDetails(baseUrl="https://second.example", apikey="SECOND"),
+        },
+        [
+            {"provider": "first", "model": "model-a"},
+            {"provider": "second", "model": "model-b"},
+        ],
+    )
+    services = make_app_services(http_client=client, upstream_routing_state=UpstreamRoutingState())
+    snapshot = make_runtime_snapshot(config_loader=loader, http_client=client)
+    return services, _health_request(services, snapshot)
+
+
+def test_health_run_filter_checks_only_the_matching_target():
+    client = _ProbeClient()
+    services, request = _two_target_health_request(client)
+
+    response = run_async(
+        stats_module.run_upstream_health_checks(
+            request,
+            stats_module.UpstreamHealthRunFilter(provider="second", model="model-b"),
+        )
+    )
+
+    body = json.loads(response.body)
+    assert body["checked"] == 1
+    assert body["rows"][0]["provider"] == "second"
+    assert [call["json"]["model"] for call in client.calls] == ["model-b"]
+    assert [row["model"] for row in services.upstream_routing_state.get_status_rows()] == ["model-b"]
+
+
+def test_health_run_with_an_empty_filter_checks_every_target():
+    client = _ProbeClient()
+    _, request = _two_target_health_request(client)
+
+    response = run_async(
+        stats_module.run_upstream_health_checks(request, stats_module.UpstreamHealthRunFilter())
+    )
+
+    assert json.loads(response.body)["checked"] == 2
+
+
+def test_health_run_filter_without_a_match_is_rejected_before_any_post():
+    client = _ProbeClient()
+    _, request = _two_target_health_request(client)
+
+    async def scenario() -> None:
+        try:
+            await stats_module.run_upstream_health_checks(
+                request,
+                stats_module.UpstreamHealthRunFilter(provider="first", model="model-b"),
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 404
+        else:
+            raise AssertionError("unmatched health filter did not fail")
+
+    run_async(scenario())
+    assert client.calls == []

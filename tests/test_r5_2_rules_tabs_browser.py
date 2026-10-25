@@ -55,9 +55,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
         [{"name": "llmgateway_session", "value": session, "url": server_url}]
     )
     page.goto(f"{server_url}/v1/ui/rules-editor")
-    expect(page.locator("#messageArea")).to_contain_text(
-        "Fallback Rules loaded successfully"
-    )
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     assert initial_rules_request_count == 1
     expect(page.locator('[data-entity-target="openrouter-free"]')).to_be_visible()
 
@@ -106,9 +104,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
     page.click("#runOpenRouterFreeEvalButton")
     _wait_for_routes(page, openrouter_run_requests, 2)
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text(
-        "Fallback Rules loaded successfully"
-    )
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     openrouter_count_before_leave_response = len(openrouter_requests)
     openrouter_run_requests[1].fulfill(
         json={
@@ -119,9 +115,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
     )
     page.wait_for_timeout(3_200)
     assert len(openrouter_requests) == openrouter_count_before_leave_response
-    expect(page.locator("#messageArea")).to_contain_text(
-        "Fallback Rules loaded successfully"
-    )
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     expect(page.locator("#openRouterFreeModels")).not_to_contain_text(
         "stale-leave-openrouter"
     )
@@ -171,9 +165,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
     page.click("#runFallbackEvalButton")
     _wait_for_routes(page, fallback_run_requests, 2)
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text(
-        "Fallback Rules loaded successfully"
-    )
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     fallback_count_before_leave_response = len(fallback_requests)
     fallback_run_requests[1].fulfill(
         json={
@@ -185,9 +177,7 @@ def test_eval_tabs_recover_pending_requests_without_stale_writes(
     )
     page.wait_for_timeout(3_200)
     assert len(fallback_requests) == fallback_count_before_leave_response
-    expect(page.locator("#messageArea")).to_contain_text(
-        "Fallback Rules loaded successfully"
-    )
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     expect(page.locator("#fallbackEvalStatus")).not_to_contain_text(
         "stale-leave-fallback"
     )

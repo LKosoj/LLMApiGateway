@@ -1,7 +1,7 @@
 {
   "page": {
     "documentTitle": "LLM Gateway — API-ключи",
-    "heading": "LLM Gateway — API-ключи",
+    "heading": "API-ключи",
     "description": "Управление виртуальными API-ключами. Для каждого ключа можно задать бюджет в долларах США, лимиты RPM/TPM и список разрешённых моделей шлюза."
   },
   "toolbar": {

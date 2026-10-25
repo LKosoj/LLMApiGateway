@@ -426,7 +426,7 @@ def test_fallback_rules_still_work(page: Page, server):
     page.goto(f"{server}/v1/ui/rules-editor")
     
     # Wait for initial load
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     
     # Add a new rule
     page.click("#addRuleButton")
@@ -458,7 +458,7 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
     page.goto(f"{server}/v1/ui/rules-editor")
     page.click('[data-entity-target="providers"]')
 
-    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
     expect(page.locator("#providersList .provider-card")).to_have_count(1)
     expect(page.locator("#providersList .CodeMirror")).to_have_count(0)
 
@@ -500,7 +500,7 @@ def test_providers_editor_structured_ui_roundtrip(page: Page, server):
 
     page.reload()
     page.click('[data-entity-target="providers"]')
-    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
     expect(page.locator("#providersList .provider-card")).to_have_count(2)
     saved_provider = page.locator("#providersList .provider-card").nth(1)
     expect(saved_provider.locator(".provider-name-input")).to_have_value("anthropic_local")
@@ -608,7 +608,7 @@ def test_providers_editor_load_failure_disables_save_and_add_until_retry(page: P
 
     page.click('[data-entity-target="providers"]')
 
-    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
     expect(page.locator("#saveButton")).to_be_enabled()
     expect(page.locator("#addProviderButton")).to_be_enabled()
     expect(page.locator("#providersList .provider-card")).to_have_count(1)
@@ -631,7 +631,7 @@ def test_async_providers_load_locks_navigation_until_response(page: Page, server
     page.route("**/v1/config/providers/structured", handle_structured_providers)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     page.click('[data-entity-target="providers"]')
     expect(page.locator("#saveButton")).to_be_disabled()
     expect(page.locator('[data-entity-target="rules"]')).to_be_disabled()
@@ -650,13 +650,13 @@ def test_async_providers_load_locks_navigation_until_response(page: Page, server
         },
         headers={"ETag": PROVIDERS_ETAG},
     )
-    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
     expect(page.locator('[data-entity-target="rules"]')).to_be_enabled()
     expect(page.locator('[data-entity-target="providers"]')).to_be_enabled()
     expect(page.locator("#saveButton")).to_be_enabled()
 
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     expect(page.locator("#saveButton")).to_be_enabled()
 
 
@@ -675,7 +675,7 @@ def test_providers_editor_serializes_explicit_loads(page: Page, server):
     page.route("**/v1/config/providers/structured", handle_structured_providers)
 
     page.goto(f"{server}/v1/ui/rules-editor")
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
 
     page.click('[data-entity-target="providers"]')
     expect(page.locator("#saveButton")).to_be_disabled()
@@ -697,13 +697,13 @@ def test_providers_editor_serializes_explicit_loads(page: Page, server):
         },
         headers={"ETag": PROVIDERS_ETAG},
     )
-    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
     expect(page.locator("#providersList .provider-card")).to_have_count(1)
     expect(page.locator("#saveButton")).to_be_enabled()
     expect(page.locator("#addProviderButton")).to_be_enabled()
 
     page.click('[data-entity-target="rules"]')
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     page.click('[data-entity-target="providers"]')
     expect(page.locator("#saveButton")).to_be_disabled()
     assert len(provider_get_routes) == 2
@@ -720,7 +720,7 @@ def test_providers_editor_serializes_explicit_loads(page: Page, server):
         },
         headers={"ETag": NEXT_PROVIDERS_ETAG},
     )
-    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
     expect(page.locator("#providersList .provider-card")).to_have_count(1)
     expect(page.locator("#providersList .provider-name-input")).to_have_value("anthropic")
     expect(page.locator("#saveButton")).to_be_enabled()
@@ -738,7 +738,7 @@ def test_fallback_rules_max_total_attempts_and_use_provider_order_persist(page: 
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     page.click("#addRuleButton")
     page.fill(".gateway-model-input", "chain-budget-model")
     page.fill(".max-total-attempts-input", "5")
@@ -752,7 +752,7 @@ def test_fallback_rules_max_total_attempts_and_use_provider_order_persist(page: 
     expect(page.locator("#messageArea")).to_contain_text("updated successfully")
 
     page.reload()
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     rule_card = page.locator(".rule-card").first
     if "collapsed" in (rule_card.get_attribute("class") or "").split():
         rule_card.locator(".accordion-toggle").click()
@@ -772,7 +772,7 @@ def test_fallback_rules_dynamic_penalty_toggle_persists(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     page.click("#addRuleButton")
     page.fill(".gateway-model-input", "dynamic-penalty-model")
     page.select_option(".provider-select", "openai")
@@ -794,7 +794,7 @@ def test_fallback_rules_strip_think_tags_toggle_persists(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     page.click("#addRuleButton")
     page.fill(".gateway-model-input", "my-thinkless-model")
     page.select_option(".provider-select", "openai")
@@ -843,7 +843,7 @@ def test_fallback_rules_loads_with_unavailable_models_highlighted(page: Page, se
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     expect(page.locator(".gateway-model-input")).to_have_value("my-gateway-model")
     expect(page.locator(".model-select").first).to_have_value("missing-model-1")
     expect(page.locator(".model-select").nth(1)).to_have_value("missing-model-2")
@@ -903,7 +903,7 @@ def test_fallback_rules_unavailable_model_can_be_replaced(page: Page, server):
 
     page.goto(f"{server}/v1/ui/rules-editor")
 
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     compress_tool_results = page.locator(".compress-tool-results-checkbox")
     expect(compress_tool_results).to_be_checked()
     compress_tool_results.uncheck()
@@ -975,7 +975,7 @@ def test_fallback_rules_unavailable_models_grouped_by_gateway_model(page: Page, 
     page.goto(f"{server}/v1/ui/rules-editor")
 
     message = page.locator("#messageArea")
-    expect(message).to_contain_text("Fallback Rules loaded successfully")
+    expect(message).to_have_attribute("data-loaded", "Fallback Rules")
     page.locator(".accordion-toggle").nth(0).click()
     page.locator(".accordion-toggle").nth(1).click()
     page.click("#saveButton")
@@ -1649,7 +1649,7 @@ def test_editor_save_and_reload(page: Page, server):
     page.goto(f"{server}/v1/ui/rules-editor")
     
     # 1. Fallback Rules
-    expect(page.locator("#messageArea")).to_contain_text("Fallback Rules loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Fallback Rules")
     page.click("#addRuleButton")
     page.fill("#editor-container-rules .gateway-model-input", "model-chat")
     page.select_option("#editor-container-rules .provider-select", "openai")
@@ -1660,7 +1660,7 @@ def test_editor_save_and_reload(page: Page, server):
 
     # 2. Decisions (Router selector must be a decisions model)
     page.click('[data-entity-target="decisions"]')
-    expect(page.locator("#messageArea")).to_contain_text("Decisions Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Decisions Routes")
     page.click("#addDecisionsButton")
     page.fill("#editor-container-decisions .gateway-model-input", "model-decision")
     page.select_option("#editor-container-decisions .provider-select", "openai")
@@ -1670,7 +1670,7 @@ def test_editor_save_and_reload(page: Page, server):
 
     # 3. Router
     page.click('[data-entity-target="router"]')
-    expect(page.locator("#messageArea")).to_contain_text("Router Models loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Router Models")
     page.click("#addRouterButton")
     page.fill("#editor-container-router .gateway-model-input", "model-router")
     page.select_option("#editor-container-router .router-selector-model-select", "model-decision")
@@ -1681,7 +1681,7 @@ def test_editor_save_and_reload(page: Page, server):
 
     # 4. Embeddings
     page.click('[data-entity-target="embeddings"]')
-    expect(page.locator("#messageArea")).to_contain_text("Embeddings Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Embeddings Routes")
     page.click("#addEmbeddingButton")
     page.fill("#editor-container-embeddings .gateway-model-input", "model-emb")
     page.select_option("#editor-container-embeddings .provider-select", "openai")
@@ -1691,7 +1691,7 @@ def test_editor_save_and_reload(page: Page, server):
 
     # 5. Rerank
     page.click('[data-entity-target="rerank"]')
-    expect(page.locator("#messageArea")).to_contain_text("Rerank Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Rerank Routes")
     page.click("#addRerankButton")
     page.fill("#editor-container-rerank .gateway-model-input", "model-rerank")
     page.select_option("#editor-container-rerank .provider-select", "openai")
@@ -1701,7 +1701,7 @@ def test_editor_save_and_reload(page: Page, server):
 
     # 6. Images
     page.click('[data-entity-target="images"]')
-    expect(page.locator("#messageArea")).to_contain_text("Images Routes loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Images Routes")
     page.click("#addImageGenerationButton")
     page.fill("#imageGenerationList .gateway-model-input", "model-image-gen")
     page.select_option("#imageGenerationList .provider-select", "openai")
@@ -1715,7 +1715,7 @@ def test_editor_save_and_reload(page: Page, server):
 
     # 7. Providers
     page.click('[data-entity-target="providers"]')
-    expect(page.locator("#messageArea")).to_contain_text("Providers loaded successfully")
+    expect(page.locator("#messageArea")).to_have_attribute("data-loaded", "Providers")
     
     # Reload and check all
     page.reload()

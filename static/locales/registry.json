@@ -28,7 +28,10 @@
     "quota",
     "rejections",
     "translator",
-    "free_models"
+    "free_models",
+    "live",
+    "failures",
+    "my_key"
   ],
   "pageNamespaces": {
     "runtime": [
@@ -89,6 +92,18 @@
     ],
     "access-denied": [
       "common"
+    ],
+    "live": [
+      "common",
+      "live"
+    ],
+    "failures": [
+      "common",
+      "failures"
+    ],
+    "my-key": [
+      "common",
+      "my_key"
     ]
   }
 }

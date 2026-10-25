@@ -20,9 +20,9 @@ from ...config.loader import (
     ModelsOperationConfig,
     RouterModelConfig,
     SubscriptionQuotaConfig,
+    UpstreamQuotaConfig,
 )
 from ...config.schema_validation import validate_custom_headers
-from ...config.schemas import UpstreamQuotaConfig
 from ...config.config_store import ConfigFile, ConfigSourceBundle
 from ...services.fallback_model_evals import FallbackModelEvalAlreadyRunning
 from ...services.openrouter_free_models import OpenRouterFreeModelsNotConfigured
