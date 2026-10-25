@@ -191,8 +191,18 @@ async def _parse_audio_speech_request(request: Request) -> tuple[str, dict[str, 
     if not isinstance(requested_model, str) or not requested_model.strip():
         raise HTTPException(status_code=400, detail="Missing 'model' in request body")
 
-    input_text = request_payload.get("input")
-    if not isinstance(input_text, str) or not input_text.strip():
+    input_value = request_payload.get("input")
+    if isinstance(input_value, list):
+        # Multi-speaker input (OpenRouter-style): list of turns, each with its own text and optional voice.
+        if not input_value or not all(
+            isinstance(turn, dict) and isinstance(turn.get("text"), str) and turn["text"].strip()
+            for turn in input_value
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="'input' list must contain turn objects with non-empty 'text'",
+            )
+    elif not isinstance(input_value, str) or not input_value.strip():
         raise HTTPException(status_code=400, detail="Missing 'input' in request body")
 
     if _is_truthy_form_value(request_payload.get("stream")):

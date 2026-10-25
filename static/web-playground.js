@@ -61,6 +61,7 @@
         voiceCatalogEmpty: "status.voiceCatalogEmpty",
         voiceLoadFailed: "status.voiceLoadFailed",
         voiceIdRequired: "status.voiceIdRequired",
+        dialogueLineInvalid: "status.dialogueLineInvalid",
         selectModelFirst: "status.selectModelFirst",
         selectProviderFirst: "status.selectProviderFirst",
         providerModelsLoadFailed: "status.providerModelsLoadFailed",
@@ -1534,8 +1535,31 @@
         }
     }
 
+    function parseSpeechDialogue(text) {
+        const turns = [];
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length; i += 1) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const separator = line.indexOf(":");
+            const voice = separator > 0 ? line.slice(0, separator).trim() : "";
+            const turnText = separator > 0 ? line.slice(separator + 1).trim() : "";
+            if (!voice || !turnText) return {invalidLine: i + 1};
+            turns.push({text: turnText, voice});
+        }
+        return {turns};
+    }
+
     async function submitAudioSpeechRequest(kind, url, form) {
         const body = readFormData(form);
+        if (document.getElementById("audioSpeechDialogue").checked && body.input) {
+            const dialogue = parseSpeechDialogue(body.input);
+            if (dialogue.invalidLine) {
+                setStatus(kind, KEYS.dialogueLineInvalid, true, {line: dialogue.invalidLine});
+                return;
+            }
+            body.input = dialogue.turns;
+        }
         if (manualVoiceModels.has(body.model)) {
             body.voice = document.getElementById("audioSpeechVoiceId").value.trim();
             if (!body.voice) {

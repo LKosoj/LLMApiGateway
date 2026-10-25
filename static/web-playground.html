@@ -503,6 +503,7 @@
                     <div class="field-group">
                         <label for="audioSpeechInput" data-i18n="playground:labels.inputText">Input text</label>
                         <textarea id="audioSpeechInput" name="input" rows="5" required></textarea>
+                        <p class="field-help" data-i18n="playground:help.speechDialogue">In dialogue mode, each line is voice_id: line of dialogue. The Voice field remains the default voice.</p>
                     </div>
                     <div class="field-group">
                         <label for="audioSpeechInstructions" data-i18n="playground:labels.instructions">Instructions (emotion and style)</label>
@@ -511,6 +512,10 @@
                     <label class="toggle-field">
                         <input id="audioSpeechLlmEnhance" name="llm_enhance" type="checkbox" checked>
                         <span data-i18n="playground:labels.llmEnhance">Enhance speech with LLM (Silero / CosyVoice)</span>
+                    </label>
+                    <label class="toggle-field">
+                        <input id="audioSpeechDialogue" type="checkbox">
+                        <span data-i18n="playground:labels.speechDialogue">Dialogue (multiple voices)</span>
                     </label>
                     <div class="field-row">
                         <div class="field-group">

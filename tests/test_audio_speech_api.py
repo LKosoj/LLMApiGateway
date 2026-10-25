@@ -241,6 +241,46 @@ class AudioSpeechApiTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Missing 'input' in request body")
         fake_http_client.post.assert_not_awaited()
 
+    def test_audio_speech_forwards_multi_speaker_turns_unchanged(self):
+        turns = [
+            {"text": "Добрый вечер!", "voice": "speaker-a"},
+            {"text": "Здравствуйте.", "voice": "speaker-b"},
+        ]
+        with self._client(_FakeDownstreamResponse(b"audio-bytes", content_type="audio/mpeg")) as (
+            client,
+            _dispatcher,
+            fake_http_client,
+        ):
+            response = client.post(
+                "/v1/audio/speech",
+                json={"model": "gateway/audio-speech", "input": turns, "voice": "speaker-a"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"audio-bytes")
+        fake_http_client.post.assert_awaited_once()
+        self.assertEqual(fake_http_client.post.await_args.kwargs["json"]["input"], turns)
+
+    def test_audio_speech_rejects_invalid_multi_speaker_turns(self):
+        for bad_input in ([], [{"voice": "speaker-a"}], [{"text": "  "}], ["plain string"]):
+            with self.subTest(input=bad_input), self._client(_FakeDownstreamResponse(b"unused")) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                response = client.post(
+                    "/v1/audio/speech",
+                    json={"model": "gateway/audio-speech", "input": bad_input},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(
+                    response.json()["detail"], "'input' list must contain turn objects with non-empty 'text'"
+                )
+                fake_http_client.post.assert_not_awaited()
+
     def test_audio_speech_unknown_model(self):
         with self._client(_FakeDownstreamResponse(b"unused")) as (client, _dispatcher, fake_http_client):
             response = client.post(

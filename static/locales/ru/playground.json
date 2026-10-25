@@ -83,7 +83,8 @@
     "instructions": "Инструкции (эмоция и стиль)",
     "llmEnhance": "Улучшение речи через LLM (Silero / CosyVoice)",
     "minDuration": "Мин. длительность сегмента, с",
-    "voiceId": "ID голоса"
+    "voiceId": "ID голоса",
+    "speechDialogue": "Диалог (несколько голосов)"
   },
   "actions": {
     "sendMessage": "Отправить сообщение",
@@ -133,7 +134,8 @@
     "researchOutputLanguage": "Задаёт язык итогового отчёта.",
     "researchArticleFormat": "Задаёт формат, который запрашивается у сервиса чтения страниц перед анализом.",
     "generatedImagesRetention": "Локальные PNG хранятся в защищённом хранилище сервера и удаляются через 10 дней; Docker Compose сохраняет их после перезапуска и пересоздания. Срок жизни URL провайдера определяется самим провайдером.",
-    "providerDirect": "Запрос уходит напрямую выбранному провайдеру: без цепочки fallback, без правил Fusion и Router."
+    "providerDirect": "Запрос уходит напрямую выбранному провайдеру: без цепочки fallback, без правил Fusion и Router.",
+    "speechDialogue": "В режиме диалога каждая строка — id_голоса: реплика. Поле «Голос» остаётся голосом по умолчанию."
   },
   "models": {
     "empty": "— Модели не настроены —",
@@ -167,7 +169,8 @@
     "assistantTyping": "Ассистент печатает…",
     "modelsLoadFailed": "Не удалось загрузить модели.",
     "tooManyFiles": "Выберите не более {count, number} файлов для поля {field}.",
-    "voiceIdRequired": "Введите ID голоса."
+    "voiceIdRequired": "Введите ID голоса.",
+    "dialogueLineInvalid": "Строка {line, number}: нужен формат id_голоса: реплика."
   },
   "results": {
     "download": "Скачать",

@@ -293,3 +293,51 @@ def test_playground_manual_voice_skips_catalog_and_requires_id(page: Page, serve
     expect(page.locator("#audioSpeechForm .run-button")).to_be_enabled()
     assert speech_requests[-1]["voice"] == "fish-voice-id"
     assert len(voice_requests) == 1
+
+
+def test_playground_speech_dialogue_sends_turns_with_voices(page: Page, server):
+    session = create_authenticated_session(server, "test-key")
+    page.context.add_cookies([{"name": "llmgateway_session", "value": session, "url": server}])
+    page.route(
+        "**/v1/ui/playground/models",
+        lambda route: route.fulfill(json={
+            "audio_speech": ["manual-tts"],
+            "audio_speech_manual_voice": ["manual-tts"],
+        }),
+    )
+    speech_requests = []
+
+    def speech(route):
+        speech_requests.append(route.request.post_data_json)
+        route.fulfill(status=400, json={"detail": "Test response"})
+
+    page.route("**/v1/audio/speech", speech)
+    page.goto(f"{server}/v1/ui/playground")
+    expect(page.locator("#audioSpeechModel")).to_have_value("manual-tts")
+    page.locator('[data-playground-section-tab="audio-speech"]').click()
+    page.fill("#audioSpeechVoiceId", "voice-a")
+    page.check("#audioSpeechDialogue")
+
+    page.fill("#audioSpeechInput", "voice-a: Добрый вечер!\nбез голоса")
+    page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator('[data-playground-section-panel="audio-speech"]')).to_contain_text(
+        "Line 2: use the format voice_id: line of dialogue."
+    )
+    assert speech_requests == []
+
+    page.fill("#audioSpeechInput", "voice-a: Добрый вечер!\n\nvoice-b: Время: девять.")
+    with page.expect_request("**/v1/audio/speech"):
+        page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator("#audioSpeechForm .run-button")).to_be_enabled()
+    assert speech_requests[-1]["voice"] == "voice-a"
+    assert speech_requests[-1]["input"] == [
+        {"text": "Добрый вечер!", "voice": "voice-a"},
+        {"text": "Время: девять.", "voice": "voice-b"},
+    ]
+
+    page.uncheck("#audioSpeechDialogue")
+    page.fill("#audioSpeechInput", "voice-a: просто текст")
+    with page.expect_request("**/v1/audio/speech"):
+        page.locator("#audioSpeechForm .run-button").click()
+    expect(page.locator("#audioSpeechForm .run-button")).to_be_enabled()
+    assert speech_requests[-1]["input"] == "voice-a: просто текст"

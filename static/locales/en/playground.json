@@ -83,7 +83,8 @@
     "instructions": "Instructions (emotion and style)",
     "llmEnhance": "Enhance speech with LLM (Silero / CosyVoice)",
     "minDuration": "Min segment duration, s",
-    "voiceId": "Voice ID"
+    "voiceId": "Voice ID",
+    "speechDialogue": "Dialogue (multiple voices)"
   },
   "actions": {
     "sendMessage": "Send message",
@@ -133,7 +134,8 @@
     "researchOutputLanguage": "Controls the language used for the synthesized final report.",
     "researchArticleFormat": "Controls the format requested from the page reader before analysis.",
     "generatedImagesRetention": "Locally published PNGs are stored in protected server storage and removed after 10 days; Docker Compose keeps them across restart and recreate. Provider-hosted URLs follow the provider's lifecycle.",
-    "providerDirect": "The request goes straight to the selected provider: no fallback chain, no Fusion or Router rule is applied."
+    "providerDirect": "The request goes straight to the selected provider: no fallback chain, no Fusion or Router rule is applied.",
+    "speechDialogue": "In dialogue mode, each line is voice_id: line of dialogue. The Voice field remains the default voice."
   },
   "models": {
     "empty": "— No models configured —",
@@ -167,7 +169,8 @@
     "assistantTyping": "Assistant is typing…",
     "modelsLoadFailed": "Failed to load models.",
     "tooManyFiles": "Select no more than {count, number} files for {field}.",
-    "voiceIdRequired": "Enter a voice ID."
+    "voiceIdRequired": "Enter a voice ID.",
+    "dialogueLineInvalid": "Line {line, number}: use the format voice_id: line of dialogue."
   },
   "results": {
     "download": "Download",

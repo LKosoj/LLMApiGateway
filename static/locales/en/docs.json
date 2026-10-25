@@ -109,7 +109,7 @@
       "kicker": "Speech",
       "text001": "Use",
       "text002": "Gateway model from the audio speech group.",
-      "text003": "Text to synthesize.",
+      "text003": "Text to synthesize, or a list of turns for multiple voices:",
       "text004": "Downstream TTS voice, if voice selection is supported.",
       "text005": "Audio format, e.g.",
       "text006": "or",
@@ -140,7 +140,8 @@
       "text029": "Gateway model from the audio diarizations group.",
       "text030": "Minimum segment duration in seconds, if supported by the model.",
       "text031": "JSON with a list of",
-      "text032": "segments, or RTTM text."
+      "text032": "segments, or RTTM text.",
+      "inputTurns": ". Each turn needs a non-empty text; voice and instructions are optional. The gateway forwards the list unchanged (for example, for fish-audio/drama-3)."
     },
     "auth": {
       "heading": "Authorization and base URL",
