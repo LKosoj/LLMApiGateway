@@ -710,12 +710,17 @@ class UpstreamRoutingState:
         last_error: str | None,
     ) -> None:
         with self._lock:
-            state = self._state_for((provider, model, key_fingerprint))
+            ref = (provider, model, key_fingerprint)
+            state = self._state_for(ref)
             state.health_status = health_status
             state.last_checked_at = self._utc_now_iso()
             state.last_error = last_error[:500] if last_error else None
             if health_status == "healthy":
                 state.cooldown_until = None
+                # A served request or a passed health check ends the rate-limit
+                # episode: the next 429 starts the ladder from scratch.
+                self._rate_limit_hit_windows.pop(ref, None)
+                self._exhaustion_windows.pop(ref, None)
                 state.penalty_score = max(0.0, state.penalty_score - 10.0)
                 state.penalty_updated_at = self._monotonic_func()
 

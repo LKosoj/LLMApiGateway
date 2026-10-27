@@ -601,6 +601,79 @@ class UpstreamRoutingStateTests(unittest.TestCase):
         )
         self.assertEqual(row["cooldown_escalation_level"], 0)
 
+    def test_success_resets_rate_limit_ladder(self):
+        # A key that served real content is no longer exhausted: earlier hits
+        # must not push the next 429 straight back to a long rung.
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        fingerprint = fingerprint_api_key("sk-success-reset-secret")
+
+        def hit():
+            state.record_failure(
+                "agentrouter",
+                "provider-model",
+                fingerprint,
+                _UpstreamError(),
+                temporary=True,
+                apply_penalty=False,
+            )
+            return state.get_status_rows()[0]
+
+        hit()
+        clock.value += RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS + 1
+        row = hit()
+        self.assertEqual(row["cooldown_escalation_level"], 1)
+
+        clock.value += RATE_LIMIT_ESCALATION_LADDER_SECONDS[0] + 1
+        state.record_success("agentrouter", "provider-model", fingerprint)
+        row = state.get_status_rows()[0]
+        self.assertEqual(row["cooldown_escalation_level"], 0)
+        self.assertEqual(row["cooldown_remaining_seconds"], 0.0)
+
+        row = hit()
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS, delta=0.01
+        )
+        self.assertEqual(row["cooldown_escalation_level"], 0)
+
+    def test_healthy_health_check_resets_rate_limit_ladder_during_cooldown(self):
+        # The manual check on the failures page lifts a long-rung block and
+        # must also forget the exhaustion history behind it.
+        clock = _Clock()
+        state = UpstreamRoutingState(time_func=clock.time, monotonic_func=clock.monotonic)
+        fingerprint = fingerprint_api_key("sk-health-reset-secret")
+
+        def hit():
+            state.record_failure(
+                "agentrouter",
+                "provider-model",
+                fingerprint,
+                _UpstreamError(),
+                temporary=True,
+                apply_penalty=False,
+            )
+            return state.get_status_rows()[0]
+
+        hit()
+        clock.value += RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS + 1
+        row = hit()
+        self.assertEqual(row["cooldown_escalation_level"], 1)
+
+        state.mark_health("agentrouter", "provider-model", fingerprint, "error", "HTTP 500")
+        row = state.get_status_rows()[0]
+        self.assertEqual(row["cooldown_escalation_level"], 1)
+
+        state.mark_health("agentrouter", "provider-model", fingerprint, "healthy", None)
+        row = state.get_status_rows()[0]
+        self.assertEqual(row["cooldown_escalation_level"], 0)
+        self.assertEqual(row["cooldown_remaining_seconds"], 0.0)
+
+        row = hit()
+        self.assertAlmostEqual(
+            row["cooldown_remaining_seconds"], RATE_LIMIT_TRANSIENT_COOLDOWN_SECONDS, delta=0.01
+        )
+        self.assertEqual(row["cooldown_escalation_level"], 0)
+
     def test_rate_limit_retry_after_floor_extends_but_never_shortens_ladder_cooldown(self):
         state = UpstreamRoutingState()
 
