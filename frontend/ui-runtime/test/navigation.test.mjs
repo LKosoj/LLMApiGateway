@@ -186,7 +186,7 @@ test("NAV_ITEMS is an immutable grouped fifteen-route role contract", () => {
       { id: "rules", href: "/v1/ui/rules-editor", labelKey: "common:navigation.rules", group: "settings", roles: ["master"] },
       { id: "api-keys", href: "/v1/ui/api-keys", labelKey: "common:navigation.apiKeys", group: "settings", roles: ["master"] },
       { id: "pricing", href: "/v1/ui/pricing", labelKey: "common:navigation.pricing", group: "settings", roles: ["master"] },
-      { id: "playground", href: "/v1/ui/playground", labelKey: "common:navigation.playground", group: "tools", roles: ["master"] },
+      { id: "playground", href: "/v1/ui/playground", labelKey: "common:navigation.playground", group: "tools", roles: ["master", "user"] },
       { id: "translator", href: "/v1/ui/translator-debug", labelKey: "common:navigation.translator", group: "tools", roles: ["master"] },
       { id: "free-models", href: "/v1/ui/free-models", labelKey: "common:navigation.freeModels", group: "tools", roles: ["master", "user"] },
       { id: "docs", href: "/v1/ui/docs", labelKey: "common:navigation.docs", group: "help", roles: ["master", "user"] },
@@ -210,7 +210,7 @@ test("navigation role filtering is fail-closed", () => {
   assert.equal(visibleNavigationItems("master").length, 14);
   assert.deepEqual(
     visibleNavigationItems("user").map((item) => item.id),
-    ["my-key", "overview", "activity", "quota", "free-models", "docs"],
+    ["my-key", "overview", "activity", "quota", "playground", "free-models", "docs"],
   );
   assert.deepEqual(visibleNavigationItems("pending"), []);
   assert.deepEqual(visibleNavigationItems("unknown"), []);
@@ -261,7 +261,7 @@ test("navigation remains hidden until a recognized role is supplied", () => {
 
   controller.update({ role: "user" });
   assert.equal(root.hidden, false);
-  assert.equal(renderedLinks(root).length, 6);
+  assert.equal(renderedLinks(root).length, 7);
 
   controller.update({ role: "unknown" });
   assert.equal(root.hidden, true);
@@ -331,7 +331,7 @@ test('layout "list" renders links directly under root without a scroller wrapper
   const links = root.children.filter((child) => child.tagName === "A");
   assert.deepEqual(
     links.map((child) => child.getAttribute("data-nav-id")),
-    ["my-key", "overview", "activity", "quota", "free-models", "docs"],
+    ["my-key", "overview", "activity", "quota", "playground", "free-models", "docs"],
   );
   assert.equal(links[3].classList.contains("active"), true);
   assert.equal(links[3].getAttribute("aria-current"), "page");
@@ -352,7 +352,7 @@ test('layout "list" renders one translated group label before each group of link
 
   assert.deepEqual(
     root.children.map((child) => child.getAttribute("data-nav-group") ?? child.getAttribute("data-nav-id")),
-    ["monitoring", "my-key", "overview", "activity", "quota", "tools", "free-models", "help", "docs"],
+    ["monitoring", "my-key", "overview", "activity", "quota", "tools", "playground", "free-models", "help", "docs"],
   );
   const groupLabels = root.children.filter((child) => child.tagName === "DIV");
   assert.deepEqual(groupLabels.map((label) => label.textContent), ["Monitoring", "Tools", "Help"]);

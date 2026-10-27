@@ -107,7 +107,7 @@ export const NAV_ITEMS = Object.freeze([
   navigationItem("rules", "/v1/ui/rules-editor", "common:navigation.rules", "settings", ["master"]),
   navigationItem("api-keys", "/v1/ui/api-keys", "common:navigation.apiKeys", "settings", ["master"]),
   navigationItem("pricing", "/v1/ui/pricing", "common:navigation.pricing", "settings", ["master"]),
-  navigationItem("playground", "/v1/ui/playground", "common:navigation.playground", "tools", ["master"]),
+  navigationItem("playground", "/v1/ui/playground", "common:navigation.playground", "tools", ["master", "user"]),
   navigationItem("translator", "/v1/ui/translator-debug", "common:navigation.translator", "tools", ["master"]),
   navigationItem("free-models", "/v1/ui/free-models", "common:navigation.freeModels", "tools", ["master", "user"]),
   navigationItem("docs", "/v1/ui/docs", "common:navigation.docs", "help", ["master", "user"]),

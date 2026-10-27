@@ -853,7 +853,7 @@ async def _serve_playground_page() -> HTMLResponse:
 
 @editor_router.get("/ui/playground", response_class=HTMLResponse, tags=["Config Editor UI"])
 async def get_playground_page(request: Request):
-    """Serves the admin playground page for testing operation endpoints."""
+    """Serves the playground page for testing operation endpoints."""
     return await _serve_playground_page()
 
 
@@ -953,15 +953,23 @@ async def get_playground_models(request: Request):
     """
     _services, runtime_snapshot = _capture_control_runtime(request)
     config_loader = runtime_snapshot.config_loader
-    return JSONResponse(content=_build_playground_models(config_loader))
+    models = _build_playground_models(config_loader)
+    api_key_record = getattr(request.state, "api_key_record", None)
+    if api_key_record is not None:
+        models["providers"] = []
+        if api_key_record.allowed_models:
+            allowed = set(api_key_record.allowed_models)
+            models = {
+                section: [name for name in names if name in allowed]
+                for section, names in models.items()
+            }
+    return JSONResponse(content=models)
 
 
 @editor_router.get("/ui/web-playground/models", tags=["Config Editor API"])
 async def get_web_playground_models(request: Request):
     """Returns playground model lists for the legacy web-playground URL."""
-    _services, runtime_snapshot = _capture_control_runtime(request)
-    config_loader = runtime_snapshot.config_loader
-    return JSONResponse(content=_build_playground_models(config_loader))
+    return await get_playground_models(request)
 
 
 @editor_router.post("/config/resync", tags=["Config Editor API"])

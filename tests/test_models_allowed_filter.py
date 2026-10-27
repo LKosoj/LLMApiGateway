@@ -161,6 +161,49 @@ class ModelsAllowedFilterTests(unittest.TestCase):
         self.assertIn("gateway-model-allowed", ids)
         self.assertIn("gateway-model-forbidden", ids)
 
+    def test_playground_pages_and_catalog_allow_restricted_virtual_key(self):
+        record = self.api_keys_db.create(
+            name="playground-restricted", allowed_models=["gateway-model-allowed"]
+        )
+        with self._client() as client:
+            login = client.post("/auth/login", json={"api_key": record.api_key})
+            self.assertEqual(login.status_code, 200)
+            for path in ("/v1/ui/playground", "/v1/ui/web-playground"):
+                with self.subTest(path=path):
+                    self.assertEqual(client.get(path).status_code, 200)
+                    response = client.get(f"{path}/models")
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()["chat"], ["gateway-model-allowed"])
+                    self.assertEqual(response.json()["providers"], [])
+            self.assertEqual(client.get("/v1/config/providers").status_code, 403)
+
+    def test_playground_unrestricted_virtual_key_sees_all_gateway_models(self):
+        record = self.api_keys_db.create(name="playground-unrestricted")
+        with self._client() as client:
+            response = client.get(
+                "/v1/ui/playground/models",
+                headers={"Authorization": f"Bearer {record.api_key}"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["chat"], ["gateway-model-allowed", "gateway-model-forbidden"])
+        self.assertEqual(response.json()["providers"], [])
+
+    def test_playground_master_keeps_provider_catalog(self):
+        with self._client() as client:
+            response = client.get(
+                "/v1/ui/playground/models",
+                headers={"Authorization": "Bearer test-master"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["providers"], ["openrouter"])
+        self.assertEqual(len(response.json()["chat"]), 2)
+
+    def test_playground_requires_authentication(self):
+        with self._client() as client:
+            for path in ("/v1/ui/playground", "/v1/ui/web-playground"):
+                self.assertEqual(client.get(path, headers={"Accept": "text/html"}, follow_redirects=False).status_code, 303)
+                self.assertEqual(client.get(f"{path}/models").status_code, 401)
+
     def test_get_single_model_rejects_disallowed_for_virtual_key(self):
         record = self.api_keys_db.create(
             name="team-restricted-single", allowed_models=["gateway-model-allowed"]
