@@ -1,4 +1,4 @@
-"""One-shot selection and loading of the application environment file."""
+"""Startup loading and refresh of missing application environment variables."""
 
 from __future__ import annotations
 
@@ -225,6 +225,12 @@ def _apply_missing_environment(values: dict[str, str], display_path: str) -> Non
 def load_application_environment() -> Path:
     """Load exactly one startup environment source without overriding process env."""
 
+    return refresh_application_environment()
+
+
+def refresh_application_environment() -> Path:
+    """Read the selected environment file again, adding only missing variables."""
+
     raw_path = os.environ.get(ENVIRONMENT_FILE_KEY)
     if raw_path is None:
         try:
@@ -257,5 +263,6 @@ __all__ = (
     "EnvironmentSubsetError",
     "PROJECT_DOTENV",
     "load_application_environment",
+    "refresh_application_environment",
     "parse_environment_subset",
 )

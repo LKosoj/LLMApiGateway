@@ -2,7 +2,7 @@
   {
     "opencode-zen": {
       "baseUrl": "https://opencode.ai/inference/v1",
-      "apikey": "public",
+      "apikey": "${APIKEY_OPENCODE}",
       "models": {
         "jev-1.13-free": {
           "input_rate": 0.042,

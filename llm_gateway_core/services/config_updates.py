@@ -24,6 +24,7 @@ from ..config.config_store import (
     ConfigSourceError,
 )
 from ..config.loader import ConfigError, ConfigLoader, RuleValidationError
+from ..config.environment import EnvironmentFileError, refresh_application_environment
 from ..utils.log_redaction import safe_exception_type_name
 
 if TYPE_CHECKING:
@@ -364,9 +365,12 @@ class ConfigUpdateCoordinator:
                 candidate_bytes,
             )
             try:
+                refresh_application_environment()
                 candidate_loader = ConfigLoader.from_source_bundle(
                     candidate_bundle
                 ).load_complete()
+            except EnvironmentFileError:
+                raise ConfigUpdateError(ConfigUpdateErrorCode.VALIDATION_FAILED) from None
             except ConfigError as exc:
                 raise ConfigUpdateError(
                     ConfigUpdateErrorCode.VALIDATION_FAILED,
@@ -676,9 +680,12 @@ class ConfigUpdateCoordinator:
                 )
 
             try:
+                refresh_application_environment()
                 disk_loader = ConfigLoader.from_source_bundle(
                     disk_bundle
                 ).load_complete()
+            except EnvironmentFileError:
+                raise ConfigUpdateError(ConfigUpdateErrorCode.VALIDATION_FAILED) from None
             except ConfigError as exc:
                 logger.warning(
                     "Configuration resync rejected the on-disk sources: %s.",

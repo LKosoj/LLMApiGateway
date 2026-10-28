@@ -546,6 +546,8 @@ cp .env.example .env
 
 Process environment variables always take precedence over values from `.env`. When `LLMGATEWAY_ENV_FILE` is unset, a direct launch reads the project `.env` only for variables missing from the process environment. A file explicitly selected through `LLMGATEWAY_ENV_FILE` must be an absolute regular non-symlink file; a read/parse error or duplicate key aborts startup without partially applying values. In production systemd, the generated `runtime.env` sets this selector while user secrets remain in a separate `gateway.env`.
 
+Saving configuration through the editor or resyncing changed JSON files through `POST /v1/config/resync` rereads the selected environment file: new variables, such as `APIKEY_OPENCODE`, become available without a restart. Existing variables are not overwritten; changing their values requires a restart. Editing `.env` alone does not trigger a refresh.
+
  ### **.env** configuration example:
  ```
 # This gateway must have its own API key that clients must use to access it
@@ -762,7 +764,7 @@ Localized free-tier provider reference catalogs live in [`static/locales/en/free
 
 ### OpenCode Zen (`opencode-zen`)
 
-`providers.json` configures a separate provider, `opencode-zen`, at `https://opencode.ai/inference/v1` with the public key `public` and `User-Agent: opencode/1.19.0`. Free model access follows [dsh-opencode-zen-free-provider](https://github.com/jiesou/dsh-opencode-zen-free-provider). No DSH installation or personal key is required. Live checks of the old `/zen/v1` URL with only a User-Agent returned `403 FreeTierError`.
+`providers.json` configures a separate provider, `opencode-zen`, at `https://opencode.ai/inference/v1` with the key reference `${APIKEY_OPENCODE}` and `User-Agent: opencode/1.19.0`. Set `APIKEY_OPENCODE=public` in `.env` for public access or `APIKEY_OPENCODE=public,personal_key` to use both keys. Free model access follows [dsh-opencode-zen-free-provider](https://github.com/jiesou/dsh-opencode-zen-free-provider). No DSH installation or personal key is required for public access. Live checks of the old `/zen/v1` URL with only a User-Agent returned `403 FreeTierError`.
 
 The gateway adds OpenCode session headers and missing `bash`/`read` tool definitions required by Zen's free channel. It does not execute those tools: calls to gateway-injected tools are removed from the response. If the client supplied `bash` or `read`, their definitions and calls are preserved. Text, reasoning, and usage statistics are preserved. Zen is always called with streaming enabled; for regular requests, the gateway collects the stream into one response. Send the same `X-Session-Id` across requests to keep one session. This also applies to internal model calls in `/v1/web/research`, including evidence matrix extraction: the stream is collected into a complete response with usage statistics preserved.
 
