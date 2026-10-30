@@ -159,6 +159,7 @@ def test_activity_opens_request_drawer_with_details_and_closes_on_escape(page: P
             "cost": 0.01,
             "prompt_tokens": 120,
             "completion_tokens": 40,
+            "x_title": "tgBot",
         },
     )
     page.route(
@@ -181,6 +182,8 @@ def test_activity_opens_request_drawer_with_details_and_closes_on_escape(page: P
     expect(drawer).to_contain_text("openai")
     expect(drawer).to_contain_text("120")
     expect(drawer).to_contain_text("40")
+    expect(drawer).to_contain_text("X-Title")
+    expect(drawer).to_contain_text("tgBot")
     # Master-only virtual key field resolves and shows the key's name.
     expect(drawer.locator("[data-master-only]")).to_contain_text("#7")
     expect(drawer.locator("[data-master-only]")).to_contain_text("Team Backend")

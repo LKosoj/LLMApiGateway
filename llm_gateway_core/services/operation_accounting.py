@@ -688,4 +688,5 @@ def build_operation_accounting_event(
         occurred_at=observation.occurred_at,
         request_id=context.reservation.request_id,
         parent_event_id=context.parent_event_id,
+        x_title=context.x_title,
     )

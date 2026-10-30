@@ -5,6 +5,7 @@ import json
 import logging
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -44,6 +45,7 @@ from llm_gateway_core.services.deep_research_protocol import (
     DeepResearchCallbackRequest,
     DeepResearchResult,
 )
+from llm_gateway_core.services.image_storage import PublishedImage
 from llm_gateway_core.services.request_handler import OperationDispatcher
 from tests._async_compat import run_async
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
@@ -92,6 +94,7 @@ def _request(
     method: str = "POST",
     calculators: dict[tuple[str, str], OperationCostCalculator] | None = None,
     with_context: bool = True,
+    x_title: str | None = "tgBot",
 ) -> tuple[Request, object]:
     policy = classify_billing_policy(method, path)
     assert policy is not None
@@ -106,6 +109,7 @@ def _request(
             api_key_id=7,
             reserved_usd=1.0,
         ),
+        x_title=x_title,
     )
     services = make_app_services()
     services.accounting_service.release.return_value = True
@@ -149,7 +153,10 @@ def _request(
                 "raw_path": path.encode("ascii"),
                 "query_string": b"",
                 "root_path": "",
-                "headers": [(b"content-type", b"application/json")],
+                "headers": (
+                    [(b"content-type", b"application/json")]
+                    + ([(b"x-title", x_title.encode("ascii"))] if x_title else [])
+                ),
                 "client": ("127.0.0.1", 1234),
                 "server": ("testserver", 80),
                 "app": app,
@@ -516,6 +523,7 @@ def test_web_endpoints_commit_one_synthesized_flat_charge(
         assert event.usage.cost == expected_cost
         assert event.cost_source is expected_source
         assert event.usage.duration_ms is not None
+        assert event.x_title == "tgBot"
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
@@ -629,6 +637,7 @@ def test_deep_research_success_uses_signed_child_context_and_zero_cost_rollup() 
         assert event.usage.cost == 0.0
         assert event.child_event_ids == seal.child_event_ids
         assert event.child_fingerprints == seal.child_fingerprints
+        assert event.x_title == "tgBot"
         services.accounting_service.cancel_deep_research_children.assert_not_awaited()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
@@ -763,9 +772,11 @@ def test_deep_research_gateway_callbacks_charge_distinct_children() -> None:
         ]
         assert [event.usage.cost for event in child_events] == [0.1, 0.1]
         assert all(event.parent_event_id == handle.rollup_event_id for event in child_events)
+        assert all(event.x_title == "tgBot" for event in child_events)
         rollup = committed_events[2]
         assert rollup.kind is AccountingEventKind.ROLLUP
         assert rollup.usage.cost == 0.0
+        assert rollup.x_title == "tgBot"
         assert rollup.child_event_ids == tuple(event.event_id for event in child_events)
         assert sum(event.usage.cost for event in committed_events) == pytest.approx(0.2)
         services.accounting_service.cancel_deep_research_children.assert_not_awaited()
@@ -872,6 +883,75 @@ def test_deep_research_callbacks_use_captured_generation_and_fresh_request_state
         active_record = services.active_requests_registry.list_records()[0]
         assert active_record["operation"] == "web_deep_research"
         assert active_record["gateway_model"] == DEEP_RESEARCH_MODEL
+
+    run_async(scenario())
+
+
+def test_deep_research_in_parent_image_callback_forwards_parent_x_title() -> None:
+    async def scenario() -> None:
+        request, services = _request("/v1/web/deep-research")
+        captured: dict[str, object] = {}
+
+        class _Response:
+            status_code = 200
+
+            def json(self) -> dict[str, object]:
+                return {"data": [{"b64_json": "aGVsbG8="}]}
+
+        async def fake_post(_url: str, **kwargs: object):
+            captured["headers"] = kwargs["headers"]
+            return _Response()
+
+        services.http_client.post.side_effect = fake_post
+        published = PublishedImage(
+            path=Path("/tmp/image.png"),
+            url="/outputs/images/job-1/image.png",
+        )
+        with patch.object(
+            services.image_storage,
+            "publish_png",
+            return_value=published,
+        ):
+            callback_context = web_research_owner._capture_deep_research_callback_context(
+                request,
+                services=services,
+                runtime_snapshot=request.state.runtime_snapshot,
+                accounting_owner=Mock(),
+                job_id="job-1",
+                child_context_token="child-token",
+                search_model=SEARCH_MODEL,
+                read_model=READ_MODEL,
+                output_format="markdown",
+                image_generation_model="image-model",
+                image_generation_size="1024x1024",
+            )
+            result = await callback_context.handle(
+                DeepResearchCallbackRequest(
+                    job_id="job-1",
+                    message_id="image-1",
+                    operation=DeepResearchCallbackOperation.IMAGE,
+                    arguments={
+                        "prompt": "diagram of a cat",
+                        "context": "research context",
+                        "research_id": "job-1",
+                        "aspect_ratio": "1:1",
+                        "num_images": 1,
+                        "style": "dark",
+                    },
+                )
+            )
+
+        assert captured["headers"] == {
+            "Authorization": "Bearer child-token",
+            "X-Title": "tgBot",
+        }
+        assert result == [
+            {
+                "url": published.url,
+                "prompt": "diagram of a cat",
+                "alt_text": "Illustration: diagram of a cat",
+            }
+        ]
 
     run_async(scenario())
 

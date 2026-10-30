@@ -325,6 +325,58 @@ def test_partial_active_request_start_is_finished_and_released_once() -> None:
 
 
 @patch("llm_gateway_core.middleware.auth.settings.gateway_api_key", "master-key")
+def test_admission_copies_incoming_x_title_onto_context() -> None:
+    app = FastAPI()
+    services = bind_app_services(app)
+    app.add_middleware(ApiKeyAuthMiddleware)
+    app.add_middleware(RequestLoggingASGIMiddleware)
+    captured: dict[str, object] = {}
+
+    @app.post("/v1/embeddings")
+    async def embeddings(request: Request) -> dict[str, bool]:
+        context = take_accounting_request_context(request.scope)
+        captured["context_x_title"] = None if context is None else context.x_title
+        captured["active_x_title"] = services.active_requests_registry.list_records()[0][
+            "x_title"
+        ]
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            headers={**MASTER_HEADERS, "X-Title": "  tgBot  "},
+        )
+
+    assert response.status_code == 200
+    assert captured["context_x_title"] == "tgBot"
+    assert captured["active_x_title"] == "tgBot"
+
+
+@patch("llm_gateway_core.middleware.auth.settings.gateway_api_key", "master-key")
+def test_admission_blank_x_title_is_stored_as_none() -> None:
+    app = FastAPI()
+    bind_app_services(app)
+    app.add_middleware(ApiKeyAuthMiddleware)
+    app.add_middleware(RequestLoggingASGIMiddleware)
+    captured: dict[str, object] = {}
+
+    @app.post("/v1/embeddings")
+    async def embeddings(request: Request) -> dict[str, bool]:
+        context = take_accounting_request_context(request.scope)
+        captured["context_x_title"] = None if context is None else context.x_title
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            headers={**MASTER_HEADERS, "X-Title": "   "},
+        )
+
+    assert response.status_code == 200
+    assert captured["context_x_title"] is None
+
+
+@patch("llm_gateway_core.middleware.auth.settings.gateway_api_key", "master-key")
 def test_consumed_context_is_not_released_by_auth() -> None:
     app = FastAPI()
     services = bind_app_services(app)

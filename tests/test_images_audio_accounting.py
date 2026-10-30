@@ -60,6 +60,7 @@ def _request(
     path: str,
     *,
     calculators: dict[tuple[str, str], OperationCostCalculator] | None = None,
+    x_title: str | None = "tgBot",
 ) -> tuple[Request, object]:
     policy = classify_billing_policy("POST", path)
     assert policy is not None
@@ -74,6 +75,7 @@ def _request(
             api_key_id=7,
             reserved_usd=1.0,
         ),
+        x_title=x_title,
     )
     services = make_app_services()
     services.accounting_service.release.return_value = True
@@ -335,6 +337,7 @@ def test_image_endpoints_commit_normalized_success_with_flat_cost_precedence(
         assert event.usage.cost == expected_cost
         assert event.cost_source is expected_source
         assert event.usage.duration_ms is not None
+        assert event.x_title == "tgBot"
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)

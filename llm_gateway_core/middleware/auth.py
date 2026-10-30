@@ -51,6 +51,7 @@ from ..services.deep_research_accounting import (
 )
 from ..services.ip_blocklist import PERMANENT_BLOCK, IpBlockGuard
 from ..utils.client_ip import get_client_ip
+from ..utils.usage_tracking import extract_request_x_title
 
 if TYPE_CHECKING:
     from ..services.runtime_config import AppServices
@@ -547,6 +548,7 @@ async def _admit_accounting_if_needed(
         parent_event_id = child_admission.parent_event_id
 
     try:
+        x_title = extract_request_x_title(request)
         context = AccountingRequestContext(
             method=route.method,
             route_template=route.route_template,
@@ -554,11 +556,9 @@ async def _admit_accounting_if_needed(
             request_id=request_id,
             reservation=reservation,
             parent_event_id=parent_event_id,
+            x_title=x_title,
         )
         publish_accounting_request_context(request.scope, context)
-        x_title = request.headers.get("x-title")
-        if isinstance(x_title, str):
-            x_title = x_title.strip() or None
         services.active_requests_registry.start(
             request_id=request_id,
             path=request.url.path,

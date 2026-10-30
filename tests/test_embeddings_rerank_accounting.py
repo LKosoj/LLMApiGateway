@@ -63,6 +63,7 @@ def _request(
             api_key_id=7,
             reserved_usd=1.0,
         ),
+        x_title="tgBot",
     )
     services = make_app_services()
     services.accounting_service.release.return_value = True
@@ -262,6 +263,7 @@ def test_buffered_embeddings_commits_upstream_or_registry_cost(
         assert event.usage.cost == expected_cost
         assert event.usage.duration_ms is not None
         assert event.cost_source is expected_source
+        assert event.x_title == "tgBot"
         _assert_no_legacy_writes(services)
 
     run_async(scenario())

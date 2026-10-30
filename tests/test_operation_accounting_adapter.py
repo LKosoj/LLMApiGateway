@@ -563,6 +563,7 @@ def _context(
     *,
     request_id: str = "request-1",
     parent_event_id: str | None = None,
+    x_title: str | None = None,
 ) -> AccountingRequestContext:
     return AccountingRequestContext(
         method=method,
@@ -576,6 +577,7 @@ def _context(
             reserved_usd=1.0,
         ),
         parent_event_id=parent_event_id,
+        x_title=x_title,
     )
 
 
@@ -594,6 +596,27 @@ def test_event_uses_reservation_identity_and_default_request_provenance() -> Non
     assert event.api_key_id == context.reservation.api_key_id
     assert event.method == context.method
     assert event.route_template == context.route_template
+    assert event.x_title is None
+
+
+def test_operation_event_copies_incoming_x_title_from_context() -> None:
+    context = _context("POST", "/v1/images/generations", x_title="  tgBot  ")
+    event = build_operation_accounting_event(
+        context,
+        parse_synthesized_operation_observation(
+            {},
+            policy=context.policy,
+            gateway_model="image-model",
+            provider=None,
+            model=None,
+            cost_rate_registry=MappingProxyType({}),
+            operation_cost_calculator_registry=MappingProxyType({}),
+            occurred_at=NOW,
+        ),
+    )
+
+    assert context.x_title == "tgBot"
+    assert event.x_title == "tgBot"
 
 
 def test_operation_event_propagates_parent_and_none_preserves_fingerprint() -> None:

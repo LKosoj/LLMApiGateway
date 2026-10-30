@@ -94,6 +94,7 @@ def _owner_setup():
         policy=policy,
         request_id=parent_reservation.request_id,
         reservation=parent_reservation,
+        x_title="tgBot",
     )
     auth_identity = DeepResearchAuthIdentity(
         api_key_id=7,
@@ -152,6 +153,7 @@ def _request_setup() -> tuple[
         policy=policy,
         request_id=parent_reservation.request_id,
         reservation=parent_reservation,
+        x_title="tgBot",
     )
     handle, token = DeepResearchContextTokenCodec.create_process_local().issue_parent(
         reservation=parent_reservation,
@@ -306,6 +308,7 @@ def test_in_process_operation_child_commits_parent_linked_charge() -> None:
     assert event.operation == "web_search"
     assert event.usage.cost == DEFAULT_OPERATION_COST_USD
     assert event.cost_source is CostSource.OPERATION_DEFAULT
+    assert event.x_title == "tgBot"
     service.release.assert_not_awaited()
 
 
@@ -534,6 +537,7 @@ def test_successful_json_commits_rollup_before_start_and_finishes_active_once() 
             assert event.cost_source is CostSource.RECEIPT_ROLLUP
             assert event.child_event_ids == seal.child_event_ids
             assert event.child_fingerprints == seal.child_fingerprints
+            assert event.x_title == "tgBot"
             return _accepted_receipt(event.event_id, event.billing_fingerprint)
 
         service.commit.side_effect = commit

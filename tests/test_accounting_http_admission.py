@@ -236,6 +236,46 @@ def test_accounting_context_appends_normalized_optional_parent_event_id() -> Non
     assert context.parent_event_id == "usage:v1:http:parent"
 
 
+def test_accounting_context_normalizes_optional_x_title() -> None:
+    base = _context()
+
+    stripped = AccountingRequestContext(
+        base.method,
+        base.route_template,
+        base.policy,
+        base.request_id,
+        base.reservation,
+        x_title="  tgBot  ",
+    )
+    empty = AccountingRequestContext(
+        base.method,
+        base.route_template,
+        base.policy,
+        base.request_id,
+        base.reservation,
+        x_title="   ",
+    )
+
+    assert stripped.x_title == "tgBot"
+    assert empty.x_title is None
+    assert base.x_title is None
+
+
+@pytest.mark.parametrize("x_title", [1, b"tgBot", True])
+def test_accounting_context_rejects_non_string_x_title(x_title: object) -> None:
+    base = _context()
+
+    with pytest.raises(AccountingValidationError):
+        AccountingRequestContext(
+            base.method,
+            base.route_template,
+            base.policy,
+            base.request_id,
+            base.reservation,
+            x_title=x_title,  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize(
     "parent_event_id",
     ["", "event\nchild", "event\x00child", "event\x7fchild", "рarent", "x" * 256, 1],

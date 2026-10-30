@@ -227,6 +227,7 @@ class DeepResearchTerminalOwner:
             request_id=request_id,
             reservation=admission.reservation,
             parent_event_id=admission.parent_event_id,
+            x_title=self._context.x_title,
         )
         started_at = time.monotonic()
         try:
@@ -279,6 +280,7 @@ class DeepResearchTerminalOwner:
             self._handle,
             seal,
             occurred_at=datetime.now(timezone.utc),
+            x_title=self._context.x_title,
         )
         self._state = _OwnerState.READY
         return seal

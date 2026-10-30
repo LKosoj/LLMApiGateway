@@ -755,6 +755,7 @@ def build_deep_research_rollup_event(
     children: DeepResearchChildSeal,
     *,
     occurred_at: datetime,
+    x_title: str | None = None,
 ) -> AccountingEvent:
     """Build a canonical zero-cost rollup over already charged children."""
     if not isinstance(parent, DeepResearchParentHandle) or not isinstance(
@@ -779,4 +780,5 @@ def build_deep_research_rollup_event(
         request_id=parent.reservation.request_id,
         child_event_ids=children.child_event_ids,
         child_fingerprints=children.child_fingerprints,
+        x_title=x_title,
     )

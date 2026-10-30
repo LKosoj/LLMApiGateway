@@ -433,6 +433,7 @@ document.addEventListener('DOMContentLoaded', () => {
             section.appendChild(RD.createField(i18n.t('activity:drawer.fields.requestedModel'), String(item.raw.gateway_model || na())));
             section.appendChild(RD.createField(i18n.t('activity:drawer.fields.provider'), String(item.provider || na())));
             section.appendChild(RD.createField(i18n.t('activity:drawer.fields.resolvedModel'), String(item.raw.model || na())));
+            section.appendChild(RD.createField(i18n.t('activity:drawer.fields.xTitle'), String(item.raw.x_title || na())));
             section.appendChild(RD.createField(
                 i18n.t('activity:drawer.fields.promptTokens'),
                 item.raw.prompt_tokens != null ? i18n.formatNumber(item.raw.prompt_tokens) : na(),

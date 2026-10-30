@@ -33,7 +33,7 @@ from ...services.deep_research_protocol import (
 )
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import normalize_retry_settings
-from ...utils.usage_tracking import extract_tokens_usage
+from ...utils.usage_tracking import extract_request_x_title, extract_tokens_usage
 from .embeddings import apply_top_n, map_rerank_payload, normalize_rerank_response
 from .operation_proxy import DownstreamHTTPException, proxy_json_to_downstream
 from .web_adapters import (
@@ -334,9 +334,13 @@ class _DeepResearchCallbackContext:
             raise RuntimeError("Gateway image generation is unavailable.")
         prompt = cast(str, callback.arguments["prompt"])
         count = cast(int, callback.arguments["num_images"])
+        headers = {"Authorization": f"Bearer {self.child_context_token}"}
+        x_title = extract_request_x_title(self.fresh_request())
+        if x_title:
+            headers["X-Title"] = x_title
         response = await self.services.http_client.post(
             f"http://127.0.0.1:{settings.gateway_port}/v1/images/generations",
-            headers={"Authorization": f"Bearer {self.child_context_token}"},
+            headers=headers,
             json={
                 "model": self.image_generation_model,
                 "prompt": prompt,

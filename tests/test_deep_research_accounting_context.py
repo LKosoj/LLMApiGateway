@@ -268,6 +268,26 @@ def test_zero_cost_rollup_is_canonical_and_order_sensitive() -> None:
     )
 
 
+def test_rollup_copies_x_title_without_changing_billing_fingerprint() -> None:
+    parent = _parent()
+    seal = seal_deep_research_children(
+        (_receipt("child-a", "a"),),
+        aggregate_usage=AccountingUsage(cost=0.75),
+    )
+
+    untitled = build_deep_research_rollup_event(parent, seal, occurred_at=NOW)
+    titled = build_deep_research_rollup_event(
+        parent,
+        seal,
+        occurred_at=NOW,
+        x_title="tgBot",
+    )
+
+    assert untitled.x_title is None
+    assert titled.x_title == "tgBot"
+    assert titled.billing_fingerprint == untitled.billing_fingerprint
+
+
 def test_context_values_are_frozen_and_reprs_hide_identity() -> None:
     codec = DeepResearchContextTokenCodec(b"s" * 32)
     parent = _parent()

@@ -47,6 +47,7 @@ class AccountingRequestContext:
     request_id: str
     reservation: AccountingReservation
     parent_event_id: str | None = None
+    x_title: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -63,6 +64,10 @@ class AccountingRequestContext:
             "parent_event_id",
             _normalize_optional_event_id(self.parent_event_id),
         )
+        if self.x_title is not None:
+            if not isinstance(self.x_title, str):
+                raise AccountingValidationError
+            object.__setattr__(self, "x_title", self.x_title.strip() or None)
 
     def __repr__(self) -> str:
         return "<AccountingRequestContext>"
