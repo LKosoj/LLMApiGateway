@@ -198,14 +198,91 @@ def test_jina_search_search_error_releases_without_charge(error):
     run_async(scenario())
 
 
-@pytest.mark.parametrize("error", [HTTPException(status_code=503, detail="failed"), asyncio.CancelledError()])
-def test_jina_search_read_error_releases_without_charge(error):
+def test_jina_search_keeps_hits_when_one_read_fails():
+    async def scenario():
+        request, services = _jina_request({"q": "topic"}, headers={"accept": "application/json"})
+        youtube_url = "https://www.youtube.com/watch?v=iwgw7FyN9zQ"
+        results = [
+            SEARCH_RESULTS[0],
+            {"title": "Members video", "url": youtube_url, "snippet": "Paywalled talk"},
+        ]
+
+        async def read(_request, *, url, **_kwargs):
+            if url == youtube_url:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"YouTube transcript is unavailable for '{youtube_url}'.",
+                )
+            return {"title": "First", "url": url, "content": "Downloaded article"}
+
+        with (
+            patch.object(web, "_search_with_model", _search_mock(results)),
+            patch.object(web, "_read_with_model", read),
+        ):
+            response = await web.jina_search(request)
+
+        assert json.loads(response.body) == {
+            "code": 200,
+            "status": 20000,
+            "data": [
+                {
+                    "title": "First",
+                    "url": URL,
+                    "description": "First description",
+                    "content": "Downloaded article",
+                },
+                {
+                    "title": "Members video",
+                    "url": youtube_url,
+                    "description": "Paywalled talk",
+                    "content": "",
+                },
+            ],
+        }
+        await _send_response(request, response)
+        services.accounting_service.commit.assert_awaited_once()
+        services.accounting_service.release.assert_not_awaited()
+
+    run_async(scenario())
+
+
+def test_jina_search_read_http_error_keeps_search_hit_without_content():
+    async def scenario():
+        request, services = _jina_request({"q": "topic"}, headers={"accept": "application/json"})
+        with (
+            patch.object(web, "_search_with_model", _search_mock([SEARCH_RESULTS[0]])),
+            patch.object(
+                web,
+                "_read_with_model",
+                AsyncMock(side_effect=HTTPException(status_code=503, detail="failed")),
+            ),
+        ):
+            response = await web.jina_search(request)
+        assert json.loads(response.body) == {
+            "code": 200,
+            "status": 20000,
+            "data": [
+                {
+                    "title": "First",
+                    "url": URL,
+                    "description": "First description",
+                    "content": "",
+                }
+            ],
+        }
+        await _send_response(request, response)
+        services.accounting_service.commit.assert_awaited_once()
+
+    run_async(scenario())
+
+
+def test_jina_search_read_cancellation_releases_without_charge():
     async def scenario():
         request, services = _jina_request({"q": "topic"})
         with (
             patch.object(web, "_search_with_model", _search_mock([SEARCH_RESULTS[0]])),
-            patch.object(web, "_read_with_model", AsyncMock(side_effect=error)),
-            pytest.raises(type(error)),
+            patch.object(web, "_read_with_model", AsyncMock(side_effect=asyncio.CancelledError())),
+            pytest.raises(asyncio.CancelledError),
         ):
             await web.jina_search(request)
         services.accounting_service.commit.assert_not_awaited()

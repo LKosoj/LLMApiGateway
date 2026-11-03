@@ -602,7 +602,22 @@ async def jina_search(request: Request):
 
     articles = await asyncio.gather(*(read_result(result) for result in results), return_exceptions=True)
     data = []
-    for article in articles:
+    for result, article in zip(results, articles):
+        if isinstance(article, Exception):
+            logger.warning(
+                "Jina-compatible search failed to read %s: %s",
+                result.get("url"),
+                article,
+            )
+            data.append(
+                {
+                    "title": str(result.get("title") or ""),
+                    "url": str(result.get("url") or ""),
+                    "description": str(result.get("snippet") or result.get("description") or ""),
+                    "content": "",
+                }
+            )
+            continue
         if isinstance(article, BaseException):
             raise article
         data.append(article)
