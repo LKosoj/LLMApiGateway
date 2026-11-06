@@ -287,6 +287,69 @@ def test_failures_page_checks_one_target_and_pauses_a_model(page: Page, r5_2_ser
     }]
 
 
+def test_failures_page_pauses_two_models_of_one_provider_from_their_cards(page: Page, r5_2_server: str):
+    """Each card's Pause button pauses that card, even if the form still shows the previous one."""
+    _login(page.context, r5_2_server, MASTER_KEY)
+    seen = _failures_routes(
+        page,
+        r5_2_server,
+        status_rows=[
+            _status_row(
+                model="model-a", upstream_key_fingerprint="aaaa1111",
+                health_status="error", last_error="HTTP 429",
+            ),
+            _status_row(
+                model="model-b", upstream_key_fingerprint="bbbb2222",
+                health_status="error", last_error="HTTP 502",
+            ),
+        ],
+        targets=[
+            {"provider": "openrouter", "upstream_key_fingerprint": "aaaa1111"},
+            {"provider": "openrouter", "upstream_key_fingerprint": "bbbb2222"},
+        ],
+    )
+
+    page.goto(f"{r5_2_server}/v1/ui/failures")
+    cards = page.locator("#downList .rp-down-card")
+    expect(cards).to_have_count(2)
+
+    cards.filter(has_text="model-a").get_by_role("button", name="Pause").click()
+    expect(page.locator("#pauseKey")).to_have_value("openrouter|aaaa1111")
+    expect(page.locator("#pauseModel")).to_have_value("model-a")
+    page.fill("#pauseReason", "first outage")
+    page.click("#pauseSubmit")
+    expect(page.locator("#pauseDetails")).not_to_have_attribute("open", "")
+    expect(page.locator("#pauseModel")).to_have_value("")
+
+    cards.filter(has_text="model-b").get_by_role("button", name="Pause").click()
+    expect(page.locator("#pauseKey")).to_have_value("openrouter|bbbb2222")
+    expect(page.locator("#pauseModel")).to_have_value("model-b")
+    # Reloading the page data while the form is open must keep this card selected.
+    page.select_option("#rangeSelect", "7d")
+    expect(page.locator("#errorsHint")).to_have_text("failed attempts per day")
+    expect(page.locator("#pauseKey")).to_have_value("openrouter|bbbb2222")
+    expect(page.locator("#pauseModel")).to_have_value("model-b")
+    # The fields can still be put back to the first pause. The card click wins.
+    page.evaluate("""() => {
+        document.querySelector('#pauseKey').value = 'openrouter|aaaa1111';
+        document.querySelector('#pauseModel').value = 'model-a';
+    }""")
+    page.fill("#pauseReason", "second outage")
+    page.click("#pauseSubmit")
+
+    expect(page.locator("#pauseDetails")).not_to_have_attribute("open", "")
+    assert seen["pause"] == [
+        {
+            "provider": "openrouter", "upstream_key_fingerprint": "aaaa1111", "model": "model-a",
+            "duration_seconds": 1800, "reason": "first outage",
+        },
+        {
+            "provider": "openrouter", "upstream_key_fingerprint": "bbbb2222", "model": "model-b",
+            "duration_seconds": 1800, "reason": "second outage",
+        },
+    ]
+
+
 def test_failures_page_opens_a_chart_for_one_model(page: Page, r5_2_server: str):
     _login(page.context, r5_2_server, MASTER_KEY)
     seen = _failures_routes(page, r5_2_server, status_rows=[_status_row()], targets=[])

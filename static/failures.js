@@ -65,6 +65,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastData = null;
     let checking = false;
     let checkedCount = null;
+    // The card whose Pause button was clicked. The form fields are only a view
+    // of it: a later redraw must not send the previous key and model instead.
+    let pinnedPause = null;
+    let applyingPauseFields = false;
     let detailTarget = null;
     let detailData = null;
     let detailGeneration = 0;
@@ -354,6 +358,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return `${item.provider}|${item.upstream_key_fingerprint}`;
     }
 
+    function setPauseModel(model) {
+        // A datalist can ignore a new value while it is attached. Drop it, write, put it back.
+        const input = els.pauseModel;
+        input.removeAttribute('list');
+        input.value = model;
+        input.setAttribute('list', 'pauseModels');
+    }
+
     function renderPauseModels() {
         const chosen = els.pauseKey.value;
         const models = new Set((lastData?.status || [])
@@ -367,15 +379,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderPauseForm(data) {
-        const chosen = els.pauseKey.value;
-        els.pauseKey.replaceChildren(...data.pauseTargets.map((item) => {
-            const option = document.createElement('option');
-            option.value = pauseTargetValue(item);
-            option.textContent = `${item.provider} · ${fingerprintLabel(item.upstream_key_fingerprint)}`;
-            return option;
-        }));
-        if (data.pauseTargets.some((item) => pauseTargetValue(item) === chosen)) els.pauseKey.value = chosen;
-        renderPauseModels();
+        const chosen = pinnedPause ? pauseTargetValue(pinnedPause) : els.pauseKey.value;
+        applyingPauseFields = true;
+        try {
+            els.pauseKey.replaceChildren(...data.pauseTargets.map((item) => {
+                const option = document.createElement('option');
+                option.value = pauseTargetValue(item);
+                option.textContent = `${item.provider} · ${fingerprintLabel(item.upstream_key_fingerprint)}`;
+                return option;
+            }));
+            if (data.pauseTargets.some((item) => pauseTargetValue(item) === chosen)) els.pauseKey.value = chosen;
+            renderPauseModels();
+            if (pinnedPause) setPauseModel(pinnedPause.model || '');
+        } finally {
+            applyingPauseFields = false;
+        }
     }
 
     function renderReliability(data) {
@@ -594,27 +612,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openPauseForm(row) {
+        pinnedPause = {
+            provider: row.provider,
+            upstream_key_fingerprint: row.upstream_key_fingerprint,
+            model: row.model || '',
+        };
         els.pauseDetails.open = true;
-        els.pauseKey.value = pauseTargetValue(row);
-        renderPauseModels();
-        els.pauseModel.value = row.model || '';
+        if (lastData) renderPauseForm(lastData);
         els.pauseReason.focus();
     }
 
     async function submitPause(event) {
         event.preventDefault();
-        const chosen = lastData?.pauseTargets.find((item) => pauseTargetValue(item) === els.pauseKey.value);
-        if (!chosen) return;
+        const pinned = pinnedPause;
+        const chosen = lastData?.pauseTargets.find((item) => (
+            pauseTargetValue(item) === (pinned ? pauseTargetValue(pinned) : els.pauseKey.value)
+        ));
+        if (!chosen) {
+            showError({ key: 'failures:pause.missingKey' });
+            return;
+        }
+        const model = pinned ? pinned.model : els.pauseModel.value;
         els.pauseSubmit.disabled = true;
         try {
             await postJson(PAUSES_ENDPOINT, {
                 provider: chosen.provider,
                 upstream_key_fingerprint: chosen.upstream_key_fingerprint,
-                model: els.pauseModel.value.trim() || null,
+                model: String(model || '').trim() || null,
                 duration_seconds: Math.round(Number(els.pauseMinutes.value) * 60),
                 reason: els.pauseReason.value.trim(),
             });
+            pinnedPause = null;
             els.pauseReason.value = '';
+            setPauseModel('');
             els.pauseDetails.open = false;
             await load();
         } catch (error) {
@@ -685,7 +715,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     els.range.addEventListener('change', () => void load());
     els.checkAll.addEventListener('click', () => void checkAll());
-    els.pauseKey.addEventListener('change', renderPauseModels);
+    els.pauseKey.addEventListener('change', () => {
+        if (applyingPauseFields) return;
+        pinnedPause = null;
+        renderPauseModels();
+    });
+    els.pauseModel.addEventListener('input', () => {
+        if (applyingPauseFields) return;
+        pinnedPause = null;
+    });
     els.pauseForm.addEventListener('submit', (event) => void submitPause(event));
     els.modelDetailClose.addEventListener('click', closeDetail);
 

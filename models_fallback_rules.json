@@ -123,21 +123,6 @@
         ]
       },
       {
-        "provider": "gemini_cli",
-        "model": "gemini-3.8-flash",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
         "provider": "routerai",
         "model": "deepseek/deepseek-v4.1-flash-1017",
         "use_provider_order_as_fallback": false,
@@ -442,7 +427,8 @@
           "overrides": {},
           "filters": [
             "temperature",
-            "seed"
+            "seed",
+            "top_p"
           ],
           "value_maps": {}
         },
@@ -652,6 +638,16 @@
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
+        "payload_transforms": {
+          "defaults": {},
+          "overrides": {},
+          "filters": [
+            "temperature",
+            "seed",
+            "top_p"
+          ],
+          "value_maps": {}
+        },
         "supports_vision": true,
         "supports_tools": true,
         "context_window": 1050000,
@@ -731,16 +727,6 @@
         "capabilities_autofilled": [
           "context_window"
         ]
-      },
-      {
-        "provider": "llm_ai",
-        "model": "deepseek-ocr-2",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": false,
-        "context_window": 8192
       }
     ],
     "rotate_models": false,
@@ -920,6 +906,21 @@
   {
     "gateway_model_name": "llmgateway/small",
     "fallback_models": [
+      {
+        "provider": "cerebras",
+        "model": "gpt-oss-120b",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": false,
+        "supports_tools": true,
+        "context_window": 131072,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
       {
         "provider": "routerai",
         "model": "inception/mercury-3",

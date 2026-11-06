@@ -116,7 +116,7 @@
       "routes": [
         {
           "provider": "routerai",
-          "model": "openai/gpt-image-2.5-sunburst",
+          "model": "openai/gpt-image-2.6-sunburst",
           "target_path": "/images/generations",
           "custom_headers": {},
           "custom_body_params": {
@@ -172,7 +172,7 @@
       "routes": [
         {
           "provider": "routerai",
-          "model": "openai/gpt-image-2.5-sunburst",
+          "model": "openai/gpt-image-2.6-sunburst",
           "target_path": "/images/edits",
           "custom_headers": {},
           "custom_body_params": {

@@ -101,6 +101,7 @@
     "minutes": "Minutes",
     "reason": "Reason",
     "submit": "Pause",
+    "missingKey": "This provider key is not in the current settings.",
     "hint": "Pauses live in the service memory: a restart clears them."
   },
   "detail": {
