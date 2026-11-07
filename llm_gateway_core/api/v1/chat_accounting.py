@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ from ...services.chat_accounting import (
     ChatTerminalObservation,
     build_chat_accounting_event,
 )
+from ...services.fusion_keepalive import json_keepalive_enabled
 from ...services.runtime_config import AppServices, RuntimeSnapshot
 from ...services.stream_observation import SSEEvent, parse_sse_json
 from ...utils.usage_tracking import (
@@ -448,11 +450,13 @@ class ChatTerminalOwner:
         if self._response_status_code(response_start) >= 400:
             return TerminalReason.UPSTREAM_ERROR
         streaming, _dialect = self._require_bound_request()
-        return (
-            TerminalReason.PROTOCOL_ERROR
-            if streaming
-            else TerminalReason.COMPLETE
-        )
+        if streaming:
+            return TerminalReason.PROTOCOL_ERROR
+        # Headers are already 200 once whitespace keepalives have started.
+        # A final document with an error and no choices is the late failure.
+        if _is_keepalive_upstream_error(response_start, _body):
+            return TerminalReason.UPSTREAM_ERROR
+        return TerminalReason.COMPLETE
 
     def _classify_opaque(self, response_start: ResponseStart) -> TerminalReason:
         if self._response_status_code(response_start) >= 400:
@@ -566,6 +570,16 @@ class ChatTerminalOwner:
 
     def __repr__(self) -> str:
         return "<ChatTerminalOwner>"
+
+
+def _is_keepalive_upstream_error(response_start: ResponseStart, body: bytes) -> bool:
+    if not json_keepalive_enabled(response_start.headers):
+        return False
+    try:
+        payload = json.loads(body)
+    except (UnicodeError, RecursionError, ValueError):
+        return False
+    return isinstance(payload, dict) and "error" in payload and "choices" not in payload
 
 
 def take_chat_terminal_owner(request: Request) -> ChatTerminalOwner:

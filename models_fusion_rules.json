@@ -28,13 +28,6 @@
       "model": "gpt-6.1-sol"
     },
     "include_details_default": true,
-    "web_tools": {
-      "search_model": "llmgateway/web-search",
-      "read_model": "llmgateway/web-read",
-      "max_tool_calls": 6,
-      "max_iterations": 4,
-      "max_results": 5
-    },
     "reserve": [
       {
         "provider": "routerai",

@@ -13,6 +13,7 @@ from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..api.error_envelope import error_response
+from ..services.fusion_keepalive import json_keepalive_enabled
 from ..services.runtime_config import AppServices
 from ..services.stream_observation import (
     SSEEvent,
@@ -210,6 +211,7 @@ class _ResponseObserver:
         "_actual_completed",
         "_actual_started",
         "_body_messages",
+        "_json_keepalive",
         "_leases",
         "_observation",
         "_pending_start",
@@ -234,6 +236,7 @@ class _ResponseObserver:
         self._pending_start: Message | None = None
         self._start: ResponseStart | None = None
         self._body_messages: list[Message] = []
+        self._json_keepalive = False
         self._leases = _LeaseGroup()
         self._sse_framer: SSEFramer | None = None
         self._sse_validated_event = False
@@ -335,6 +338,7 @@ class _ResponseObserver:
             wire_mode=wire_mode,
             charset=charset,
         )
+        self._json_keepalive = json_keepalive_enabled(raw_headers)
         if wire_mode is WireMode.SSE:
             self._sse_framer = SSEFramer(
                 max_event_bytes=self._services.stream_event_max_bytes
@@ -356,7 +360,27 @@ class _ResponseObserver:
             await self._flush_start()
 
     async def _send_json(self, message: Message, body: bytes) -> None:
-        if self._actual_started:
+        more_body = bool(message.get("more_body", False))
+        if self._settled:
+            if body and not _is_json_whitespace(body):
+                raise _ObservationFailure(_FailureKind.PROTOCOL)
+            await self._send_body(message)
+            return
+        # Opt-in only. Ordinary JSON still buffers every chunk until the
+        # document is complete. Whitespace keepalives must leave immediately
+        # and must not occupy the small retained-frame budget.
+        if (
+            self._json_keepalive
+            and more_body
+            and not self._body_messages
+            and _is_json_whitespace(body)
+        ):
+            if len(body) > self._services.json_response_max_bytes:
+                raise _ObservationFailure(_FailureKind.PROTOCOL)
+            await self._flush_start()
+            await self._send_body(message)
+            return
+        if self._actual_started and not self._json_keepalive:
             raise _ObservationFailure(_FailureKind.PROTOCOL)
         if body:
             if self._leases.remaining_bytes + len(body) > self._services.json_response_max_bytes:
@@ -366,7 +390,7 @@ class _ResponseObserver:
             message,
             body,
         )
-        if bool(message.get("more_body", False)):
+        if more_body:
             return
         payload = b"".join(_message_body(item) for item in self._body_messages)
         try:
@@ -819,6 +843,10 @@ def _wire_mode(headers: tuple[tuple[bytes, bytes], ...]) -> tuple[WireMode, str]
         codecs.lookup(charset)
         return WireMode.JSON, charset
     return WireMode.OPAQUE, charset or "utf-8"
+
+
+def _is_json_whitespace(body: bytes) -> bool:
+    return body.translate(None, b" \t\r\n") == b""
 
 
 def _message_body(message: Message) -> bytes:

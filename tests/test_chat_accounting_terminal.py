@@ -574,3 +574,54 @@ def test_none_commit_receipt_and_false_release_fail_closed() -> None:
         assert release_error.value.code is AccountingErrorCode.ACCOUNTING_FAILED
 
     run_async(scenario())
+
+
+def _keepalive_start() -> ResponseStart:
+    return ResponseStart(
+        status_code=200,
+        headers=(
+            (b"content-type", b"application/json"),
+            (b"x-llmgateway-json-keepalive", b"1"),
+        ),
+        wire_mode=WireMode.JSON,
+        charset="utf-8",
+    )
+
+
+def test_keepalive_error_without_choices_releases_instead_of_committing() -> None:
+    async def scenario() -> None:
+        _, services, _, _, _, observation = _build_observation()
+        start = _keepalive_start()
+        reason = observation.classify_json(
+            start,
+            b'{"error":{"message":"Fusion main model failed."}}',
+        )
+        assert reason is TerminalReason.UPSTREAM_ERROR
+        await observation.finalizer.finalize(TerminalSignal(reason, start))
+        services.accounting_service.commit.assert_not_awaited()
+        services.accounting_service.release.assert_awaited()
+
+    run_async(scenario())
+
+
+def test_keepalive_success_with_choices_stays_complete() -> None:
+    _, _, _, _, handoff, observation = _build_observation()
+    handoff.publish(_terminal_observation())
+    start = _keepalive_start()
+    assert (
+        observation.classify_json(
+            start,
+            b'{"choices":[{"message":{"content":"ok"}}]}',
+        )
+        is TerminalReason.COMPLETE
+    )
+
+
+def test_error_object_without_keepalive_header_stays_complete() -> None:
+    _, _, _, _, handoff, observation = _build_observation()
+    handoff.publish(_terminal_observation())
+    start = _start(200, WireMode.JSON)
+    assert (
+        observation.classify_json(start, b'{"error":{"message":"x"}}')
+        is TerminalReason.COMPLETE
+    )

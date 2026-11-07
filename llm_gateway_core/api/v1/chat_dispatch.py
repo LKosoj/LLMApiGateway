@@ -41,6 +41,7 @@ from ...services.chat_accounting import (
     ObservedChatResponse,
     build_direct_chat_terminal_observation,
 )
+from ...services import fusion_keepalive
 from ...services.model_policy import resolve_model_name
 from ...services.payload_transform import apply_payload_transforms
 from ...services.ratelimit_headers import parse_ratelimit_headers
@@ -1759,8 +1760,22 @@ async def dispatch_chat_request(
             raise HTTPException(status_code=400, detail="Fusion models do not support streaming responses.")
         fusion_service = runtime_snapshot.fusion_service
         proxy_http_clients = runtime_snapshot.proxy_http_clients
-        if accounting_handoff is not None:
-            observed = await fusion_service.run_observed(
+
+        async def _produce_fusion_response() -> dict:
+            if accounting_handoff is not None:
+                observed = await fusion_service.run_observed(
+                    request=request,
+                    gateway_model_name=routing_model,
+                    fusion_config=fusion_config,
+                    request_body=request_body_json,
+                    http_client=http_client,
+                    proxy_http_clients=proxy_http_clients,
+                )
+                if not isinstance(observed, ObservedChatResponse):
+                    raise AccountingValidationError
+                accounting_handoff.publish(observed.observation)
+                return observed.response
+            return await fusion_service.run(
                 request=request,
                 gateway_model_name=routing_model,
                 fusion_config=fusion_config,
@@ -1768,18 +1783,14 @@ async def dispatch_chat_request(
                 http_client=http_client,
                 proxy_http_clients=proxy_http_clients,
             )
-            if not isinstance(observed, ObservedChatResponse):
-                raise AccountingValidationError
-            accounting_handoff.publish(observed.observation)
-            return observed.response
-        return await fusion_service.run(
-            request=request,
-            gateway_model_name=routing_model,
-            fusion_config=fusion_config,
-            request_body=request_body_json,
-            http_client=http_client,
-            proxy_http_clients=proxy_http_clients,
-        )
+
+        if fusion_keepalive.fusion_response_should_keepalive(request):
+            return fusion_keepalive.FusionKeepaliveJsonResponse(
+                request,
+                _produce_fusion_response,
+                interval_seconds=fusion_keepalive.FUSION_KEEPALIVE_INTERVAL_SECONDS,
+            )
+        return await _produce_fusion_response()
 
     router_rules = getattr(config_loader_instance, "router_rules", None)
     router_config = (

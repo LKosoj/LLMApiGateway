@@ -42,6 +42,7 @@ from llm_gateway_core.services.accounting import (
 )
 from llm_gateway_core.services.chat_accounting import ChatTerminalObservation
 from llm_gateway_core.services.chat_accounting import ObservedChatResponse
+from llm_gateway_core.services.fusion_keepalive import FusionKeepaliveJsonResponse
 from llm_gateway_core.services.stream_observation import SSEFramer
 from llm_gateway_core.services.request_handler import _OwnedStreamingResponse, _StreamResourceOwner
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
@@ -573,9 +574,27 @@ def test_fusion_dispatch_uses_observed_result_for_outer_handoff() -> None:
                 enforce_model_access=False,
                 accounting_handoff=handoff,
             )
+            assert isinstance(result, FusionKeepaliveJsonResponse)
+            taken: dict[str, object] = {}
+            sent: list[dict] = []
 
-        assert result is public_response
-        assert handoff.take() is observed.observation
+            async def send(message):
+                if message.get("type") == "http.response.body" and message.get("body"):
+                    taken["observation"] = handoff.take()
+                sent.append(dict(message))
+
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            await result(request.scope, receive, send)
+
+        assert taken["observation"] is observed.observation
+        body = b"".join(
+            message.get("body", b"")
+            for message in sent
+            if message.get("type") == "http.response.body"
+        )
+        assert json.loads(body) == public_response
         run_observed.assert_awaited_once()
         run_legacy.assert_not_awaited()
 

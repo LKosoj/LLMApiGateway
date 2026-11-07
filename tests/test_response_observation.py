@@ -937,6 +937,130 @@ def test_sse_without_terminal_after_start_closes_without_second_envelope() -> No
     run_async(scenario())
 
 
+def _json_start(*extra: tuple[bytes, bytes]) -> Message:
+    message = _start(b"application/json")
+    message["headers"] = [*message["headers"], *extra]
+    return message
+
+
+def test_json_whitespace_without_keepalive_stays_buffered() -> None:
+    async def scenario() -> None:
+        services = make_app_services()
+        probe = _Probe()
+        source = [
+            _json_start(),
+            {"type": "http.response.body", "body": b"\n", "more_body": True},
+            {"type": "http.response.body", "body": b"{}"},
+        ]
+
+        sent = await _run_observed(
+            source,
+            services=services,
+            observation=_observation(services, probe),
+            probe=probe,
+        )
+
+        assert _body(sent) == b"\n{}"
+        assert probe.order.index(("finalize", TerminalReason.COMPLETE)) < probe.order.index(
+            ("send", "start")
+        )
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
+
+
+def test_json_keepalive_flushes_whitespace_before_the_document_is_complete() -> None:
+    async def scenario() -> None:
+        services = make_app_services()
+        probe = _Probe()
+        document = b'{"answer":"ok"}'
+        source = [
+            _json_start((b"x-llmgateway-json-keepalive", b"1")),
+            {"type": "http.response.body", "body": b"\n", "more_body": True},
+            {"type": "http.response.body", "body": document, "more_body": True},
+            {"type": "http.response.body", "body": b""},
+        ]
+
+        sent = await _run_observed(
+            source,
+            services=services,
+            observation=_observation(services, probe),
+            probe=probe,
+        )
+
+        assert _body(sent) == b"\n" + document
+        assert probe.json_payloads[0][1] == document
+        assert probe.order.index(("send", b"\n")) < probe.order.index(
+            ("finalize", TerminalReason.COMPLETE)
+        )
+        assert probe.order.index(("finalize", TerminalReason.COMPLETE)) < probe.order.index(
+            ("send", document)
+        )
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
+
+
+def test_json_keepalive_whitespace_does_not_consume_buffer_slots() -> None:
+    async def scenario() -> None:
+        capacity = StreamObservationCapacity(max_items=2, max_bytes=128)
+        services = make_app_services(
+            stream_observation_capacity=capacity,
+            json_response_capacity=capacity,
+        )
+        probe = _Probe()
+        source = [
+            _json_start((b"x-llmgateway-json-keepalive", b"1")),
+            *[
+                {"type": "http.response.body", "body": b"\n", "more_body": True}
+                for _ in range(5)
+            ],
+            {"type": "http.response.body", "body": b"{}"},
+        ]
+
+        sent = await _run_observed(
+            source,
+            services=services,
+            observation=_observation(services, probe),
+            probe=probe,
+        )
+
+        assert sent[0]["status"] == 200
+        assert json.loads(_body(sent)) == {}
+        assert probe.order.index(("send", b"\n")) < probe.order.index(
+            ("finalize", TerminalReason.COMPLETE)
+        )
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
+
+
+def test_json_keepalive_still_buffers_partial_objects() -> None:
+    async def scenario() -> None:
+        services = make_app_services()
+        probe = _Probe()
+        source = [
+            _json_start((b"x-llmgateway-json-keepalive", b"1")),
+            {"type": "http.response.body", "body": b'{"message":"', "more_body": True},
+            {"type": "http.response.body", "body": b'ok"}'},
+        ]
+
+        sent = await _run_observed(
+            source,
+            services=services,
+            observation=_observation(services, probe),
+            probe=probe,
+        )
+
+        assert sent == source
+        assert probe.order.index(("finalize", TerminalReason.COMPLETE)) < probe.order.index(
+            ("send", "start")
+        )
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
+
+
 def test_response_finalizer_duplicate_signals_share_one_result_identity() -> None:
     async def scenario() -> None:
         supervisor = TaskSupervisor()

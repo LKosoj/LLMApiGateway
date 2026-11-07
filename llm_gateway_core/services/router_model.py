@@ -21,6 +21,7 @@ from fastapi import HTTPException, Request
 from ..utils.usage_tracking import ModelCostRates
 from .accounting import AccountingValidationError
 from .chat_accounting import ChatTerminalObservation, ObservedChatResponse
+from .fusion_keepalive import DELEGATE_DISPATCH_STATE_ATTR
 from .operation_accounting import build_token_model_component
 
 logger = logging.getLogger(__name__)
@@ -665,6 +666,8 @@ class RouterModelService:
 
         previous_start_index = getattr(request.state, "llmgateway_forced_fallback_start_index", None)
         previous_owner_model = getattr(request.state, "llmgateway_forced_fallback_owner_model", None)
+        previous_delegate = getattr(request.state, DELEGATE_DISPATCH_STATE_ATTR, False)
+        setattr(request.state, DELEGATE_DISPATCH_STATE_ATTR, True)
         try:
             if selected_candidate["type"] == "fallback_entry":
                 request.state.llmgateway_forced_fallback_start_index = selected_candidate["index"]
@@ -674,5 +677,6 @@ class RouterModelService:
                 request.state.llmgateway_forced_fallback_owner_model = None
             return await _dispatch_chat_request(request, target_body, accounting_handoff=accounting_handoff)
         finally:
+            setattr(request.state, DELEGATE_DISPATCH_STATE_ATTR, previous_delegate)
             request.state.llmgateway_forced_fallback_start_index = previous_start_index
             request.state.llmgateway_forced_fallback_owner_model = previous_owner_model
