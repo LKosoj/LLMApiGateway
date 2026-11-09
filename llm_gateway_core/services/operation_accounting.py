@@ -239,7 +239,8 @@ def _strict_token_usage(
     )
     aliased_prompt_present = input_present or cache_creation_present or cache_read_present
     aliased_prompt = input_tokens + cache_creation + cache_read
-    if prompt_present and aliased_prompt_present and canonical_prompt != aliased_prompt:
+    # Cache counters alone are partial metadata, not an independent input total.
+    if prompt_present and input_present and canonical_prompt != aliased_prompt:
         # OpenAI-compatible wrappers (AgentRouter Claude, for one) emit both
         # families and leave the Anthropic aliases at zero. That is a dummy
         # second schema, not a second measurement: reject only when the
@@ -306,6 +307,8 @@ def _strict_token_usage(
     if cached_candidates and any(value != cached_candidates[0] for value in cached_candidates[1:]):
         raise AccountingValidationError
     cached_tokens = cached_candidates[0] if cached_candidates else 0
+    if prompt_present and not input_present and cache_creation + cached_tokens > prompt:
+        raise AccountingValidationError
 
     reasoning_candidates: list[int] = []
     for mapping, key in (

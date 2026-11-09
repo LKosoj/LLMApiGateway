@@ -124,3 +124,51 @@ def test_responses_client_stream_preserves_cost_for_accounting(upstream_cost):
         assert observations[0].usage.cost == pytest.approx(upstream_cost if upstream_cost is not None else 0.00007)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("upstream_cost", [None, 0, 0.123])
+def test_chat_partial_cache_usage_persists_actual_tokens_and_cost(tmp_path, monkeypatch, upstream_cost):
+    provider = ProviderDetails(
+        baseUrl="https://provider.example/v1", apikey="key", models={"model": {"input_rate": 2, "output_rate": 10}}
+    )
+    usage = {
+        "cache_creation_input_tokens": 714,
+        "prompt_tokens": 2060,
+        "completion_tokens": 806,
+        "total_tokens": 2866,
+        "prompt_tokens_details": {
+            "cached_tokens": 92,
+            "cache_creation_tokens": 714,
+            "cache_write_tokens": 714,
+            "cached_creation_tokens": 714,
+        },
+    }
+    if upstream_cost is not None:
+        usage["cost"] = upstream_cost
+    observation = build_direct_chat_terminal_observation(
+        {"usage": usage},
+        provider="provider",
+        model="model",
+        cost_rate_registry=build_model_cost_rate_registry({"provider": provider}),
+    )
+    context = AccountingRequestContext(
+        method="POST",
+        route_template="/v1/chat/completions",
+        policy=classify_billing_policy("POST", "/v1/chat/completions"),
+        request_id="request-1",
+        reservation=AccountingReservation(
+            reservation_id="reservation-1", request_id="request-1", api_key_id=7, reserved_usd=1
+        ),
+    )
+    event = build_chat_accounting_event(
+        context, observation, gateway_model="gateway/model", occurred_at=datetime(2026, 10, 20, tzinfo=timezone.utc)
+    )
+    monkeypatch.setenv("GATEWAY_DB_DIR", str(tmp_path))
+    database = TokensUsageDB(db_filename="chat-usage.db")
+    database.accept_accounting_event(event)
+    with sqlite3.connect(database.db_path) as connection:
+        row = connection.execute(
+            "SELECT prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost FROM tokens_usage"
+        ).fetchone()
+    assert row[:4] == (2060, 806, 2866, 92)
+    assert row[4] == pytest.approx(upstream_cost if upstream_cost is not None else (2060 * 2 + 806 * 10) / 1_000_000)

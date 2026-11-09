@@ -476,3 +476,42 @@ def test_direct_chat_stream_observation_builder_propagates_ttft_ms_to_usage():
         occurred_at=NOW,
     )
     assert event.usage.ttft_ms == 123
+
+
+@pytest.mark.parametrize("upstream_cost", [None, 0.0, 0.125])
+def test_direct_chat_partial_cache_usage_preserves_cost_and_event(upstream_cost):
+    usage = {
+        "cache_creation_input_tokens": 714,
+        "prompt_tokens": 2060,
+        "completion_tokens": 806,
+        "total_tokens": 2866,
+        "prompt_tokens_details": {
+            "cached_tokens": 92,
+            "cache_creation_tokens": 714,
+            "cache_write_tokens": 714,
+            "cached_creation_tokens": 714,
+        },
+    }
+    if upstream_cost is not None:
+        usage["cost"] = upstream_cost
+    observation = build_direct_chat_terminal_observation(
+        {"usage": usage},
+        provider="provider",
+        model="model",
+        cost_rate_registry=MappingProxyType({("provider", "model"): ModelCostRates(1.0, 2.0)}),
+    )
+    expected = upstream_cost if upstream_cost is not None else (2060 + 806 * 2) / 1_000_000
+    assert observation.usage.cost == pytest.approx(expected)
+    assert observation.components[0].cost_source is (
+        CostSource.UPSTREAM if upstream_cost is not None else CostSource.TOKEN_REGISTRY
+    )
+    event = build_chat_accounting_event(
+        _context("/v1/chat/completions"), observation, gateway_model="gateway-model", occurred_at=NOW, duration_ms=17
+    )
+    assert (
+        event.usage.prompt_tokens,
+        event.usage.completion_tokens,
+        event.usage.total_tokens,
+        event.usage.cached_tokens,
+    ) == (2060, 806, 2866, 92)
+    assert event.usage.cost == pytest.approx(expected)

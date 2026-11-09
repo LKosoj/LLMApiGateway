@@ -1026,45 +1026,130 @@ def _responses_input_to_openai_messages(input_items: object) -> list[dict]:
     return openai_messages
 
 
-def _responses_tools_to_openai(tools: object) -> list[dict]:
+# Codex hosted web_search is executed by /v1/responses through the gateway
+# search stack. The tool itself is translated into a normal function here.
+_HOSTED_RESPONSES_TOOL_TYPES = frozenset({"web_search", "web_search_preview"})
+
+
+def _responses_function_tool_to_openai(tool: dict) -> dict:
+    function_payload = tool.get("function", {}) if isinstance(tool.get("function"), dict) else {}
+    name = tool.get("name") or function_payload.get("name")
+    if not isinstance(name, str) or not name:
+        raise HTTPException(status_code=400, detail="Responses tools require a non-empty function name")
+
+    parameters = tool.get("parameters")
+    if parameters is None:
+        parameters = function_payload.get("parameters") or tool.get("parametersJsonSchema")
+    if not isinstance(parameters, dict):
+        parameters = {"type": "object", "properties": {}}
+
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": tool.get("description") or function_payload.get("description"),
+            "parameters": parameters,
+        },
+    }
+
+
+def _append_responses_function_tool(
+    translated_tools: list[dict],
+    tool: dict,
+    seen_names: set[str],
+    namespace: object,
+) -> None:
+    name = tool["function"]["name"]
+    if name in seen_names:
+        qualifier = namespace if isinstance(namespace, str) and namespace else f"tool_{len(translated_tools)}"
+        name = f"{qualifier}__{name}"
+        if name in seen_names:
+            name = f"{name}_{len(translated_tools)}"
+        tool["function"]["name"] = name
+    seen_names.add(name)
+    translated_tools.append(tool)
+
+
+def _responses_namespace_tools(tool: dict) -> list[dict]:
+    nested = tool.get("tools")
+    if not isinstance(nested, list):
+        raise HTTPException(status_code=400, detail="Responses namespace tools require a tools list")
+
+    converted: list[dict] = []
+    for inner in nested:
+        if not isinstance(inner, dict):
+            raise HTTPException(status_code=400, detail="Responses tools must be objects")
+        inner_type = inner.get("type")
+        if inner_type not in (None, "function"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported Responses tool type inside namespace: {inner_type}",
+            )
+        converted.append(_responses_function_tool_to_openai(inner))
+    return converted
+
+
+def _responses_tools_to_openai(tools: object, web_search_bindings: list | None = None) -> list[dict]:
     if not isinstance(tools, list):
         raise HTTPException(status_code=400, detail="Responses tools must be a list")
 
     translated_tools: list[dict] = []
+    seen_names: set[str] = set()
     for tool in tools:
         if not isinstance(tool, dict):
             raise HTTPException(status_code=400, detail="Responses tools must be objects")
 
         tool_type = tool.get("type")
+        if tool_type == "namespace":
+            for converted in _responses_namespace_tools(tool):
+                _append_responses_function_tool(translated_tools, converted, seen_names, tool.get("name"))
+            continue
+        if tool_type in _HOSTED_RESPONSES_TOOL_TYPES:
+            from .responses_web_search import (
+                external_web_access_allowed,
+                responses_web_search_binding,
+                responses_web_search_function_tool,
+            )
+
+            # external_web_access false means the client forbids live internet.
+            # Do not offer the tool, so the model cannot ask this gateway to search.
+            if not external_web_access_allowed(tool):
+                logging.info(
+                    "Skipping Responses hosted tool %s because external_web_access is false.",
+                    tool_type,
+                )
+                continue
+            converted = responses_web_search_function_tool(tool)
+            _append_responses_function_tool(translated_tools, converted, seen_names, None)
+            binding = responses_web_search_binding(tool, converted["function"]["name"])
+            if web_search_bindings is not None:
+                web_search_bindings.append(binding)
+            logging.info(
+                "Translating Responses hosted tool %s into gateway function %s (external_web_access=%s).",
+                tool_type,
+                binding.function_name,
+                binding.external_web_access,
+            )
+            continue
         if tool_type not in (None, "function"):
             raise HTTPException(status_code=400, detail=f"Unsupported Responses tool type: {tool_type}")
 
-        function_payload = tool.get("function", {}) if isinstance(tool.get("function"), dict) else {}
-        name = tool.get("name") or function_payload.get("name")
-        if not isinstance(name, str) or not name:
-            raise HTTPException(status_code=400, detail="Responses tools require a non-empty function name")
-
-        parameters = tool.get("parameters")
-        if parameters is None:
-            parameters = function_payload.get("parameters") or tool.get("parametersJsonSchema")
-        if not isinstance(parameters, dict):
-            parameters = {"type": "object", "properties": {}}
-
-        translated_tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": tool.get("description") or function_payload.get("description"),
-                    "parameters": parameters,
-                },
-            }
+        _append_responses_function_tool(
+            translated_tools,
+            _responses_function_tool_to_openai(tool),
+            seen_names,
+            None,
         )
 
     return translated_tools
 
 
 def _responses_request_to_openai_payload(responses_payload: dict) -> tuple[dict, str]:
+    openai_payload, requested_model, _bindings = _translate_responses_request(responses_payload)
+    return openai_payload, requested_model
+
+
+def _translate_responses_request(responses_payload: dict) -> tuple[dict, str, list]:
     requested_model = responses_payload.get("model")
     if not isinstance(requested_model, str) or not requested_model:
         raise HTTPException(status_code=400, detail="Missing 'model' in request body")
@@ -1099,8 +1184,12 @@ def _responses_request_to_openai_payload(responses_payload: dict) -> tuple[dict,
         if field in responses_payload:
             openai_payload[field] = copy.deepcopy(responses_payload[field])
 
+    web_search_bindings: list = []
     if "tools" in responses_payload:
-        openai_payload["tools"] = _responses_tools_to_openai(responses_payload["tools"])
+        openai_payload["tools"] = _responses_tools_to_openai(
+            responses_payload["tools"],
+            web_search_bindings=web_search_bindings,
+        )
 
     if "tool_choice" in responses_payload:
         openai_payload["tool_choice"] = copy.deepcopy(responses_payload["tool_choice"])
@@ -1114,7 +1203,7 @@ def _responses_request_to_openai_payload(responses_payload: dict) -> tuple[dict,
     if "response_format" in responses_payload and "response_format" not in openai_payload:
         openai_payload["response_format"] = copy.deepcopy(responses_payload["response_format"])
 
-    return openai_payload, requested_model
+    return openai_payload, requested_model, web_search_bindings
 
 
 def _build_openai_usage_to_responses_usage(usage: object) -> dict:

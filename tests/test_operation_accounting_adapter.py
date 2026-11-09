@@ -798,3 +798,58 @@ def test_non_equivalent_provenance_or_observation_policy_is_rejected() -> None:
                 route_template="/v1/images/generations",
             ),
         )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"cache_creation_input_tokens": 714},
+        {"cache_read_input_tokens": 92},
+        {"cache_creation_input_tokens": 714, "cache_read_input_tokens": 92},
+    ],
+)
+def test_openai_prompt_with_partial_anthropic_cache_buckets(extra):
+    usage = {
+        "prompt_tokens": 2060,
+        "completion_tokens": 806,
+        "total_tokens": 2866,
+        "prompt_tokens_details": {"cached_tokens": 92},
+        **extra,
+    }
+    observed = _parse_token({"usage": usage})
+    assert (
+        observed.usage.prompt_tokens,
+        observed.usage.completion_tokens,
+        observed.usage.total_tokens,
+        observed.usage.cached_tokens,
+    ) == (2060, 806, 2866, 92)
+    assert observed.cost_source is CostSource.TOKEN_REGISTRY
+    assert observed.usage.cost == pytest.approx((2060 * 2 + 806 * 4) / 1_000_000)
+
+
+def test_openai_prompt_still_rejects_complete_conflicting_anthropic_buckets():
+    with pytest.raises(AccountingValidationError):
+        _parse_token(
+            {
+                "usage": {
+                    "prompt_tokens": 2060,
+                    "input_tokens": 1000,
+                    "cache_creation_input_tokens": 714,
+                    "cache_read_input_tokens": 92,
+                    "completion_tokens": 806,
+                }
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "partial_cache",
+    [
+        {"cache_creation_input_tokens": 2061},
+        {"cache_creation_input_tokens": 2000, "cache_read_input_tokens": 61},
+        {"cache_creation_input_tokens": 2000, "prompt_tokens_details": {"cached_tokens": 61}},
+    ],
+)
+def test_partial_cache_buckets_cannot_exceed_total_prompt(partial_cache):
+    with pytest.raises(AccountingValidationError):
+        _parse_token({"usage": {"prompt_tokens": 2060, "completion_tokens": 806, **partial_cache}})

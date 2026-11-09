@@ -79,13 +79,13 @@
     "fallback_models": [
       {
         "provider": "routerai",
-        "model": "inception/mercury-3",
+        "model": "qwen/qwen3-235b-a22b-2507",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 262144,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -417,6 +417,15 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
+        "provider": "a6",
+        "model": "claude-opus-5-5",
+        "use_provider_order_as_fallback": false,
+        "retry_delay": 1,
+        "retry_count": 2,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "agentrouter",
         "model": "gpt-6.1-sol",
         "use_provider_order_as_fallback": false,
@@ -549,13 +558,13 @@
     "fallback_models": [
       {
         "provider": "routerai",
-        "model": "inception/mercury-3",
+        "model": "qwen/qwen3-235b-a22b-2507",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 262144,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -923,13 +932,13 @@
       },
       {
         "provider": "routerai",
-        "model": "inception/mercury-3",
+        "model": "openai/gpt-oss-20b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
         "supports_vision": false,
         "supports_tools": true,
-        "context_window": 1000000,
+        "context_window": 131072,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

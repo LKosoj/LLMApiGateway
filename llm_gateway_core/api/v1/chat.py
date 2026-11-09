@@ -67,6 +67,7 @@ from .chat_dialects import (
     _responses_input_to_openai_messages as _responses_input_to_openai_messages,
     _responses_tools_to_openai as _responses_tools_to_openai,
     _responses_request_to_openai_payload as _responses_request_to_openai_payload,
+    _translate_responses_request as _translate_responses_request,
     _build_openai_usage_to_responses_usage as _build_openai_usage_to_responses_usage,
     _openai_message_content_to_responses_content as _openai_message_content_to_responses_content,
     _openai_response_to_responses as _openai_response_to_responses,
@@ -254,12 +255,32 @@ async def chat_completions(request: Request):
 async def openai_responses(request: Request):
     request_body_bytes = await request.body()
     responses_payload = _read_json_request_body(request_body_bytes, "/v1/responses", request)
-    openai_payload, requested_model = _responses_request_to_openai_payload(responses_payload)
+    openai_payload, requested_model, web_search_bindings = _translate_responses_request(responses_payload)
     request.state.llmgateway_original_responses_payload = responses_payload
 
     # Set metadata for stats
     request.state.llmgateway_gateway_model = requested_model
     request.state.llmgateway_operation = "chat"
+
+    if web_search_bindings:
+        from .responses_web_search import (
+            complete_responses_web_search,
+            publish_responses_chat_observation,
+            responses_chat_to_sse,
+        )
+
+        client_streams = bool(openai_payload.get("stream"))
+        response_data = await complete_responses_web_search(
+            request,
+            openai_payload,
+            web_search_bindings,
+            dispatch=_dispatch_chat_request,
+        )
+        publish_responses_chat_observation(request, response_data)
+        _update_request_usage_tracker(request, response_data.get("usage"))
+        if client_streams:
+            return responses_chat_to_sse(response_data, requested_model)
+        return _openai_response_to_responses(response_data, requested_model)
 
     response_data = await _dispatch_chat_request(
         request,
