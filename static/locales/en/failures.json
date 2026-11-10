@@ -125,6 +125,8 @@
     "format_ignored": "Answer format ignored",
     "unparsed_tool_call_dialect": "Unreadable tool call",
     "upstream_provider_error": "Provider returned an error as text",
+    "leading_ideograph": "Ideograph in the first response chunk",
+    "mixed_script_word": "Mixed alphabets in one word",
     "unknown": "Other error"
   },
   "values": {

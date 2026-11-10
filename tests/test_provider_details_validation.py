@@ -23,6 +23,28 @@ class ProviderDetailsValidationTests(unittest.TestCase):
 
         self.assertEqual(details.baseUrl, "https://provider.example")
         self.assertEqual(details.apikey, "DIRECT-KEY")
+        self.assertIsNone(details.switch_on_leading_ideograph)
+
+    def test_switch_on_leading_ideograph_accepts_only_real_booleans(self):
+        enabled = ProviderDetails(
+            baseUrl="https://provider.example",
+            apikey="DIRECT-KEY",
+            switch_on_leading_ideograph=True,
+        )
+        disabled = ProviderDetails(
+            baseUrl="https://provider.example",
+            apikey="DIRECT-KEY",
+            switch_on_leading_ideograph=False,
+        )
+
+        self.assertIs(enabled.switch_on_leading_ideograph, True)
+        self.assertIsNone(disabled.switch_on_leading_ideograph)
+        with self.assertRaises(ValidationError):
+            ProviderDetails(
+                baseUrl="https://provider.example",
+                apikey="DIRECT-KEY",
+                switch_on_leading_ideograph="yes",
+            )
 
     def test_custom_headers_user_agent_is_accepted(self):
         details = ProviderDetails(

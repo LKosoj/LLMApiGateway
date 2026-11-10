@@ -5,7 +5,12 @@ from llm_gateway_core.api.v1.chat_model_behavior import (
     ModelBehaviorFailureDetail,
     describe_degenerate_response,
     detect_degenerate_non_stream_response,
+    LEADING_IDEOGRAPH_FAILURE_MESSAGE,
+    MIXED_SCRIPT_WORD_FAILURE_MESSAGE,
+    detect_leading_ideograph_non_stream,
     detect_upstream_provider_error_non_stream,
+    text_contains_ideograph,
+    text_contains_mixed_script_word,
 )
 
 
@@ -597,6 +602,152 @@ class UpstreamProviderErrorTests(unittest.TestCase):
         result = detect_upstream_provider_error_non_stream(
             response_data,
             "provider-model",
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsNone(result)
+
+
+class LeadingIdeographTests(unittest.TestCase):
+    def test_empty_text_has_no_ideograph(self):
+        self.assertFalse(text_contains_ideograph(""))
+        self.assertFalse(text_contains_ideograph(" \n\t"))
+
+    def test_ideograph_and_other_scripts(self):
+        self.assertTrue(text_contains_ideograph("金狻猊"))
+        self.assertTrue(text_contains_ideograph("\n金"))
+        self.assertTrue(text_contains_ideograph("This is one of those topics 金"))
+        self.assertFalse(text_contains_ideograph("This is one of those topics"))
+        self.assertFalse(text_contains_ideograph("Привет"))
+        self.assertFalse(text_contains_ideograph("あ"))
+
+    def test_openai_reply_containing_an_ideograph_fails(self):
+        result = detect_leading_ideograph_non_stream(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": " 金"},
+                    }
+                ]
+            },
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsInstance(result, ModelBehaviorFailureDetail)
+        self.assertEqual(result.behavior_class, "leading_ideograph")
+        self.assertEqual(str(result), LEADING_IDEOGRAPH_FAILURE_MESSAGE)
+
+    def test_latin_preamble_with_an_ideograph_fails(self):
+        result = detect_leading_ideograph_non_stream(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "This is one of those topics 金",
+                        }
+                    }
+                ]
+            },
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsInstance(result, ModelBehaviorFailureDetail)
+        self.assertEqual(str(result), LEADING_IDEOGRAPH_FAILURE_MESSAGE)
+
+    def test_reasoning_ideograph_does_not_fail_a_latin_answer(self):
+        result = detect_leading_ideograph_non_stream(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "This is one of those topics.",
+                            "reasoning_content": "金",
+                        }
+                    }
+                ]
+            },
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsNone(result)
+
+    def test_tool_call_without_text_is_kept(self):
+        result = detect_leading_ideograph_non_stream(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{"id": "call_1"}],
+                        },
+                    }
+                ]
+            },
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsNone(result)
+
+    def test_mixed_alphabet_word_and_its_boundaries(self):
+        self.assertTrue(text_contains_mixed_script_word("добромcompanyстве"))
+        self.assertTrue(text_contains_mixed_script_word("приветhello"))
+        self.assertTrue(text_contains_mixed_script_word("companyстве"))
+        self.assertFalse(text_contains_mixed_script_word("добром company"))
+        self.assertFalse(text_contains_mixed_script_word("добром-company"))
+        self.assertFalse(text_contains_mixed_script_word("привет"))
+        self.assertFalse(text_contains_mixed_script_word("company"))
+        self.assertFalse(text_contains_mixed_script_word("café"))
+        self.assertFalse(text_contains_mixed_script_word("hello世界"))
+
+    def test_openai_reply_with_a_mixed_word_fails(self):
+        result = detect_leading_ideograph_non_stream(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Ответ добромcompanyстве готов.",
+                        }
+                    }
+                ]
+            },
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsInstance(result, ModelBehaviorFailureDetail)
+        self.assertEqual(result.behavior_class, "mixed_script_word")
+        self.assertEqual(str(result), MIXED_SCRIPT_WORD_FAILURE_MESSAGE)
+
+    def test_separate_words_in_two_alphabets_are_kept(self):
+        result = detect_leading_ideograph_non_stream(
+            {
+                "choices": [
+                    {"message": {"role": "assistant", "content": "добром company"}}
+                ]
+            },
+            is_anthropic_provider=False,
+        )
+
+        self.assertIsNone(result)
+
+    def test_reasoning_mixed_word_does_not_fail_a_plain_answer(self):
+        result = detect_leading_ideograph_non_stream(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Обычный ответ.",
+                            "reasoning_content": "добромcompanyстве",
+                        }
+                    }
+                ]
+            },
             is_anthropic_provider=False,
         )
 

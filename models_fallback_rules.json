@@ -423,7 +423,8 @@
         "retry_delay": 1,
         "retry_count": 2,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "context_window": 1000000
       },
       {
         "provider": "agentrouter",
@@ -777,7 +778,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1024000,
+        "context_window": 1048575,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",

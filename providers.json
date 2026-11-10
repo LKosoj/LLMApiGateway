@@ -587,7 +587,8 @@
   {
     "a6": {
       "baseUrl": "https://api.a6api.vip/v1",
-      "apikey": "${APIKEY_A6}"
+      "apikey": "${APIKEY_A6}",
+      "switch_on_leading_ideograph": true
     }
   }
 ]

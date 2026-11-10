@@ -77,6 +77,8 @@ logs/
 .claude/
 /docs/
 outputs/
+# Local operation routes. The file stays on disk and is not committed.
+/models_operation_rules.json
 # mypy
 .mypy_cache/
 .dmypy.json

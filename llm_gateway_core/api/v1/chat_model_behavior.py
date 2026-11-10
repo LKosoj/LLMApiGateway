@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 
 from ...utils.usage_tracking import estimate_token_count
 from .chat_sanitizers import (
@@ -40,6 +41,8 @@ MODEL_BEHAVIOR_FAILURE_CLASSES: frozenset[str] = frozenset(
         "format_ignored",
         "unparsed_tool_call_dialect",
         "upstream_provider_error",
+        "leading_ideograph",
+        "mixed_script_word",
     }
 )
 
@@ -161,6 +164,166 @@ def _extract_anthropic_block_text(content_blocks: list, block_type: str, text_ke
         if isinstance(block, dict) and block.get("type") == block_type
     ]
     return "".join(part for part in text_parts if isinstance(part, str))
+
+
+# Stored on the fallback event and printed as the failed-attempt Error line.
+LEADING_IDEOGRAPH_FAILURE_MESSAGE = (
+    "Fallback triggered by provider setting switch_on_leading_ideograph: "
+    "the first response chunk contains an ideograph."
+)
+# Same provider switch. A normal reply falls back; a stream fails instead,
+# so that path uses its own sentence.
+MIXED_SCRIPT_WORD_FAILURE_MESSAGE = (
+    "Fallback triggered by provider setting switch_on_leading_ideograph: "
+    "a single word mixes letters from different alphabets."
+)
+MIXED_SCRIPT_STREAM_FAILURE_MESSAGE = (
+    "Request failed by provider setting switch_on_leading_ideograph: "
+    "a single word mixes letters from different alphabets."
+)
+
+# Letters only. A character inside one of these blocks still has to be a
+# Unicode letter; punctuation in the same block just ends the word.
+_ALPHABET_RANGES: tuple[tuple[str, tuple[tuple[int, int], ...]], ...] = (
+    (
+        "latin",
+        (
+            (0x0041, 0x005A),
+            (0x0061, 0x007A),
+            (0x00C0, 0x00D6),
+            (0x00D8, 0x00F6),
+            (0x00F8, 0x024F),
+            (0x1E00, 0x1EFF),
+            (0x2C60, 0x2C7F),
+            (0xA720, 0xA7FF),
+            (0xAB30, 0xAB6F),
+        ),
+    ),
+    (
+        "cyrillic",
+        (
+            (0x0400, 0x052F),
+            (0x1C80, 0x1C8F),
+            (0x2DE0, 0x2DFF),
+            (0xA640, 0xA69F),
+        ),
+    ),
+    ("greek", ((0x0370, 0x03FF), (0x1F00, 0x1FFF))),
+    ("armenian", ((0x0530, 0x058F),)),
+    ("hebrew", ((0x0590, 0x05FF),)),
+    (
+        "arabic",
+        (
+            (0x0600, 0x06FF),
+            (0x0750, 0x077F),
+            (0x08A0, 0x08FF),
+            (0xFB50, 0xFDFF),
+            (0xFE70, 0xFEFF),
+        ),
+    ),
+    (
+        "georgian",
+        (
+            (0x10A0, 0x10FF),
+            (0x1C90, 0x1CBF),
+            (0x2D00, 0x2D2F),
+        ),
+    ),
+)
+
+
+def _is_cjk_ideograph(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x3400 <= code <= 0x4DBF
+        or 0x4E00 <= code <= 0x9FFF
+        or 0xF900 <= code <= 0xFAFF
+        or 0x20000 <= code <= 0x2EBEF
+    )
+
+
+def text_contains_ideograph(text: str) -> bool:
+    """True when any character is a CJK ideograph. Hiragana, katakana, and hangul are not."""
+    return any(_is_cjk_ideograph(char) for char in text)
+
+
+def _alphabet_script(char: str) -> str | None:
+    if not unicodedata.category(char).startswith("L"):
+        return None
+    code = ord(char)
+    for name, ranges in _ALPHABET_RANGES:
+        for start, end in ranges:
+            if start <= code <= end:
+                return name
+    return None
+
+
+class MixedScriptWordScanner:
+    """True once one run of letters uses two alphabets.
+
+    Digits and punctuation end the run. Combining marks and invisible
+    format characters stay inside the current run and add no alphabet.
+    """
+
+    def __init__(self) -> None:
+        self._scripts: set[str] = set()
+
+    def feed(self, text: str) -> bool:
+        for char in text:
+            category = unicodedata.category(char)
+            if category.startswith("M") or category == "Cf":
+                continue
+            script = _alphabet_script(char)
+            if script is None:
+                self._scripts.clear()
+                continue
+            self._scripts.add(script)
+            if len(self._scripts) > 1:
+                return True
+        return False
+
+
+def text_contains_mixed_script_word(text: str) -> bool:
+    """True when one word mixes alphabets, as in ``добромcompanyстве``."""
+    return MixedScriptWordScanner().feed(text)
+
+
+def detect_leading_ideograph_non_stream(
+    response_data: object,
+    *,
+    is_anthropic_provider: bool,
+) -> ModelBehaviorFailureDetail | None:
+    """Fail a finished chat reply that contains an ideograph or a mixed word.
+
+    A non-streaming body arrives as one chunk, so the whole visible assistant
+    text is checked. Hidden reasoning text is not that answer. An ideograph
+    keeps its own message. A word with two alphabets is the same kind of
+    attempt failure, with its own message.
+    """
+    if not isinstance(response_data, dict):
+        return None
+    if is_anthropic_provider:
+        content_blocks = response_data.get("content")
+        content_blocks = content_blocks if isinstance(content_blocks, list) else []
+        text_content = _extract_anthropic_block_text(content_blocks, "text", "text")
+    else:
+        choices = response_data.get("choices")
+        first_choice = choices[0] if isinstance(choices, list) and choices else None
+        first_choice = first_choice if isinstance(first_choice, dict) else {}
+        message = first_choice.get("message")
+        message = message if isinstance(message, dict) else {}
+        text_content = _extract_openai_message_text(message.get("content"))
+    if text_contains_ideograph(text_content):
+        return ModelBehaviorFailureDetail(
+            LEADING_IDEOGRAPH_FAILURE_MESSAGE,
+            behavior_class="leading_ideograph",
+        )
+    if text_contains_mixed_script_word(text_content):
+        return ModelBehaviorFailureDetail(
+            MIXED_SCRIPT_WORD_FAILURE_MESSAGE,
+            behavior_class="mixed_script_word",
+        )
+    return None
 
 
 def detect_upstream_provider_error_text(

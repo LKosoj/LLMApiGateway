@@ -6638,6 +6638,7 @@
       tpm: "editor:tooltips.tpm",
       tpd: "editor:tooltips.tpd",
       maxConcurrency: "editor:tooltips.maxConcurrency",
+      switchOnLeadingIdeograph: "editor:tooltips.switchOnLeadingIdeograph",
       modelApiTypes: "editor:tooltips.modelApiTypes",
       modelApiType: "editor:tooltips.modelApiType"
     };
@@ -6972,6 +6973,10 @@
       if (proxy) {
         providerPayload.proxy = proxy;
       }
+      const ideographSwitch = providerCard.querySelector(".provider-switch-on-leading-ideograph-checkbox");
+      if (ideographSwitch && ideographSwitch.checked) {
+        providerPayload.switch_on_leading_ideograph = true;
+      }
       if (routing) {
         providerPayload.routing = routing;
       }
@@ -7094,10 +7099,22 @@
       ctx.attachFieldTooltip(typeField, PROVIDER_FIELD_TOOLTIPS.type);
       const proxyField = ctx.createFieldGroup("Proxy (optional)", proxyInput, "provider-proxy-field");
       ctx.attachFieldTooltip(proxyField, PROVIDER_FIELD_TOOLTIPS.proxy);
+      const ideographCheckbox = document.createElement("input");
+      ideographCheckbox.type = "checkbox";
+      ideographCheckbox.className = "provider-switch-on-leading-ideograph-checkbox";
+      ideographCheckbox.checked = initialData.switch_on_leading_ideograph === true;
+      const ideographToggle = document.createElement("label");
+      ideographToggle.className = "toggle-field";
+      ideographToggle.appendChild(ideographCheckbox);
+      const ideographLabel = document.createElement("span");
+      ctx.bindLocalizedText(ideographLabel, "editor:toggles.switchOnLeadingIdeograph");
+      ideographToggle.appendChild(ideographLabel);
+      ctx.attachFieldTooltip(ideographToggle, PROVIDER_FIELD_TOOLTIPS.switchOnLeadingIdeograph);
       fieldsGrid.appendChild(baseUrlField);
       fieldsGrid.appendChild(apiKeyField);
       fieldsGrid.appendChild(typeField);
       fieldsGrid.appendChild(proxyField);
+      fieldsGrid.appendChild(ideographToggle);
       const advancedDetails = document.createElement("details");
       advancedDetails.className = "advanced-options";
       const advancedSummary = document.createElement("summary");

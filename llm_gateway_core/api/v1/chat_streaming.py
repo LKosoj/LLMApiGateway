@@ -28,9 +28,13 @@ from .chat_dialects import (
     _map_finish_reason_to_anthropic,
 )
 from .chat_model_behavior import (
+    LEADING_IDEOGRAPH_FAILURE_MESSAGE,
+    MIXED_SCRIPT_STREAM_FAILURE_MESSAGE,
+    MixedScriptWordScanner,
     ModelBehaviorFailureDetail,
     UPSTREAM_PROVIDER_ERROR_PREFIX,
     detect_upstream_provider_error_text,
+    text_contains_ideograph,
 )
 from .chat_sanitizers import strip_think_blocks as _strip_think_blocks
 from ...services.tool_call_rescue import (
@@ -163,6 +167,159 @@ async def detect_upstream_provider_error_stream(
     async def replay_buffered():
         for chunk in buffered_chunks:
             yield chunk
+
+    return replace_streaming_response_body(response, replay_buffered()), None
+
+
+def _visible_stream_delta_texts(payload: object, *, is_anthropic_provider: bool) -> list[str]:
+    """Assistant text from one SSE payload. Reasoning and tool calls are skipped."""
+    if not isinstance(payload, Mapping):
+        return []
+    if is_anthropic_provider:
+        if payload.get("type") != "content_block_delta":
+            return []
+        delta = payload.get("delta")
+        if not isinstance(delta, Mapping) or delta.get("type") != "text_delta":
+            return []
+        text = delta.get("text")
+        return [text] if isinstance(text, str) else []
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return []
+    texts: list[str] = []
+    for choice in choices:
+        if not isinstance(choice, Mapping):
+            continue
+        delta = choice.get("delta")
+        if not isinstance(delta, Mapping):
+            continue
+        content = delta.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+    return texts
+
+
+def _events_mix_alphabets(
+    events: tuple,
+    scanner: MixedScriptWordScanner,
+    *,
+    is_anthropic_provider: bool,
+) -> bool:
+    for event in events:
+        if event.done:
+            continue
+        try:
+            payload = parse_sse_json(event)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        for text in _visible_stream_delta_texts(payload, is_anthropic_provider=is_anthropic_provider):
+            if scanner.feed(text):
+                return True
+    return False
+
+
+def _mixed_script_stream_error_chunk() -> bytes:
+    payload = {
+        "error": {
+            "message": MIXED_SCRIPT_STREAM_FAILURE_MESSAGE,
+            "type": "server_error",
+            "code": "mixed_script_word",
+        }
+    }
+    return b"data: " + json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n\n"
+
+
+async def detect_leading_ideograph_stream(
+    response: StreamingResponse,
+    *,
+    is_anthropic_provider: bool,
+) -> tuple[StreamingResponse, ModelBehaviorFailureDetail | None]:
+    """Reject a chat stream for an ideograph or a mixed-alphabet word.
+
+    An ideograph is read from the raw first non-empty chunk only. A later
+    ideograph is forwarded. A mixed-alphabet word is read from assistant text
+    across chunks. If that word is already in the first chunk, the attempt
+    fails before anything is forwarded. If a later chunk completes the word,
+    that chunk is not forwarded and the stream ends with an error event.
+    """
+    source_iterator = response.body_iterator
+    buffered_chunks: list[object] = []
+    scanner = MixedScriptWordScanner()
+    framer = SSEFramer()
+    scan_broken = False
+
+    def feed_chunk(chunk: bytes) -> bool:
+        nonlocal scan_broken
+        if scan_broken:
+            return scanner.feed(chunk.decode("utf-8", errors="replace"))
+        try:
+            batch = framer.feed(chunk)
+        except Exception:
+            scan_broken = True
+            logging.warning(
+                "Mixed-alphabet scan could not frame the stream; reading the raw chunk text."
+            )
+            return scanner.feed(chunk.decode("utf-8", errors="replace"))
+        return _events_mix_alphabets(
+            batch.events,
+            scanner,
+            is_anthropic_provider=is_anthropic_provider,
+        )
+
+    def finish_scan() -> bool:
+        if scan_broken:
+            return False
+        try:
+            batch = framer.finish()
+        except Exception:
+            return False
+        return _events_mix_alphabets(
+            batch.events,
+            scanner,
+            is_anthropic_provider=is_anthropic_provider,
+        )
+
+    async def replay_buffered_and_source():
+        for chunk in buffered_chunks:
+            yield chunk
+        async for chunk in source_iterator:
+            if isinstance(chunk, bytes) and chunk and feed_chunk(chunk):
+                logging.error(MIXED_SCRIPT_STREAM_FAILURE_MESSAGE)
+                yield _mixed_script_stream_error_chunk()
+                return
+            yield chunk
+        if finish_scan():
+            logging.error(MIXED_SCRIPT_STREAM_FAILURE_MESSAGE)
+            yield _mixed_script_stream_error_chunk()
+
+    # Pull chunks by hand. ``async for`` would close the upstream body on
+    # return, and the client would lose everything after the first chunk.
+    while True:
+        try:
+            chunk = await source_iterator.__anext__()
+        except StopAsyncIteration:
+            break
+        if isinstance(chunk, bytes) and not chunk:
+            continue
+        buffered_chunks.append(chunk)
+        if isinstance(chunk, bytes) and text_contains_ideograph(chunk.decode("utf-8", errors="replace")):
+            return response, ModelBehaviorFailureDetail(
+                LEADING_IDEOGRAPH_FAILURE_MESSAGE,
+                behavior_class="leading_ideograph",
+            )
+        if isinstance(chunk, bytes) and feed_chunk(chunk):
+            return response, ModelBehaviorFailureDetail(
+                MIXED_SCRIPT_STREAM_FAILURE_MESSAGE,
+                behavior_class="mixed_script_word",
+            )
+        return replace_streaming_response_body(response, replay_buffered_and_source()), None
+
+    async def replay_buffered():
+        for chunk in buffered_chunks:
+            yield chunk
+        if finish_scan():
+            logging.error(MIXED_SCRIPT_STREAM_FAILURE_MESSAGE)
+            yield _mixed_script_stream_error_chunk()
 
     return replace_streaming_response_body(response, replay_buffered()), None
 

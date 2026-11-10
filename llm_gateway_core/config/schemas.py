@@ -162,6 +162,11 @@ class ProviderDetails(BaseModel):
     routing: UpstreamRoutingConfig = Field(default_factory=UpstreamRoutingConfig)
     upstream_key_pools: Dict[str, UpstreamKeyPoolConfig] = Field(default_factory=dict)
     upstream_limits: UpstreamQuotaConfig | None = None
+    # Chat only. Absent means off. An ideograph in the first response chunk
+    # fails the attempt, and later routes of this same provider are skipped.
+    # A word that mixes alphabets does the same for a finished reply. A stream
+    # that contains such a word fails the client request instead of switching.
+    switch_on_leading_ideograph: bool | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -199,6 +204,15 @@ class ProviderDetails(BaseModel):
             raise ValueError(placeholder_secret_error("provider apikey", value))
 
         return value
+
+    @field_validator("switch_on_leading_ideograph", mode="before")
+    @classmethod
+    def validate_switch_on_leading_ideograph(cls, value: Any) -> bool | None:
+        if value is None or value is False:
+            return None
+        if value is True:
+            return True
+        raise ValueError("'switch_on_leading_ideograph' must be a boolean.")
 
     @field_validator("custom_headers")
     @classmethod

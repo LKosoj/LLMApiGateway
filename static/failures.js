@@ -14,7 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const KNOWN_REASONS = new Set([
         'http_429', 'http_400', 'http_401', 'http_403', 'http_404',
         'read_timeout', 'connect_timeout', 'connect_error', 'context_overflow',
-        'empty_completion', 'format_ignored', 'unparsed_tool_call_dialect', 'upstream_provider_error',
+        'empty_completion', 'format_ignored', 'unparsed_tool_call_dialect',
+        'upstream_provider_error', 'leading_ideograph', 'mixed_script_word',
     ]);
     const OPERATION_LABEL_KEYS = {
         chat: 'common:operations.chat',

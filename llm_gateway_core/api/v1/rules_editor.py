@@ -128,6 +128,7 @@ class StructuredProviderItem(BaseModel):
     routing: dict[str, Any] | None = None
     upstream_key_pools: dict[str, Any] | None = None
     upstream_limits: UpstreamQuotaConfig | None = None
+    switch_on_leading_ideograph: bool | None = None
     auth: dict[str, Any] | None = None
 
     @field_validator("name")
@@ -151,6 +152,15 @@ class StructuredProviderItem(BaseModel):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("switch_on_leading_ideograph", mode="before")
+    @classmethod
+    def validate_switch_on_leading_ideograph(cls, value: Any) -> bool | None:
+        if value is None or value is False:
+            return None
+        if value is True:
+            return True
+        raise ValueError("'switch_on_leading_ideograph' must be a boolean.")
 
     @field_validator("custom_headers")
     @classmethod
@@ -342,6 +352,8 @@ def _serialize_structured_providers(providers: list[StructuredProviderItem]) -> 
             provider_payload["upstream_key_pools"] = provider.upstream_key_pools
         if provider.upstream_limits is not None:
             provider_payload["upstream_limits"] = provider.upstream_limits.model_dump(exclude_none=True)
+        if provider.switch_on_leading_ideograph is True:
+            provider_payload["switch_on_leading_ideograph"] = True
         if provider.auth is not None:
             provider_payload["auth"] = provider.auth
         payload.append({provider.name: provider_payload})

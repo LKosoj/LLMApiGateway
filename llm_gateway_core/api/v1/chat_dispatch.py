@@ -77,6 +77,7 @@ from .chat_model_behavior import (
     ModelBehaviorFailureDetail,
     describe_degenerate_response,
     detect_degenerate_non_stream_response,
+    detect_leading_ideograph_non_stream,
     detect_upstream_provider_error_non_stream,
 )
 from .responses_upstream import (
@@ -98,6 +99,7 @@ from .chat_streaming import (
     _sanitize_openai_json_object_stream,
     _sanitize_openai_stream_think_tags,
     _sanitize_openai_stream_tool_call_rescue,
+    detect_leading_ideograph_stream,
     detect_upstream_provider_error_stream,
 )
 from ...services.tool_call_rescue import (
@@ -418,6 +420,100 @@ def _finalize_chat_success_response(
         return response_data
 
     return response_data
+
+
+def _provider_switches_on_leading_ideograph(providers_config: object, provider_name: object) -> bool:
+    if not isinstance(providers_config, Mapping) or not isinstance(provider_name, str) or not provider_name:
+        return False
+    provider_config = providers_config.get(provider_name)
+    return getattr(provider_config, "switch_on_leading_ideograph", None) is True
+
+
+_PROVIDER_TEXT_SKIP_BEHAVIORS = frozenset({"leading_ideograph", "mixed_script_word"})
+
+
+def _remember_ideograph_provider_skip(request: Request, provider_name: object) -> None:
+    if not isinstance(provider_name, str) or not provider_name:
+        return
+    skipped = getattr(request.state, "llmgateway_ideograph_skip_providers", None)
+    if not isinstance(skipped, set):
+        skipped = set()
+        request.state.llmgateway_ideograph_skip_providers = skipped
+    skipped.add(provider_name)
+
+
+async def _apply_leading_ideograph_check(
+    response_data: object,
+    error_detail: object,
+    *,
+    providers_config: object,
+    provider_name: object,
+    provider_model: object,
+    is_streaming: bool,
+    is_anthropic_provider: bool,
+    close_stream,
+) -> tuple[object, object]:
+    """When the provider asked for it, reject an ideograph or a mixed-alphabet word."""
+    if error_detail is not None or response_data is None:
+        return response_data, error_detail
+    if not _provider_switches_on_leading_ideograph(providers_config, provider_name):
+        return response_data, error_detail
+    if is_streaming:
+        if not isinstance(response_data, StreamingResponse):
+            return response_data, error_detail
+        stream_response = response_data
+        try:
+            checked_response, checked_error = await detect_leading_ideograph_stream(
+                stream_response,
+                is_anthropic_provider=is_anthropic_provider,
+            )
+        except BaseException:
+            await close_stream(stream_response)
+            raise
+        if checked_error is not None:
+            await close_stream(stream_response)
+            if checked_error.behavior_class == "mixed_script_word":
+                logging.warning(
+                    "Request failed by provider setting switch_on_leading_ideograph: "
+                    "a single word from model '%s' via provider '%s' mixes letters "
+                    "from different alphabets.",
+                    provider_model,
+                    provider_name,
+                )
+            else:
+                logging.warning(
+                    "Fallback triggered by provider setting switch_on_leading_ideograph: "
+                    "the first response chunk from model '%s' via provider '%s' contains an ideograph. "
+                    "Skipping this provider.",
+                    provider_model,
+                    provider_name,
+                )
+            return None, checked_error
+        return checked_response, error_detail
+
+    behavior_detail = detect_leading_ideograph_non_stream(
+        response_data,
+        is_anthropic_provider=is_anthropic_provider,
+    )
+    if behavior_detail is None:
+        return response_data, error_detail
+    if behavior_detail.behavior_class == "mixed_script_word":
+        logging.warning(
+            "Fallback triggered by provider setting switch_on_leading_ideograph: "
+            "a single word from model '%s' via provider '%s' mixes letters "
+            "from different alphabets. Skipping this provider.",
+            provider_model,
+            provider_name,
+        )
+    else:
+        logging.warning(
+            "Fallback triggered by provider setting switch_on_leading_ideograph: "
+            "the first response chunk from model '%s' via provider '%s' contains an ideograph. "
+            "Skipping this provider.",
+            provider_model,
+            provider_name,
+        )
+    return None, behavior_detail
 
 
 async def attempt_model_fallback_rule(
@@ -1101,6 +1197,17 @@ async def attempt_model_fallback_rule(
                     )
                     response_data = None
 
+            response_data, error_detail = await _apply_leading_ideograph_check(
+                response_data,
+                error_detail,
+                providers_config=providers_config,
+                provider_name=provider_name,
+                provider_model=provider_model,
+                is_streaming=is_streaming,
+                is_anthropic_provider=is_anthropic_provider,
+                close_stream=_close_stream_after_postprocess_failure,
+            )
+
             if response_data and error_detail is None and not is_streaming:
                 # Detection must run before _observe_success(): the accounting
                 # handoff is one-shot, and publishing on a degenerate attempt
@@ -1226,6 +1333,11 @@ async def attempt_model_fallback_rule(
                     )
                     continue
             if is_behavior_class_failure:
+                behavior_class = getattr(error_detail, "behavior_class", None)
+                if is_streaming and behavior_class == "mixed_script_word":
+                    raise HTTPException(status_code=502, detail=str(error_detail))
+                if behavior_class in _PROVIDER_TEXT_SKIP_BEHAVIORS:
+                    _remember_ideograph_provider_skip(request, provider_name)
                 logging.warning(
                     "Model behavior failure (%s) detected on model '%s'; skipping local retry.",
                     error_detail.behavior_class,
@@ -1357,6 +1469,17 @@ async def attempt_model_fallback_rule(
                             )
                             response_data = None
 
+                    response_data, error_detail = await _apply_leading_ideograph_check(
+                        response_data,
+                        error_detail,
+                        providers_config=providers_config,
+                        provider_name=provider_name,
+                        provider_model=provider_model,
+                        is_streaming=is_streaming,
+                        is_anthropic_provider=is_anthropic_provider,
+                        close_stream=_close_stream_after_postprocess_failure,
+                    )
+
                     if response_data and error_detail is None and not is_streaming:
                         # Detection must run before _observe_success(): the
                         # accounting handoff is one-shot, and publishing on a
@@ -1478,6 +1601,11 @@ async def attempt_model_fallback_rule(
                             )
                             continue
                     if is_behavior_class_failure:
+                        behavior_class = getattr(error_detail, "behavior_class", None)
+                        if is_streaming and behavior_class == "mixed_script_word":
+                            raise HTTPException(status_code=502, detail=str(error_detail))
+                        if behavior_class in _PROVIDER_TEXT_SKIP_BEHAVIORS:
+                            _remember_ideograph_provider_skip(request, provider_name)
                         logging.warning(
                             "Model behavior failure (%s) detected on model '%s' sub-provider '%s'; skipping local retry.",
                             error_detail.behavior_class,
@@ -1983,6 +2111,20 @@ async def dispatch_chat_request(
     context_overflow_fallback_attempted = False
     attempt_number = 1
     for model_fallback_rule in model_fallbacks_sequence:
+        skipped_providers = getattr(request.state, "llmgateway_ideograph_skip_providers", None)
+        rule_provider = model_fallback_rule.get("provider")
+        if (
+            isinstance(skipped_providers, set)
+            and isinstance(rule_provider, str)
+            and rule_provider in skipped_providers
+        ):
+            logging.warning(
+                "Skipping provider '%s' for model '%s': provider setting "
+                "switch_on_leading_ideograph already matched.",
+                rule_provider,
+                requested_model,
+            )
+            continue
         if max_total_attempts is not None and attempt_number > max_total_attempts:
             logging.warning(
                 "Chain-wide attempt budget (%s) exhausted for model '%s'; "

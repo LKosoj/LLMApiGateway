@@ -125,6 +125,8 @@
     "format_ignored": "Модель не соблюла формат ответа",
     "unparsed_tool_call_dialect": "Непонятный вызов инструмента",
     "upstream_provider_error": "Провайдер вернул ошибку текстом",
+    "leading_ideograph": "Иероглиф в первом куске ответа",
+    "mixed_script_word": "В одном слове смешаны алфавиты",
     "unknown": "Другая ошибка"
   },
   "values": {
