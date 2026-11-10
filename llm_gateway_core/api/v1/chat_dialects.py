@@ -542,7 +542,10 @@ def _openai_request_to_anthropic_payload(
         role = message.get("role")
         content = message.get("content")
 
-        if role == "system":
+        # Codex and newer OpenAI models send instructions as "developer".
+        # Anthropic has one instruction channel, so both roles go there,
+        # in the order they appeared.
+        if role in {"system", "developer"}:
             text = _openai_content_to_plain_text(content)
             if text:
                 system_texts.append(text)

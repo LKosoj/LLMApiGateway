@@ -206,6 +206,31 @@ class OpenAIRequestToAnthropicPayloadTests(unittest.TestCase):
         self.assertEqual(result["max_tokens"], chat_module.ANTHROPIC_DEFAULT_MAX_TOKENS)
         self.assertEqual(result["max_tokens"], 32768)
 
+    def test_developer_role_joins_system_in_encounter_order(self):
+        payload = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "system", "content": "Be concise."},
+                {
+                    "role": "developer",
+                    "content": [
+                        {"type": "text", "text": "Follow the repository instructions."},
+                    ],
+                },
+                {"role": "developer", "content": ""},
+                {"role": "user", "content": "Hi"},
+            ],
+        }
+        result = chat_module._openai_request_to_anthropic_payload(payload)
+        self.assertEqual(
+            result["system"],
+            "Be concise.\n\nFollow the repository instructions.",
+        )
+        self.assertEqual(
+            result["messages"],
+            [{"role": "user", "content": [{"type": "text", "text": "Hi"}]}],
+        )
+
     def test_assistant_tool_calls_become_tool_use_blocks(self):
         payload = {
             "model": "claude",
@@ -539,6 +564,150 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
         self.assertEqual(
             body["usage"],
             {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9},
+        )
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.create_shared_http_client")
+    @patch("main.ConfigLoader")
+    def test_codex_responses_developer_role_round_trips_through_anthropic(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = _build_fake_config_loader("anthropic")
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+
+        make_llm_request_mock.return_value = (
+            {
+                "id": "msg_codex",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [{"type": "text", "text": "Hello"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 7, "output_tokens": 2},
+            },
+            None,
+        )
+
+        codex_request = {
+            "model": "gateway-model",
+            "instructions": "You are Codex.",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        {"type": "input_text", "text": "Follow the repository instructions."},
+                    ],
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Say hello"}],
+                },
+            ],
+        }
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/responses",
+                    json=codex_request,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        provider_payload = make_llm_request_mock.await_args.args[3]
+        self.assertEqual(
+            provider_payload["system"],
+            "You are Codex.\n\nFollow the repository instructions.",
+        )
+        self.assertEqual(
+            provider_payload["messages"],
+            [{"role": "user", "content": [{"type": "text", "text": "Say hello"}]}],
+        )
+
+        body = response.json()
+        self.assertEqual(body["object"], "response")
+        self.assertEqual(body["status"], "completed")
+        self.assertEqual(body["model"], "gateway-model")
+        self.assertEqual(body["output"][0]["type"], "message")
+        self.assertEqual(body["output"][0]["role"], "assistant")
+        self.assertEqual(body["output"][0]["content"][0]["type"], "output_text")
+        self.assertEqual(body["output"][0]["content"][0]["text"], "Hello")
+        self.assertEqual(body["usage"]["input_tokens"], 7)
+        self.assertEqual(body["usage"]["output_tokens"], 2)
+
+    @patch("llm_gateway_core.api.v1.chat.make_llm_request")
+    @patch("main.TokensUsageDB")
+    @patch("main.create_shared_http_client")
+    @patch("main.ConfigLoader")
+    def test_codex_responses_developer_role_streams_back_as_responses_sse(
+        self,
+        config_loader_cls,
+        async_client_ctor,
+        _tokens_usage_db,
+        make_llm_request_mock,
+    ):
+        config_loader_cls.return_value = _build_fake_config_loader("anthropic")
+        fake_http_client = Mock()
+        fake_http_client.aclose = AsyncMock()
+        async_client_ctor.return_value = fake_http_client
+        make_llm_request_mock.return_value = (_build_anthropic_text_stream(), None)
+
+        codex_request = {
+            "model": "gateway-model",
+            "stream": True,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": "Follow the repository instructions.",
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Say hello",
+                },
+            ],
+        }
+        with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/v1/responses",
+                    json=codex_request,
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        provider_payload = make_llm_request_mock.await_args.args[3]
+        self.assertEqual(provider_payload["system"], "Follow the repository instructions.")
+        self.assertTrue(provider_payload["stream"])
+
+        events = [
+            json.loads(line[len("data:"):].strip())
+            for line in response.text.split("\n")
+            if line.startswith("data:") and line[len("data:"):].strip() not in {"", "[DONE]"}
+        ]
+        deltas = [
+            event["delta"]
+            for event in events
+            if event.get("type") == "response.output_text.delta"
+        ]
+        self.assertEqual("".join(deltas), "Hello")
+        completed = [event for event in events if event.get("type") == "response.completed"]
+        self.assertEqual(len(completed), 1)
+        completed_response = completed[0]["response"]
+        self.assertEqual(completed_response["status"], "completed")
+        self.assertEqual(completed_response["model"], "gateway-model")
+        self.assertEqual(
+            completed_response["output"][0]["content"][0]["text"],
+            "Hello",
         )
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
