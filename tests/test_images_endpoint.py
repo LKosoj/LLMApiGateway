@@ -454,6 +454,46 @@ class ImagesEndpointTests(unittest.TestCase):
             },
         )
 
+    def test_post_images_edits_accepts_up_to_eight_images_in_order(self):
+        for count in (7, 8):
+            with self.subTest(count=count, transport="json"):
+                images = [{"image_url": f"https://example.com/{i}.png"} for i in range(count)]
+                with self._client(_FakeDownstreamResponse({"data": [{"b64_json": "edited"}]})) as (client, _, upstream):
+                    response = client.post(
+                        "/v1/images/edits",
+                        json={"model": "gateway/image-edit", "prompt": "Edit", "images": images},
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(upstream.post.await_args.kwargs["json"]["images"], images)
+            with self.subTest(count=count, transport="multipart"):
+                files = [("image[]", (f"{i}.png", PNG_BYTES, "image/png")) for i in range(count)]
+                files.append(("mask", ("mask.png", MASK_PNG_BYTES, "image/png")))
+                async def downstream(*_args, **kwargs):
+                    self.assertEqual([part[1][0] for part in kwargs["files"]],
+                                     [f"{i}.png" for i in range(count)] + ["mask.png"])
+                    return _FakeDownstreamResponse({"data": [{"b64_json": "edited"}]})
+                with self._client(downstream) as (client, _, upstream):
+                    response = client.post(
+                        "/v1/images/edits", data={"model": "gateway/image-edit", "prompt": "Edit"},
+                        files=files, headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+                self.assertEqual(response.status_code, 200)
+                upstream.post.assert_awaited_once()
+
+    def test_post_images_edits_rejects_multiple_masks(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _, upstream):
+            response = client.post(
+                "/v1/images/edits", data={"model": "gateway/image-edit", "prompt": "Edit"},
+                files=[("image", ("source.png", PNG_BYTES, "image/png"))] + [
+                    ("mask", (f"mask-{i}.png", MASK_PNG_BYTES, "image/png")) for i in range(2)
+                ],
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Only one 'mask'", response.json()["detail"])
+        upstream.post.assert_not_awaited()
+
     def test_post_images_edits_falls_back_after_invalid_downstream_response(self):
         fallback_payload = {
             "created": 457,
@@ -751,7 +791,7 @@ class ImagesEndpointTests(unittest.TestCase):
                 data={"model": "gateway/image-edit", "prompt": "Edit"},
                 files=[
                     ("image", (f"source-{index}.png", PNG_BYTES, "image/png"))
-                    for index in range(5)
+                    for index in range(9)
                 ],
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
@@ -759,7 +799,7 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(per_file_response.status_code, 413)
         self.assertEqual(total_response.status_code, 413)
         self.assertEqual(count_response.status_code, 400)
-        self.assertIn("At most four", count_response.json()["detail"])
+        self.assertIn("At most eight", count_response.json()["detail"])
         fake_http_client.post.assert_not_awaited()
 
     def test_local_upload_capacity_failure_does_not_fall_back(self):
