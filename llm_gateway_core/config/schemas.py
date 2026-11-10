@@ -164,8 +164,9 @@ class ProviderDetails(BaseModel):
     upstream_limits: UpstreamQuotaConfig | None = None
     # Chat only. Absent means off. An ideograph in the first response chunk
     # fails the attempt, and later routes of this same provider are skipped.
-    # A word that mixes alphabets does the same for a finished reply. A stream
-    # that contains such a word fails the client request instead of switching.
+    # A word that mixes alphabets does the same for a finished reply and for a
+    # stream whose first chunk already contains the word. A later stream chunk
+    # fails the client request instead of switching.
     switch_on_leading_ideograph: bool | None = None
 
     @model_validator(mode="before")

@@ -348,7 +348,7 @@
     "tpm": "Prompt and completion tokens per minute allowed per upstream key. Leave empty to disable this cap.",
     "tpd": "Prompt and completion tokens per day allowed per upstream key. Leave empty to disable this cap.",
     "maxConcurrency": "Maximum simultaneous upstream requests for one provider key, shared by all chat models. Leave empty to disable this cap.",
-    "switchOnLeadingIdeograph": "Chat only. An ideograph in the first chunk skips this provider. A word that mixes alphabets does the same for a normal reply. A streaming reply fails with an error instead."
+    "switchOnLeadingIdeograph": "Chat only. An ideograph in the first chunk skips this provider. A mixed-alphabet word does the same when it is already in the first chunk. If a later stream chunk completes that word, the stream fails with an error."
   },
   "placeholders": {
     "chooseGatewayModel": "Select a gateway model",

@@ -171,8 +171,9 @@ LEADING_IDEOGRAPH_FAILURE_MESSAGE = (
     "Fallback triggered by provider setting switch_on_leading_ideograph: "
     "the first response chunk contains an ideograph."
 )
-# Same provider switch. A normal reply falls back; a stream fails instead,
-# so that path uses its own sentence.
+# Same provider switch for a finished reply and for a stream whose first
+# chunk already contains the word. A later stream chunk cannot switch, so
+# that path uses its own sentence.
 MIXED_SCRIPT_WORD_FAILURE_MESSAGE = (
     "Fallback triggered by provider setting switch_on_leading_ideograph: "
     "a single word mixes letters from different alphabets."

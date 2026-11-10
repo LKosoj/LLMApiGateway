@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import main
 from llm_gateway_core.api.v1.chat_model_behavior import (
     LEADING_IDEOGRAPH_FAILURE_MESSAGE,
-    MIXED_SCRIPT_STREAM_FAILURE_MESSAGE,
+    MIXED_SCRIPT_WORD_FAILURE_MESSAGE,
 )
 from llm_gateway_core.api.v1.chat_streaming import detect_leading_ideograph_stream
 from llm_gateway_core.api.v1.rules_editor import StructuredProviderItem, _serialize_structured_providers
@@ -106,7 +106,7 @@ class LeadingIdeographStreamTests(unittest.TestCase):
         failure, forwarded = self._detect_and_read(_openai_delta("добромcompanyстве"))
 
         self.assertEqual(failure.behavior_class, "mixed_script_word")
-        self.assertEqual(str(failure), MIXED_SCRIPT_STREAM_FAILURE_MESSAGE)
+        self.assertEqual(str(failure), MIXED_SCRIPT_WORD_FAILURE_MESSAGE)
         self.assertEqual(forwarded, b"")
 
     def test_word_split_across_chunks_ends_the_stream_with_an_error(self):
@@ -339,7 +339,7 @@ class LeadingIdeographFailoverTests(unittest.TestCase):
     @patch("main.TokensUsageDB")
     @patch("llm_gateway_core.services.http_client_factory.httpx.AsyncClient")
     @patch("main.ConfigLoader")
-    def test_streaming_mixed_word_fails_without_a_fallback(
+    def test_streaming_mixed_word_in_the_first_chunk_switches_provider(
         self,
         config_loader_cls,
         async_client_ctor,
@@ -351,12 +351,16 @@ class LeadingIdeographFailoverTests(unittest.TestCase):
         fake_http_client.aclose = AsyncMock()
         async_client_ctor.return_value = fake_http_client
 
-        async def body():
+        async def bad_body():
             yield _openai_delta("добромcompanyстве")
 
+        async def good_body():
+            yield _openai_delta("Кэш хранит готовый ответ.")
+            yield b"data: [DONE]\n\n"
+
         make_llm_request_mock.side_effect = [
-            (StreamingResponse(body(), media_type="text/event-stream"), None),
-            (_completion("other-ok", "Кэш хранит готовый ответ."), None),
+            (StreamingResponse(bad_body(), media_type="text/event-stream"), None),
+            (StreamingResponse(good_body(), media_type="text/event-stream"), None),
         ]
 
         request_payload = {
@@ -366,12 +370,25 @@ class LeadingIdeographFailoverTests(unittest.TestCase):
         }
         with patch.object(main.settings, "gateway_api_key", "test-gateway-key"):
             with TestClient(main.app) as client:
-                response = client.post(
-                    "/v1/chat/completions",
-                    json=request_payload,
-                    headers={"Authorization": "Bearer test-gateway-key"},
-                )
+                with self.assertLogs(level="WARNING") as captured:
+                    response = client.post(
+                        "/v1/chat/completions",
+                        json=request_payload,
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertIn("mixes letters from different alphabets", response.text)
-        self.assertEqual(make_llm_request_mock.await_count, 1)
+        self.assertTrue(
+            any(
+                "switch_on_leading_ideograph" in line
+                and "mixes letters from different alphabets" in line
+                and "Skipping this provider" in line
+                for line in captured.output
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Кэш хранит готовый ответ.", response.text)
+        self.assertNotIn("добромcompanyстве", response.text)
+        self.assertEqual(
+            [call.args[3]["model"] for call in make_llm_request_mock.await_args_list],
+            ["a6-first", "other-model"],
+        )

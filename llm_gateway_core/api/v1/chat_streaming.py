@@ -30,6 +30,7 @@ from .chat_dialects import (
 from .chat_model_behavior import (
     LEADING_IDEOGRAPH_FAILURE_MESSAGE,
     MIXED_SCRIPT_STREAM_FAILURE_MESSAGE,
+    MIXED_SCRIPT_WORD_FAILURE_MESSAGE,
     MixedScriptWordScanner,
     ModelBehaviorFailureDetail,
     UPSTREAM_PROVIDER_ERROR_PREFIX,
@@ -239,8 +240,9 @@ async def detect_leading_ideograph_stream(
     An ideograph is read from the raw first non-empty chunk only. A later
     ideograph is forwarded. A mixed-alphabet word is read from assistant text
     across chunks. If that word is already in the first chunk, the attempt
-    fails before anything is forwarded. If a later chunk completes the word,
-    that chunk is not forwarded and the stream ends with an error event.
+    fails before anything is forwarded and the caller switches providers. If a
+    later chunk completes the word, that chunk is not forwarded and the stream
+    ends with an error event.
     """
     source_iterator = response.body_iterator
     buffered_chunks: list[object] = []
@@ -309,7 +311,7 @@ async def detect_leading_ideograph_stream(
             )
         if isinstance(chunk, bytes) and feed_chunk(chunk):
             return response, ModelBehaviorFailureDetail(
-                MIXED_SCRIPT_STREAM_FAILURE_MESSAGE,
+                MIXED_SCRIPT_WORD_FAILURE_MESSAGE,
                 behavior_class="mixed_script_word",
             )
         return replace_streaming_response_body(response, replay_buffered_and_source()), None

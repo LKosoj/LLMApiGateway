@@ -474,9 +474,9 @@ async def _apply_leading_ideograph_check(
             await close_stream(stream_response)
             if checked_error.behavior_class == "mixed_script_word":
                 logging.warning(
-                    "Request failed by provider setting switch_on_leading_ideograph: "
+                    "Fallback triggered by provider setting switch_on_leading_ideograph: "
                     "a single word from model '%s' via provider '%s' mixes letters "
-                    "from different alphabets.",
+                    "from different alphabets. Skipping this provider.",
                     provider_model,
                     provider_name,
                 )
@@ -1334,8 +1334,6 @@ async def attempt_model_fallback_rule(
                     continue
             if is_behavior_class_failure:
                 behavior_class = getattr(error_detail, "behavior_class", None)
-                if is_streaming and behavior_class == "mixed_script_word":
-                    raise HTTPException(status_code=502, detail=str(error_detail))
                 if behavior_class in _PROVIDER_TEXT_SKIP_BEHAVIORS:
                     _remember_ideograph_provider_skip(request, provider_name)
                 logging.warning(
@@ -1602,8 +1600,6 @@ async def attempt_model_fallback_rule(
                             continue
                     if is_behavior_class_failure:
                         behavior_class = getattr(error_detail, "behavior_class", None)
-                        if is_streaming and behavior_class == "mixed_script_word":
-                            raise HTTPException(status_code=502, detail=str(error_detail))
                         if behavior_class in _PROVIDER_TEXT_SKIP_BEHAVIORS:
                             _remember_ideograph_provider_skip(request, provider_name)
                         logging.warning(
