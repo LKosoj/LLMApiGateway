@@ -942,6 +942,91 @@ class MiddlewareOrderAndBodyLimitTests(unittest.TestCase):
             [disconnect_only],
         )
 
+    def test_body_silence_returns_408_without_calling_downstream(self):
+        async def scenario() -> None:
+            sent = []
+
+            async def downstream(_scope, _receive, _send):
+                raise AssertionError("a stalled body must not reach the route")
+
+            started = False
+
+            async def receive():
+                nonlocal started
+                if not started:
+                    started = True
+                    return {
+                        "type": "http.request",
+                        "body": b"partial",
+                        "more_body": True,
+                    }
+                await asyncio.Event().wait()
+
+            async def send(message):
+                sent.append(message)
+
+            scope = {"type": "http", "method": "POST", "path": "/v1/responses", "headers": []}
+            middleware = ContentSizeLimitMiddleware(
+                downstream,
+                max_body_size=1024,
+                idle_timeout_seconds=0.05,
+            )
+            await middleware(scope, receive, send)
+
+            self.assertEqual(sent[0]["status"], 408)
+            self.assertEqual(
+                sent[1]["body"],
+                b'{"detail": "Request body timed out"}',
+            )
+            self.assertTrue(scope["state"][PRE_ROUTE_REJECTED_STATE_KEY])
+
+        run_async(scenario())
+
+    def test_body_chunks_inside_the_idle_window_still_reach_downstream(self):
+        async def scenario() -> None:
+            async def receive():
+                yield_first = {
+                    "type": "http.request",
+                    "body": b"ab",
+                    "more_body": True,
+                }
+                if not getattr(receive, "sent", False):
+                    receive.sent = True
+                    return yield_first
+                await asyncio.sleep(0.05)
+                return {"type": "http.request", "body": b"cd", "more_body": False}
+
+            received = []
+
+            async def downstream(_scope, replay_receive, send):
+                while True:
+                    message = await replay_receive()
+                    received.append(message)
+                    if message["type"] != "http.request" or not message.get("more_body", False):
+                        break
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b"ok"})
+
+            async def send(_message):
+                return None
+
+            middleware = ContentSizeLimitMiddleware(
+                downstream,
+                max_body_size=64,
+                idle_timeout_seconds=0.5,
+            )
+            await middleware(
+                {"type": "http", "headers": []},
+                receive,
+                send,
+            )
+            self.assertEqual(
+                b"".join(message["body"] for message in received),
+                b"abcd",
+            )
+
+        run_async(scenario())
+
     def test_downstream_exception_identity_is_preserved_after_preread(self):
         primary = RuntimeError("downstream failure")
 
@@ -1276,6 +1361,66 @@ class MiddlewareOrderAndBodyLimitTests(unittest.TestCase):
         ):
             with self.subTest(failure=type(failure).__name__):
                 run_async(scenario(failure))
+
+    def test_stalled_request_body_times_out_and_clears_the_active_request(self):
+        async def scenario() -> None:
+            app = build_gateway_middleware_test_app(max_request_body_bytes=1024)
+            async with _install_budget_virtual_key(app) as (record, services):
+                started = False
+                sent = []
+
+                async def receive():
+                    nonlocal started
+                    if not started:
+                        started = True
+                        return {
+                            "type": "http.request",
+                            "body": b"partial",
+                            "more_body": True,
+                        }
+                    await asyncio.Event().wait()
+
+                async def send(message):
+                    sent.append(message)
+
+                scope = {
+                    "type": "http",
+                    "asgi": {"version": "3.0", "spec_version": "2.3"},
+                    "http_version": "1.1",
+                    "method": "POST",
+                    "scheme": "http",
+                    "path": "/v1/chat/completions",
+                    "raw_path": b"/v1/chat/completions",
+                    "query_string": b"",
+                    "headers": [
+                        (
+                            b"authorization",
+                            f"Bearer {record.api_key}".encode("ascii"),
+                        )
+                    ],
+                    "client": ("testclient", 50000),
+                    "server": ("testserver", 80),
+                }
+                with patch(
+                    "llm_gateway_core.middleware.content_size.REQUEST_BODY_IDLE_TIMEOUT_SECONDS",
+                    0.05,
+                ):
+                    await app(scope, receive, send)
+
+                self.assertEqual(app.state.test_route_calls, 0)
+                self.assertEqual(sent[0]["status"], 408)
+                services.accounting_service.reserve.assert_awaited_once()
+                services.accounting_service.release.assert_awaited_once()
+                self.assertEqual(
+                    services.usd_budget_ledger.reserved_for(record.id),
+                    0.0,
+                )
+                self.assertEqual(
+                    services.active_requests_registry.list_records(),
+                    [],
+                )
+
+        run_async(scenario())
 
     def test_registered_stack_keeps_streaming_chat_ownership_until_final_body(self):
         async def scenario() -> None:

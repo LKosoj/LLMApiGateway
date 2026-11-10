@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 from collections import deque
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -12,6 +14,9 @@ LOGIN_REQUEST_PATH = "/auth/login"
 # Login accepts one small JSON object. Keep this independent of the much larger
 # model request limit so unauthenticated traffic cannot retain a 100 MiB body.
 LOGIN_MAX_REQUEST_BODY_BYTES = 64 * 1024
+# Silence while the body is still incomplete. A slow upload keeps resetting
+# this; a client that stops sending does not.
+REQUEST_BODY_IDLE_TIMEOUT_SECONDS = 30.0
 PRE_ROUTE_REJECTED_STATE_KEY = "llmgateway_pre_route_rejected"
 UNMATCHED_ROUTE_STATE_KEY = "llmgateway_unmatched_route"
 
@@ -29,9 +34,21 @@ def contains_request_body_too_large(exc: BaseException) -> bool:
 
 
 class ContentSizeLimitMiddleware:
-    def __init__(self, app: ASGIApp, *, max_body_size: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_body_size: int,
+        idle_timeout_seconds: float | None = None,
+    ) -> None:
         self.app = app
         self.max_body_size = max_body_size
+        self._idle_timeout_seconds = idle_timeout_seconds
+
+    def _idle_timeout(self) -> float:
+        if self._idle_timeout_seconds is None:
+            return REQUEST_BODY_IDLE_TIMEOUT_SECONDS
+        return self._idle_timeout_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -59,7 +76,20 @@ class ContentSizeLimitMiddleware:
         terminal_request = False
         buffered_disconnect: Message | None = None
         while True:
-            message = await receive()
+            try:
+                message = await asyncio.wait_for(receive(), self._idle_timeout())
+            except TimeoutError:
+                body_blocks.clear()
+                _mark_pre_route_rejected(scope)
+                logging.warning(
+                    "Request body stopped arriving for %.0fs on %s %s after %s bytes. Closing it.",
+                    self._idle_timeout(),
+                    scope.get("method") or "",
+                    scope.get("path") or "",
+                    bytes_seen,
+                )
+                await _send_body_timeout(send)
+                return
             if message["type"] == "http.request":
                 body = message.get("body", b"")
                 bytes_seen += len(body)
@@ -178,11 +208,19 @@ def _is_unmatched_route(scope: Scope) -> bool:
     return isinstance(state, dict) and bool(state.get(UNMATCHED_ROUTE_STATE_KEY))
 
 
-async def _send_too_large(send: Send) -> None:
-    body = json.dumps({"detail": "Request body too large"}).encode("utf-8")
+async def _send_json(send: Send, *, status: int, detail: str) -> None:
+    body = json.dumps({"detail": detail}).encode("utf-8")
     headers = [
         (b"content-type", b"application/json"),
         (b"content-length", str(len(body)).encode("ascii")),
     ]
-    await send({"type": "http.response.start", "status": 413, "headers": headers})
+    await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
+
+
+async def _send_too_large(send: Send) -> None:
+    await _send_json(send, status=413, detail="Request body too large")
+
+
+async def _send_body_timeout(send: Send) -> None:
+    await _send_json(send, status=408, detail="Request body timed out")
