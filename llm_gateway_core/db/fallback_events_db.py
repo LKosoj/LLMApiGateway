@@ -297,12 +297,13 @@ class FallbackEventsDB:
                 query = f"""
                 SELECT
                     strftime('{date_format}', timestamp) as time_period,
+                    COALESCE(operation, 'chat') as operation,
                     gateway_model, provider, model, error_type,
                     COUNT(*) as count,
                     CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms
                 FROM fallback_events
                 {where_clause}
-                GROUP BY time_period, gateway_model, provider, model, error_type
+                GROUP BY time_period, COALESCE(operation, 'chat'), gateway_model, provider, model, error_type
                 ORDER BY time_period DESC, count DESC
                 """
                 cursor = await db.execute(query, params)
@@ -344,33 +345,38 @@ class FallbackEventsDB:
                     await db.execute(pragma)
                 db.row_factory = aiosqlite.Row
 
-                # Count distinct request_ids with more than 1 attempt
+                # A switch is two or more attempts of one operation.
+                # One request can carry several operations, so page those pairs.
                 cursor = await db.execute(f"""
                 SELECT COUNT(*) FROM (
-                    SELECT request_id FROM fallback_events
+                    SELECT request_id, COALESCE(operation, 'chat') as operation
+                    FROM fallback_events
                     {request_filter}
-                    GROUP BY request_id HAVING COUNT(*) > 1
+                    GROUP BY request_id, COALESCE(operation, 'chat')
+                    HAVING COUNT(*) > 1
                 )
                 """, params)
                 row = await cursor.fetchone()
                 total_count = row[0]
 
-                # Get paginated request_ids
                 cursor = await db.execute(f"""
-                SELECT request_id, MAX(timestamp) as latest_ts
+                SELECT
+                    request_id,
+                    COALESCE(operation, 'chat') as operation,
+                    MAX(timestamp) as latest_ts
                 FROM fallback_events
                 {request_filter}
-                GROUP BY request_id
+                GROUP BY request_id, COALESCE(operation, 'chat')
                 HAVING COUNT(*) > 1
                 ORDER BY latest_ts DESC
                 LIMIT ? OFFSET ?
                 """, params + [limit, offset])
-                request_ids = [row[0] async for row in cursor]
+                page_pairs = [(row["request_id"], row["operation"]) async for row in cursor]
 
-                if not request_ids:
+                if not page_pairs:
                     return [], total_count
 
-                # Get all attempts for these request_ids
+                request_ids = list(dict.fromkeys(pair[0] for pair in page_pairs))
                 placeholders = ",".join("?" * len(request_ids))
                 request_where = ["request_id IN (" + placeholders + ")"]
                 request_params = list(request_ids)
@@ -391,19 +397,15 @@ class FallbackEventsDB:
 
                 rows = await cursor.fetchall()
 
-                # Group by request_id
-                chains: dict[str, list[dict]] = {}
+                chains: dict[tuple[str, str], list[dict]] = {}
                 for row in rows:
                     record = dict(row)
-                    rid = record["request_id"]
-                    if rid not in chains:
-                        chains[rid] = []
-                    chains[rid].append(record)
+                    operation_name = record["operation"] if record["operation"] is not None else "chat"
+                    chains.setdefault((record["request_id"], operation_name), []).append(record)
 
-                # Build response records in order of request_ids
                 records = []
-                for rid in request_ids:
-                    attempts = chains.get(rid, [])
+                for rid, operation_name in page_pairs:
+                    attempts = chains.get((rid, operation_name), [])
                     if not attempts:
                         continue
 
@@ -423,7 +425,7 @@ class FallbackEventsDB:
                         "success": any_success,
                         "final_provider": last["provider"],
                         "final_model": last["model"],
-                        "operation": first["operation"],
+                        "operation": operation_name,
                         "upstream_key_fingerprint": last["upstream_key_fingerprint"],
                         "attempts": [
                             {
@@ -616,11 +618,12 @@ class FallbackEventsDB:
                     FROM (
                         SELECT
                             request_id,
+                            COALESCE(operation, 'chat') as operation,
                             MAX(CASE WHEN success = 0 THEN 1 ELSE 0 END) as has_error,
                             MAX(CASE WHEN success = 1 THEN 1 ELSE 0 END) as has_success
                         FROM fallback_events
                         {where_clause}
-                        GROUP BY request_id
+                        GROUP BY request_id, COALESCE(operation, 'chat')
                     )
                     """,
                     params,
@@ -637,19 +640,25 @@ class FallbackEventsDB:
                     SELECT
                         provider,
                         model,
+                        COALESCE(operation, 'chat') as operation,
                         COALESCE(upstream_key_fingerprint, 'unknown') as upstream_key_fingerprint,
                         COALESCE(error_type, 'unknown') as error_type,
                         COUNT(*) as errors
                     FROM fallback_events
                     {failed_where_clause}
-                    GROUP BY provider, model, upstream_key_fingerprint, error_type
+                    GROUP BY provider, model, COALESCE(operation, 'chat'), upstream_key_fingerprint, error_type
                     ORDER BY errors DESC, error_type ASC
                     """,
                     failed_params,
                 )
-                top_error_types: dict[tuple[str, str, str], str] = {}
+                top_error_types: dict[tuple[str, str, str, str], str] = {}
                 for error_row in await cursor.fetchall():
-                    ref = (error_row["provider"], error_row["model"], error_row["upstream_key_fingerprint"])
+                    ref = (
+                        error_row["provider"],
+                        error_row["model"],
+                        error_row["operation"],
+                        error_row["upstream_key_fingerprint"],
+                    )
                     top_error_types.setdefault(ref, error_row["error_type"])
 
                 cursor = await db.execute(
@@ -658,6 +667,7 @@ class FallbackEventsDB:
                         provider || ' / ' || model as label,
                         provider,
                         model,
+                        COALESCE(operation, 'chat') as operation,
                         COALESCE(upstream_key_fingerprint, 'unknown') as upstream_key_fingerprint,
                         COUNT(*) as attempts,
                         COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as successes,
@@ -667,7 +677,7 @@ class FallbackEventsDB:
                         MAX(duration_ms) as max_duration_ms
                     FROM fallback_events
                     {where_clause}
-                    GROUP BY provider, model, upstream_key_fingerprint
+                    GROUP BY provider, model, COALESCE(operation, 'chat'), upstream_key_fingerprint
                     ORDER BY attempts DESC
                     LIMIT 20
                     """,
@@ -676,7 +686,12 @@ class FallbackEventsDB:
                 upstream = [dict(row) for row in await cursor.fetchall()]
                 for upstream_row in upstream:
                     upstream_row["top_error_type"] = top_error_types.get(
-                        (upstream_row["provider"], upstream_row["model"], upstream_row["upstream_key_fingerprint"])
+                        (
+                            upstream_row["provider"],
+                            upstream_row["model"],
+                            upstream_row["operation"],
+                            upstream_row["upstream_key_fingerprint"],
+                        )
                     )
 
                 # Outcome aggregates keyed the same way as the usage breakdowns

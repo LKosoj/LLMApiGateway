@@ -660,7 +660,8 @@ body.dark-mode .error-badge-access {
     color: var(--text);
 }
 
-.chain-title {
+.chain-title,
+.chain-operation {
     color: var(--text-muted);
     font-size: 12px;
 }

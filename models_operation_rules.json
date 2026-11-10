@@ -336,6 +336,18 @@
           "custom_body_params": {}
         }
       ]
+    },
+    {
+      "gateway_model_name": "llmgateway/whisper",
+      "routes": [
+        {
+          "provider": "routerai",
+          "model": "openai/whisper-large-v3-turbo",
+          "target_path": "/audio/transcriptions",
+          "custom_headers": {},
+          "custom_body_params": {}
+        }
+      ]
     }
   ],
   "audio_diarizations": [

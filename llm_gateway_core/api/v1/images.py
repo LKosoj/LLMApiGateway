@@ -28,6 +28,10 @@ from .image_adapters import (
     estimate_image_request_processing_weight,
     normalize_downstream_image_response,
 )
+from .operation_fallback_log import (
+    clear_route_key_fingerprint,
+    record_operation_route_attempt,
+)
 from .operation_proxy import (
     DownstreamHTTPException,
     json_response,
@@ -358,6 +362,21 @@ async def _proxy_image_with_fallback(
     request_started_at = time.monotonic()
 
     for route_index, route in enumerate(routes):
+        clear_route_key_fingerprint(request)
+        attempt_started_at = time.monotonic()
+
+        def record_attempt(success: bool, error: BaseException | None = None) -> None:
+            record_operation_route_attempt(
+                request,
+                operation=operation_name,
+                gateway_model=requested_model,
+                provider=route.provider,
+                model=route.model,
+                success=success,
+                error=error,
+                started_at=attempt_started_at,
+            )
+
         try:
             provider_config = config_loader_instance.providers_config.get(route.provider)
             if provider_config is None:
@@ -381,6 +400,7 @@ async def _proxy_image_with_fallback(
                 operation_name=operation_name,
             )
         except HTTPException as exc:
+            record_attempt(False, exc)
             if _should_try_next_image_route(exc, route_index, routes):
                 _log_image_route_fallback(
                     operation_label,
@@ -422,10 +442,12 @@ async def _proxy_image_with_fallback(
                     exc,
                     exc_info=True,
                 )
-                raise HTTPException(
+                config_error = HTTPException(
                     status_code=500,
                     detail="Internal server error: Invalid image route configuration.",
-                ) from exc
+                )
+                record_attempt(False, config_error)
+                raise config_error from exc
 
             effective_client = proxy_http_clients.get(route.provider, http_client)
             try:
@@ -471,10 +493,12 @@ async def _proxy_image_with_fallback(
                     route=route,
                     duration_ms=request_duration_ms(request_started_at),
                 )
+                record_attempt(True)
                 return await finalize_buffered_operation(owner, response, observation)
 
         if route_error is None:
             raise RuntimeError("image route ended without a response or error")
+        record_attempt(False, route_error)
         if _should_try_next_image_route(route_error, route_index, routes):
             _log_image_route_fallback(
                 operation_label,

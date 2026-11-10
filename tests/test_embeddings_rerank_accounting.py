@@ -430,6 +430,7 @@ def test_embeddings_fallback_commits_only_final_route_identity(upstream_status: 
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
+        _assert_route_switch(services, "embeddings")
 
     run_async(scenario())
 
@@ -539,8 +540,26 @@ def test_rerank_fallback_on_downstream_http_error(upstream_status: int) -> None:
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
+        _assert_route_switch(services, "rerank")
 
     run_async(scenario())
+
+
+def _assert_route_switch(services, operation: str) -> None:
+    calls = services.fallback_events_db.insert_event.call_args_list
+    assert len(calls) == 2
+    failed, rescued = calls[0].kwargs, calls[1].kwargs
+    assert failed["success"] is False
+    assert failed["provider"] == "provider-a"
+    assert failed["model"] == "model-a"
+    assert failed["attempt_number"] == 1
+    assert failed["operation"] == operation
+    assert failed["request_id"] == "request-1"
+    assert rescued["success"] is True
+    assert rescued["provider"] == "provider-b"
+    assert rescued["model"] == "model-b"
+    assert rescued["attempt_number"] == 2
+    assert rescued["operation"] == operation
 
 
 def test_embeddings_missing_accounting_context_fails_closed() -> None:

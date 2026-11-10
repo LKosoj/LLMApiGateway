@@ -151,6 +151,23 @@ function initializeUsagePage() {
         return operation || notAvailable();
     };
 
+    const OPERATION_LABEL_KEYS = {
+        chat: 'common:operations.chat',
+        embeddings: 'common:operations.embeddings',
+        rerank: 'common:operations.rerank',
+        images_generation: 'common:operations.imagesGeneration',
+        images_edit: 'common:operations.imagesEdit',
+        audio_speech: 'common:operations.audioSpeech',
+        audio_transcription: 'common:operations.audioTranscription',
+        audio_diarization: 'common:operations.audioDiarization',
+    };
+
+    const operationLabel = (operation) => {
+        const name = typeof operation === 'string' && operation.trim() ? operation.trim() : 'chat';
+        const key = OPERATION_LABEL_KEYS[name];
+        return key ? gatewayI18n.t(key) : name;
+    };
+
     const formatTimestamp = (value) => {
         const timestamp = typeof value === 'string' ? value.trim() : '';
         if (!timestamp) {
@@ -829,6 +846,7 @@ function initializeUsagePage() {
             const trHead = document.createElement('tr');
             [
                 'usage:columns.gatewayModel',
+                'usage:columns.operationHeader',
                 'usage:columns.providerHeader',
                 'usage:columns.modelHeader',
                 'usage:columns.errorType',
@@ -846,12 +864,20 @@ function initializeUsagePage() {
             groupedByPeriod[periodKey].forEach(row => {
                 const tr = document.createElement('tr');
 
-                const cells = [
-                    row.gateway_model || notAvailable(),
-                    row.provider || notAvailable(),
-                    row.model || notAvailable(),
-                ];
-                cells.forEach(text => {
+                const gatewayCell = document.createElement('td');
+                gatewayCell.textContent = row.gateway_model || notAvailable();
+                markTechnical(gatewayCell);
+                tr.appendChild(gatewayCell);
+
+                const operationName = typeof row.operation === 'string' && row.operation.trim()
+                    ? row.operation.trim()
+                    : 'chat';
+                const operationCell = document.createElement('td');
+                operationCell.textContent = operationLabel(operationName);
+                if (!OPERATION_LABEL_KEYS[operationName]) markTechnical(operationCell);
+                tr.appendChild(operationCell);
+
+                [row.provider || notAvailable(), row.model || notAvailable()].forEach(text => {
                     const td = document.createElement('td');
                     td.textContent = text;
                     markTechnical(td);
@@ -965,6 +991,15 @@ function initializeUsagePage() {
             modelSpan.textContent = record.gateway_model || notAvailable();
             markTechnical(modelSpan);
             summary.appendChild(modelSpan);
+
+            const operationName = typeof record.operation === 'string' && record.operation.trim()
+                ? record.operation.trim()
+                : 'chat';
+            const operationSpan = document.createElement('span');
+            operationSpan.className = 'chain-operation';
+            operationSpan.textContent = operationLabel(operationName);
+            if (!OPERATION_LABEL_KEYS[operationName]) markTechnical(operationSpan);
+            summary.appendChild(operationSpan);
 
             const titleSpan = document.createElement('span');
             titleSpan.className = 'chain-title';

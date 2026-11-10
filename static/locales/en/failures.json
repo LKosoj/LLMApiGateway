@@ -76,7 +76,7 @@
   },
   "chains": {
     "heading": "Recent switches",
-    "hint": "requests where the first model did not cope",
+    "hint": "text, images, audio, embeddings and rerank: requests where the first model did not cope",
     "columns": {
       "time": "Time",
       "requested": "Requested",

@@ -81,5 +81,15 @@
     },
     "name": "Ключ: {name}",
     "logout": "Выйти"
+  },
+  "operations": {
+    "chat": "Текст",
+    "embeddings": "Эмбеддинги",
+    "rerank": "Реранкер",
+    "imagesGeneration": "Изображения",
+    "imagesEdit": "Правка изображений",
+    "audioSpeech": "Синтез речи",
+    "audioTranscription": "Распознавание речи",
+    "audioDiarization": "Диаризация"
   }
 }

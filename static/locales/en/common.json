@@ -81,5 +81,15 @@
     },
     "name": "Key: {name}",
     "logout": "Sign out"
+  },
+  "operations": {
+    "chat": "Text",
+    "embeddings": "Embeddings",
+    "rerank": "Reranker",
+    "imagesGeneration": "Images",
+    "imagesEdit": "Image edit",
+    "audioSpeech": "Speech",
+    "audioTranscription": "Transcription",
+    "audioDiarization": "Diarization"
   }
 }

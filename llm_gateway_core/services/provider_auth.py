@@ -49,4 +49,10 @@ async def resolve_provider_auth_headers(
         provider_config=provider_config,
         api_key=api_key,
     )
+    # The fingerprint belongs to the key this call already selected.
+    # Resolving the provider key again would rotate to the next key.
+    try:
+        request.state.llmgateway_route_key_fingerprint = material.upstream_key_fingerprint
+    except Exception:
+        pass
     return material.headers

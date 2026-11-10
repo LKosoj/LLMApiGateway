@@ -194,6 +194,60 @@ class FallbackEventsDBTests(unittest.TestCase):
         self.assertEqual(records[0]["final_provider"], "nvidia")
         self.assertEqual(records[0]["x_title"], "tgBot")
         self.assertEqual(len(records[0]["attempts"]), 2)
+        self.assertEqual(records[0]["operation"], "chat")
+
+    def test_chains_and_rescued_counts_split_by_operation(self):
+        shared = "req-shared"
+        attempts = [
+            (shared, 1, "embeddings", "provider-a", "model-a", False),
+            (shared, 2, "embeddings", "provider-b", "model-b", True),
+            (shared, 1, None, "provider-a", "text-a", False),
+            (shared, 2, None, "provider-b", "text-b", False),
+            ("req-audio", 1, "audio_transcription", "provider-a", "asr-a", False),
+            ("req-audio", 2, "audio_transcription", "provider-b", "asr-b", True),
+            ("req-solo", 1, "audio_speech", "provider-a", "tts", True),
+        ]
+        for request_id, attempt_number, operation, provider, model, success in attempts:
+            self.db.insert_event(
+                request_id=request_id,
+                gateway_model="gateway-model",
+                attempt_number=attempt_number,
+                provider=provider,
+                model=model,
+                success=success,
+                error_type=None if success else "http_503",
+                error_message=None if success else "failed",
+                duration_ms=100,
+                operation=operation,
+            )
+
+        records, total = run_async(self.db.get_fallback_records(limit=25, offset=0))
+
+        self.assertEqual(total, 3)
+        by_operation = {record["operation"]: record for record in records}
+        self.assertEqual(set(by_operation), {"embeddings", "chat", "audio_transcription"})
+        self.assertEqual(by_operation["embeddings"]["request_id"], shared)
+        self.assertTrue(by_operation["embeddings"]["success"])
+        self.assertEqual(by_operation["embeddings"]["total_attempts"], 2)
+        self.assertEqual(by_operation["embeddings"]["final_model"], "model-b")
+        self.assertFalse(by_operation["chat"]["success"])
+        self.assertEqual(by_operation["chat"]["request_id"], shared)
+        self.assertEqual(by_operation["audio_transcription"]["request_id"], "req-audio")
+
+        data = run_async(
+            self.db.get_dashboard_fallback(
+                "day",
+                datetime.now(timezone.utc) - timedelta(minutes=1),
+                datetime.now(timezone.utc) + timedelta(minutes=1),
+            )
+        )
+        self.assertEqual(data["requests"], {"total": 4, "rescued": 2, "failed": 1})
+
+        stats = run_async(self.db.get_aggregated_stats("day"))
+        failed_operations = {row["operation"] for row in stats}
+        self.assertEqual(failed_operations, {"embeddings", "chat", "audio_transcription"})
+        chat_count = sum(row["count"] for row in stats if row["operation"] == "chat")
+        self.assertEqual(chat_count, 2)
 
     def test_init_db_adds_x_title_column_for_existing_table(self):
         db = FallbackEventsDB.__new__(FallbackEventsDB)

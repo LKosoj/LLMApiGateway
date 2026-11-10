@@ -16,6 +16,16 @@ document.addEventListener('DOMContentLoaded', () => {
         'read_timeout', 'connect_timeout', 'connect_error', 'context_overflow',
         'empty_completion', 'format_ignored', 'unparsed_tool_call_dialect', 'upstream_provider_error',
     ]);
+    const OPERATION_LABEL_KEYS = {
+        chat: 'common:operations.chat',
+        embeddings: 'common:operations.embeddings',
+        rerank: 'common:operations.rerank',
+        images_generation: 'common:operations.imagesGeneration',
+        images_edit: 'common:operations.imagesEdit',
+        audio_speech: 'common:operations.audioSpeech',
+        audio_transcription: 'common:operations.audioTranscription',
+        audio_diarization: 'common:operations.audioDiarization',
+    };
     const { apiFetch, bootstrapRoleUI } = window.gatewayAuth;
     const i18n = window.gatewayI18n;
     const report = window.gatewayReport;
@@ -104,6 +114,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (minutes < 60) return i18n.formatRelativeTime(-Math.max(0, minutes), 'minute');
         if (minutes < 48 * 60) return i18n.formatRelativeTime(-Math.round(minutes / 60), 'hour');
         return i18n.formatRelativeTime(-Math.round(minutes / 1440), 'day');
+    }
+
+    function operationLabel(operation) {
+        const key = OPERATION_LABEL_KEYS[operation];
+        return key ? i18n.t(key) : (operation || i18n.t('common:operations.chat'));
     }
 
     function reasonLabel(code) {
@@ -409,9 +424,12 @@ document.addEventListener('DOMContentLoaded', () => {
             success.append(report.meter(rate / 100, tone), el('span', null, formatPercent(rate)));
             const open = report.targetButton(row.model, row.provider);
             open.addEventListener('click', () => openDetail(row));
+            const targetCell = el('div');
+            targetCell.appendChild(open);
+            if (row.operation) targetCell.appendChild(el('div', 'rp-muted', operationLabel(row.operation)));
             const tr = document.createElement('tr');
             tr.append(
-                headCell(open),
+                headCell(targetCell),
                 cell(
                     i18n.t('failures:reliability.columns.key'),
                     el('span', 'rp-mono', fingerprintLabel(row.upstream_key_fingerprint)),
@@ -467,6 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ),
             );
             const requested = el('div', null, record.gateway_model || i18n.t('failures:values.notAvailable'));
+            requested.appendChild(el('div', 'rp-muted', operationLabel(record.operation || 'chat')));
             requested.appendChild(el('div', 'rp-muted', i18n.t('failures:chains.total', {
                 client: record.x_title || i18n.t('failures:values.notAvailable'),
                 duration: formatSeconds(record.total_duration_ms),
@@ -664,6 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
             model: detailTarget.model || '',
             upstream_key_fingerprint: detailTarget.upstream_key_fingerprint || '',
         });
+        if (detailTarget.operation) params.set('operation', detailTarget.operation);
         try {
             const dashboard = await fetchJson(`/v1/api/analytics-dashboard?${params}`);
             if (stopped || generation !== detailGeneration) return;
@@ -680,6 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
             provider: row.provider,
             model: row.model,
             upstream_key_fingerprint: row.upstream_key_fingerprint,
+            operation: row.operation || null,
         };
         detailData = null;
         report.clearChart(els.modelDetailChart, el('div', 'rp-muted', i18n.t('failures:detail.loading')));

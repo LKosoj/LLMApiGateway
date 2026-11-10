@@ -375,8 +375,26 @@ def test_image_fallback_commits_once_from_final_success(upstream_status: int) ->
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
+        _assert_route_switch(services, "images_generation")
 
     run_async(scenario())
+
+
+def _assert_route_switch(services, operation: str) -> None:
+    calls = services.fallback_events_db.insert_event.call_args_list
+    assert len(calls) == 2
+    failed, rescued = calls[0].kwargs, calls[1].kwargs
+    assert failed["success"] is False
+    assert failed["provider"] == "provider-a"
+    assert failed["model"] == "model-a"
+    assert failed["attempt_number"] == 1
+    assert failed["operation"] == operation
+    assert failed["request_id"] == "request-1"
+    assert rescued["success"] is True
+    assert rescued["provider"] == "provider-b"
+    assert rescued["model"] == "model-b"
+    assert rescued["attempt_number"] == 2
+    assert rescued["operation"] == operation
 
 
 @pytest.mark.parametrize(
@@ -409,6 +427,8 @@ def test_image_error_or_cancellation_releases_without_commit(
         services.accounting_service.commit.assert_not_awaited()
         services.accounting_service.release.assert_awaited_once()
         _assert_no_legacy_writes(services)
+        if expected_exception is asyncio.CancelledError:
+            services.fallback_events_db.insert_event.assert_not_called()
 
     run_async(scenario())
 
@@ -575,6 +595,13 @@ def test_audio_speech_binary_response_commits_configured_cost_before_return() ->
         assert response.body == b"audio-bytes"
         assert response.status_code == 201
         assert response.headers["content-type"] == "audio/wav"
+        speech_event = services.fallback_events_db.insert_event.call_args.kwargs
+        assert services.fallback_events_db.insert_event.call_count == 1
+        assert speech_event["success"] is True
+        assert speech_event["operation"] == "audio_speech"
+        assert speech_event["attempt_number"] == 1
+        assert speech_event["provider"] == "provider-a"
+        assert speech_event["model"] == "speech-model"
         services.accounting_service.commit.assert_not_awaited()
 
         def before_send(message: dict[str, object]) -> None:
@@ -779,6 +806,7 @@ def test_audio_transcription_fallback_commits_only_final_success(upstream_status
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
+        _assert_route_switch(services, "audio_transcription")
 
     run_async(scenario())
 
@@ -796,5 +824,6 @@ def test_audio_cancellation_releases_without_commit() -> None:
         services.accounting_service.commit.assert_not_awaited()
         services.accounting_service.release.assert_awaited_once()
         _assert_no_legacy_writes(services)
+        services.fallback_events_db.insert_event.assert_not_called()
 
     run_async(scenario())

@@ -37,6 +37,10 @@ from ...services.payload_transform import apply_payload_transforms
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import OperationDispatcher, normalize_retry_settings
 from ...services.stream_observation import SSEEvent, parse_sse_json
+from .operation_fallback_log import (
+    clear_route_key_fingerprint,
+    record_operation_route_attempt,
+)
 from .operation_proxy import (
     DownstreamHTTPException,
     json_response,
@@ -458,6 +462,21 @@ async def create_embeddings(request: Request):
 
     try:
         for route_index, route in enumerate(routes):
+            clear_route_key_fingerprint(request)
+            attempt_started_at = time.monotonic()
+
+            def record_attempt(success: bool, error: BaseException | None = None) -> None:
+                record_operation_route_attempt(
+                    request,
+                    operation="embeddings",
+                    gateway_model=requested_model,
+                    provider=route.provider,
+                    model=route.model,
+                    success=success,
+                    error=error,
+                    started_at=attempt_started_at,
+                )
+
             try:
                 provider_config = config_loader_instance.providers_config.get(route.provider)
                 if provider_config is None:
@@ -509,6 +528,7 @@ async def create_embeddings(request: Request):
                             request_started_at=request_started_at,
                         ),
                     )
+                    record_attempt(True)
                     return downstream_result
 
                 downstream_json, downstream_status_code = downstream_result
@@ -521,10 +541,12 @@ async def create_embeddings(request: Request):
                     duration_ms=request_duration_ms(request_started_at),
                 )
             except (HTTPException, AccountingError) as exc:
+                record_attempt(False, exc)
                 if _should_try_next_route(exc, route_index, routes):
                     _log_route_fallback("Embeddings", requested_model, route, route_index, routes, exc)
                     continue
                 raise
+            record_attempt(True)
             return await finalize_buffered_operation(
                 owner,
                 response,
@@ -592,6 +614,21 @@ async def create_rerank(request: Request):
 
     try:
         for route_index, route in enumerate(routes):
+            clear_route_key_fingerprint(request)
+            attempt_started_at = time.monotonic()
+
+            def record_attempt(success: bool, error: BaseException | None = None) -> None:
+                record_operation_route_attempt(
+                    request,
+                    operation="rerank",
+                    gateway_model=requested_model,
+                    provider=route.provider,
+                    model=route.model,
+                    success=success,
+                    error=error,
+                    started_at=attempt_started_at,
+                )
+
             try:
                 provider_config = config_loader_instance.providers_config.get(route.provider)
                 if provider_config is None:
@@ -663,10 +700,12 @@ async def create_rerank(request: Request):
                     duration_ms=request_duration_ms(request_started_at),
                 )
             except (HTTPException, AccountingError) as exc:
+                record_attempt(False, exc)
                 if _should_try_next_route(exc, route_index, routes):
                     _log_route_fallback("Rerank", requested_model, route, route_index, routes, exc)
                     continue
                 raise
+            record_attempt(True)
             return await finalize_buffered_operation(
                 owner,
                 response,
