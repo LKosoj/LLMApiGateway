@@ -417,6 +417,13 @@
     "gateway_model_name": "llmgateway/high",
     "fallback_models": [
       {
+        "provider": "freemodel_ant",
+        "model": "claude-opus-5-5",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
         "provider": "a6",
         "model": "claude-opus-5-5",
         "use_provider_order_as_fallback": false,

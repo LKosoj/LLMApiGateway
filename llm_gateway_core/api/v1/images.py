@@ -68,7 +68,7 @@ TRUTHY_FORM_VALUES = frozenset({"1", "on", "true", "yes"})
 IMAGE_FORM_MAX_FILES = IMAGE_UPLOAD_MAX_PARTS
 IMAGE_FORM_MAX_FIELDS = 64
 IMAGE_FORM_MAX_PART_SIZE = 64 * 1024
-IMAGE_FORM_MAX_IMAGES = 8
+IMAGE_FORM_MAX_IMAGES = 16
 
 
 def _get_operation_runtime(
@@ -192,7 +192,7 @@ async def _parse_multipart_edit_request(
                     if len(images) >= IMAGE_FORM_MAX_IMAGES:
                         raise HTTPException(
                             status_code=400,
-                            detail="At most eight image files are supported in request body.",
+                            detail="At most sixteen image files are supported in request body.",
                         )
                     images.append(await _validate_image_upload(value))
                 else:

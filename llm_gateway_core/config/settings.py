@@ -7,7 +7,7 @@ from .environment import load_application_environment
 
 load_application_environment()
 
-IMAGE_UPLOAD_MAX_PARTS = 9
+IMAGE_UPLOAD_MAX_PARTS = 17
 IMAGE_DATA_URL_OVERHEAD_BYTES = 64
 
 

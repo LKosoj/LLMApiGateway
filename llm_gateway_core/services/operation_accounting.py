@@ -44,6 +44,22 @@ _TOKEN_USAGE_KEYS = frozenset(
         "total_tokens",
     }
 )
+_MAX_ROUTE_NAME_BYTES = 512
+
+
+def _optional_route_name(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AccountingValidationError
+    normalized = value.strip()
+    if (
+        not normalized
+        or "\x00" in normalized
+        or len(normalized.encode("utf-8")) > _MAX_ROUTE_NAME_BYTES
+    ):
+        raise AccountingValidationError
+    return normalized
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -99,6 +115,7 @@ class OperationTerminalObservation:
                 raise AccountingValidationError
             return
 
+        # The cost component cannot name a route. The usage row can.
         BillingComponent(
             provider=None,
             model=None,
@@ -108,8 +125,12 @@ class OperationTerminalObservation:
             operation=self.policy.operation,
             gateway_model=self.gateway_model,
         )
-        if self.provider is not None or self.model is not None:
+        provider = _optional_route_name(self.provider)
+        model = _optional_route_name(self.model)
+        if (provider is None) != (model is None):
             raise AccountingValidationError
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "model", model)
 
     def __repr__(self) -> str:
         return "<OperationTerminalObservation>"
@@ -574,8 +595,8 @@ def _parse_operation_observation(
     return OperationTerminalObservation(
         policy=policy,
         gateway_model=gateway_model,
-        provider=None,
-        model=None,
+        provider=provider,
+        model=model,
         usage=AccountingUsage(
             cost=resolved.cost_usd,
             cost_saved=cost_saved,

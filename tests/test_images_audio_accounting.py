@@ -336,6 +336,8 @@ def test_image_endpoints_commit_normalized_success_with_flat_cost_precedence(
         event = services.accounting_service.commit.await_args.args[1]
         assert event.usage.cost == expected_cost
         assert event.cost_source is expected_source
+        assert event.provider == "provider-a"
+        assert event.model == "model-a"
         assert event.usage.duration_ms is not None
         assert event.x_title == "tgBot"
         services.accounting_service.commit.assert_awaited_once()
@@ -372,6 +374,8 @@ def test_image_fallback_commits_once_from_final_success(upstream_status: int) ->
         event = services.accounting_service.commit.await_args.args[1]
         assert event.usage.cost == 0.7
         assert event.cost_source is CostSource.UPSTREAM
+        assert event.provider == "provider-b"
+        assert event.model == "model-b"
         services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
@@ -618,6 +622,8 @@ def test_audio_speech_binary_response_commits_configured_cost_before_return() ->
         event = services.accounting_service.commit.await_args.args[1]
         assert event.usage.cost == 0.33
         assert event.cost_source is CostSource.OPERATION_CONFIGURED
+        assert event.provider == "provider-a"
+        assert event.model == "speech-model"
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
 

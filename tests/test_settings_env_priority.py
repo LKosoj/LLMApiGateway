@@ -13,6 +13,12 @@ SETTINGS_MODULE_NAME = "llm_gateway_core.config.settings"
 
 
 class SettingsEnvPriorityTests(unittest.TestCase):
+    def test_image_materialization_estimate_includes_seventeen_parts(self):
+        settings_module = importlib.import_module(SETTINGS_MODULE_NAME)
+        self.assertEqual(settings_module.IMAGE_UPLOAD_MAX_PARTS, 17)
+        self.assertEqual(settings_module._max_image_materialization_peak_bytes(
+            max_file_bytes=1, max_total_bytes=17), 17 * (4 + 64) + 1 + 4 + 64)
+
     def test_deep_research_process_limits_are_strict_on_reload(self):
         settings_module = importlib.import_module(SETTINGS_MODULE_NAME)
         # A deployment may pin these keys in the project .env; the reload below must

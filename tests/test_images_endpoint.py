@@ -791,7 +791,7 @@ class ImagesEndpointTests(unittest.TestCase):
                 data={"model": "gateway/image-edit", "prompt": "Edit"},
                 files=[
                     ("image", (f"source-{index}.png", PNG_BYTES, "image/png"))
-                    for index in range(9)
+                    for index in range(17)
                 ],
                 headers={"Authorization": "Bearer test-gateway-key"},
             )
@@ -799,8 +799,22 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(per_file_response.status_code, 413)
         self.assertEqual(total_response.status_code, 413)
         self.assertEqual(count_response.status_code, 400)
-        self.assertIn("At most eight", count_response.json()["detail"])
+        self.assertIn("At most sixteen", count_response.json()["detail"])
         fake_http_client.post.assert_not_awaited()
+
+    def test_multipart_accepts_sixteen_ordered_images_and_mask(self):
+        files = [("image[]", (f"source-{index}.png", PNG_BYTES, "image/png")) for index in range(16)]
+        files.append(("mask", ("mask.png", MASK_PNG_BYTES, "image/png")))
+        with self._client(_FakeDownstreamResponse({"data": [{"b64_json": "edited"}]})) as (client, _, downstream):
+            response = client.post(
+                "/v1/images/edits", data={"model": "gateway/image-edit", "prompt": "Edit"},
+                files=files, headers={"Authorization": "Bearer test-gateway-key"},
+            )
+        self.assertEqual(response.status_code, 200)
+        forwarded = downstream.post.await_args.kwargs["files"]
+        self.assertEqual([item[0] for item in forwarded], ["image[]"] * 16 + ["mask"])
+        self.assertEqual([item[1][0] for item in forwarded],
+                         [f"source-{index}.png" for index in range(16)] + ["mask.png"])
 
     def test_local_upload_capacity_failure_does_not_fall_back(self):
         with patch.object(main.settings, "upload_admission_timeout_seconds", 0.01):

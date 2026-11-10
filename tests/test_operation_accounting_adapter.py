@@ -399,8 +399,8 @@ def test_flat_cost_precedence_is_upstream_then_configured_then_default() -> None
         DEFAULT_OPERATION_COST_USD,
         CostSource.OPERATION_DEFAULT,
     )
-    assert upstream.provider is None
-    assert upstream.model is None
+    assert upstream.provider == "trusted-provider"
+    assert upstream.model == "trusted-model"
 
 
 def test_null_flat_cost_uses_configured_then_default_cost() -> None:
@@ -495,6 +495,120 @@ def test_synthesized_payload_cost_is_never_treated_as_upstream_cost() -> None:
 
     assert observation.usage.cost == DEFAULT_OPERATION_COST_USD
     assert observation.cost_source is CostSource.OPERATION_DEFAULT
+    assert observation.provider is None
+    assert observation.model is None
+
+
+def test_flat_observation_keeps_a_route_pair_on_the_usage_event() -> None:
+    observation = parse_upstream_operation_observation(
+        {},
+        policy=_policy("POST", "/v1/images/generations"),
+        gateway_model="image-model",
+        provider=" trusted-provider ",
+        model=" trusted-model ",
+        cost_rate_registry=MappingProxyType({}),
+        operation_cost_calculator_registry=MappingProxyType({}),
+        occurred_at=NOW,
+    )
+    named = build_operation_accounting_event(
+        _context("POST", "/v1/images/generations"),
+        observation,
+    )
+    blank = build_operation_accounting_event(
+        _context("POST", "/v1/images/generations"),
+        parse_synthesized_operation_observation(
+            {},
+            policy=_policy("POST", "/v1/images/generations"),
+            gateway_model="image-model",
+            provider=None,
+            model=None,
+            cost_rate_registry=MappingProxyType({}),
+            operation_cost_calculator_registry=MappingProxyType({}),
+            occurred_at=NOW,
+        ),
+    )
+
+    assert (observation.provider, observation.model) == (
+        "trusted-provider",
+        "trusted-model",
+    )
+    assert (named.provider, named.model) == ("trusted-provider", "trusted-model")
+    assert named.gateway_model == "image-model"
+    assert blank.provider is None
+    assert blank.model is None
+    assert named.event_id == blank.event_id
+    assert named.billing_fingerprint != blank.billing_fingerprint
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("trusted-provider", None),
+        (None, "trusted-model"),
+        ("", "trusted-model"),
+        ("trusted-provider\x00", "trusted-model"),
+    ],
+)
+def test_flat_observation_rejects_a_half_or_broken_route_pair(
+    provider: str | None,
+    model: str | None,
+) -> None:
+    with pytest.raises(AccountingValidationError):
+        parse_upstream_operation_observation(
+            {},
+            policy=_policy("POST", "/v1/images/generations"),
+            gateway_model="image-model",
+            provider=provider,
+            model=model,
+            cost_rate_registry=MappingProxyType({}),
+            operation_cost_calculator_registry=MappingProxyType({}),
+            occurred_at=NOW,
+        )
+
+
+def test_synthesized_web_observation_keeps_its_supplied_route_pair() -> None:
+    observation = parse_synthesized_operation_observation(
+        {"usage": {"cost": 99.0}},
+        policy=_policy("POST", "/v1/web/search"),
+        gateway_model="web-model",
+        provider="llmgateway",
+        model="web-model",
+        cost_rate_registry=MappingProxyType({}),
+        operation_cost_calculator_registry=MappingProxyType({}),
+        occurred_at=NOW,
+    )
+
+    assert observation.provider == "llmgateway"
+    assert observation.model == "web-model"
+    assert observation.usage.cost == DEFAULT_OPERATION_COST_USD
+
+
+def test_provenance_route_overrides_an_observation_route() -> None:
+    context = _context("GET", "/v1/pdf/jobs/{job_id}", request_id="poll-request")
+    observation = parse_upstream_operation_observation(
+        {"usage": {"cost": 0.25}},
+        policy=context.policy,
+        gateway_model="pdf-model",
+        provider="observation-provider",
+        model="observation-model",
+        cost_rate_registry=MappingProxyType({}),
+        operation_cost_calculator_registry=MappingProxyType({}),
+        occurred_at=NOW,
+    )
+    event = build_operation_accounting_event(
+        context,
+        observation,
+        provenance=OperationEventProvenance(
+            event_id="stable-pdf-event",
+            method="POST",
+            route_template="/v1/pdf/jobs",
+            provider="converter-a",
+            model="pdf-model-a",
+        ),
+    )
+
+    assert (event.provider, event.model) == ("converter-a", "pdf-model-a")
+    assert event.event_id == "stable-pdf-event"
 
 
 def test_operation_parsers_preserve_external_duration_without_mutating_payload() -> None:

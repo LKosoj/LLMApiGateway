@@ -596,6 +596,8 @@ def test_web_terminal_charge_uses_outer_model_after_nested_call() -> None:
         assert _wire_body(messages) == response.body
         event = services.accounting_service.commit.await_args.args[1]
         assert event.gateway_model == SEARCH_MODEL
+        assert event.provider == "llmgateway"
+        assert event.model == SEARCH_MODEL
         assert event.usage.cost == 0.21
 
     run_async(scenario())
