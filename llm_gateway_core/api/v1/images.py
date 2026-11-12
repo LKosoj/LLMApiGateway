@@ -28,6 +28,7 @@ from .image_adapters import (
     estimate_image_request_processing_weight,
     normalize_downstream_image_response,
 )
+from .image_dimensions import image_dimensions_match, requested_image_dimensions
 from .operation_fallback_log import (
     clear_route_key_fingerprint,
     record_operation_route_attempt,
@@ -359,6 +360,7 @@ async def _proxy_image_with_fallback(
     operation_label: str,
     source_transport: str,
 ) -> object:
+    expected_dimensions = requested_image_dimensions(request_payload)
     request_started_at = time.monotonic()
 
     for route_index, route in enumerate(routes):
@@ -451,37 +453,51 @@ async def _proxy_image_with_fallback(
 
             effective_client = proxy_http_clients.get(route.provider, http_client)
             try:
-                downstream_json, downstream_status_code = await _execute_prepared_request(
-                    prepared_request,
-                    target_url=target_url,
-                    headers=headers,
-                    http_client=effective_client,
-                    retry_count=retry_count,
-                    retry_delay=retry_delay,
-                )
-                try:
-                    response_payload = normalize_downstream_image_response(
-                        downstream_json,
-                        route,
-                        request_payload,
+                for size_attempt in range(3):
+                    downstream_json, downstream_status_code = await _execute_prepared_request(
+                        prepared_request,
+                        target_url=target_url,
+                        headers=headers,
+                        http_client=effective_client,
+                        retry_count=retry_count,
+                        retry_delay=retry_delay,
                     )
-                except ImageRouteConfigError as exc:
-                    logger.error(
-                        "Invalid %s response mapping for '%s': %s",
-                        operation_label.lower(),
-                        requested_model,
-                        exc,
-                        exc_info=True,
+                    try:
+                        response_payload = normalize_downstream_image_response(
+                            downstream_json,
+                            route,
+                            request_payload,
+                        )
+                    except ImageRouteConfigError as exc:
+                        logger.error(
+                            "Invalid %s response mapping for '%s': %s",
+                            operation_label.lower(),
+                            requested_model,
+                            exc,
+                            exc_info=True,
+                        )
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Internal server error: Invalid image route configuration.",
+                        ) from exc
+                    except ImageDownstreamResponseError as exc:
+                        raise HTTPException(
+                            status_code=503,
+                            detail=f"Invalid downstream image response: {exc}",
+                        ) from exc
+                    if expected_dimensions is None or await image_dimensions_match(
+                        response_payload, expected_dimensions, http_client,
+                    ):
+                        break
+                    logger.warning(
+                        "%s returned images with size different from %sx%s; attempt=%s/3 provider=%s model=%s",
+                        operation_label, *expected_dimensions, size_attempt + 1, route.provider, route.model,
                     )
+                else:
                     raise HTTPException(
-                        status_code=500,
-                        detail="Internal server error: Invalid image route configuration.",
-                    ) from exc
-                except ImageDownstreamResponseError as exc:
-                    raise HTTPException(
-                        status_code=503,
-                        detail=f"Invalid downstream image response: {exc}",
-                    ) from exc
+                        status_code=502,
+                        detail=f"Returned image size does not match {request_payload['size']} after 3 attempts.",
+                    )
             except HTTPException as exc:
                 route_error = exc
             else:

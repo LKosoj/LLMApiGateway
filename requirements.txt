@@ -99,6 +99,8 @@ lxml-html-clean==0.4.5
     # via lxml
 nvidia-riva-client==2.25.1
     # via llmapigateway (pyproject.toml)
+pillow==12.2.0
+    # via llmapigateway (pyproject.toml)
 playwright==1.60.0
     # via cloakbrowser
 protobuf==6.33.5

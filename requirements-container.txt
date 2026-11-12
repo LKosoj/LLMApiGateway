@@ -2932,6 +2932,7 @@ pillow==12.2.0 \
     # via
     #   -c requirements-research.txt
     #   gpt-researcher
+    #   llmapigateway (pyproject.toml)
     #   weasyprint
 playwright==1.60.0 \
     --hash=sha256:1c2bfae7884fb3fb05b853290eab8f343d524e5016f2f1def702acbbdf14c93e \

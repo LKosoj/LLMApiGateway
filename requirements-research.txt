@@ -693,7 +693,9 @@ pathspec==1.1.1
 pillow==12.2.0
     # via
     #   -c requirements-dev.txt
+    #   -c requirements.txt
     #   gpt-researcher
+    #   llmapigateway (pyproject.toml)
     #   weasyprint
 playwright==1.60.0
     # via

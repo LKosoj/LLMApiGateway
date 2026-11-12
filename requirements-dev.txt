@@ -573,7 +573,9 @@ pathspec==1.1.1
     # via langgraph-cli
 pillow==12.2.0
     # via
+    #   -c requirements.txt
     #   gpt-researcher
+    #   llmapigateway (pyproject.toml)
     #   weasyprint
 pip-api==0.0.34
     # via pip-audit

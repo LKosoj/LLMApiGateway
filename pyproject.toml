@@ -29,6 +29,7 @@ dependencies = [
     "youtube-transcript-api>=1.2.4",
     "PySocks>=1.7.1",
     "selectolax>=0.4.9",
+    "pillow>=12.2.0",
 ]
 
 [project.optional-dependencies]

@@ -833,3 +833,38 @@ def test_audio_cancellation_releases_without_commit() -> None:
         services.fallback_events_db.insert_event.assert_not_called()
 
     run_async(scenario())
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_image_size_retries_commit_only_accepted_result(matches: bool) -> None:
+    async def scenario() -> None:
+        request, services = _request("/v1/images/generations")
+        _install_successful_commit(services.accounting_service)
+        payload = {"model": "gateway-image", "prompt": "draw", "size": "32x64"}
+        with _image_dependencies(
+            payload,
+            [_route(), _route("provider-b", "model-b")],
+            [({"usage": {"cost": 0.1}}, 200),
+             ({"usage": {"cost": 0.2}}, 200),
+             ({"usage": {"cost": 0.3}}, 200)],
+            {"data": [{"b64_json": "checked separately"}]},
+        ) as (execute, _, prepare), patch.object(
+            images, "image_dimensions_match", AsyncMock(side_effect=[False, False, matches]),
+        ):
+            if matches:
+                response = await images.create_images_generation(request)
+                await _send_response(request, response)
+                services.accounting_service.commit.assert_awaited_once()
+                event = services.accounting_service.commit.await_args.args[1]
+                assert event.usage.cost == 0.3
+                services.accounting_service.release.assert_not_awaited()
+            else:
+                with pytest.raises(HTTPException) as exc:
+                    await images.create_images_generation(request)
+                assert exc.value.status_code == 502
+                services.accounting_service.commit.assert_not_awaited()
+                services.accounting_service.release.assert_awaited_once()
+            assert execute.await_count == 3
+            prepare.assert_awaited_once()
+
+    run_async(scenario())

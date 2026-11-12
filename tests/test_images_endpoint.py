@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import tempfile
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 from fastapi.testclient import TestClient
+from PIL import Image
 
 import main
 from llm_gateway_core.api.v1 import images as images_api
@@ -26,6 +28,13 @@ from tests.images_audio_accounting_test_support import (
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 MASK_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
+
+
+def image_base64(width, height):
+    output = io.BytesIO()
+    Image.new("RGB", (width, height)).save(output, format="PNG")
+    return base64.b64encode(output.getvalue()).decode()
+
 
 VALID_PROVIDERS_TEXT = """
 [
@@ -310,7 +319,7 @@ class ImagesEndpointTests(unittest.TestCase):
     def test_post_images_alias_uses_generation_route_and_records_usage(self):
         downstream_payload = {
             "created": 123,
-            "data": [{"b64_json": "image-bytes"}],
+            "data": [{"b64_json": image_base64(512, 512)}],
             "usage": {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
         }
 
@@ -346,7 +355,7 @@ class ImagesEndpointTests(unittest.TestCase):
     def test_post_images_generations_falls_back_after_downstream_404(self):
         fallback_payload = {
             "created": 124,
-            "data": [{"b64_json": "fallback-image-bytes"}],
+            "data": [{"b64_json": image_base64(512, 512)}],
         }
 
         with self._client(
@@ -394,7 +403,7 @@ class ImagesEndpointTests(unittest.TestCase):
     def test_post_images_generations_can_omit_client_fields_for_downstream_compatibility(self):
         downstream_payload = {
             "created": 125,
-            "data": [{"b64_json": "image-bytes"}],
+            "data": [{"b64_json": image_base64(1024, 1024)}],
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, _dispatcher, fake_http_client):
@@ -603,7 +612,7 @@ class ImagesEndpointTests(unittest.TestCase):
     def test_post_images_edits_json_can_force_openai_multipart_downstream(self):
         downstream_payload = {
             "created": 457,
-            "data": [{"b64_json": "edited-image"}],
+            "data": [{"b64_json": image_base64(1024, 1024)}],
         }
 
         with self._client(_FakeDownstreamResponse(downstream_payload)) as (client, dispatcher, fake_http_client):
@@ -990,7 +999,7 @@ class ImagesEndpointTests(unittest.TestCase):
 
     def test_post_images_generations_supports_nvidia_mapping_and_normalizes_artifacts_response(self):
         downstream_payload = {
-            "artifacts": [{"base64": "nvidia-image-bytes"}],
+            "artifacts": [{"base64": image_base64(1536, 1024)}],
             "usage": {"input_tokens": 5, "output_tokens": 7, "total_tokens": 12},
         }
 
@@ -1012,7 +1021,7 @@ class ImagesEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
         self.assertIsInstance(response_json.get("created"), int)
-        self.assertEqual(response_json["data"], [{"b64_json": "nvidia-image-bytes"}])
+        self.assertEqual(response_json["data"], [{"b64_json": image_base64(1536, 1024)}])
         self.assertEqual(response_json["usage"], downstream_payload["usage"])
         fake_http_client.post.assert_awaited_once()
         self.assertEqual(
