@@ -1331,6 +1331,10 @@ This command mutates the host: when needed it creates the fixed `llmgateway:llmg
 
 Secrets and user variables live in `/etc/llm-gateway/gateway.env`, while generated paths live in `/etc/llm-gateway/runtime.env`; both files are owned by `root:llmgateway` with mode `0640`. `runtime.env` points configs/DB/outputs to `/var/lib/llm-gateway`, logs to `/var/log/llm-gateway`, the CloakBrowser cache to `/var/cache/llm-gateway`, and pins one worker. Before any mutation, the installer runs a secret-safe inventory. Duplicate/reserved env keys, unknown state files, unsafe targets, and a missing source/target environment or mandatory Providers/Fallback fail closed; safe existing targets remain authoritative and the source is never deleted.
 
+The current host service stop timeout is configured in `/etc/systemd/system/llm-gateway.service.d/timeout.conf`: `[Service]` → `TimeoutStopSec=20s`. After changing the unit/drop-in, run `sudo systemctl daemon-reload`; verify with `systemctl show llm-gateway.service -p TimeoutStopUSec`. This limits shutdown waiting, not startup time.
+
+At startup, accounting recovers all unfinished charges regardless of age and validates the last 24 hours before admitting paid requests. The daily boundary is fixed once at startup. Older history is checked in the background in batches of up to 256 operations: both databases are read using the same event IDs under a short shared lock, released between batches. Related records outside each batch are also validated. New charges continue during the history audit. Any discrepancy closes admission for new paid requests and makes `/health` report an accounting error. History retention waits for the background audit to finish; this audit does not create a database copy. Source schema migration v3 adds `accounting_outbox(created_at, event_id)` and `tokens_usage(timestamp, accounting_event_id)` indexes for fast recent-history selection. The indexes are built once on the first startup of the updated version.
+
 The unit passes `systemd-analyze verify`, applies hardening, and has two mandatory `EnvironmentFile` directives in `gateway.env` → `runtime.env` order. A bounded `ExecStartPost` retries the local `HEAD /health` for up to 60 seconds (`TimeoutStartSec=75`) without calling LLM providers. When replacing the unit/runtime files, the installer creates mode-`0600` backups and publishes atomically; failure restores them and leaves the service stopped. A fully converged rerun with the service already active and enabled changes no files and invokes no mutating `systemctl` command.
 
 Restarting an already installed service does not need the installer, which exists for installation and migration. A separate helper restarts the unit and opens its journal right away:
@@ -1412,3 +1416,42 @@ Send this JSON with an ordinary HTTP client to `/v1/decisions`, using `Authoriza
 This illustrates the response shape, rather than an actual request result. `noul` is the probability of yes between 0 and 1; `choice` contains the selected key and option probabilities; `score` is the expected position on a scale whose first level has index 0. Your application chooses the decision threshold. For `noul`, optional `criteria` must contain both `true` and `false`. `choice` requires a non-empty object of options; `score` requires a non-empty array ordered from lowest to highest.
 
 Contract: [AITUNNEL Decisions API](https://aitunnel.ru/docs/decisions).
+
+## Video generation
+
+The `llmgateway/wan3.0` model creates videos through BetterToken (`wan-3.0`), then RouterAI (`alibaba/wan-3.0`) if the first provider explicitly refuses task creation. Fill in `APIKEY_BETTERTOKEN=` in the local `.env`; RouterAI uses the existing `APIKEY_ROUTERAI`.
+
+Requests follow the [RouterAI](https://routerai.ru/models/alibaba/wan-3.0) format; the gateway translates them for [BetterToken](https://docs.bettertoken.ai/en/api-reference/videos).
+
+```bash
+curl "$GATEWAY_URL/v1/videos" \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: my-video-request-1' \
+  -d '{
+    "model": "llmgateway/wan3.0",
+    "prompt": "A bird flies over the sea, smooth camera movement",
+    "duration": 5,
+    "resolution": "720p",
+    "aspect_ratio": "16:9",
+    "generate_audio": true,
+    "input_references": [
+      {"type": "image_url", "image_url": {"url": "https://example.com/reference.jpg"}}
+    ]
+  }'
+```
+
+The response contains `id`, `status`, `polling_url` and `content_url`. URLs are relative, point to the gateway and require the same access key:
+
+- `GET /v1/videos/{id}` returns status; `completed` means generation finished. BetterToken also reports download readiness through `delivery_status: ready`.
+- `GET /v1/videos/{id}/content` downloads MP4; the `Range` header is supported.
+
+Instead of `input_references`, send `frame_images`: `[{"type":"image_url","image_url":{"url":"https://example.com/first.jpg"},"frame_type":"first_frame"}]`. URLs and data URIs are passed to the provider. `input_references` supports `image_url`, `video_url` and `audio_url` objects; provider-specific limits apply. BetterToken does not support combining frame images and free references: its explicit refusal allows fallback to RouterAI without dropping references.
+
+Route order lives in the `videos_generations` section of `models_operation_rules.json` and can be edited under “Images & Video” in the web interface. `request_format` selects `bettertoken_videos` or `routerai_videos` (RouterAI by default).
+
+Fallback only applies to HTTP `400/401/402/403/404/413/415/422` responses without an accepted task ID. Timeouts, `409/429/5xx`, malformed responses and missing IDs never automatically start another generation: acceptance may be uncertain. For BetterToken, `Idempotency-Key` is forwarded upstream; save and reuse it with the same body after uncertain acceptance. Once an ID is returned, generation or polling errors never trigger fallback.
+
+The selected provider, upstream ID and API endpoint are stored in `llmgateway_video_jobs.db` in the database directory (`GATEWAY_DB_DIR`). Polling after a restart continues with that provider even if route order changes. Provider credentials come from the current configuration.
+
+Cost is accounted once when a completed task is observed: valid `usage.cost` takes precedence; otherwise `billing.net_amount` is accepted only in `USD`. When actual cost is missing or uses another currency, no charge record is created yet; a subsequent poll may obtain settlement. No assumed tariff or currency conversion is applied. Repeated polling and downloads do not create duplicate charges.

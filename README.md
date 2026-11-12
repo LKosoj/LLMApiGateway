@@ -1333,6 +1333,10 @@ sudo sh docker/setup-gateway-service.sh
 
 Секреты и пользовательские переменные хранятся в `/etc/llm-gateway/gateway.env`, а сгенерированные пути — в `/etc/llm-gateway/runtime.env`; оба файла принадлежат `root:llmgateway` и имеют mode `0640`. `runtime.env` направляет configs/DB/outputs в `/var/lib/llm-gateway`, logs — в `/var/log/llm-gateway`, CloakBrowser cache — в `/var/cache/llm-gateway` и фиксирует один worker. До любой мутации installer выполняет secret-safe inventory. Duplicate/reserved env keys, неизвестные state-файлы, небезопасные targets и отсутствие source/target environment либо обязательных Providers/Fallback завершают установку без молчаливого переноса; существующие безопасные targets остаются authoritative, а source никогда не удаляется.
 
+Лимит остановки текущего host-сервиса задан в `/etc/systemd/system/llm-gateway.service.d/timeout.conf`: `[Service]` → `TimeoutStopSec=20s`. После изменения unit/drop-in выполните `sudo systemctl daemon-reload`; проверка: `systemctl show llm-gateway.service -p TimeoutStopUSec`. Это ограничивает ожидание остановки, а не время запуска.
+
+При запуске учёт восстанавливает все незавершённые списания независимо от возраста и проверяет последние 24 часа до приёма платных запросов. Граница суток фиксируется один раз при запуске. Более старая история проверяется в фоне порциями до 256 операций: обе базы читаются по одному набору идентификаторов под короткой общей блокировкой, которая освобождается между порциями. Связанные записи за пределами порции также проверяются. Новые списания продолжают обрабатываться во время проверки истории. При найденном расхождении приём новых платных запросов блокируется, а `/health` сообщает ошибку учёта. Очистка истории ждёт окончания фоновой проверки; копия базы для этой проверки не создаётся. Миграция source-схемы v3 добавляет индексы `accounting_outbox(created_at, event_id)` и `tokens_usage(timestamp, accounting_event_id)` для быстрой выборки последних суток. Построение индексов выполняется один раз при первом запуске обновлённой версии.
+
 Unit проходит `systemd-analyze verify`, получает hardening и два обязательных `EnvironmentFile` в порядке `gateway.env` → `runtime.env`. Bounded `ExecStartPost` повторяет локальный `HEAD /health` до 60 секунд (`TimeoutStartSec=75`) и не обращается к LLM providers. При замене unit/runtime installer сохраняет mode-`0600` backups и публикует файлы атомарно; ошибка откатывает их и оставляет service остановленным. Полностью converged повторный запуск при уже active/enabled service не изменяет файлы и не вызывает mutating `systemctl`.
 
 Для повседневного перезапуска уже установленного сервиса установщик не нужен — он предназначен для установки и миграции. Есть отдельный скрипт, который перезапускает unit и сразу открывает его журнал:
@@ -1414,3 +1418,42 @@ python -m ruff check .
 Это пример структуры ответа, не результат реального запроса. `noul` — вероятность «да» от 0 до 1; `choice` — выбранный ключ и вероятности вариантов; `score` — взвешенная позиция на шкале, где первый уровень имеет индекс 0. Порог принятия решения выбирает ваш код. `criteria` для `noul` необязателен; если задан, нужны оба ключа `true` и `false`. Для `choice` нужен непустой объект вариантов, для `score` — непустой массив уровней от низшего к высшему.
 
 Контракт: [Decisions API AITUNNEL](https://aitunnel.ru/docs/decisions).
+
+## Генерация видео
+
+Модель `llmgateway/wan3.0` создаёт видео через BetterToken (`wan-3.0`), затем RouterAI (`alibaba/wan-3.0`) при явном отказе первого провайдера создать задачу. В локальном `.env` заполните `APIKEY_BETTERTOKEN=`; RouterAI использует существующий `APIKEY_ROUTERAI`.
+
+Запросы используют формат [RouterAI](https://routerai.ru/models/alibaba/wan-3.0); гейтвей преобразует их для [BetterToken](https://docs.bettertoken.ai/en/api-reference/videos).
+
+```bash
+curl "$GATEWAY_URL/v1/videos" \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: my-video-request-1' \
+  -d '{
+    "model": "llmgateway/wan3.0",
+    "prompt": "Птица летит над морем, плавное движение камеры",
+    "duration": 5,
+    "resolution": "720p",
+    "aspect_ratio": "16:9",
+    "generate_audio": true,
+    "input_references": [
+      {"type": "image_url", "image_url": {"url": "https://example.com/reference.jpg"}}
+    ]
+  }'
+```
+
+Ответ содержит `id`, `status`, `polling_url` и `content_url`. Адреса относительные, ведут через гейтвей и требуют тот же ключ доступа:
+
+- `GET /v1/videos/{id}` — статус; `completed` означает завершение. BetterToken также сообщает готовность скачивания через `delivery_status: ready`.
+- `GET /v1/videos/{id}/content` — скачивание MP4; поддерживается заголовок `Range`.
+
+Вместо `input_references` можно передать `frame_images`: `[{"type":"image_url","image_url":{"url":"https://example.com/first.jpg"},"frame_type":"first_frame"}]`. Ссылки и data URI передаются провайдеру. `input_references` поддерживает объекты `image_url`, `video_url`, `audio_url`; конкретные ограничения определяет провайдер. BetterToken не поддерживает смешивание опорных кадров и свободных референсов: его явный отказ позволит перейти к RouterAI без удаления референсов.
+
+Порядок маршрутов задаётся в `models_operation_rules.json`, секция `videos_generations`, и редактируется в web-интерфейсе «Изображения и видео». `request_format` выбирает `bettertoken_videos` или `routerai_videos` (по умолчанию RouterAI).
+
+Фаллбэк разрешён только при HTTP `400/401/402/403/404/413/415/422` без ID принятой задачи. При таймауте, `409/429/5xx`, некорректном ответе или отсутствии ID повторная генерация автоматически не запускается: исход создания может быть неизвестен. Для BetterToken заголовок `Idempotency-Key` передаётся провайдеру; сохраните и повторно используйте его с тем же телом при неопределённом исходе. После получения ID ошибка генерации или опроса не запускает фаллбэк.
+
+Выбранный провайдер, его ID и адрес API сохраняются в `llmgateway_video_jobs.db` внутри каталога баз (`GATEWAY_DB_DIR`). Опрос после перезапуска продолжает обращаться к этому провайдеру, даже если порядок маршрутов изменился. Ключи провайдера берутся из текущей конфигурации.
+
+Стоимость учитывается один раз при наблюдении завершённой задачи: валидный `usage.cost` имеет приоритет, иначе принимается `billing.net_amount` только в `USD`. Если фактическая стоимость отсутствует или указана в другой валюте, запись списания пока не создаётся; следующий опрос может получить окончательную стоимость. Условный тариф и пересчёт валют не применяются. Повторный опрос и скачивание не создают повторного списания.

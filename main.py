@@ -75,6 +75,7 @@ from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
+from llm_gateway_core.db.video_jobs_db import VideoJobsDB
 from llm_gateway_core.services import session_secret
 from llm_gateway_core.services.openrouter_free_models import (
     REFRESH_INTERVAL_SECONDS as CAPABILITY_AUTOFILL_REFRESH_INTERVAL_SECONDS,
@@ -178,6 +179,7 @@ async def run_usage_stats_cleanup_loop(
     fallback_events_db: FallbackEventsDB,
     rejections_db: RejectionsDB,
     *,
+    accounting_service: AccountingService,
     retention_days: int = USAGE_STATS_RETENTION_DAYS,
     interval_seconds: float = USAGE_STATS_CLEANUP_INTERVAL_SECONDS,
     ip_block_guard: IpBlockGuard | None = None,
@@ -192,6 +194,7 @@ async def run_usage_stats_cleanup_loop(
             try:
                 if ip_block_guard is not None:
                     await run_cancellation_resistant_thread_worker(ip_block_guard.scan_permanent_blocks)
+                await accounting_service.wait_for_history_audit()
                 await run_cancellation_resistant_thread_worker(
                     tokens_usage_db.cleanup_old_records,
                     retention_days=retention_days,
@@ -217,12 +220,14 @@ def start_usage_stats_cleanup_task(
     fallback_events_db: FallbackEventsDB,
     rejections_db: RejectionsDB,
     *,
+    accounting_service: AccountingService,
     supervisor: TaskSupervisor,
     ip_block_guard: IpBlockGuard | None = None,
 ) -> asyncio.Task:
     return supervisor.create_task(
         run_usage_stats_cleanup_loop(
             tokens_usage_db, fallback_events_db, rejections_db, ip_block_guard=ip_block_guard,
+            accounting_service=accounting_service,
         ),
         name="usage-stats-cleanup",
     )
@@ -934,6 +939,7 @@ async def lifespan(app: FastAPI):
             tokens_usage_db,
             fallback_events_db,
             rejections_db,
+            accounting_service=accounting_service,
             supervisor=task_supervisor,
             ip_block_guard=ip_block_guard,
         )
@@ -970,6 +976,7 @@ async def lifespan(app: FastAPI):
         state_binding: _TemporaryStateBinding | None = None
         try:
             services = AppServices(
+                video_jobs_db=VideoJobsDB(),
                 runtime_manager=runtime_manager,
                 config_update_coordinator=config_update_coordinator,
                 http_client=http_client,

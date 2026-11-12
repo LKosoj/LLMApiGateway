@@ -576,6 +576,7 @@ class _ConfigValidationMixin:
             ("embeddings", operation_rules.embeddings),
             ("rerank", operation_rules.rerank),
             ("decisions", operation_rules.decisions),
+            ("videos_generations", operation_rules.videos_generations),
             ("images_generations", operation_rules.images_generations),
             ("images_edits", operation_rules.images_edits),
             ("audio_speech", operation_rules.audio_speech),

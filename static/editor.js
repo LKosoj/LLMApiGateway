@@ -355,7 +355,7 @@
       modelStatus.textContent = statusText || "";
       modelStatus.dataset.state = state || "idle";
     }
-    function buildFallbackRow(initialData, options = {}) {
+    function buildFallbackRow(initialData, options2 = {}) {
       const fallbackRow = document.createElement("div");
       fallbackRow.className = "fallback-row";
       fallbackRow.dataset.modelsLoadError = "false";
@@ -399,7 +399,7 @@
       const autofilledCapabilityFields = new Set(
         Array.isArray(initialData.capabilities_autofilled) ? initialData.capabilities_autofilled : []
       );
-      const resolveAutofillSource = typeof options.autofillSource === "function" ? options.autofillSource : () => null;
+      const resolveAutofillSource = typeof options2.autofillSource === "function" ? options2.autofillSource : () => null;
       const supportsVisionSelect = ctx.createTriStateSelect("supports-vision-select");
       supportsVisionSelect.value = initialData.supports_vision === true ? "true" : initialData.supports_vision === false ? "false" : "";
       const supportsVisionField = ctx.wrapCapabilityField({
@@ -454,10 +454,10 @@
       const removeButton = document.createElement("button");
       removeButton.type = "button";
       removeButton.className = "icon-button danger-button";
-      ctx.bindKnownActionText(removeButton, options.removeButtonLabel || "Remove Fallback");
+      ctx.bindKnownActionText(removeButton, options2.removeButtonLabel || "Remove Fallback");
       removeButton.addEventListener("click", () => {
-        if (typeof options.onRemove === "function") {
-          options.onRemove(fallbackRow);
+        if (typeof options2.onRemove === "function") {
+          options2.onRemove(fallbackRow);
           return;
         }
         const parentRuleCard = fallbackRow.closest(".rule-card");
@@ -1469,8 +1469,8 @@
   // src/fusion.mjs
   function registerFusion(ctx) {
     const FUSION_PANEL_MAX = 8;
-    function buildFusionMemberRow(initialData, options) {
-      options = options || {};
+    function buildFusionMemberRow(initialData, options2) {
+      options2 = options2 || {};
       const data = initialData || {};
       const row = document.createElement("div");
       row.className = "fallback-row fusion-member-row";
@@ -1520,11 +1520,11 @@
       row.appendChild(fieldsGrid);
       row.appendChild(modelStatus);
       row.appendChild(advancedDetails);
-      if (options.removable) {
+      if (options2.removable) {
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.className = "icon-button danger-button";
-        ctx.bindKnownActionText(removeButton, options.removeLabel || "Remove Panel Model");
+        ctx.bindKnownActionText(removeButton, options2.removeLabel || "Remove Panel Model");
         removeButton.addEventListener("click", () => {
           row.remove();
         });
@@ -1989,6 +1989,9 @@
     const addImageGenerationButton = document.getElementById("addImageGenerationButton");
     const imageGenerationList = document.getElementById("imageGenerationList");
     const imageGenerationEmptyState = document.getElementById("imageGenerationEmptyState");
+    const addVideoGenerationButton = document.getElementById("addVideoGenerationButton");
+    const videoGenerationList = document.getElementById("videoGenerationList");
+    const videoGenerationEmptyState = document.getElementById("videoGenerationEmptyState");
     const addImageEditButton = document.getElementById("addImageEditButton");
     const imageEditList = document.getElementById("imageEditList");
     const imageEditEmptyState = document.getElementById("imageEditEmptyState");
@@ -2074,6 +2077,9 @@
       addImageGenerationButton,
       imageGenerationList,
       imageGenerationEmptyState,
+      addVideoGenerationButton,
+      videoGenerationList,
+      videoGenerationEmptyState,
       addImageEditButton,
       imageEditList,
       imageEditEmptyState,
@@ -2611,7 +2617,7 @@
       updateSaveButtonDisabledState();
       syncInteractionLock();
     }
-    async function loadConfigDocument(documentName, url, options) {
+    async function loadConfigDocument(documentName, url, options2) {
       ctx.invalidateProviderCatalogRows();
       const requestId = (ctx.state.loadRequestIds.get(documentName) || 0) + 1;
       const requestMutationVersion = ctx.state.editorMutationVersion;
@@ -2619,18 +2625,18 @@
       setDocumentBusy(documentName, true);
       try {
         const response = await ctx.apiFetch(url);
-        const payload = options.responseType === "text" ? await response.text() : await readJsonBody(response);
+        const payload = options2.responseType === "text" ? await response.text() : await readJsonBody(response);
         if (!response.ok) {
           throw new ConfigUiError(
-            options.responseType === "text" ? `Request failed (HTTP ${response.status}).` : safeResponseError(response, payload)
+            options2.responseType === "text" ? `Request failed (HTTP ${response.status}).` : safeResponseError(response, payload)
           );
         }
         const etag = requireStrongEtag(response);
-        const validatedPayload = options.validate(payload);
+        const validatedPayload = options2.validate(payload);
         if (ctx.state.loadRequestIds.get(documentName) !== requestId || ctx.state.editorMutationVersion !== requestMutationVersion) {
           return false;
         }
-        const application = options.apply(validatedPayload);
+        const application = options2.apply(validatedPayload);
         syncInteractionLock();
         await application;
         if (ctx.state.loadRequestIds.get(documentName) !== requestId || ctx.state.editorMutationVersion !== requestMutationVersion) {
@@ -2650,13 +2656,13 @@
         }
       }
     }
-    async function saveConfigDocument(documentName, url, payload, options = {}) {
+    async function saveConfigDocument(documentName, url, payload, options2 = {}) {
       ctx.invalidateProviderCatalogRows();
       let base;
       try {
         base = getDocumentBase(documentName);
       } catch (error) {
-        showLocalizedError(options.errorTitle, error);
+        showLocalizedError(options2.errorTitle, error);
         return null;
       }
       const submittedMutationVersion = ctx.state.editorMutationVersion;
@@ -2666,10 +2672,10 @@
         response = await ctx.apiFetch(url, {
           method: "POST",
           headers: {
-            "Content-Type": options.contentType || "application/json",
+            "Content-Type": options2.contentType || "application/json",
             "If-Match": base.etag
           },
-          body: options.body === void 0 ? JSON.stringify(payload) : options.body
+          body: options2.body === void 0 ? JSON.stringify(payload) : options2.body
         });
         body = await readJsonBody(response).catch(() => ({}));
         if (response.status !== 409) {
@@ -2691,17 +2697,17 @@
         }
       }
       if (!response.ok) {
-        showLocalizedError(options.errorTitle, safeResponseError(response, body));
+        showLocalizedError(options2.errorTitle, safeResponseError(response, body));
         return null;
       }
       let etag;
       let publishedPayload;
       try {
         etag = requireStrongEtag(response);
-        publishedPayload = options.extractPublishedPayload ? options.extractPublishedPayload(body, payload) : body;
-        publishedPayload = options.validatePublished ? options.validatePublished(publishedPayload) : publishedPayload;
+        publishedPayload = options2.extractPublishedPayload ? options2.extractPublishedPayload(body, payload) : body;
+        publishedPayload = options2.validatePublished ? options2.validatePublished(publishedPayload) : publishedPayload;
       } catch (error) {
-        showLocalizedError(options.errorTitle, error);
+        showLocalizedError(options2.errorTitle, error);
         return null;
       }
       commitDocumentBase(documentName, publishedPayload, etag);
@@ -2835,6 +2841,9 @@
     }
     function refreshImageGenerationEmptyState() {
       ctx.elements.imageGenerationEmptyState.hidden = ctx.elements.imageGenerationList.children.length !== 0;
+    }
+    function refreshVideoGenerationEmptyState() {
+      ctx.elements.videoGenerationEmptyState.hidden = ctx.elements.videoGenerationList.children.length !== 0;
     }
     function refreshImageEditEmptyState() {
       ctx.elements.imageEditEmptyState.hidden = ctx.elements.imageEditList.children.length !== 0;
@@ -3166,7 +3175,7 @@
         return left < right ? -1 : left > right ? 1 : 0;
       });
     }
-    function setSelectOptions(select, options, placeholder, selectedValue) {
+    function setSelectOptions(select, options2, placeholder, selectedValue) {
       select.textContent = "";
       const placeholderOption = document.createElement("option");
       placeholderOption.value = "";
@@ -3177,15 +3186,15 @@
         placeholderOption.textContent = placeholder;
       }
       select.appendChild(placeholderOption);
-      options.forEach((optionValue) => {
+      options2.forEach((optionValue) => {
         const option = document.createElement("option");
         option.value = optionValue;
         option.textContent = optionValue;
         select.appendChild(option);
       });
-      select.value = selectedValue && options.includes(selectedValue) ? selectedValue : "";
+      select.value = selectedValue && options2.includes(selectedValue) ? selectedValue : "";
     }
-    function setModelSelectOptions(select, options, selectedValue, placeholder) {
+    function setModelSelectOptions(select, options2, selectedValue, placeholder) {
       const currentValue = typeof selectedValue === "string" ? selectedValue : "";
       select.textContent = "";
       const placeholderOption = document.createElement("option");
@@ -3197,13 +3206,13 @@
         placeholderOption.textContent = placeholder;
       }
       select.appendChild(placeholderOption);
-      options.forEach((optionValue) => {
+      options2.forEach((optionValue) => {
         const option = document.createElement("option");
         option.value = optionValue;
         option.textContent = optionValue;
         select.appendChild(option);
       });
-      if (currentValue && !options.includes(currentValue)) {
+      if (currentValue && !options2.includes(currentValue)) {
         const staleOption = document.createElement("option");
         staleOption.value = currentValue;
         bindLocalizedText(
@@ -3873,6 +3882,7 @@
       refreshEmbeddingsEmptyState,
       refreshRerankEmptyState,
       refreshImageGenerationEmptyState,
+      refreshVideoGenerationEmptyState,
       refreshImageEditEmptyState,
       refreshAudioSpeechEmptyState,
       refreshAudioTranscriptionsEmptyState,
@@ -4130,6 +4140,7 @@
         decisions: Array.isArray(payload.decisions) ? payload.decisions : [],
         rerank: Array.isArray(payload.rerank) ? payload.rerank : [],
         images_generations: Array.isArray(payload.images_generations) ? payload.images_generations : [],
+        videos_generations: Array.isArray(payload.videos_generations) ? payload.videos_generations : [],
         images_edits: Array.isArray(payload.images_edits) ? payload.images_edits : []
       };
       if (Object.prototype.hasOwnProperty.call(payload, "audio_transcriptions")) {
@@ -4153,6 +4164,7 @@
       ctx.state.decisionsRules = normalized.decisions;
       ctx.state.rerankRules = normalized.rerank;
       ctx.state.imageGenerationRules = normalized.images_generations;
+      ctx.state.videoGenerationRules = normalized.videos_generations || [];
       ctx.state.imageEditRules = normalized.images_edits;
       ctx.state.audioSpeechRules = normalized.audio_speech || [];
       ctx.state.audioTranscriptionRules = normalized.audio_transcriptions || [];
@@ -4171,6 +4183,7 @@
         decisions: ctx.state.decisionsRules,
         rerank: ctx.state.rerankRules,
         images_generations: ctx.state.imageGenerationRules,
+        videos_generations: ctx.state.videoGenerationRules,
         images_edits: ctx.state.imageEditRules
       };
       if (!basePayload && ctx.state.audioTranscriptionRules.length > 0) {
@@ -4193,6 +4206,7 @@
         decisions: overrides.decisions ?? source.decisions,
         rerank: overrides.rerank ?? source.rerank,
         images_generations: overrides.images_generations ?? source.images_generations,
+        videos_generations: overrides.videos_generations ?? source.videos_generations,
         images_edits: overrides.images_edits ?? source.images_edits
       };
       if (Object.prototype.hasOwnProperty.call(overrides, "audio_transcriptions") || Object.prototype.hasOwnProperty.call(source, "audio_transcriptions") || ctx.state.audioTranscriptionRules.length > 0) {
@@ -4258,10 +4272,10 @@
         { selector: ".read-model-input", options: ctx.state.gatewayModelCatalog.web_read }
       ];
       [ctx.elements.webResearchList, ctx.elements.webDeepResearchList].forEach((list) => {
-        crossSelectors.forEach(({ selector, options }) => {
+        crossSelectors.forEach(({ selector, options: options2 }) => {
           list.querySelectorAll(selector).forEach((select) => {
             if (select.tagName !== "SELECT") return;
-            ctx.setModelSelectOptions(select, options, select.value);
+            ctx.setModelSelectOptions(select, options2, select.value);
           });
         });
       });
@@ -4447,16 +4461,16 @@
       });
       ctx.refreshEmbeddingsEmptyState();
     }
-    function buildEmbeddingCard(initialData, options = {}) {
-      const refreshEmptyState = options.refreshEmptyState || ctx.refreshEmbeddingsEmptyState;
-      const buildRouteRow = options.buildRouteRow || buildEmbeddingRouteRow;
+    function buildEmbeddingCard(initialData, options2 = {}) {
+      const refreshEmptyState = options2.refreshEmptyState || ctx.refreshEmbeddingsEmptyState;
+      const buildRouteRow = options2.buildRouteRow || buildEmbeddingRouteRow;
       const card = document.createElement("section");
       card.className = "rule-card";
       const cardHeader = document.createElement("div");
       cardHeader.className = "rule-card-header";
       const titleWrap = document.createElement("div");
       titleWrap.className = "rule-card-title";
-      const gatewayModelInput = ctx.createTextInput("gateway-model-input", options.gatewayPlaceholder || "llmgateway/embedding-model");
+      const gatewayModelInput = ctx.createTextInput("gateway-model-input", options2.gatewayPlaceholder || "llmgateway/embedding-model");
       gatewayModelInput.value = initialData.gateway_model_name || "";
       titleWrap.appendChild(ctx.createFieldGroup("Gateway Model Name", gatewayModelInput, "gateway-model-field"));
       const removeButton = document.createElement("button");
@@ -4474,7 +4488,7 @@
       const addRouteButton = document.createElement("button");
       addRouteButton.type = "button";
       addRouteButton.className = "secondary-button add-fallback-button";
-      ctx.bindKnownActionText(addRouteButton, options.addRouteAction || "Add Fallback Route");
+      ctx.bindKnownActionText(addRouteButton, options2.addRouteAction || "Add Fallback Route");
       addRouteButton.addEventListener("click", () => {
         routeList.appendChild(buildRouteRow({}));
       });
@@ -4805,8 +4819,8 @@
       const provider = providerSelect.value.trim();
       const model = modelInput.value.trim();
       const target_path = targetPathInput.value.trim();
-      const request_format = requestFormatSelect.value.trim();
-      const response_format = responseFormatSelect.value.trim();
+      const request_format = requestFormatSelect?.value.trim() || "";
+      const response_format = responseFormatSelect?.value.trim() || "";
       const response_output_format = responseOutputFormatSelect.value.trim();
       if (!provider) {
         throw new Error("Each rerank route must have a provider selected.");
@@ -4824,9 +4838,11 @@
         provider,
         model,
         target_path,
-        custom_body_params: ctx.parseObjectTextarea(customBodyParamsInput.value, "Custom body params"),
         custom_headers: ctx.parseObjectTextarea(customHeadersInput.value, "Custom headers")
       };
+      if (!options.video) {
+        routePayload.custom_body_params = ctx.parseObjectTextarea(customBodyParamsInput.value, "Custom body params");
+      }
       if (request_format) {
         routePayload.request_format = request_format;
       }
@@ -4960,14 +4976,14 @@
       });
       refreshEmptyState();
     }
-    function buildImageCard(initialData, options) {
+    function buildImageCard(initialData, options2) {
       const card = document.createElement("section");
       card.className = "rule-card";
       const cardHeader = document.createElement("div");
       cardHeader.className = "rule-card-header";
       const titleWrap = document.createElement("div");
       titleWrap.className = "rule-card-title";
-      const gatewayModelInput = ctx.createTextInput("gateway-model-input", options.gatewayPlaceholder);
+      const gatewayModelInput = ctx.createTextInput("gateway-model-input", options2.gatewayPlaceholder);
       gatewayModelInput.value = initialData.gateway_model_name || "";
       titleWrap.appendChild(ctx.createFieldGroup("Gateway Model Name", gatewayModelInput, "gateway-model-field"));
       const removeButton = document.createElement("button");
@@ -4976,7 +4992,7 @@
       ctx.bindKnownActionText(removeButton, "Remove Model");
       removeButton.addEventListener("click", () => {
         card.remove();
-        options.refreshEmptyState();
+        options2.refreshEmptyState();
       });
       const routeList = document.createElement("div");
       routeList.className = "fallback-list";
@@ -4985,11 +5001,11 @@
       addRouteButton.className = "secondary-button add-fallback-button";
       ctx.bindKnownActionText(addRouteButton, "Add Route");
       addRouteButton.addEventListener("click", () => {
-        routeList.appendChild(buildImageRouteRow({}, options.defaultTargetPath));
+        routeList.appendChild(buildImageRouteRow({}, options2.defaultTargetPath, options2));
       });
       const cardBody = document.createElement("div");
       cardBody.className = "rule-card-body";
-      cardBody.appendChild(ctx.createOperationCostCalculatorField(initialData));
+      if (!options2.video) cardBody.appendChild(ctx.createOperationCostCalculatorField(initialData));
       cardBody.appendChild(routeList);
       cardBody.appendChild(addRouteButton);
       const accordionToggle = document.createElement("button");
@@ -5023,16 +5039,16 @@
       card.appendChild(cardBody);
       const routes = Array.isArray(initialData.routes) ? initialData.routes : [];
       routes.forEach((route) => {
-        const routeRow = buildImageRouteRow(route, options.defaultTargetPath);
+        const routeRow = buildImageRouteRow(route, options2.defaultTargetPath, options2);
         routeList.appendChild(routeRow);
       });
       if (routes.length === 0) {
-        const routeRow = buildImageRouteRow({}, options.defaultTargetPath);
+        const routeRow = buildImageRouteRow({}, options2.defaultTargetPath, options2);
         routeList.appendChild(routeRow);
       }
       return card;
     }
-    function buildImageRouteRow(initialData, defaultTargetPath) {
+    function buildImageRouteRow(initialData, defaultTargetPath, options2 = {}) {
       const row = document.createElement("div");
       row.className = "fallback-row";
       ctx.setupRowReordering(row);
@@ -5052,7 +5068,7 @@
       const requestFormatSelect = ctx.createSelect("request-format-select");
       ctx.setSelectOptions(
         requestFormatSelect,
-        ctx.constants.IMAGE_REQUEST_FORMAT_OPTIONS,
+        options2.video ? ["routerai_videos", "bettertoken_videos"] : ctx.constants.IMAGE_REQUEST_FORMAT_OPTIONS,
         "Default request format",
         initialData.request_format || ""
       );
@@ -5086,12 +5102,14 @@
       const advancedGrid = document.createElement("div");
       advancedGrid.className = "advanced-grid";
       advancedGrid.appendChild(ctx.createFieldGroup("Request Format", requestFormatSelect));
-      advancedGrid.appendChild(ctx.createFieldGroup("Response Format", responseFormatSelect));
-      advancedGrid.appendChild(ctx.createFieldGroup("Retry Delay", retryDelayInput));
-      advancedGrid.appendChild(ctx.createFieldGroup("Retry Count", retryCountInput));
-      advancedGrid.appendChild(ctx.createFieldGroup("Request Mapping", requestMappingInput, "textarea-group"));
-      advancedGrid.appendChild(ctx.createFieldGroup("Response Mapping", responseMappingInput, "textarea-group"));
-      advancedGrid.appendChild(ctx.createFieldGroup("Custom Body Params", customBodyParamsInput, "textarea-group"));
+      if (!options2.video) {
+        advancedGrid.appendChild(ctx.createFieldGroup("Response Format", responseFormatSelect));
+        advancedGrid.appendChild(ctx.createFieldGroup("Retry Delay", retryDelayInput));
+        advancedGrid.appendChild(ctx.createFieldGroup("Retry Count", retryCountInput));
+        advancedGrid.appendChild(ctx.createFieldGroup("Request Mapping", requestMappingInput, "textarea-group"));
+        advancedGrid.appendChild(ctx.createFieldGroup("Response Mapping", responseMappingInput, "textarea-group"));
+      }
+      if (!options2.video) advancedGrid.appendChild(ctx.createFieldGroup("Custom Body Params", customBodyParamsInput, "textarea-group"));
       advancedGrid.appendChild(ctx.createFieldGroup("Custom Headers", customHeadersInput, "textarea-group"));
       advancedDetails.appendChild(advancedGrid);
       const removeButton = document.createElement("button");
@@ -5120,7 +5138,7 @@
       });
       return row;
     }
-    function normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel) {
+    function normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel, options2 = {}) {
       const providerSelect = routeRow.querySelector(".provider-select");
       const modelInput = routeRow.querySelector(".model-input");
       const customBodyParamsInput = routeRow.querySelector(".custom-body-params-input");
@@ -5135,8 +5153,8 @@
       const provider = providerSelect.value.trim();
       const model = modelInput.value.trim();
       const target_path = targetPathInput.value.trim() || defaultTargetPath;
-      const request_format = requestFormatSelect.value.trim();
-      const response_format = responseFormatSelect.value.trim();
+      const request_format = requestFormatSelect?.value.trim() || "";
+      const response_format = responseFormatSelect?.value.trim() || "";
       if (!provider) {
         throw new Error(`Each ${routeLabel} route must have a provider selected.`);
       }
@@ -5150,15 +5168,17 @@
         provider,
         model,
         target_path,
-        custom_body_params: ctx.parseObjectTextarea(customBodyParamsInput.value, "Custom body params"),
         custom_headers: ctx.parseObjectTextarea(customHeadersInput.value, "Custom headers")
       };
-      const request_mapping = ctx.parseObjectTextarea(requestMappingInput.value, "Request mapping");
-      const response_mapping = ctx.parseObjectTextarea(responseMappingInput.value, "Response mapping");
+      if (!options2.video) {
+        routePayload.custom_body_params = ctx.parseObjectTextarea(customBodyParamsInput.value, "Custom body params");
+      }
+      const request_mapping = options2.video ? {} : ctx.parseObjectTextarea(requestMappingInput.value, "Request mapping");
+      const response_mapping = options2.video ? {} : ctx.parseObjectTextarea(responseMappingInput.value, "Response mapping");
       if (request_format) {
         routePayload.request_format = request_format;
       }
-      if (response_format) {
+      if (response_format && !options2.video) {
         routePayload.response_format = response_format;
       }
       if (Object.keys(request_mapping).length > 0) {
@@ -5167,10 +5187,10 @@
       if (Object.keys(response_mapping).length > 0) {
         routePayload.response_mapping = response_mapping;
       }
-      ctx.applyRetrySettingsToPayload(routePayload, retryDelayInput, retryCountInput);
+      if (!options2.video) ctx.applyRetrySettingsToPayload(routePayload, retryDelayInput, retryCountInput);
       return routePayload;
     }
-    function normalizeImageCardForSave(ruleCard, routeLabel, defaultTargetPath) {
+    function normalizeImageCardForSave(ruleCard, routeLabel, defaultTargetPath, options2 = {}) {
       const gatewayModelInput = ruleCard.querySelector(".gateway-model-input");
       const routeRows = Array.from(ruleCard.querySelectorAll(".fallback-list > .fallback-row"));
       const gatewayModelName = gatewayModelInput.value.trim();
@@ -5180,17 +5200,20 @@
       if (routeRows.length === 0) {
         throw new Error(`${routeLabel} model '${gatewayModelName}' must contain at least one route.`);
       }
-      return ctx.applyOperationCostCalculator({
+      const payload = {
         gateway_model_name: gatewayModelName,
-        routes: routeRows.map((routeRow) => normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel))
-      }, ruleCard);
+        routes: routeRows.map((routeRow) => normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel, options2))
+      };
+      return options2.video ? payload : ctx.applyOperationCostCalculator(payload, ruleCard);
     }
     function getImagesPayloadForSave(basePayload = null) {
       const images_generations = Array.from(ctx.elements.imageGenerationList.querySelectorAll(".rule-card")).map((ruleCard) => normalizeImageCardForSave(ruleCard, "image generation", "/images/generations"));
       const images_edits = Array.from(ctx.elements.imageEditList.querySelectorAll(".rule-card")).map((ruleCard) => normalizeImageCardForSave(ruleCard, "image edit", "/images/edits"));
+      const videos_generations = Array.from(ctx.elements.videoGenerationList.querySelectorAll(".rule-card")).map((ruleCard) => normalizeImageCardForSave(ruleCard, "video generation", "/videos", { video: true }));
       return buildOperationRoutesPayload({
         images_generations,
-        images_edits
+        images_edits,
+        videos_generations
       }, basePayload);
     }
     function getNormalizedImagesContent() {
@@ -5209,6 +5232,17 @@
                 gatewayPlaceholder: "llmgateway/image-generation-model",
                 defaultTargetPath: "/images/generations",
                 refreshEmptyState: ctx.refreshImageGenerationEmptyState
+              })
+            );
+            await renderImageSection(
+              ctx.elements.videoGenerationList,
+              ctx.refreshVideoGenerationEmptyState,
+              payload.videos_generations,
+              (item) => buildImageCard(item, {
+                gatewayPlaceholder: "llmgateway/wan3.0",
+                defaultTargetPath: "/videos",
+                refreshEmptyState: ctx.refreshVideoGenerationEmptyState,
+                video: true
               })
             );
             await renderImageSection(
@@ -5297,7 +5331,7 @@
         throw new Error(`${fieldLabel} must start with / or with http:// or https://`);
       }
     }
-    function normalizeAudioRouteForSave(routeRow, options) {
+    function normalizeAudioRouteForSave(routeRow, options2) {
       const providerSelect = routeRow.querySelector(".provider-select");
       const modelInput = routeRow.querySelector(".model-input");
       const customBodyParamsInput = routeRow.querySelector(".custom-body-params-input");
@@ -5311,11 +5345,11 @@
       const retryCountInput = routeRow.querySelector(".retry-count-input");
       const provider = providerSelect.value.trim();
       const model = modelInput.value.trim();
-      const target_path = targetPathInput.value.trim() || options.defaultTargetPath;
+      const target_path = targetPathInput.value.trim() || options2.defaultTargetPath;
       const request_format = requestFormatSelect?.value.trim() || "";
       const voices_target_path = voicesTargetPathInput?.value.trim() || "";
       if (!provider) {
-        throw new Error(`Each ${options.routeLabel} route must have a provider selected.`);
+        throw new Error(`Each ${options2.routeLabel} route must have a provider selected.`);
       }
       if (!model) {
         throw new Error(`Enter or choose a model for provider '${provider}' before saving.`);
@@ -5592,14 +5626,14 @@
       card.appendChild(cardBody);
       return card;
     }
-    function buildAudioCard(initialData, options) {
+    function buildAudioCard(initialData, options2) {
       const card = document.createElement("section");
       card.className = "rule-card";
       const cardHeader = document.createElement("div");
       cardHeader.className = "rule-card-header";
       const titleWrap = document.createElement("div");
       titleWrap.className = "rule-card-title";
-      const gatewayModelInput = ctx.createTextInput("gateway-model-input", options.gatewayPlaceholder);
+      const gatewayModelInput = ctx.createTextInput("gateway-model-input", options2.gatewayPlaceholder);
       gatewayModelInput.value = initialData.gateway_model_name || "";
       gatewayModelInput.addEventListener("input", refreshAudioSpeakerDropdowns);
       titleWrap.appendChild(ctx.createFieldGroup("Gateway Model Name", gatewayModelInput, "gateway-model-field"));
@@ -5609,7 +5643,7 @@
       ctx.bindKnownActionText(removeButton, "Remove Model");
       removeButton.addEventListener("click", () => {
         card.remove();
-        options.refreshEmptyState();
+        options2.refreshEmptyState();
         refreshAudioSpeakerDropdowns();
       });
       const routeList = document.createElement("div");
@@ -5617,9 +5651,9 @@
       const addRouteButton = document.createElement("button");
       addRouteButton.type = "button";
       addRouteButton.className = "secondary-button add-fallback-button";
-      ctx.bindKnownActionText(addRouteButton, options.addRouteButtonText);
+      ctx.bindKnownActionText(addRouteButton, options2.addRouteButtonText);
       addRouteButton.addEventListener("click", () => {
-        routeList.appendChild(options.buildRouteRow({}));
+        routeList.appendChild(options2.buildRouteRow({}));
       });
       const cardBody = document.createElement("div");
       cardBody.className = "rule-card-body";
@@ -5657,11 +5691,11 @@
       card.appendChild(cardBody);
       const routes = Array.isArray(initialData.routes) ? initialData.routes : [];
       routes.forEach((route) => {
-        const routeRow = options.buildRouteRow(route);
+        const routeRow = options2.buildRouteRow(route);
         routeList.appendChild(routeRow);
       });
       if (routes.length === 0) {
-        const routeRow = options.buildRouteRow({});
+        const routeRow = options2.buildRouteRow({});
         routeList.appendChild(routeRow);
       }
       return card;
@@ -5696,7 +5730,7 @@
         customBodyPlaceholder: '{"min_duration": 0.3}'
       });
     }
-    function buildAudioRouteRow(initialData, options) {
+    function buildAudioRouteRow(initialData, options2) {
       const row = document.createElement("div");
       row.className = "fallback-row";
       ctx.setupRowReordering(row);
@@ -5706,15 +5740,15 @@
       ctx.setSelectOptions(providerSelect, ctx.state.availableProviders, "Choose a provider", initialData.provider || "");
       const modelInput = ctx.createTextInput("model-input", "Choose or enter model");
       modelInput.value = initialData.model || "";
-      const dataListId = `${options.dataListPrefix}-${Math.random().toString(36).substr(2, 9)}`;
+      const dataListId = `${options2.dataListPrefix}-${Math.random().toString(36).substr(2, 9)}`;
       modelInput.setAttribute("list", dataListId);
       const dataList = document.createElement("datalist");
       dataList.id = dataListId;
       row.appendChild(dataList);
-      const targetPathInput = ctx.createTextInput("target-path-input", options.defaultTargetPath);
-      targetPathInput.value = initialData.target_path || options.defaultTargetPath;
+      const targetPathInput = ctx.createTextInput("target-path-input", options2.defaultTargetPath);
+      targetPathInput.value = initialData.target_path || options2.defaultTargetPath;
       const { retryDelayInput, retryCountInput } = ctx.createRetrySettingsInputs(initialData);
-      const customBodyParamsInput = ctx.createTextarea("custom-body-params-input", options.customBodyPlaceholder);
+      const customBodyParamsInput = ctx.createTextarea("custom-body-params-input", options2.customBodyPlaceholder);
       customBodyParamsInput.value = ctx.normalizeObjectTextarea(initialData.custom_body_params);
       const customHeadersInput = ctx.createTextarea("custom-headers-input", '{"X-Header": "value"}');
       customHeadersInput.value = ctx.normalizeObjectTextarea(initialData.custom_headers);
@@ -5733,7 +5767,7 @@
       advancedDetails.appendChild(advancedSummary);
       const advancedGrid = document.createElement("div");
       advancedGrid.className = "advanced-grid";
-      if (options.includeRequestFormat) {
+      if (options2.includeRequestFormat) {
         const requestFormatSelect = ctx.createSelect("request-format-select");
         ctx.setSelectOptions(
           requestFormatSelect,
@@ -5743,7 +5777,7 @@
         );
         advancedGrid.appendChild(ctx.createFieldGroup("Request Format", requestFormatSelect));
       }
-      if (options.includeVoicesTargetPath) {
+      if (options2.includeVoicesTargetPath) {
         const voicesTargetPathInput = ctx.createTextInput("voices-target-path-input", "/voices");
         voicesTargetPathInput.value = initialData.voices_target_path || "";
         advancedGrid.appendChild(ctx.createFieldGroup("Voices Target Path", voicesTargetPathInput));
@@ -5766,7 +5800,7 @@
       const removeButton = document.createElement("button");
       removeButton.type = "button";
       removeButton.className = "icon-button danger-button";
-      ctx.bindKnownActionText(removeButton, options.removeButtonText);
+      ctx.bindKnownActionText(removeButton, options2.removeButtonText);
       removeButton.addEventListener("click", () => {
         row.remove();
       });
@@ -5910,12 +5944,12 @@
       wrapper.appendChild(popover);
       label.appendChild(wrapper);
     }
-    function buildWebSearchCard(initialData, options) {
+    function buildWebSearchCard(initialData, options2) {
       const { card, cardBody, gatewayModelInput } = createWebCardShell(
         initialData,
-        options.gatewayPlaceholder,
+        options2.gatewayPlaceholder,
         "Remove Service",
-        options.refreshEmptyState
+        options2.refreshEmptyState
       );
       gatewayModelInput.addEventListener("input", refreshWebCrossDropdowns);
       const serviceGrid = document.createElement("div");
@@ -5928,12 +5962,12 @@
       cardBody.appendChild(serviceGrid);
       return card;
     }
-    function buildWebReadCard(initialData, options) {
+    function buildWebReadCard(initialData, options2) {
       const { card, gatewayModelInput } = createWebCardShell(
         initialData,
-        options.gatewayPlaceholder,
+        options2.gatewayPlaceholder,
         "Remove Service",
-        options.refreshEmptyState
+        options2.refreshEmptyState
       );
       gatewayModelInput.addEventListener("input", refreshWebCrossDropdowns);
       return card;
@@ -5957,16 +5991,16 @@
       }
       return ctx.applyOperationCostCalculator({ gateway_model_name: gatewayModelName }, ruleCard);
     }
-    function buildWebReferenceCard(initialData, options) {
+    function buildWebReferenceCard(initialData, options2) {
       const { card, cardBody } = createWebCardShell(
         initialData,
-        options.gatewayPlaceholder,
+        options2.gatewayPlaceholder,
         "Remove Service",
-        options.refreshEmptyState
+        options2.refreshEmptyState
       );
       const fieldsGrid = document.createElement("div");
       fieldsGrid.className = "fallback-row-grid";
-      options.fields.forEach((field) => {
+      options2.fields.forEach((field) => {
         let control;
         if (field.catalog) {
           control = ctx.createSelect(field.className);
@@ -5983,16 +6017,16 @@
       cardBody.appendChild(fieldsGrid);
       return card;
     }
-    function normalizeWebReferenceCardForSave(ruleCard, options) {
+    function normalizeWebReferenceCardForSave(ruleCard, options2) {
       const gatewayModelName = ruleCard.querySelector(".gateway-model-input").value.trim();
       if (!gatewayModelName) {
-        throw new Error(`Each ${options.serviceLabel} must have a gateway model name.`);
+        throw new Error(`Each ${options2.serviceLabel} must have a gateway model name.`);
       }
       const payload = { gateway_model_name: gatewayModelName };
-      options.fields.forEach((field) => {
+      options2.fields.forEach((field) => {
         const value = ruleCard.querySelector(`.${field.className}`).value.trim();
         if (field.required && !value) {
-          throw new Error(`${options.serviceLabel} '${gatewayModelName}' must define ${field.key}.`);
+          throw new Error(`${options2.serviceLabel} '${gatewayModelName}' must define ${field.key}.`);
         }
         if (value) {
           payload[field.key] = value;
@@ -6365,7 +6399,7 @@
         dataList.appendChild(option);
       });
     }
-    function createLazyProviderCatalogRowController(options) {
+    function createLazyProviderCatalogRowController(options2) {
       const {
         row,
         providerSelect,
@@ -6373,7 +6407,7 @@
         dataList = null,
         modelStatus,
         requireListedModel = false
-      } = options;
+      } = options2;
       const statusText = document.createElement("span");
       const retryButton = document.createElement("button");
       retryButton.type = "button";
@@ -7699,6 +7733,7 @@
       decisionsRules: [],
       rerankRules: [],
       imageGenerationRules: [],
+      videoGenerationRules: [],
       imageEditRules: [],
       audioSpeechRules: [],
       audioTranscriptionRules: [],
@@ -7810,6 +7845,17 @@
       imageGenerationCard.classList.remove("collapsed");
       ctx.elements.imageGenerationList.appendChild(imageGenerationCard);
       ctx.refreshImageGenerationEmptyState();
+    });
+    ctx.elements.addVideoGenerationButton.addEventListener("click", () => {
+      const videoGenerationCard = ctx.buildImageCard({}, {
+        gatewayPlaceholder: "llmgateway/wan3.0",
+        defaultTargetPath: "/videos",
+        refreshEmptyState: ctx.refreshVideoGenerationEmptyState,
+        video: true
+      });
+      videoGenerationCard.classList.remove("collapsed");
+      ctx.elements.videoGenerationList.appendChild(videoGenerationCard);
+      ctx.refreshVideoGenerationEmptyState();
     });
     ctx.elements.addImageEditButton.addEventListener("click", () => {
       const imageEditCard = ctx.buildImageCard({}, {

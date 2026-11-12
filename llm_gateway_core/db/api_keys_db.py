@@ -454,6 +454,16 @@ def _accounting_sink_audit_row(row: sqlite3.Row) -> AccountingSinkAuditRow:
         raise AccountingError(AccountingErrorCode.SCHEMA_MISMATCH) from None
 
 
+_SELECT_ACCOUNTING_SINK_AUDIT_EVENT_IDS_SQL = """
+SELECT event_id
+FROM applied_accounting_events
+{time_clause}
+  AND event_id COLLATE BINARY > :after_event_id
+ORDER BY event_id COLLATE BINARY
+LIMIT :limit
+"""
+
+
 def _close_accounting_audit_connection(
     conn: sqlite3.Connection,
     *,
@@ -1464,12 +1474,27 @@ class ApiKeysDB:
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSinkAuditRow, ...]:
         """Return one bounded, strictly ordered page of persisted receipts."""
 
         limit = _validate_accounting_audit_limit(limit)
         if after_event_id is not None:
             after_event_id = _validate_accounting_audit_event_id(after_event_id)
+        if event_ids is not None:
+            if (
+                type(event_ids) is not tuple
+                or len(event_ids) > ACCOUNTING_AUDIT_MAX_PAGE_SIZE
+                or any(not isinstance(event_id, str) for event_id in event_ids)
+            ):
+                raise AccountingValidationError
+            event_ids = tuple(
+                _validate_accounting_audit_event_id(event_id) for event_id in event_ids
+            )
+            if len(set(event_ids)) != len(event_ids):
+                raise AccountingValidationError
+            if not event_ids:
+                return ()
 
         conn: sqlite3.Connection | None = None
         primary_error: BaseException | None = None
@@ -1479,9 +1504,12 @@ class ApiKeysDB:
                 enable_foreign_keys=False,
             )
             conn.row_factory = sqlite3.Row
-            if after_event_id is None:
+            if event_ids is not None:
+                placeholders = ", ".join(
+                    f":event_id_{ordinal}" for ordinal in range(len(event_ids))
+                )
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT receipt.event_id, receipt.billing_fingerprint,
                            receipt.api_key_id, receipt.spend_usd,
                            receipt.applied_at, receipt.sink_kind,
@@ -1498,10 +1526,10 @@ class ApiKeysDB:
                            ON active.id = receipt.api_key_id
                     LEFT JOIN api_key_accounting_tombstones AS tombstone
                            ON tombstone.api_key_id = receipt.api_key_id
+                    WHERE receipt.event_id IN ({placeholders})
                     ORDER BY receipt.event_id COLLATE BINARY
-                    LIMIT ?
                     """,
-                    (limit,),
+                    {f"event_id_{ordinal}": event_id for ordinal, event_id in enumerate(event_ids)},
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -1522,17 +1550,17 @@ class ApiKeysDB:
                            ON active.id = receipt.api_key_id
                     LEFT JOIN api_key_accounting_tombstones AS tombstone
                            ON tombstone.api_key_id = receipt.api_key_id
-                    WHERE receipt.event_id COLLATE BINARY > ?
+                    WHERE receipt.event_id COLLATE BINARY > :after_event_id
                     ORDER BY receipt.event_id COLLATE BINARY
-                    LIMIT ?
+                    LIMIT :limit
                     """,
-                    (after_event_id, limit),
+                    {"after_event_id": after_event_id or "", "limit": limit},
                 ).fetchall()
 
-            if len(rows) > limit:
+            if event_ids is None and len(rows) > limit:
                 raise AccountingError(AccountingErrorCode.SCHEMA_MISMATCH)
             audit_rows: list[AccountingSinkAuditRow] = []
-            previous_event_id = after_event_id
+            previous_event_id = after_event_id if event_ids is None else None
             for raw_row in rows:
                 audit_row = _accounting_sink_audit_row(raw_row)
                 if (
@@ -1558,6 +1586,81 @@ class ApiKeysDB:
                     conn,
                     primary_error=primary_error,
                 )
+
+    def list_accounting_sink_audit_event_ids(
+        self,
+        *,
+        limit: int,
+        after_event_id: str | None = None,
+        since: datetime | None = None,
+        before: datetime | None = None,
+    ) -> tuple[str, ...]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= ACCOUNTING_AUDIT_MAX_PAGE_SIZE
+            or (since is not None and before is not None)
+        ):
+            raise AccountingValidationError
+        if after_event_id is not None:
+            after_event_id = _validate_accounting_audit_event_id(after_event_id)
+        if since is not None and (
+            not isinstance(since, datetime)
+            or since.tzinfo is None
+            or since.utcoffset() is None
+        ):
+            raise AccountingValidationError
+        if before is not None and (
+            not isinstance(before, datetime)
+            or before.tzinfo is None
+            or before.utcoffset() is None
+        ):
+            raise AccountingValidationError
+
+        params: dict[str, object] = {
+            "after_event_id": after_event_id or "",
+            "limit": limit,
+        }
+        if since is not None:
+            time_clause = "WHERE applied_at >= :boundary"
+            params["boundary"] = _accounting_timestamp(since)
+        elif before is not None:
+            time_clause = "WHERE applied_at < :boundary"
+            params["boundary"] = _accounting_timestamp(before)
+        else:
+            time_clause = "WHERE 1 = 1"
+
+        conn: sqlite3.Connection | None = None
+        primary_error: BaseException | None = None
+        try:
+            conn = accounting_schema.open_accounting_runtime_connection(
+                self.db_path,
+                enable_foreign_keys=False,
+            )
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                _SELECT_ACCOUNTING_SINK_AUDIT_EVENT_IDS_SQL.format(
+                    time_clause=time_clause,
+                ),
+                params,
+            ).fetchall()
+            result = tuple(
+                _validate_accounting_audit_event_id(row["event_id"])
+                for row in rows
+            )
+            return result
+        except AccountingError as exc:
+            primary_error = exc
+            raise
+        except Exception:
+            primary_error = AccountingError(AccountingErrorCode.RECONCILE_FAILED)
+            raise primary_error from None
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            if conn is not None:
+                _close_accounting_audit_connection(conn, primary_error=primary_error)
 
     def get_accounting_owner_states(
         self,

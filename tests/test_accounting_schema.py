@@ -473,6 +473,7 @@ def test_fresh_initialization_creates_exact_dormant_accounting_schema(
         assert _marker_rows(conn) == [
             ("accounting_source", 1),
             ("accounting_source", 2),
+            ("accounting_source", 3),
         ]
         assert all(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] == 0 for table in SOURCE_TABLES)
 
@@ -1204,6 +1205,7 @@ def test_source_v1_to_v2_migration_preserves_model_manifest_identity(
         assert _marker_rows(conn) == [
             ("accounting_source", 1),
             ("accounting_source", 2),
+            ("accounting_source", 3),
         ]
         assert conn.execute(
             """
@@ -1234,6 +1236,7 @@ def test_source_v2_literal_case_tamper_fails_before_writes(db_dir: Path) -> None
         assert _marker_rows(conn) == [
             ("accounting_source", 1),
             ("accounting_source", 2),
+            ("accounting_source", 3),
         ]
         conn.execute(
             "ALTER TABLE accounting_event_components "
@@ -1252,6 +1255,7 @@ def test_source_v2_literal_case_tamper_fails_before_writes(db_dir: Path) -> None
         assert _marker_rows(conn) == [
             ("accounting_source", 1),
             ("accounting_source", 2),
+            ("accounting_source", 3),
         ]
         assert all(
             conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] == 0
@@ -1369,7 +1373,7 @@ def test_source_v2_migration_verifies_migrated_rows_after_commit(
         migrate_accounting_source(path)
 
 
-@pytest.mark.parametrize("versions", ((2,), (1, 3), (1, 2, 3)))
+@pytest.mark.parametrize("versions", ((2,), (1, 3), (1, 2, 4)))
 def test_source_migration_rejects_marker_gaps_and_future_versions_without_ddl(
     db_dir: Path,
     versions: tuple[int, ...],
@@ -1441,6 +1445,7 @@ def test_reopen_is_idempotent_and_keeps_one_component_marker(db_dir: Path) -> No
         assert _marker_rows(conn) == [
             ("accounting_source", 1),
             ("accounting_source", 2),
+            ("accounting_source", 3),
         ]
         assert all(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] == 0 for table in SOURCE_TABLES)
     with sqlite3.connect(db_dir / "reopen-sink.db") as conn:
@@ -1455,7 +1460,7 @@ def test_reopen_is_idempotent_and_keeps_one_component_marker(db_dir: Path) -> No
             "concurrent-source.db",
             _create_current_tokens_table,
             migrate_accounting_source,
-            (("accounting_source", 1), ("accounting_source", 2)),
+            (("accounting_source", 1), ("accounting_source", 2), ("accounting_source", 3)),
         ),
         (
             "concurrent-sink.db",

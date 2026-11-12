@@ -821,6 +821,7 @@ SUPPORTED_OPERATION_TYPES = frozenset(
         "embeddings",
         "rerank",
         "decisions",
+        "videos_generations",
         "images_generations",
         "images_edits",
         "audio_speech",

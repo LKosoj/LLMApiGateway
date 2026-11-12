@@ -520,6 +520,7 @@ class LifespanAppServicesTests(unittest.TestCase):
                 tokens_db,
                 fallback_db,
                 rejections_db,
+                accounting_service=Mock(wait_for_history_audit=AsyncMock()),
                 supervisor=supervisor,
             )
 
@@ -712,6 +713,7 @@ class LifespanAppServicesTests(unittest.TestCase):
                     Mock(),
                     Mock(),
                     Mock(),
+                    accounting_service=Mock(wait_for_history_audit=AsyncMock()),
                     supervisor=supervisor,
                 ),
                 main.start_deep_research_images_cleanup_task(

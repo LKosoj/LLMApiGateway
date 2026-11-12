@@ -18,6 +18,7 @@ from ..db.fallback_events_db import FallbackEventsDB
 from ..db.model_rotation_db import ModelRotationDB
 from ..db.rejections_db import RejectionsDB
 from ..db.tokens_usage_db import TokensUsageDB
+from ..db.video_jobs_db import VideoJobsDB
 from ..db.write_batcher import WriteBatcher
 from ..utils.usage_tracking import ModelCostRates
 from ..utils.log_redaction import sanitize_exception_type_name
@@ -137,6 +138,7 @@ class AppServices:
     stream_event_max_bytes: int
     json_response_max_bytes: int
     task_supervisor: TaskSupervisor
+    video_jobs_db: VideoJobsDB
 
     def __post_init__(self) -> None:
         if (

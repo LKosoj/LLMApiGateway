@@ -112,6 +112,7 @@ class SharedHttpClientTests(unittest.TestCase):
                         fake_tokens_usage_db,
                         fake_fallback_events_db,
                         fake_rejections_db,
+                        accounting_service=Mock(wait_for_history_audit=AsyncMock()),
                         retention_days=90,
                         interval_seconds=3600,
                     )
@@ -708,3 +709,29 @@ class DeepResearchWorkerHttpClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_retention_waits_for_history_audit_without_blocking_other_tasks():
+    async def scenario():
+        history_done = asyncio.Event()
+        waiting = asyncio.Event()
+        tokens, fallback, rejections = Mock(), Mock(), Mock()
+
+        async def wait_for_history():
+            waiting.set()
+            await history_done.wait()
+
+        service = Mock(wait_for_history_audit=AsyncMock(side_effect=wait_for_history))
+        task = asyncio.create_task(main.run_usage_stats_cleanup_loop(
+            tokens, fallback, rejections, accounting_service=service, interval_seconds=3600,
+        ))
+        await asyncio.wait_for(waiting.wait(), 1)
+        tokens.cleanup_old_records.assert_not_called()
+        history_done.set()
+        await _wait_for_mock_call(tokens.cleanup_old_records)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    run_async(scenario())

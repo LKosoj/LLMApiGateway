@@ -74,6 +74,17 @@ function startEditor(ctx) {
         ctx.elements.imageGenerationList.appendChild(imageGenerationCard);
         ctx.refreshImageGenerationEmptyState();
     });
+    ctx.elements.addVideoGenerationButton.addEventListener('click', () => {
+        const videoGenerationCard = ctx.buildImageCard({}, {
+            gatewayPlaceholder: 'llmgateway/wan3.0',
+            defaultTargetPath: '/videos',
+            refreshEmptyState: ctx.refreshVideoGenerationEmptyState,
+            video: true,
+        });
+        videoGenerationCard.classList.remove('collapsed');
+        ctx.elements.videoGenerationList.appendChild(videoGenerationCard);
+        ctx.refreshVideoGenerationEmptyState();
+    });
     ctx.elements.addImageEditButton.addEventListener('click', () => {
         const imageEditCard = ctx.buildImageCard({}, {
             gatewayPlaceholder: 'llmgateway/image-edit-model',

@@ -203,7 +203,7 @@
                 <div class="rules-builder">
                     <div class="rules-toolbar">
                         <div class="rules-toolbar-copy">
-                            <strong data-i18n="editor:sections.imageGeneration.title">Image Generation Routes</strong>
+                            <strong data-i18n="editor:sections.imageGeneration.title">Image and Video Generation Routes</strong>
                             <span data-i18n="editor:sections.imageGeneration.description">Configure routes for both /v1/images and /v1/images/generations.</span>
                             <span data-i18n="editor:sections.imageGeneration.hint">The default is OpenAI-compatible passthrough. Advanced options support mapping-based adapters such as NVIDIA JSON/artifacts routes.</span>
                         </div>
@@ -213,6 +213,17 @@
                     <div id="imageGenerationEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.imageGeneration.empty">
                         No image generation routes yet. Add the first image generation model to begin.
                     </div>
+                </div>
+                <div class="rules-builder">
+                    <div class="rules-toolbar">
+                        <div class="rules-toolbar-copy">
+                            <strong data-i18n="editor:sections.videoGeneration.title">Video Generation Routes</strong>
+                            <span data-i18n="editor:sections.videoGeneration.description">Configure asynchronous routes for /v1/videos.</span>
+                        </div>
+                        <button id="addVideoGenerationButton" type="button" class="secondary-button" data-i18n="editor:actions.addVideoModel">Add Video Model</button>
+                    </div>
+                    <div id="videoGenerationList" class="rules-list"></div>
+                    <div id="videoGenerationEmptyState" class="rules-empty-state" hidden data-i18n="editor:sections.videoGeneration.empty">No video generation routes yet. Add the first video model to begin.</div>
                 </div>
                 <div class="rules-builder">
                     <div class="rules-toolbar">

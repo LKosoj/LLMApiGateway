@@ -46,6 +46,7 @@ export function createEditorState() {
         decisionsRules: [],
         rerankRules: [],
         imageGenerationRules: [],
+        videoGenerationRules: [],
         imageEditRules: [],
         audioSpeechRules: [],
         audioTranscriptionRules: [],

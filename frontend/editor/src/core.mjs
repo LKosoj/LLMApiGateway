@@ -51,6 +51,9 @@ const rerankEmptyState = document.getElementById('rerankEmptyState');
 const addImageGenerationButton = document.getElementById('addImageGenerationButton');
 const imageGenerationList = document.getElementById('imageGenerationList');
 const imageGenerationEmptyState = document.getElementById('imageGenerationEmptyState');
+const addVideoGenerationButton = document.getElementById('addVideoGenerationButton');
+const videoGenerationList = document.getElementById('videoGenerationList');
+const videoGenerationEmptyState = document.getElementById('videoGenerationEmptyState');
 const addImageEditButton = document.getElementById('addImageEditButton');
 const imageEditList = document.getElementById('imageEditList');
 const imageEditEmptyState = document.getElementById('imageEditEmptyState');
@@ -137,6 +140,9 @@ const modelRulesRawInput = document.getElementById('modelRulesRawInput');
         addImageGenerationButton,
         imageGenerationList,
         imageGenerationEmptyState,
+        addVideoGenerationButton,
+        videoGenerationList,
+        videoGenerationEmptyState,
         addImageEditButton,
         imageEditList,
         imageEditEmptyState,
@@ -1051,6 +1057,10 @@ export function registerCore(ctx) {
 
     function refreshImageGenerationEmptyState() {
         ctx.elements.imageGenerationEmptyState.hidden = ctx.elements.imageGenerationList.children.length !== 0;
+    }
+
+    function refreshVideoGenerationEmptyState() {
+        ctx.elements.videoGenerationEmptyState.hidden = ctx.elements.videoGenerationList.children.length !== 0;
     }
 
     function refreshImageEditEmptyState() {
@@ -2211,6 +2221,7 @@ export function registerCore(ctx) {
         refreshEmbeddingsEmptyState,
         refreshRerankEmptyState,
         refreshImageGenerationEmptyState,
+        refreshVideoGenerationEmptyState,
         refreshImageEditEmptyState,
         refreshAudioSpeechEmptyState,
         refreshAudioTranscriptionsEmptyState,

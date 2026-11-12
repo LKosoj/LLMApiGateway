@@ -479,6 +479,7 @@ def _serialize_structured_operation_rules(
     include_audio_diarizations: bool = False,
     include_audio_speaker_transcriptions: bool = False,
     include_pdf_conversions: bool = False,
+    include_videos_generations: bool = False,
     include_web_sections: bool = False,
 ) -> str:
     payload_dump = payload.model_dump(exclude_none=True)
@@ -497,6 +498,8 @@ def _serialize_structured_operation_rules(
         serialized_payload["audio_diarizations"] = payload_dump["audio_diarizations"]
     if include_audio_speaker_transcriptions or payload.audio_speaker_transcriptions:
         serialized_payload["audio_speaker_transcriptions"] = payload_dump["audio_speaker_transcriptions"]
+    if include_videos_generations or payload.videos_generations:
+        serialized_payload["videos_generations"] = payload_dump["videos_generations"]
     if include_pdf_conversions or payload.pdf_conversions:
         serialized_payload["pdf_conversions"] = payload_dump["pdf_conversions"]
     if include_web_sections or payload.web_search:
@@ -555,7 +558,7 @@ def _build_structured_operation_rules_response(config_loader) -> dict:
     if audio_transcriptions:
         response_payload["audio_transcriptions"] = audio_transcriptions
 
-    for section_name in ("audio_speech", "audio_diarizations", "pdf_conversions"):
+    for section_name in ("audio_speech", "audio_diarizations", "pdf_conversions", "videos_generations"):
         section_rules = [
             serialize_model(gateway_model_name, config, include_routes=True)
             for gateway_model_name, config in config_loader.operation_rules.get(section_name, {}).items()
@@ -1367,6 +1370,10 @@ async def save_operation_rules_structured(request: Request):
             include_audio_speaker_transcriptions=(
                 "audio_speaker_transcriptions" in envelope
                 or bool(structured_payload.audio_speaker_transcriptions)
+            ),
+            include_videos_generations=(
+                "videos_generations" in envelope
+                or bool(structured_payload.videos_generations)
             ),
             include_pdf_conversions=(
                 "pdf_conversions" in envelope

@@ -7,8 +7,8 @@ import logging
 import secrets
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, fields, replace
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Protocol
 
 from .accounting import (
@@ -33,7 +33,11 @@ from .accounting import (
     SourceStatus,
     StoredAccountingEvent,
 )
-from .accounting_reconciliation import reconcile_accounting_repositories
+from .accounting_reconciliation import (
+    accounting_audit_event_ids,
+    reconcile_accounting_audit_page,
+    reconcile_accounting_repositories,
+)
 from .access_control import UsdBudgetLedger
 from .deep_research_accounting import (
     DeepResearchAccountingRegistry,
@@ -76,11 +80,17 @@ class AccountingSourceRepository(Protocol):
         attempted_at: datetime,
     ) -> AccountingProjectionMark: ...
 
+    def list_accounting_source_audit_event_ids(
+        self, *, limit: int, after_event_id: str | None = None,
+        since: datetime | None = None, before: datetime | None = None,
+    ) -> tuple[str, ...]: ...
+
     def list_accounting_source_audit_rows(
         self,
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSourceAuditRow, ...]: ...
 
 
@@ -91,11 +101,17 @@ class AccountingSinkRepository(Protocol):
         applied_at: datetime,
     ) -> ProjectionStatus: ...
 
+    def list_accounting_sink_audit_event_ids(
+        self, *, limit: int, after_event_id: str | None = None,
+        since: datetime | None = None, before: datetime | None = None,
+    ) -> tuple[str, ...]: ...
+
     def list_accounting_sink_audit_rows(
         self,
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSinkAuditRow, ...]: ...
 
     def get_accounting_owner_states(
@@ -303,6 +319,7 @@ class AccountingService:
         self._stop_requested: asyncio.Event | None = None
         self._sessions_drained: asyncio.Event | None = None
         self._projector_task: asyncio.Task[None] | None = None
+        self._history_audit_task: asyncio.Task[None] | None = None
         self._start_task: asyncio.Task[None] | None = None
         self._reconcile_task: asyncio.Task[ReconciliationReport] | None = None
         self._stop_task: asyncio.Task[None] | None = None
@@ -595,12 +612,84 @@ class AccountingService:
             reconcile_accounting_repositories,
             self._source,
             self._sink,
-            page_size=min(
-                self._projector_batch_size,
-                ACCOUNTING_AUDIT_MAX_PAGE_SIZE,
-            ),
+            page_size=ACCOUNTING_AUDIT_MAX_PAGE_SIZE,
         )
         return self._publish_full_reconciliation(report)
+
+    @staticmethod
+    def _merge_audit_reports(left: ReconciliationReport, right: ReconciliationReport) -> ReconciliationReport:
+        return replace(left, **{
+            item.name: getattr(left, item.name) + getattr(right, item.name)
+            for item in fields(ReconciliationReport) if item.name != "mode"
+        })
+
+    async def _recent_audit_locked(
+        self, cutoff: datetime,
+    ) -> tuple[ReconciliationReport, frozenset[str], tuple[str, ...]]:
+        report = ReconciliationReport(mode=ReconciliationMode.FULL)
+        checked_ids: set[str] = set()
+        cursor = None
+        while True:
+            event_ids = await asyncio.to_thread(
+                accounting_audit_event_ids, self._source, self._sink,
+                cutoff=cutoff, recent=True, after_event_id=cursor,
+            )
+            if not event_ids:
+                break
+            page = await asyncio.to_thread(reconcile_accounting_audit_page, self._source, self._sink, event_ids)
+            report = self._merge_audit_reports(report, page)
+            checked_ids.update(event_ids)
+            cursor = event_ids[-1]
+        first_history_ids = await asyncio.to_thread(
+            accounting_audit_event_ids, self._source, self._sink, cutoff=cutoff, recent=False,
+        )
+        if not first_history_ids:
+            self._publish_full_reconciliation(report)
+        return report, frozenset(checked_ids), first_history_ids
+
+    async def _audit_history(
+        self, cutoff: datetime, checked_ids: frozenset[str],
+        report: ReconciliationReport, event_ids: tuple[str, ...],
+    ) -> None:
+        try:
+            while event_ids:
+                with self._state_guard:
+                    if self._state in {AccountingHealthState.STOPPING, AccountingHealthState.STOPPED, AccountingHealthState.FAILED}:
+                        return
+                cursor = event_ids[-1]
+                async with self._drain:
+                    with self._state_guard:
+                        if self._state in {AccountingHealthState.STOPPING, AccountingHealthState.STOPPED, AccountingHealthState.FAILED}:
+                            return
+                    ids = tuple(event_id for event_id in event_ids if event_id not in checked_ids)
+                    if ids:
+                        page = await asyncio.to_thread(reconcile_accounting_audit_page, self._source, self._sink, ids)
+                        report = self._merge_audit_reports(report, page)
+                        if not page.clean:
+                            self._record_error(AccountingErrorCode.RECONCILE_FAILED, permanent=True)
+                            logger.error("Accounting history audit found inconsistencies: %s", page)
+                            return
+                    event_ids = await asyncio.to_thread(
+                        accounting_audit_event_ids, self._source, self._sink,
+                        cutoff=cutoff, recent=False, after_event_id=cursor,
+                    )
+                await asyncio.sleep(0)
+            self._publish_full_reconciliation(report)
+            logger.info("Accounting history audit completed: %s", report)
+        except Exception:
+            self._record_error(AccountingErrorCode.RECONCILE_FAILED, permanent=True)
+            logger.exception("Accounting history audit failed")
+        except BaseException:
+            self._record_error(AccountingErrorCode.ACCOUNTING_FAILED, permanent=True)
+            raise
+
+    async def wait_for_history_audit(self) -> None:
+        """Keep retention from deleting usage records during startup history validation."""
+        task = self._history_audit_task
+        if task is not None:
+            await asyncio.shield(task)
+        if self._has_fatal_error():
+            raise AccountingError(AccountingErrorCode.RECONCILE_FAILED)
 
     async def start(self) -> None:
         self._bind_loop()
@@ -665,8 +754,10 @@ class AccountingService:
                 async with self._drain:
                     clean, tolerated = await self._drain_pending_locked()
                     report = None
+                    history_ids = ()
                     if clean and not tolerated:
-                        report = await self._full_reconcile_locked()
+                        cutoff = self._now() - timedelta(days=1)
+                        report, checked_ids, history_ids = await self._recent_audit_locked(cutoff)
             except AccountingError as exc:
                 self._record_error(
                     exc.code,
@@ -754,6 +845,15 @@ class AccountingService:
                 accepting=True,
                 initialized=True,
             )
+            if history_ids:
+                workflow = self._audit_history(cutoff, checked_ids, report, history_ids)
+                try:
+                    self._history_audit_task = asyncio.create_task(workflow, name="accounting-history-audit")
+                except BaseException:
+                    workflow.close()
+                    self._record_error(AccountingErrorCode.ACCOUNTING_FAILED, permanent=True)
+                    raise
+                self._history_audit_task.add_done_callback(self._start_task_done)
 
     async def reconcile(self) -> ReconciliationReport:
         """Drain runtime backlog without exposing a public full-audit mode."""
@@ -2490,6 +2590,11 @@ class AccountingService:
                     return
                 self._state = AccountingHealthState.STOPPING
                 self._accepting = False
+            if self._history_audit_task is not None:
+                history_results = await asyncio.gather(self._history_audit_task, return_exceptions=True)
+                for result in history_results:
+                    if terminal_error is None and isinstance(result, BaseException) and not isinstance(result, Exception):
+                        terminal_error = result
             await self._session_drain.wait()
             with self._state_guard:
                 session_tasks = tuple(self._session_tasks)

@@ -160,6 +160,6 @@ def test_daily_task_runs_scan_then_sleeps_24_hours():
     with patch("main.scheduler_sleep", new_callable=AsyncMock) as sleep:
         sleep.side_effect = asyncio.CancelledError
         with pytest.raises(asyncio.CancelledError):
-            asyncio.run(main.run_usage_stats_cleanup_loop(Mock(), Mock(), Mock(), ip_block_guard=guard))
+            asyncio.run(main.run_usage_stats_cleanup_loop(Mock(), Mock(), Mock(), accounting_service=Mock(wait_for_history_audit=AsyncMock()), ip_block_guard=guard))
         guard.scan_permanent_blocks.assert_called_once_with()
         sleep.assert_awaited_once_with(24 * 60 * 60)

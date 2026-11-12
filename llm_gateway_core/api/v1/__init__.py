@@ -9,6 +9,7 @@ from .decisions import router as decisions_router
 from .images import router as images_router
 from .audio import router as audio_router
 from .pdf import router as pdf_router
+from .videos import router as videos_router
 from .web import router as web_router
 from .admin_api_keys import admin_api_keys_router
 from .quota import quota_router
@@ -36,6 +37,7 @@ router.include_router(decisions_router, tags=["Decisions V1"])
 router.include_router(images_router, tags=["Images V1"])
 router.include_router(audio_router, tags=["Audio V1"])
 router.include_router(pdf_router, tags=["PDF V1"])
+router.include_router(videos_router, tags=["Videos V1"])
 router.include_router(web_router, tags=["Web V1"])
 router.include_router(admin_api_keys_router, tags=["Admin API Keys V1"])
 router.include_router(quota_router, prefix="", tags=["Quota V1"])

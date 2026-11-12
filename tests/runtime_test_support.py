@@ -24,6 +24,7 @@ from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
+from llm_gateway_core.db.video_jobs_db import VideoJobsDB
 from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.accounting import AccountingReservation
 from llm_gateway_core.services.accounting_service import AccountingService
@@ -156,6 +157,7 @@ def make_app_services(**overrides: object) -> AppServices:
         "tokens_usage_db": lambda: _strict_instance_double(TokensUsageDB),
         "fallback_events_db": lambda: _strict_instance_double(FallbackEventsDB),
         "model_rotation_db": lambda: _strict_instance_double(ModelRotationDB),
+        "video_jobs_db": lambda: _strict_instance_double(VideoJobsDB),
         "write_batcher": lambda: _strict_instance_double(WriteBatcher),
         "accounting_service": _accounting_service_double,
         "usd_budget_ledger": UsdBudgetLedger,

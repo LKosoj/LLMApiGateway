@@ -28,7 +28,7 @@
     "embeddings": "Embeddings",
     "decisions": "Decisions",
     "rerank": "Rerank",
-    "images": "Images",
+    "images": "Images & Video",
     "audio": "Audio",
     "web": "Web",
     "fusion": "Fusion",
@@ -48,6 +48,7 @@
     "addFusionModel": "Add Fusion Model",
     "addRouterModel": "Add Router Model",
     "addGenerationModel": "Add Generation Model",
+    "addVideoModel": "Add Video Model",
     "addEditModel": "Add Edit Model",
     "addSpeechModel": "Add Speech Model",
     "addAudioModel": "Add Audio Model",
@@ -65,7 +66,7 @@
     "saveEmbeddings": "Save Embeddings Routes",
     "saveDecisions": "Save Decisions Routes",
     "saveRerank": "Save Rerank Routes",
-    "saveImages": "Save Images Routes",
+    "saveImages": "Save Images & Video Routes",
     "saveAudio": "Save Audio Routes",
     "saveWeb": "Save Web Services",
     "saveFusion": "Save Fusion Models",
@@ -145,6 +146,11 @@
       "description": "Configure routes for /v1/images/edits. Supports JSON and multipart requests.",
       "hint": "Use request and response mappings when a downstream model requires a provider-specific shape.",
       "empty": "No image edit routes yet. Add the first image edit model to begin."
+    },
+    "videoGeneration": {
+      "title": "Video Generation Routes",
+      "description": "Configure asynchronous routes for /v1/videos.",
+      "empty": "No video generation routes yet. Add the first video model to begin."
     },
     "audioSpeech": {
       "title": "Audio Speech Routes",
@@ -374,7 +380,7 @@
     "loading": "Loading {name}…",
     "saving": "Saving {name}…",
     "saved": "{name} updated successfully.",
-    "imagesName": "Images Routes",
+    "imagesName": "Images & Video Routes",
     "audioName": "Audio Routes",
     "webName": "Web Services",
     "modelRulesSaved": "Model Rules saved successfully.",

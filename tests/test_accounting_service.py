@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -16,6 +16,7 @@ from llm_gateway_core.db import accounting_schema
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
 from llm_gateway_core.services.accounting import (
+    ACCOUNTING_AUDIT_MAX_PAGE_SIZE,
     ACCOUNTING_EVENT_VERSION,
     AccountingError,
     AccountingErrorCode,
@@ -151,6 +152,7 @@ class FakeSource:
         self.audit_rows: tuple[AccountingSourceAuditRow, ...] = ()
         self.audit_error: BaseException | None = None
         self.audit_calls = 0
+        self.audit_created_at: dict[str, datetime] = {}
         self.audit_entered = threading.Event()
         self.audit_release: threading.Event | None = None
         self.accept_entered = threading.Event()
@@ -199,11 +201,20 @@ class FakeSource:
                 rows = [row for row in rows if (row.created_at, row.event.event_id) > after]
             return tuple(rows[:limit])
 
+    def list_accounting_source_audit_event_ids(self, *, limit, after_event_id=None, since=None, before=None):
+        return tuple(sorted(
+            row.event_id for row in self.audit_rows
+            if (after_event_id is None or row.event_id > after_event_id)
+            and (since is None or self.audit_created_at.get(row.event_id, NOW) >= since)
+            and (before is None or self.audit_created_at.get(row.event_id, NOW) < before)
+        )[:limit])
+
     def list_accounting_source_audit_rows(
         self,
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSourceAuditRow, ...]:
         self.audit_entered.set()
         if self.audit_release is not None:
@@ -213,6 +224,8 @@ class FakeSource:
             if self.audit_error is not None:
                 raise self.audit_error
             rows = sorted(self.audit_rows, key=lambda row: row.event_id)
+            if event_ids is not None:
+                rows = [row for row in rows if row.event_id in event_ids]
             if after_event_id is not None:
                 rows = [row for row in rows if row.event_id > after_event_id]
             return tuple(rows[:limit])
@@ -285,6 +298,7 @@ class FakeSink:
         self.audit_rows: tuple[AccountingSinkAuditRow, ...] = ()
         self.audit_error: BaseException | None = None
         self.audit_calls = 0
+        self.audit_created_at: dict[str, datetime] = {}
         self.owner_states: dict[int, AccountingOwnerState] = {}
         self.owner_calls: list[tuple[int, ...]] = []
         self.records: dict[int, ApiKeyRecord] = {}
@@ -320,17 +334,28 @@ class FakeSink:
             self.applied.add(event_id)
             return ProjectionStatus.APPLIED
 
+    def list_accounting_sink_audit_event_ids(self, *, limit, after_event_id=None, since=None, before=None):
+        return tuple(sorted(
+            row.event_id for row in self.audit_rows
+            if (after_event_id is None or row.event_id > after_event_id)
+            and (since is None or self.audit_created_at.get(row.event_id, NOW) >= since)
+            and (before is None or self.audit_created_at.get(row.event_id, NOW) < before)
+        )[:limit])
+
     def list_accounting_sink_audit_rows(
         self,
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSinkAuditRow, ...]:
         with self._lock:
             self.audit_calls += 1
             if self.audit_error is not None:
                 raise self.audit_error
             rows = sorted(self.audit_rows, key=lambda row: row.event_id)
+            if event_ids is not None:
+                rows = [row for row in rows if row.event_id in event_ids]
             if after_event_id is not None:
                 rows = [row for row in rows if row.event_id > after_event_id]
             return tuple(rows[:limit])
@@ -1428,6 +1453,33 @@ def test_stop_still_refuses_clean_drain_when_permanent_failure_persists() -> Non
     run_async(scenario())
 
 
+def test_full_audit_batches_are_independent_of_projection_batch_size() -> None:
+    async def scenario() -> None:
+        source = FakeSource()
+        source.audit_rows = tuple(
+            AccountingSourceAuditRow(
+                event_id=f"audit-{index:04d}",
+                row_kind=AccountingSourceAuditKind.OUTBOX,
+                event_kind=AccountingEventKind.CHARGE,
+                billing_fingerprint="a" * 64,
+                api_key_id=None,
+                spend_usd=0.25,
+                projected_at=NOW,
+                usage_present=True,
+                parent_link_state=AccountingParentLinkState.NOT_APPLICABLE,
+            )
+            for index in range(ACCOUNTING_AUDIT_MAX_PAGE_SIZE + 1)
+        )
+        service = _service(source, FakeSink(), projector_batch_size=1)
+        await service.start()
+        assert source.audit_calls == 2
+        assert service.health_snapshot().last_full_reconciliation.clean
+        await service.stop()
+        assert source.audit_calls == 4
+
+    run_async(scenario())
+
+
 def test_start_full_reconcile_is_skipped_when_permanent_failure_is_tolerated() -> None:
     """Demonstrates that the full startup audit is genuinely skipped (not
     merely already-clean by default) once a permanent projection failure is
@@ -2451,10 +2503,11 @@ def test_record_lifecycle_rejection_has_no_source_side_effects() -> None:
     run_async(scenario())
 
 
-def test_start_waits_for_full_audit_before_opening_admission() -> None:
+def test_start_waits_for_recent_audit_before_opening_admission() -> None:
     async def scenario() -> None:
         source = FakeSource()
         source.audit_release = threading.Event()
+        source.audit_rows = (_history_source_row("recent-barrier"),)
         service = _service(source, FakeSink())
 
         start_task = asyncio.create_task(service.start())
@@ -2505,6 +2558,7 @@ def test_start_ordinary_audit_failure_is_retryable_without_partial_publication()
     async def scenario() -> None:
         source = FakeSource()
         source.audit_error = RuntimeError("sensitive-audit-detail")
+        source.audit_rows = (_history_source_row("recent-retry"),)
         service = _service(source, FakeSink())
 
         with pytest.raises(AccountingError) as error:
@@ -3525,4 +3579,117 @@ def test_deep_research_child_budget_outlives_the_concurrency_limit() -> None:
         assert await service.release(parent_reservation) is True
         await service.stop()
 
+    run_async(scenario())
+
+
+def _history_source_row(event_id: str, *, api_key_id: int | None = None) -> AccountingSourceAuditRow:
+    return AccountingSourceAuditRow(
+        event_id=event_id, row_kind=AccountingSourceAuditKind.OUTBOX,
+        event_kind=AccountingEventKind.CHARGE, billing_fingerprint='a' * 64,
+        api_key_id=api_key_id, spend_usd=0.25, projected_at=NOW, usage_present=True,
+        parent_link_state=AccountingParentLinkState.NOT_APPLICABLE,
+    )
+
+
+def test_start_opens_after_recent_audit_and_history_yields_to_new_charges() -> None:
+    async def scenario():
+        class HistorySource(FakeSource):
+            def __init__(self):
+                super().__init__()
+                self.history_entered = threading.Event()
+                self.history_release = threading.Event()
+                self.history_second_entered = threading.Event()
+                self.history_second_release = threading.Event()
+
+            def list_accounting_source_audit_rows(self, *, limit, after_event_id=None, event_ids=None):
+                if event_ids and event_ids[0] == 'history-0000':
+                    self.history_entered.set()
+                    assert self.history_release.wait(2)
+                if event_ids and event_ids[0] == 'history-0256':
+                    self.history_second_entered.set()
+                    assert self.history_second_release.wait(2)
+                return super().list_accounting_source_audit_rows(
+                    limit=limit, after_event_id=after_event_id, event_ids=event_ids,
+                )
+
+        source = HistorySource()
+        source.audit_rows = tuple(_history_source_row(f'history-{i:04d}') for i in range(257))
+        source.audit_created_at = {row.event_id: NOW - timedelta(days=2) for row in source.audit_rows}
+        service = _service(source, FakeSink())
+        await service.start()
+        assert service.health_snapshot().accepting
+        assert service.health_snapshot().last_full_reconciliation is None
+        assert await asyncio.to_thread(source.history_entered.wait, 1)
+        charge = asyncio.create_task(service.record(_charge('new-charge', api_key_id=None)))
+        await asyncio.sleep(0)
+        source.history_release.set()
+        assert await asyncio.to_thread(source.history_second_entered.wait, 1)
+        await asyncio.wait_for(charge, 1)
+        assert service.health_snapshot().last_full_reconciliation is None
+        source.history_second_release.set()
+        await service.wait_for_history_audit()
+        report = service.health_snapshot().last_full_reconciliation
+        assert report.clean and report.source_rows_scanned == 257
+        await service.stop()
+    run_async(scenario())
+
+
+def test_history_mismatch_closes_admission_after_fast_start() -> None:
+    async def scenario():
+        source, sink = FakeSource(), FakeSink()
+        source.audit_rows = (
+            _history_source_row('old-missing-receipt', api_key_id=7),
+            *(_history_source_row(f'zz-history-{index:04d}') for index in range(257)),
+        )
+        source.audit_created_at = {row.event_id: NOW - timedelta(days=2) for row in source.audit_rows}
+        service = _service(source, sink)
+        await service.start()
+        assert service.health_snapshot().accepting
+        with pytest.raises(AccountingError):
+            await service.wait_for_history_audit()
+        snapshot = service.health_snapshot()
+        assert not snapshot.accepting and snapshot.state is AccountingHealthState.FAILED
+        assert snapshot.last_error_code is AccountingErrorCode.RECONCILE_FAILED
+        assert snapshot.last_full_reconciliation is None
+        assert source.audit_calls == 1
+        with pytest.raises(AccountingError):
+            await service.record(_charge('blocked'))
+        with pytest.raises(AccountingError):
+            await service.stop()
+    run_async(scenario())
+
+
+def test_recent_and_history_match_both_sides_once_across_time_boundary() -> None:
+    async def scenario():
+        source, sink = FakeSource(), FakeSink()
+        source.audit_rows = (_history_source_row('cross-boundary', api_key_id=7),)
+        source.audit_created_at['cross-boundary'] = NOW - timedelta(days=2)
+        sink.audit_rows = (AccountingSinkAuditRow(
+            event_id='cross-boundary', billing_fingerprint='a' * 64,
+            api_key_id=7, spend_usd=0.25, applied_at=NOW,
+            sink_kind='active', owner_state=AccountingOwnerState.ACTIVE,
+        ),)
+        service = _service(source, sink)
+        await service.start()
+        await service.wait_for_history_audit()
+        report = service.health_snapshot().last_full_reconciliation
+        assert report.clean
+        assert report.source_rows_scanned == 1 and report.sink_rows_scanned == 1
+        await service.stop()
+    run_async(scenario())
+
+
+def test_old_unfinished_charge_is_recovered_before_admission() -> None:
+    async def scenario():
+        source, sink = FakeSource(), FakeSink()
+        event = _charge('old-pending')
+        source.events[event.event_id] = StoredAccountingEvent(
+            event=event, usage_row_id=1, created_at=NOW - timedelta(days=7),
+        )
+        service = _service(source, sink)
+        await service.start()
+        assert sink.calls == ['old-pending']
+        assert source.events['old-pending'].projected_at is not None
+        assert service.health_snapshot().accepting
+        await service.stop()
     run_async(scenario())

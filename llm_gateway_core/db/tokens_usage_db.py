@@ -246,6 +246,49 @@ LEFT JOIN outgoing_link_summary AS outgoing ON outgoing.event_id = page.event_id
 ORDER BY page.event_id COLLATE BINARY
 """
 
+_ACCOUNTING_SOURCE_AUDIT_SQL_TAIL = _SELECT_ACCOUNTING_SOURCE_AUDIT_PAGE_SQL[
+    _SELECT_ACCOUNTING_SOURCE_AUDIT_PAGE_SQL.index("usage_summary AS (") :
+]
+
+
+def _accounting_source_audit_selected_sql(event_ids: tuple[str, ...]) -> str:
+    values_sql = ", ".join(f"(:event_id_{ordinal})" for ordinal in range(len(event_ids)))
+    tail = _ACCOUNTING_SOURCE_AUDIT_SQL_TAIL.replace(
+        "ORDER BY page.event_id COLLATE BINARY",
+        "WHERE outbox.event_id IS NOT NULL OR usage.event_id IS NOT NULL\n"
+        "ORDER BY page.event_id COLLATE BINARY",
+        1,
+    )
+    return f"WITH page_ids(event_id) AS (VALUES {values_sql}),\n" + tail
+
+
+_SELECT_ACCOUNTING_SOURCE_AUDIT_EVENT_IDS_SQL = """
+WITH outbox_ids(event_id) AS (
+    SELECT event_id FROM accounting_outbox {outbox_index}
+    WHERE event_id COLLATE BINARY > :after_event_id
+      {outbox_time_clause}
+    ORDER BY event_id COLLATE BINARY
+    LIMIT :limit
+),
+usage_ids(event_id) AS (
+    SELECT usage.accounting_event_id FROM tokens_usage AS usage {usage_index}
+    WHERE usage.accounting_event_id IS NOT NULL
+      AND usage.accounting_event_id COLLATE BINARY > :after_event_id
+      {usage_time_clause}
+    ORDER BY usage.accounting_event_id COLLATE BINARY
+    LIMIT :limit
+),
+candidate_ids(event_id) AS (
+    SELECT event_id FROM outbox_ids
+    UNION
+    SELECT event_id FROM usage_ids
+)
+SELECT event_id FROM candidate_ids
+ORDER BY event_id COLLATE BINARY
+LIMIT :limit
+"""
+
+
 
 def _accounting_error(code: AccountingErrorCode) -> AccountingError:
     return AccountingError(code)
@@ -1537,6 +1580,7 @@ class TokensUsageDB:
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSourceAuditRow, ...]:
         if (
             isinstance(limit, bool)
@@ -1546,25 +1590,46 @@ class TokensUsageDB:
             raise _accounting_error(AccountingErrorCode.INVALID_CONTRACT)
         if after_event_id is not None:
             after_event_id = _validate_accounting_event_id(after_event_id)
+        if event_ids is not None:
+            if (
+                type(event_ids) is not tuple
+                or len(event_ids) > ACCOUNTING_AUDIT_MAX_PAGE_SIZE
+                or any(not isinstance(event_id, str) for event_id in event_ids)
+            ):
+                raise _accounting_error(AccountingErrorCode.INVALID_CONTRACT)
+            event_ids = tuple(_validate_accounting_event_id(event_id) for event_id in event_ids)
+            if len(set(event_ids)) != len(event_ids):
+                raise _accounting_error(AccountingErrorCode.INVALID_CONTRACT)
+            if not event_ids:
+                return ()
 
         conn: sqlite3.Connection | None = None
         primary_error: BaseException | None = None
         try:
             conn = _open_accounting_source_connection(self.db_path)
             conn.execute("BEGIN")
-            rows = conn.execute(
-                _SELECT_ACCOUNTING_SOURCE_AUDIT_PAGE_SQL,
-                {
-                    "after_event_id": after_event_id or "",
-                    "limit": limit,
-                },
-            ).fetchall()
-            if len(rows) > limit:
+            if event_ids is None:
+                rows = conn.execute(
+                    _SELECT_ACCOUNTING_SOURCE_AUDIT_PAGE_SQL,
+                    {
+                        "after_event_id": after_event_id or "",
+                        "limit": limit,
+                    },
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    _accounting_source_audit_selected_sql(event_ids),
+                    {
+                        f"event_id_{ordinal}": event_id
+                        for ordinal, event_id in enumerate(event_ids)
+                    },
+                ).fetchall()
+            if event_ids is None and len(rows) > limit:
                 _raise_accounting_conflict()
             manifests = _read_accounting_audit_manifests(conn, rows)
 
             audit_rows: list[AccountingSourceAuditRow] = []
-            previous_event_id = after_event_id
+            previous_event_id = after_event_id if event_ids is None else None
             for row in rows:
                 manifest = manifests.get(row["event_id"], ((), (), ()))
                 audit_row = _source_audit_row_from_db(
@@ -1609,6 +1674,84 @@ class TokensUsageDB:
                     conn,
                     primary_error=primary_error,
                 )
+
+    def list_accounting_source_audit_event_ids(
+        self,
+        *,
+        limit: int,
+        after_event_id: str | None = None,
+        since: datetime | None = None,
+        before: datetime | None = None,
+    ) -> tuple[str, ...]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= ACCOUNTING_AUDIT_MAX_PAGE_SIZE
+            or (since is not None and before is not None)
+        ):
+            raise _accounting_error(AccountingErrorCode.INVALID_CONTRACT)
+        if after_event_id is not None:
+            after_event_id = _validate_accounting_event_id(after_event_id)
+        if since is not None:
+            since = _normalize_accounting_datetime(since)
+        if before is not None:
+            before = _normalize_accounting_datetime(before)
+
+        outbox_time_clause = ""
+        usage_time_clause = ""
+        params: dict[str, object] = {
+            "after_event_id": after_event_id or "",
+            "limit": limit,
+        }
+        if since is not None:
+            outbox_time_clause = "AND created_at >= :boundary"
+            usage_time_clause = "AND usage.timestamp >= :boundary"
+            params["boundary"] = _utc_isoformat(since)
+        elif before is not None:
+            outbox_time_clause = "AND created_at < :boundary"
+            usage_time_clause = """AND usage.timestamp < :boundary
+                AND NOT EXISTS (
+                    SELECT 1 FROM accounting_outbox AS current
+                    WHERE current.event_id = usage.accounting_event_id
+                      AND current.created_at >= :boundary
+                )"""
+            params["boundary"] = _utc_isoformat(before)
+
+        conn: sqlite3.Connection | None = None
+        primary_error: BaseException | None = None
+        try:
+            conn = _open_accounting_source_connection(self.db_path)
+            conn.execute("BEGIN")
+            rows = conn.execute(
+                _SELECT_ACCOUNTING_SOURCE_AUDIT_EVENT_IDS_SQL.format(
+                    outbox_time_clause=outbox_time_clause,
+                    usage_time_clause=usage_time_clause,
+                    outbox_index="INDEXED BY ix_accounting_outbox_created" if since is not None else "",
+                    usage_index="INDEXED BY ix_tokens_usage_accounting_time" if since is not None else "",
+                ),
+                params,
+            ).fetchall()
+            result = tuple(_validate_accounting_event_id(row["event_id"]) for row in rows)
+            conn.rollback()
+            return result
+        except AccountingError as exc:
+            primary_error = exc
+            if conn is not None:
+                _rollback_accounting_source_connection(conn, primary_error=primary_error)
+            raise
+        except Exception:
+            primary_error = _accounting_error(AccountingErrorCode.SOURCE_WRITE_FAILED)
+            if conn is not None:
+                _rollback_accounting_source_connection(conn, primary_error=primary_error)
+            raise primary_error from None
+        except BaseException as exc:
+            primary_error = exc
+            if conn is not None:
+                _rollback_accounting_source_connection(conn, primary_error=primary_error)
+            raise
+        finally:
+            if conn is not None:
+                _close_accounting_source_connection(conn, primary_error=primary_error)
 
     def list_pending_accounting_events(
         self,

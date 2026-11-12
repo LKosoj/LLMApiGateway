@@ -17,7 +17,7 @@ ACCOUNTING_MIGRATION_BUSY_TIMEOUT_MS = 2_000
 
 _SOURCE_COMPONENT = "accounting_source"
 _SINK_COMPONENT = "accounting_sink"
-_SOURCE_SCHEMA_VERSION = 2
+_SOURCE_SCHEMA_VERSION = 3
 _SINK_SCHEMA_VERSION = 1
 _PYTHON_WHITESPACE_CODEPOINTS_SQL = (
     "9, 10, 11, 12, 13, 28, 29, 30, 31, 32, 133, 160, 5760, "
@@ -107,6 +107,12 @@ ALTER TABLE tokens_usage ADD COLUMN parent_accounting_event_id TEXT CHECK (
 _TOKENS_USAGE_EVENT_INDEX_SQL = """
 CREATE UNIQUE INDEX ux_tokens_usage_accounting_event
 ON tokens_usage(accounting_event_id) WHERE accounting_event_id IS NOT NULL
+"""
+
+_TOKENS_USAGE_ACCOUNTING_TIME_INDEX_SQL = """
+CREATE INDEX ix_tokens_usage_accounting_time
+ON tokens_usage(timestamp, accounting_event_id)
+WHERE accounting_event_id IS NOT NULL
 """
 
 _OUTBOX_TABLE_SQL = """
@@ -200,6 +206,11 @@ ON accounting_outbox(created_at, event_id) WHERE projected_at IS NULL
 _OUTBOX_KEY_PENDING_INDEX_SQL = """
 CREATE INDEX ix_accounting_outbox_key_pending
 ON accounting_outbox(api_key_id, created_at) WHERE projected_at IS NULL
+"""
+
+_OUTBOX_CREATED_INDEX_SQL = """
+CREATE INDEX ix_accounting_outbox_created
+ON accounting_outbox(created_at, event_id)
 """
 
 _EVENT_COMPONENTS_V1_TABLE_SQL = f"""
@@ -531,6 +542,11 @@ _SOURCE_MIGRATION_V2_SQL = (
     "DROP TABLE accounting_event_components_v1",
 )
 
+_SOURCE_MIGRATION_V3_SQL = (
+    _OUTBOX_CREATED_INDEX_SQL,
+    _TOKENS_USAGE_ACCOUNTING_TIME_INDEX_SQL,
+)
+
 _SINK_MIGRATION_SQL = (
     _APPLIED_EVENTS_TABLE_SQL,
     _APPLIED_EVENTS_KEY_INDEX_SQL,
@@ -809,6 +825,14 @@ def _verify_source_schema_version(
         object_name="ux_tokens_usage_accounting_event",
         expected_sql=_TOKENS_USAGE_EVENT_INDEX_SQL,
     )
+    if version >= 3:
+        _verify_sql_object(
+            conn,
+            component=component,
+            object_type="index",
+            object_name="ix_tokens_usage_accounting_time",
+            expected_sql=_TOKENS_USAGE_ACCOUNTING_TIME_INDEX_SQL,
+        )
     _verify_sql_object(
         conn,
         component=component,
@@ -841,14 +865,17 @@ def _verify_source_schema_version(
             ("last_error_code", "TEXT", 0, None, 0),
         ),
     )
+    outbox_indexes = {
+        "ix_accounting_outbox_pending": _OUTBOX_PENDING_INDEX_SQL,
+        "ix_accounting_outbox_key_pending": _OUTBOX_KEY_PENDING_INDEX_SQL,
+    }
+    if version >= 3:
+        outbox_indexes["ix_accounting_outbox_created"] = _OUTBOX_CREATED_INDEX_SQL
     _verify_explicit_indexes(
         conn,
         component=component,
         table="accounting_outbox",
-        expected={
-            "ix_accounting_outbox_pending": _OUTBOX_PENDING_INDEX_SQL,
-            "ix_accounting_outbox_key_pending": _OUTBOX_KEY_PENDING_INDEX_SQL,
-        },
+        expected=outbox_indexes,
     )
 
     _verify_sql_object(
@@ -988,6 +1015,22 @@ def _verify_source_schema_v1(conn: sqlite3.Connection) -> None:
         event_components_sql=_EVENT_COMPONENTS_V1_TABLE_SQL,
         event_component_columns=_EVENT_COMPONENTS_V1_COLUMNS,
     )
+
+
+def _verify_source_schema_v2(conn: sqlite3.Connection) -> None:
+    _verify_source_schema_version(
+        conn,
+        version=2,
+        event_components_sql=_EVENT_COMPONENTS_V2_TABLE_SQL,
+        event_component_columns=_EVENT_COMPONENTS_V2_COLUMNS,
+    )
+    if conn.execute(
+        """
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'table' AND name = 'accounting_event_components_v1'
+        """
+    ).fetchone() is not None:
+        _fail_schema(_SOURCE_COMPONENT, "accounting_event_components_v1")
 
 
 def _verify_source_schema(conn: sqlite3.Connection) -> None:
@@ -1306,6 +1349,9 @@ def migrate_accounting_source(db_path: str | PathLike[str]) -> None:
         migrated_rows = _apply_source_v2_migration(conn)
 
     def verify_source_v2(conn: sqlite3.Connection) -> None:
+        _verify_source_schema_v2(conn)
+
+    def verify_source_latest(conn: sqlite3.Connection) -> None:
         _verify_source_schema(conn)
         if (
             migrated_rows is not None
@@ -1330,8 +1376,16 @@ def migrate_accounting_source(db_path: str | PathLike[str]) -> None:
                 None,
             ),
             (2, apply_source_v2, _verify_source_schema_v1),
+            (
+                3,
+                lambda conn: _execute_migration_statements(
+                    conn,
+                    _SOURCE_MIGRATION_V3_SQL,
+                ),
+                verify_source_v2,
+            ),
         ),
-        verify=verify_source_v2,
+        verify=verify_source_latest,
     )
 
 

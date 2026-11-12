@@ -1284,6 +1284,8 @@ _BILLING_POLICIES = MappingProxyType(
             BillingUnit.OPERATION,
         ),
         ("POST", "/v1/audio/diarize"): BillingPolicy("audio_diarization", BillingUnit.OPERATION),
+        ("POST", "/v1/videos"): BillingPolicy("video_generation", BillingUnit.OPERATION),
+        ("GET", "/v1/videos/{job_id}"): BillingPolicy("video_generation", BillingUnit.OPERATION),
         ("POST", "/v1/pdf/convert"): BillingPolicy("pdf_conversion", BillingUnit.OPERATION),
         ("POST", "/v1/pdf/jobs"): BillingPolicy(
             "pdf_conversion",

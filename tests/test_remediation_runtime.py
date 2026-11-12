@@ -20,6 +20,7 @@ import sqlite3
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -188,6 +189,7 @@ def test_usage_cleanup_loop_survives_iteration_exception() -> None:
                 tokens_db,
                 fallback_db,
                 rejections_db,
+                accounting_service=Mock(wait_for_history_audit=AsyncMock()),
                 retention_days=1,
                 interval_seconds=0,
             )

@@ -31,6 +31,8 @@ SUPPORTED_REQUEST_FORMATS = frozenset(
         REQUEST_FORMAT_OPENAI_IMAGES_MULTIPART,
         REQUEST_FORMAT_NVIDIA_GENAI_JSON,
         REQUEST_FORMAT_NVIDIA_RIVA_GRPC,
+        "routerai_videos",
+        "bettertoken_videos",
     }
 )
 SUPPORTED_RESPONSE_FORMATS = frozenset(

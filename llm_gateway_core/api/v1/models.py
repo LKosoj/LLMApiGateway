@@ -36,6 +36,7 @@ CAPABILITY_ORDER = (
     "rerank",
     "decisions",
     "images",
+    "videos",
     "audio_speech",
     "audio_transcription",
     "audio_diarization",
@@ -51,6 +52,7 @@ MODEL_TYPE_BY_CAPABILITY = {
     "rerank": "rerank",
     "decisions": "decisions",
     "images": "image",
+    "videos": "video",
     "audio_speech": "audio",
     "audio_transcription": "audio",
     "audio_diarization": "audio",
@@ -66,6 +68,7 @@ INPUT_MODALITIES_BY_CAPABILITY = {
     "rerank": ("text",),
     "decisions": ("text",),
     "images": ("text",),
+    "videos": ("text", "image", "video", "audio"),
     "audio_speech": ("text",),
     "audio_transcription": ("audio",),
     "audio_diarization": ("audio",),
@@ -81,6 +84,7 @@ OUTPUT_MODALITIES_BY_CAPABILITY = {
     "rerank": ("text",),
     "decisions": ("decisions",),
     "images": ("image",),
+    "videos": ("video",),
     "audio_speech": ("audio",),
     "audio_transcription": ("text",),
     "audio_diarization": ("text",),
@@ -90,7 +94,7 @@ OUTPUT_MODALITIES_BY_CAPABILITY = {
     "web_research": ("text",),
     "web_deep_research": ("text",),
 }
-MODALITY_ORDER = ("text", "image", "audio", "document", "embeddings", "decisions")
+MODALITY_ORDER = ("text", "image", "video", "audio", "document", "embeddings", "decisions")
 IMAGE_OPERATION_ORDER = ("generation", "edit")
 # New API-style endpoint types: clients such as Cherry Studio read them from /v1/models
 # instead of guessing image models from their ids.
@@ -246,6 +250,10 @@ def _add_gateway_operation_models(gateway_models: dict, operation_rules: dict) -
 
     for model_name in operation_rules.get("rerank", {}).keys():
         _add_capability(gateway_models, model_name, "rerank")
+
+    for model_name in operation_rules.get("videos_generations", {}):
+        _add_capability(gateway_models, model_name, "videos")
+        gateway_models[model_name]["supported_endpoint_types"] = ["video-generation"]
 
     image_model_names = set(operation_rules.get("images_generations", {}).keys())
     image_model_names.update(operation_rules.get("images_edits", {}).keys())

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Protocol, TypeVar, cast
 
 from .accounting import (
@@ -23,20 +24,32 @@ from .accounting import (
 
 
 class AccountingSourceAuditRepository(Protocol):
+    def list_accounting_source_audit_event_ids(
+        self, *, limit: int, after_event_id: str | None = None,
+        since: datetime | None = None, before: datetime | None = None,
+    ) -> tuple[str, ...]: ...
+
     def list_accounting_source_audit_rows(
         self,
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSourceAuditRow, ...]: ...
 
 
 class AccountingSinkAuditRepository(Protocol):
+    def list_accounting_sink_audit_event_ids(
+        self, *, limit: int, after_event_id: str | None = None,
+        since: datetime | None = None, before: datetime | None = None,
+    ) -> tuple[str, ...]: ...
+
     def list_accounting_sink_audit_rows(
         self,
         *,
         limit: int,
         after_event_id: str | None = None,
+        event_ids: tuple[str, ...] | None = None,
     ) -> tuple[AccountingSinkAuditRow, ...]: ...
 
     def get_accounting_owner_states(
@@ -200,6 +213,10 @@ def _reconcile_accounting_repositories(
     )
     sink_rows = iter(_sink_stream(sink, page_size=page_size, scanned=sink_scanned))
 
+    return _compare_audit_streams(source_rows, sink_rows, source_scanned, sink_scanned)
+
+
+def _compare_audit_streams(source_rows, sink_rows, source_scanned, sink_scanned) -> ReconciliationReport:
     counters = {
         "pending_source_events": 0,
         "usage_without_outbox": 0,
@@ -314,3 +331,38 @@ def reconcile_accounting_repositories(
         raise AccountingError(AccountingErrorCode.RECONCILE_FAILED) from None
     except BaseException:
         raise
+
+
+def accounting_audit_event_ids(
+    source: AccountingSourceAuditRepository, sink: AccountingSinkAuditRepository, *,
+    cutoff: datetime, recent: bool, after_event_id: str | None = None,
+) -> tuple[str, ...]:
+    """Bound the union before fetching both sides of the same operations."""
+    window = {"since": cutoff} if recent else {"before": cutoff}
+    arguments = {"limit": ACCOUNTING_AUDIT_MAX_PAGE_SIZE, "after_event_id": after_event_id, **window}
+    ids = set(source.list_accounting_source_audit_event_ids(**arguments))
+    ids.update(sink.list_accounting_sink_audit_event_ids(**arguments))
+    return tuple(sorted(ids)[:ACCOUNTING_AUDIT_MAX_PAGE_SIZE])
+
+
+def reconcile_accounting_audit_page(
+    source: AccountingSourceAuditRepository, sink: AccountingSinkAuditRepository, event_ids: tuple[str, ...],
+) -> ReconciliationReport:
+    """Read and compare a single ID batch while the service holds its drain lock."""
+    try:
+        limit = ACCOUNTING_AUDIT_MAX_PAGE_SIZE
+        source_rows = _validate_page(
+            source.list_accounting_source_audit_rows(limit=limit, event_ids=event_ids),
+            row_type=AccountingSourceAuditRow, limit=limit, after_event_id=None,
+        )
+        sink_rows = _validate_page(
+            sink.list_accounting_sink_audit_rows(limit=limit, event_ids=event_ids),
+            row_type=AccountingSinkAuditRow, limit=limit, after_event_id=None,
+        )
+        owners = _owner_states_for_source_page(sink, source_rows)
+        source_items = iter((row, owners.get(row.api_key_id)) for row in source_rows)
+        return _compare_audit_streams(source_items, iter(sink_rows), [len(source_rows)], [len(sink_rows)])
+    except AccountingError:
+        raise
+    except Exception:
+        raise AccountingError(AccountingErrorCode.RECONCILE_FAILED) from None

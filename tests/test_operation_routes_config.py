@@ -76,8 +76,8 @@ class OperationRoutesConfigTests(unittest.TestCase):
             )
 
         self.assertIn(
-            "'request_format' must be one of: nvidia_genai_json, nvidia_riva_grpc, openai_images, "
-            "openai_images_multipart, query_passages, query_texts.",
+            "'request_format' must be one of: bettertoken_videos, nvidia_genai_json, nvidia_riva_grpc, openai_images, "
+            "openai_images_multipart, query_passages, query_texts, routerai_videos.",
             str(context.exception),
         )
 

@@ -1,5 +1,12 @@
 [
   {
+    "bettertoken": {
+      "baseUrl": "https://bettertoken.ai/v1",
+      "apikey": "${APIKEY_BETTERTOKEN}",
+      "available_models": ["wan-3.0"]
+    }
+  },
+  {
     "opencode-zen": {
       "baseUrl": "https://opencode.ai/inference/v1",
       "apikey": "${APIKEY_OPENCODE}",

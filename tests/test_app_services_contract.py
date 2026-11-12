@@ -15,6 +15,7 @@ from llm_gateway_core.db.model_rotation_db import ModelRotationDB
 from llm_gateway_core.db.rejections_db import RejectionsDB
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.db.write_batcher import WriteBatcher
+from llm_gateway_core.db.video_jobs_db import VideoJobsDB
 from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.accounting import OperationCostCalculator
 from llm_gateway_core.services.accounting_service import AccountingService
@@ -81,6 +82,7 @@ APP_SERVICE_FIELDS = (
     "stream_event_max_bytes",
     "json_response_max_bytes",
     "task_supervisor",
+    "video_jobs_db",
 )
 
 
@@ -136,6 +138,7 @@ class AppServicesContractTests(unittest.TestCase):
                 "config_update_coordinator": ConfigUpdateCoordinator,
                 "http_client": httpx.AsyncClient,
                 "tokens_usage_db": TokensUsageDB,
+                "video_jobs_db": VideoJobsDB,
                 "fallback_events_db": FallbackEventsDB,
                 "rejections_db": RejectionsDB,
                 "api_keys_db": ApiKeysDB,

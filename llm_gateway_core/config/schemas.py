@@ -911,6 +911,28 @@ class ImagesGenerationModelConfig(BaseModel):
     routes: List[OperationRoute]
 
 
+class VideosGenerationModelConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gateway_model_name: str
+    routes: List[OperationRoute]
+
+    @model_validator(mode="after")
+    def validate_video_routes(self):
+        if not self.routes:
+            raise ValueError("Video models must have at least one route")
+        for route in self.routes:
+            if route.request_format not in (None, "routerai_videos", "bettertoken_videos"):
+                raise ValueError("Video routes require routerai_videos or bettertoken_videos")
+            if any((
+                route.retry_count, route.retry_delay, route.custom_body_params,
+                route.payload_transforms, route.request_mapping, route.response_mapping,
+                route.response_format, route.response_output_format,
+            )):
+                raise ValueError("Video routes do not support retries, body overrides or image mappings")
+        return self
+
+
 class ImagesEditModelConfig(BaseModel):
     gateway_model_name: str
     cost_calculator: OperationCostCalculatorConfig | None = None
@@ -1100,6 +1122,7 @@ class _ModelsOperationConfigSections(BaseModel):
     embeddings: List[EmbeddingsModelConfig] = Field(default_factory=list)
     rerank: List[RerankModelConfig] = Field(default_factory=list)
     decisions: List[DecisionsModelConfig] = Field(default_factory=list)
+    videos_generations: List[VideosGenerationModelConfig] = Field(default_factory=list)
     images_generations: List[ImagesGenerationModelConfig] = Field(default_factory=list)
     images_edits: List[ImagesEditModelConfig] = Field(default_factory=list)
     audio_speech: List[AudioSpeechModelConfig] = Field(default_factory=list)
@@ -1125,6 +1148,10 @@ class ModelsOperationConfig(RootModel[_ModelsOperationConfigSections]):
     @property
     def decisions(self) -> List[DecisionsModelConfig]:
         return self.root.decisions
+
+    @property
+    def videos_generations(self) -> List[VideosGenerationModelConfig]:
+        return self.root.videos_generations
 
     @property
     def images_generations(self) -> List[ImagesGenerationModelConfig]:

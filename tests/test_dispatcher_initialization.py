@@ -81,6 +81,7 @@ class DispatcherInitializationTests(unittest.TestCase):
                     services.tokens_usage_db,
                     services.fallback_events_db,
                     services.rejections_db,
+                    accounting_service=services.accounting_service,
                     supervisor=services.task_supervisor,
                     ip_block_guard=services.ip_block_guard,
                 )

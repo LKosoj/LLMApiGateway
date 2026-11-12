@@ -8,6 +8,7 @@ export function registerOperations(ctx) {
             decisions: Array.isArray(payload.decisions) ? payload.decisions : [],
             rerank: Array.isArray(payload.rerank) ? payload.rerank : [],
             images_generations: Array.isArray(payload.images_generations) ? payload.images_generations : [],
+            videos_generations: Array.isArray(payload.videos_generations) ? payload.videos_generations : [],
             images_edits: Array.isArray(payload.images_edits) ? payload.images_edits : [],
         };
         if (Object.prototype.hasOwnProperty.call(payload, 'audio_transcriptions')) {
@@ -34,6 +35,7 @@ export function registerOperations(ctx) {
         ctx.state.decisionsRules = normalized.decisions;
         ctx.state.rerankRules = normalized.rerank;
         ctx.state.imageGenerationRules = normalized.images_generations;
+        ctx.state.videoGenerationRules = normalized.videos_generations || [];
         ctx.state.imageEditRules = normalized.images_edits;
         ctx.state.audioSpeechRules = normalized.audio_speech || [];
         ctx.state.audioTranscriptionRules = normalized.audio_transcriptions || [];
@@ -53,6 +55,7 @@ export function registerOperations(ctx) {
             decisions: ctx.state.decisionsRules,
             rerank: ctx.state.rerankRules,
             images_generations: ctx.state.imageGenerationRules,
+            videos_generations: ctx.state.videoGenerationRules,
             images_edits: ctx.state.imageEditRules,
         };
         if (!basePayload && ctx.state.audioTranscriptionRules.length > 0) {
@@ -75,6 +78,7 @@ export function registerOperations(ctx) {
             decisions: overrides.decisions ?? source.decisions,
             rerank: overrides.rerank ?? source.rerank,
             images_generations: overrides.images_generations ?? source.images_generations,
+            videos_generations: overrides.videos_generations ?? source.videos_generations,
             images_edits: overrides.images_edits ?? source.images_edits,
         };
         if (
@@ -824,8 +828,8 @@ export function registerOperations(ctx) {
         const provider = providerSelect.value.trim();
         const model = modelInput.value.trim();
         const target_path = targetPathInput.value.trim();
-        const request_format = requestFormatSelect.value.trim();
-        const response_format = responseFormatSelect.value.trim();
+        const request_format = requestFormatSelect?.value.trim() || '';
+        const response_format = responseFormatSelect?.value.trim() || '';
         const response_output_format = responseOutputFormatSelect.value.trim();
 
         if (!provider) {
@@ -845,9 +849,11 @@ export function registerOperations(ctx) {
             provider,
             model,
             target_path,
-            custom_body_params: ctx.parseObjectTextarea(customBodyParamsInput.value, 'Custom body params'),
             custom_headers: ctx.parseObjectTextarea(customHeadersInput.value, 'Custom headers'),
         };
+        if (!options.video) {
+            routePayload.custom_body_params = ctx.parseObjectTextarea(customBodyParamsInput.value, 'Custom body params');
+        }
 
         if (request_format) {
             routePayload.request_format = request_format;
@@ -1028,12 +1034,12 @@ export function registerOperations(ctx) {
         addRouteButton.className = 'secondary-button add-fallback-button';
         ctx.bindKnownActionText(addRouteButton, 'Add Route');
         addRouteButton.addEventListener('click', () => {
-            routeList.appendChild(buildImageRouteRow({}, options.defaultTargetPath));
+            routeList.appendChild(buildImageRouteRow({}, options.defaultTargetPath, options));
         });
 
         const cardBody = document.createElement('div');
         cardBody.className = 'rule-card-body';
-        cardBody.appendChild(ctx.createOperationCostCalculatorField(initialData));
+        if (!options.video) cardBody.appendChild(ctx.createOperationCostCalculatorField(initialData));
         cardBody.appendChild(routeList);
         cardBody.appendChild(addRouteButton);
 
@@ -1072,19 +1078,19 @@ export function registerOperations(ctx) {
 
         const routes = Array.isArray(initialData.routes) ? initialData.routes : [];
         routes.forEach(route => {
-            const routeRow = buildImageRouteRow(route, options.defaultTargetPath);
+            const routeRow = buildImageRouteRow(route, options.defaultTargetPath, options);
             routeList.appendChild(routeRow);
         });
 
         if (routes.length === 0) {
-            const routeRow = buildImageRouteRow({}, options.defaultTargetPath);
+            const routeRow = buildImageRouteRow({}, options.defaultTargetPath, options);
             routeList.appendChild(routeRow);
         }
 
         return card;
     }
 
-    function buildImageRouteRow(initialData, defaultTargetPath) {
+    function buildImageRouteRow(initialData, defaultTargetPath, options = {}) {
         const row = document.createElement('div');
         row.className = 'fallback-row';
 
@@ -1109,7 +1115,7 @@ export function registerOperations(ctx) {
         const requestFormatSelect = ctx.createSelect('request-format-select');
         ctx.setSelectOptions(
             requestFormatSelect,
-            ctx.constants.IMAGE_REQUEST_FORMAT_OPTIONS,
+            options.video ? ['routerai_videos', 'bettertoken_videos'] : ctx.constants.IMAGE_REQUEST_FORMAT_OPTIONS,
             'Default request format',
             initialData.request_format || ''
         );
@@ -1149,12 +1155,14 @@ export function registerOperations(ctx) {
         const advancedGrid = document.createElement('div');
         advancedGrid.className = 'advanced-grid';
         advancedGrid.appendChild(ctx.createFieldGroup('Request Format', requestFormatSelect));
-        advancedGrid.appendChild(ctx.createFieldGroup('Response Format', responseFormatSelect));
-        advancedGrid.appendChild(ctx.createFieldGroup('Retry Delay', retryDelayInput));
-        advancedGrid.appendChild(ctx.createFieldGroup('Retry Count', retryCountInput));
-        advancedGrid.appendChild(ctx.createFieldGroup('Request Mapping', requestMappingInput, 'textarea-group'));
-        advancedGrid.appendChild(ctx.createFieldGroup('Response Mapping', responseMappingInput, 'textarea-group'));
-        advancedGrid.appendChild(ctx.createFieldGroup('Custom Body Params', customBodyParamsInput, 'textarea-group'));
+        if (!options.video) {
+            advancedGrid.appendChild(ctx.createFieldGroup('Response Format', responseFormatSelect));
+            advancedGrid.appendChild(ctx.createFieldGroup('Retry Delay', retryDelayInput));
+            advancedGrid.appendChild(ctx.createFieldGroup('Retry Count', retryCountInput));
+            advancedGrid.appendChild(ctx.createFieldGroup('Request Mapping', requestMappingInput, 'textarea-group'));
+            advancedGrid.appendChild(ctx.createFieldGroup('Response Mapping', responseMappingInput, 'textarea-group'));
+        }
+        if (!options.video) advancedGrid.appendChild(ctx.createFieldGroup('Custom Body Params', customBodyParamsInput, 'textarea-group'));
         advancedGrid.appendChild(ctx.createFieldGroup('Custom Headers', customHeadersInput, 'textarea-group'));
         advancedDetails.appendChild(advancedGrid);
 
@@ -1189,7 +1197,7 @@ export function registerOperations(ctx) {
         return row;
     }
 
-    function normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel) {
+    function normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel, options = {}) {
         const providerSelect = routeRow.querySelector('.provider-select');
         const modelInput = routeRow.querySelector('.model-input');
         const customBodyParamsInput = routeRow.querySelector('.custom-body-params-input');
@@ -1205,8 +1213,8 @@ export function registerOperations(ctx) {
         const provider = providerSelect.value.trim();
         const model = modelInput.value.trim();
         const target_path = targetPathInput.value.trim() || defaultTargetPath;
-        const request_format = requestFormatSelect.value.trim();
-        const response_format = responseFormatSelect.value.trim();
+        const request_format = requestFormatSelect?.value.trim() || '';
+        const response_format = responseFormatSelect?.value.trim() || '';
 
         if (!provider) {
             throw new Error(`Each ${routeLabel} route must have a provider selected.`);
@@ -1222,15 +1230,17 @@ export function registerOperations(ctx) {
             provider,
             model,
             target_path,
-            custom_body_params: ctx.parseObjectTextarea(customBodyParamsInput.value, 'Custom body params'),
             custom_headers: ctx.parseObjectTextarea(customHeadersInput.value, 'Custom headers'),
         };
-        const request_mapping = ctx.parseObjectTextarea(requestMappingInput.value, 'Request mapping');
-        const response_mapping = ctx.parseObjectTextarea(responseMappingInput.value, 'Response mapping');
+        if (!options.video) {
+            routePayload.custom_body_params = ctx.parseObjectTextarea(customBodyParamsInput.value, 'Custom body params');
+        }
+        const request_mapping = options.video ? {} : ctx.parseObjectTextarea(requestMappingInput.value, 'Request mapping');
+        const response_mapping = options.video ? {} : ctx.parseObjectTextarea(responseMappingInput.value, 'Response mapping');
         if (request_format) {
             routePayload.request_format = request_format;
         }
-        if (response_format) {
+        if (response_format && !options.video) {
             routePayload.response_format = response_format;
         }
         if (Object.keys(request_mapping).length > 0) {
@@ -1239,11 +1249,11 @@ export function registerOperations(ctx) {
         if (Object.keys(response_mapping).length > 0) {
             routePayload.response_mapping = response_mapping;
         }
-        ctx.applyRetrySettingsToPayload(routePayload, retryDelayInput, retryCountInput);
+        if (!options.video) ctx.applyRetrySettingsToPayload(routePayload, retryDelayInput, retryCountInput);
         return routePayload;
     }
 
-    function normalizeImageCardForSave(ruleCard, routeLabel, defaultTargetPath) {
+    function normalizeImageCardForSave(ruleCard, routeLabel, defaultTargetPath, options = {}) {
         const gatewayModelInput = ruleCard.querySelector('.gateway-model-input');
         const routeRows = Array.from(ruleCard.querySelectorAll('.fallback-list > .fallback-row'));
 
@@ -1255,10 +1265,11 @@ export function registerOperations(ctx) {
             throw new Error(`${routeLabel} model '${gatewayModelName}' must contain at least one route.`);
         }
 
-        return ctx.applyOperationCostCalculator({
+        const payload = {
             gateway_model_name: gatewayModelName,
-            routes: routeRows.map(routeRow => normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel)),
-        }, ruleCard);
+            routes: routeRows.map(routeRow => normalizeImageRouteForSave(routeRow, defaultTargetPath, routeLabel, options)),
+        };
+        return options.video ? payload : ctx.applyOperationCostCalculator(payload, ruleCard);
     }
 
     function getImagesPayloadForSave(basePayload = null) {
@@ -1268,10 +1279,14 @@ export function registerOperations(ctx) {
         const images_edits = Array.from(ctx.elements.imageEditList.querySelectorAll('.rule-card')).map(ruleCard => (
             normalizeImageCardForSave(ruleCard, 'image edit', '/images/edits')
         ));
+        const videos_generations = Array.from(ctx.elements.videoGenerationList.querySelectorAll('.rule-card')).map(ruleCard => (
+            normalizeImageCardForSave(ruleCard, 'video generation', '/videos', { video: true })
+        ));
 
         return buildOperationRoutesPayload({
             images_generations,
             images_edits,
+            videos_generations,
         }, basePayload);
     }
 
@@ -1292,6 +1307,17 @@ export function registerOperations(ctx) {
                             gatewayPlaceholder: 'llmgateway/image-generation-model',
                             defaultTargetPath: '/images/generations',
                             refreshEmptyState: ctx.refreshImageGenerationEmptyState,
+                        }),
+                    );
+                    await renderImageSection(
+                        ctx.elements.videoGenerationList,
+                        ctx.refreshVideoGenerationEmptyState,
+                        payload.videos_generations,
+                        item => buildImageCard(item, {
+                            gatewayPlaceholder: 'llmgateway/wan3.0',
+                            defaultTargetPath: '/videos',
+                            refreshEmptyState: ctx.refreshVideoGenerationEmptyState,
+                            video: true,
                         }),
                     );
                     await renderImageSection(
