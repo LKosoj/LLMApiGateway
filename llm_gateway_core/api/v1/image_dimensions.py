@@ -7,6 +7,9 @@ from PIL import Image
 
 from .image_adapters import SIZE_DIMENSIONS_RE
 
+# Провайдеры округляют размер по-своему (1093x1920 вместо 1088x1920): допускаем отклонение каждой стороны.
+SIZE_TOLERANCE = 0.10
+
 
 def requested_image_dimensions(payload: dict[str, object]) -> tuple[int, int] | None:
     size = payload.get("size")
@@ -41,7 +44,8 @@ async def image_dimensions_match(
             else:
                 raise ValueError("Missing image content")
             with Image.open(io.BytesIO(content)) as image:
-                matches = (image.size == expected) and matches
+                matches = all(abs(actual - wanted) <= wanted * SIZE_TOLERANCE
+                              for actual, wanted in zip(image.size, expected)) and matches
             del content
         except (ValueError, TypeError, OSError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=502, detail="Cannot read returned image to check its size.") from exc

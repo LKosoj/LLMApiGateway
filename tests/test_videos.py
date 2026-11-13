@@ -35,7 +35,7 @@ from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
 MODEL = 'llmgateway/wan3.0'
 ROUTES = [
-    dict(provider='bettertoken', model='wan-3.0', target_path='/videos', request_format='bettertoken_videos'),
+    dict(provider='bettertoken', model='wan3.0-video', target_path='/videos', request_format='bettertoken_videos'),
     dict(provider='routerai', model='alibaba/wan-3.0', target_path='/videos', request_format='routerai_videos'),
 ]
 RULES = {'videos_generations': {MODEL: {'routes': ROUTES}}}
@@ -97,7 +97,7 @@ def test_bettertoken_reference_translation():
         {'type': 'video_url', 'video_url': {'url': 'https://example.com/a.mp4'}},
         {'type': 'audio_url', 'audio_url': {'url': 'https://example.com/a.mp3'}},
     ], generate_audio=False, seed=42)
-    payload = build_video_payload(body, 'wan-3.0', 'bettertoken_videos')
+    payload = build_video_payload(body, 'wan3.0-video', 'bettertoken_videos')
     assert payload['operation'] == 'reference_to_video'
     assert payload['duration'] == {'mode': 'fixed', 'seconds': 5}
     assert payload['output'] == {'format': 'mp4', 'resolution': '720p'}
@@ -111,11 +111,11 @@ def test_bettertoken_reference_translation():
 
 def test_first_frame_translation_and_validation():
     frame = {'type': 'image_url', 'image_url': {'url': 'https://example.com/frame.jpg'}, 'frame_type': 'first_frame'}
-    payload = build_video_payload(VideoRequest(**BODY, frame_images=[frame]), 'wan-3.0', 'bettertoken_videos')
+    payload = build_video_payload(VideoRequest(**BODY, frame_images=[frame]), 'wan3.0-video', 'bettertoken_videos')
     assert payload['operation'] == 'image_to_video'
     assert payload['media'][0]['role'] == 'first_frame'
     mixed = VideoRequest(**BODY, frame_images=[frame], input_references=[{**frame, 'frame_type': None}])
-    translated = build_video_payload(mixed, 'wan-3.0', 'bettertoken_videos')
+    translated = build_video_payload(mixed, 'wan3.0-video', 'bettertoken_videos')
     assert [media['role'] for media in translated['media']] == ['first_frame', 'reference_image']
     with pytest.raises(ValidationError):
         VideoRequest(**BODY, frame_images=[frame, frame])
@@ -153,6 +153,22 @@ def test_fallback_pins_provider_across_restart(tmp_path, refusal):
         assert [r.url.host for r in calls] == ['bettertoken.example', 'routerai.example', 'routerai.example', 'routerai.example']
     asyncio.run(scenario())
 
+
+
+def test_status_hides_provider_download_links(tmp_path):
+    # Ссылки провайдера требуют его ключа: клиент шлюза качает только через content_url.
+    async def scenario():
+        def handler(request):
+            if request.method == 'POST':
+                return httpx.Response(200, json={'id': 'upstream-1', 'status': 'queued'})
+            return httpx.Response(200, json={'id': 'upstream-1', 'status': 'completed',
+                                             'unsigned_urls': ['https://routerai.example/v1/videos/upstream-1/content']})
+        async with video_client(tmp_path, handler) as (client, _, _):
+            task = (await client.post('/v1/videos', json=BODY)).json()
+            status = (await client.get(task['polling_url'])).json()
+            assert 'unsigned_urls' not in status
+            assert status['content_url'] == f"/v1/videos/{task['id']}/content"
+    asyncio.run(scenario())
 
 @pytest.mark.parametrize('failure', [409, 429, 500, 502, 503, 'timeout', 'bad_json', 'no_id', 'error_with_id'])
 def test_uncertain_create_never_falls_back(tmp_path, failure):

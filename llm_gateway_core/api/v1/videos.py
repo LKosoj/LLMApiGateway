@@ -82,6 +82,8 @@ def _task_payload(response: httpx.Response) -> dict:
 
 def _public_task(payload: dict, job: dict) -> dict:
     result = dict(payload)
+    # Ссылки провайдера открываются только его ключом; клиент качает через content_url.
+    result.pop("unsigned_urls", None)
     result.update(
         id=job["id"], model=job["gateway_model"],
         polling_url=f"/v1/videos/{job['id']}",

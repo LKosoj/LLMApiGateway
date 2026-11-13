@@ -89,6 +89,16 @@ def test_reads_image_url_without_provider_auth():
     upstream.get.assert_awaited_once_with(url, follow_redirects=True)
 
 
+@pytest.mark.parametrize(("width", "height", "fits"), [
+    (1093, 1920, True), (1088, 1728, True), (1196, 2112, True), (1200, 1920, False), (1088, 1700, False),
+])
+def test_size_within_ten_percent_is_accepted_as_is(width, height, fits):
+    payload = {"data": [{"b64_json": encoded_image(width, height)}]}
+    original = payload["data"][0]["b64_json"]
+    assert asyncio.run(image_dimensions_match(payload, (1088, 1920), AsyncMock())) is fits
+    assert payload["data"][0]["b64_json"] == original
+
+
 @pytest.mark.parametrize("payload", [{"data": []}, {"data": [{"b64_json": "broken"}]}])
 def test_unreadable_image_is_an_explicit_error(payload):
     with pytest.raises(HTTPException) as exc:

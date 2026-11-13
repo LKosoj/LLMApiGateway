@@ -3,7 +3,7 @@
     "bettertoken": {
       "baseUrl": "https://bettertoken.ai/v1",
       "apikey": "${APIKEY_BETTERTOKEN}",
-      "available_models": ["wan-3.0"]
+      "available_models": ["wan3.0-video"]
     }
   },
   {
