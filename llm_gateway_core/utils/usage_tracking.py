@@ -58,15 +58,13 @@ def extract_request_x_title(request: Request | None) -> str | None:
         return None
 
     try:
-        value = request.headers.get(REQUEST_TITLE_HEADER)
+        for header in (REQUEST_TITLE_HEADER, "originator"):
+            value = request.headers.get(header)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     except Exception:
         return None
-
-    if not isinstance(value, str):
-        return None
-
-    cleaned_value = value.strip()
-    return cleaned_value or None
+    return extract_request_user_agent(request)
 
 
 # User-Agent values are attacker-controlled request bytes; bound what reaches

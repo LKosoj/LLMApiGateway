@@ -353,7 +353,12 @@ def test_admission_copies_incoming_x_title_onto_context() -> None:
 
 
 @patch("llm_gateway_core.middleware.auth.settings.gateway_api_key", "master-key")
-def test_admission_blank_x_title_is_stored_as_none() -> None:
+@pytest.mark.parametrize(('headers', 'expected'), [
+    ({'X-Title': ' ', 'originator': ' codex-tui ', 'User-Agent': 'curl/8'}, 'codex-tui'),
+    ({'X-Title': ' ', 'User-Agent': 'curl/8'}, 'curl/8'),
+    ({'X-Title': ' ', 'User-Agent': ' '}, None),
+])
+def test_admission_blank_x_title_uses_client_headers(headers, expected) -> None:
     app = FastAPI()
     bind_app_services(app)
     app.add_middleware(ApiKeyAuthMiddleware)
@@ -369,11 +374,11 @@ def test_admission_blank_x_title_is_stored_as_none() -> None:
     with TestClient(app) as client:
         response = client.post(
             "/v1/embeddings",
-            headers={**MASTER_HEADERS, "X-Title": "   "},
+            headers={**MASTER_HEADERS, **headers},
         )
 
     assert response.status_code == 200
-    assert captured["context_x_title"] is None
+    assert captured["context_x_title"] == expected
 
 
 @patch("llm_gateway_core.middleware.auth.settings.gateway_api_key", "master-key")

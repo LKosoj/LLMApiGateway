@@ -781,7 +781,7 @@ def _build_health_probe_request(provider_config, model: str, api_key: str | None
         f"{provider_config.baseUrl.rstrip('/')}/chat/completions",
         {
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+            "HTTP-Referer": "https://github.com/LKosoj/LLMApiGateway",
             "X-Title": "LLMGateway Upstream Health",
             **auth_headers,
         },

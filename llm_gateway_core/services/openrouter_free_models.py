@@ -1267,7 +1267,7 @@ class OpenRouterFreeModelsService:
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {provider_api_key}",
-                "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+                "HTTP-Referer": "https://github.com/LKosoj/LLMApiGateway",
                 "X-Title": "LLMGateway OpenRouter Free Model Scoring",
             },
             json=payload,

@@ -792,7 +792,7 @@ async def attempt_model_fallback_rule(
     else:
         headers = {
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+            "HTTP-Referer": "https://github.com/LKosoj/LLMApiGateway",
             "X-Title": "LLMGateway",
             **auth_material.headers,
         }

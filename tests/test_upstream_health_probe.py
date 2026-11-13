@@ -81,6 +81,14 @@ def test_anthropic_health_probe_uses_x_api_key_header():
     assert payload["model"] == "claude-model"
 
 
+def test_health_probe_identifies_gateway_project():
+    _, headers, _ = _build_health_probe_request(
+        ProviderDetails(baseUrl='https://provider.example/v1', apikey='test-key'), 'model', 'test-key',
+    )
+    assert headers['HTTP-Referer'] == 'https://github.com/LKosoj/LLMApiGateway'
+    assert headers['X-Title'] == 'LLMGateway Upstream Health'
+
+
 def test_health_probe_uses_only_configured_upstream_key_pool():
     provider_config = ProviderDetails(
         baseUrl="https://provider.example",

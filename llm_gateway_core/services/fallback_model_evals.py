@@ -514,7 +514,7 @@ class FallbackModelEvalService:
             f"{provider_config.baseUrl.rstrip('/')}/models",
             headers={
                 **auth_headers,
-                "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+                "HTTP-Referer": "https://github.com/LKosoj/LLMApiGateway",
                 "X-Title": "LLMGateway Fallback Model Eval",
             },
             timeout=HEALTH_PROBE_TIMEOUT_SECONDS,
@@ -632,7 +632,7 @@ class FallbackModelEvalService:
 
         headers = {
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/fabiojbg/LLMApiGateway",
+            "HTTP-Referer": "https://github.com/LKosoj/LLMApiGateway",
             "X-Title": "LLMGateway Fallback Model Eval",
             **await self._auth_headers(target.provider, provider_config),
         }

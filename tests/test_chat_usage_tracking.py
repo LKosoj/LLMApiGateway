@@ -253,6 +253,7 @@ class ChatUsageTrackingTests(unittest.TestCase):
         self.assertEqual(
             call_args,
             {
+                "x_title": "testclient",
                 "prompt_tokens": 3,
                 "completion_tokens": 4,
                 "total_tokens": 7,
@@ -316,6 +317,7 @@ class ChatUsageTrackingTests(unittest.TestCase):
         self.assertEqual(
             call_args,
             {
+                "x_title": "testclient",
                 "prompt_tokens": 3,
                 "completion_tokens": 4,
                 "total_tokens": 7,
@@ -613,6 +615,7 @@ class ChatUsageTrackingTests(unittest.TestCase):
         self.assertEqual(
             call_args,
             {
+                "x_title": "testclient",
                 "prompt_tokens": 10,
                 "completion_tokens": 5,
                 "total_tokens": 15,
@@ -666,6 +669,7 @@ class ChatUsageTrackingTests(unittest.TestCase):
         self.assertEqual(
             call_args,
             {
+                "x_title": "testclient",
                 "prompt_tokens": 7,
                 "completion_tokens": 2,
                 "total_tokens": 9,

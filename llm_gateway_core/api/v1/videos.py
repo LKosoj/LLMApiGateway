@@ -170,15 +170,27 @@ async def create_video(body: VideoRequest, request: Request):
                 )
                 raise HTTPException(502, "Video task acceptance is unknown; no fallback was attempted") from exc
             if upstream.is_error:
-                error = HTTPException(upstream.status_code, "Video provider could not create the task")
-                record_operation_route_attempt(
-                    request, operation=OPERATION, gateway_model=body.model, provider=route.provider,
-                    model=route.model, success=False, error=error, started_at=started_at,
-                )
                 try:
                     error_payload = upstream.json()
                 except ValueError:
                     error_payload = None
+                provider_error = error_payload.get("error", error_payload) if isinstance(error_payload, dict) else None
+                diagnostic = f"HTTP {upstream.status_code}"
+                if isinstance(provider_error, dict):
+                    code = provider_error.get("code")
+                    message = provider_error.get("message")
+                    if isinstance(code, (str, int)):
+                        diagnostic += f"; code={str(code)[:100]}"
+                else:
+                    message = provider_error if isinstance(provider_error, str) else upstream.text
+                if isinstance(message, str) and message.strip():
+                    diagnostic += f"; message={message.strip()}"
+                error = HTTPException(upstream.status_code, "Video provider could not create the task")
+                error.diagnostic_detail = diagnostic[:500]
+                record_operation_route_attempt(
+                    request, operation=OPERATION, gateway_model=body.model, provider=route.provider,
+                    model=route.model, success=False, error=error, started_at=started_at,
+                )
                 has_task = isinstance(error_payload, dict) and bool(error_payload.get("id"))
                 if upstream.status_code in CREATE_REFUSAL_STATUSES and not has_task and index + 1 < len(routes):
                     logger.warning("Video creation refused by %s (%s); trying next provider", route.provider, upstream.status_code)

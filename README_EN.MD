@@ -521,7 +521,7 @@ The statistics page includes a **Fallback Analytics** tab that provides detailed
 - **Chains** — detailed fallback chains for individual requests. Only requests with 2+ attempts are shown. The chain header displays the incoming `X-Title`. Each chain can be expanded to see the full sequence: which providers were tried, the reason for each failure, an expanded error message for generic upstream failures and transport failures (`ReadTimeout`, `ConnectTimeout`, `ConnectError`) with a short payload summary, and how long each attempt took (with a visual duration bar). If a chain contains a `401`/`403` attempt, the collapsed card is additionally flagged with an `Access denied — on cooldown` badge listing the affected `provider/model` targets: the gateway drops such a target from rotation for 10 minutes, and it is a signal to fix the key or the plan.
 - **Upstream Analytics** — fast aggregates by `provider/model/upstream_key_fingerprint`: attempts, successes, errors, success rate, average duration, and max duration. This helps distinguish a single upstream-key problem from a model-wide or client-side issue.
 
-Fallback event and upstream analytics data are stored in the `fallback_events` table in the same database (`tokens_usage.db`) and are subject to the same automatic cleanup (90 days). Fallback events and successful usage records store the incoming `X-Title`; usage records also store `upstream_key_fingerprint`, so token/cost records can be correlated with the selected upstream key or client title without exposing the secret.
+Fallback event and upstream analytics data are stored in the `fallback_events` table in the same database (`tokens_usage.db`) and are subject to the same automatic cleanup (90 days). Fallback events and successful usage records store the client title: a nonempty `X-Title`, otherwise `originator`, otherwise `User-Agent`. Outbound requests identifying the gateway use `https://github.com/LKosoj/LLMApiGateway` as `HTTP-Referer`; usage records also store `upstream_key_fingerprint`, so token/cost records can be correlated with the selected upstream key or client title without exposing the secret.
 
 API endpoints:
 - `GET /v1/api/fallback-stats/{period}` — aggregated failure statistics (period: hour/day/week/month)
@@ -1451,6 +1451,8 @@ Instead of `input_references`, send `frame_images`: `[{"type":"image_url","image
 Route order lives in the `videos_generations` section of `models_operation_rules.json` and can be edited under “Images & Video” in the web interface. `request_format` selects `bettertoken_videos` or `routerai_videos` (RouterAI by default).
 
 Fallback only applies to HTTP `400/401/402/403/404/413/415/422` responses without an accepted task ID. Timeouts, `409/429/5xx`, malformed responses and missing IDs never automatically start another generation: acceptance may be uncertain. For BetterToken, `Idempotency-Key` is forwarded upstream; save and reuse it with the same body after uncertain acceptance. Once an ID is returned, generation or polling errors never trigger fallback.
+
+When video task creation fails, the HTTP status, error code and message from BetterToken or RouterAI are saved in the attempt history (`error_message`, up to 500 characters).
 
 The selected provider, upstream ID and API endpoint are stored in `llmgateway_video_jobs.db` in the database directory (`GATEWAY_DB_DIR`). Polling after a restart continues with that provider even if route order changes. Provider credentials come from the current configuration.
 

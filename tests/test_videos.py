@@ -194,6 +194,42 @@ def test_uncertain_create_never_falls_back(tmp_path, failure):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize('shape', ['nested', 'top_level', 'string', 'text', 'long'])
+def test_creation_errors_record_provider_diagnostics(tmp_path, shape):
+    async def scenario():
+        def handler(request):
+            provider = request.url.host.split('.')[0]
+            code = f'{provider}_invalid_media'
+            message = f'{provider}: reference image is unavailable'
+            if shape in ('nested', 'long'):
+                if shape == 'long':
+                    message += 'x' * 1000
+                return httpx.Response(422, json={'error': {'code': code, 'message': message}})
+            if shape == 'top_level':
+                return httpx.Response(422, json={'code': code, 'message': message})
+            if shape == 'string':
+                return httpx.Response(422, json={'error': message})
+            return httpx.Response(422, text=message)
+
+        async with video_client(tmp_path, handler) as (client, services, _events):
+            insert = services.fallback_events_db.insert_event
+            response = await client.post('/v1/videos', json=BODY)
+            assert response.status_code == 422
+            assert response.json()['detail'] == 'Video provider could not create the task'
+            assert insert.call_count == 2
+            for call, provider in zip(insert.call_args_list, ('bettertoken', 'routerai')):
+                event = call.kwargs
+                assert event['provider'] == provider
+                assert event['success'] is False
+                assert 'HTTP 422' in event['error_message']
+                assert f'{provider}: reference image is unavailable' in event['error_message']
+                if shape in ('nested', 'top_level', 'long'):
+                    assert f'code={provider}_invalid_media' in event['error_message']
+                if shape == 'long':
+                    assert len(event['error_message']) == 500
+    asyncio.run(scenario())
+
+
 def test_bettertoken_job_billing_and_idempotent_creation(tmp_path, monkeypatch):
     monkeypatch.setenv('GATEWAY_DB_DIR', str(tmp_path))
     usage_db = TokensUsageDB('video-usage.db')

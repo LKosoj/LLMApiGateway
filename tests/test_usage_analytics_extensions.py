@@ -30,6 +30,7 @@ from llm_gateway_core.utils.usage_tracking import (
     extract_request_client_ip,
     extract_request_fallback_depth,
     extract_request_user_agent,
+    extract_request_x_title,
 )
 from tests._async_compat import run_async
 
@@ -404,6 +405,21 @@ def _fake_request(
         headers=headers or {},
         state=state or SimpleNamespace(),
     )
+
+
+@pytest.mark.parametrize(('headers', 'expected'), [
+    ({'x-title': ' App ', 'originator': 'codex-tui', 'user-agent': 'curl/8'}, 'App'),
+    ({'x-title': ' ', 'originator': ' codex-tui ', 'user-agent': 'curl/8'}, 'codex-tui'),
+    ({'originator': 'codex-tui', 'user-agent': 'curl/8'}, 'codex-tui'),
+    ({'originator': ' ', 'user-agent': ' curl/8 '}, 'curl/8'),
+    ({'user-agent': 'curl/8'}, 'curl/8'),
+    ({'user-agent': 'x' * 1000}, 'x' * MAX_CLIENT_USER_AGENT_CHARS),
+    ({'x-title': ' ', 'originator': ' ', 'user-agent': ' '}, None),
+    ({}, None),
+])
+def test_request_title_header_priority(headers, expected) -> None:
+    assert extract_request_x_title(_fake_request(headers=headers)) == expected
+    assert extract_request_x_title(None) is None
 
 
 def test_extract_request_client_ip_returns_peer_host() -> None:
