@@ -470,6 +470,55 @@ class RouterDispatchTests(unittest.TestCase):
         self.assertEqual(response["choices"][0]["message"]["content"], "final from model-b")
         self.assertEqual(response["router"]["selected_candidate_id"], "gateway:gateway/high")
 
+    def test_image_selects_premium_without_decision_call(self):
+        for image_url in ("https://example.com/image.png", "data:image/png;base64,aGVsbG8="):
+            with self.subTest(image_url=image_url):
+                config_loader = self._config_loader([
+                    {"type": "gateway_model", "model": "gateway/light", "cost_hint": "cheap"},
+                    {"type": "gateway_model", "model": "gateway/high", "cost_hint": "premium"},
+                ])
+                request = self._request(config_loader)
+                messages = [{"role": "user", "content": [
+                    {"type": "text", "text": "Describe this"},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ]}]
+                payloads = []
+
+                async def fake_chat(client, url, headers, payload, is_streaming, **_kwargs):
+                    payloads.append(payload)
+                    return _openai_response("image described", cost=0.02)
+
+                def decide(payload):
+                    raise AssertionError("decision model must not be called for images")
+
+                with _upstreams(fake_chat, decide):
+                    observed = self._run_observed(request, config_loader, messages)
+
+                self.assertEqual(payloads[0]["model"], "model-a")
+                self.assertEqual(payloads[0]["messages"], messages)
+                self.assertEqual(observed.response["router"]["decision_source"], "image")
+                self.assertEqual(observed.response["router"]["reason"], "image_input")
+                self.assertEqual([c.model for c in observed.observation.components], ["model-a"])
+                self.assertEqual(observed.response["usage"]["cost"], 0.02)
+
+    def test_image_requires_unambiguous_premium_target(self):
+        for hints in (("cheap", "free"), ("premium", "premium")):
+            with self.subTest(hints=hints):
+                config_loader = self._config_loader([
+                    {"type": "gateway_model", "model": "gateway/light", "cost_hint": hints[0]},
+                    {"type": "gateway_model", "model": "gateway/high", "cost_hint": hints[1]},
+                ])
+                request = self._request(config_loader)
+                service = request.state.runtime_snapshot.router_model_service
+                with patch.object(service, "_call_decision_model", AsyncMock()) as decide:
+                    with self.assertRaises(HTTPException) as raised:
+                        self._run_observed(request, config_loader, [{"role": "user", "content": [
+                            {"type": "image_url", "image_url": {"url": "https://example.com/i.png"}},
+                        ]}])
+                self.assertEqual(raised.exception.status_code, 500)
+                self.assertIn("premium", raised.exception.detail)
+                decide.assert_not_awaited()
+
     def test_recent_tool_error_selects_premium_without_selector_call(self):
         config_loader = self._config_loader(
             [
@@ -1283,6 +1332,39 @@ class RouterStreamTests(unittest.TestCase):
             )
             self.assertAlmostEqual(observation.usage.cost, 0.03)
             self.assertEqual(observation.top_model, "model-a")
+
+    def test_image_stream_bypasses_decision_and_preserves_request(self):
+        config_loader = self._config_loader([
+            {"type": "gateway_model", "model": "gateway/light", "cost_hint": "cheap"},
+            {"type": "gateway_model", "model": "gateway/high", "cost_hint": "premium"},
+        ])
+        request = self._request(config_loader)
+        service = request.state.runtime_snapshot.router_model_service
+        handoff = _RecordingHandoff()
+        body = {"model": "gateway/router", "stream": True, "messages": [
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "https://example.com/i.png"}},
+            ]},
+            {"role": "assistant", "content": "Previous answer"},
+            {"role": "user", "content": "Describe it again"},
+        ]}
+        stream = StreamingResponse(iter([b"data: [DONE]\n\n"]), media_type="text/event-stream")
+        with (
+            patch.object(service, "_call_decision_model", AsyncMock()) as decide,
+            patch("llm_gateway_core.api.v1.chat._dispatch_chat_request", AsyncMock(return_value=stream)) as dispatch,
+        ):
+            response = run_async(service.run_stream(
+                request=request,
+                gateway_model_name="gateway/router",
+                router_config=config_loader.router_rules["gateway/router"],
+                request_body=body,
+                accounting_handoff=handoff,
+            ))
+        self.assertIs(response, stream)
+        decide.assert_not_awaited()
+        self.assertEqual(dispatch.await_args.args[1], dict(body, model="gateway/high"))
+        self.assertIs(dispatch.await_args.kwargs["accounting_handoff"], handoff)
+        self.assertEqual(body["model"], "gateway/router")
 
     def test_prefixed_handoff_publishes_through_real_chat_handoff(self):
         delegate_observation = ChatTerminalObservation(

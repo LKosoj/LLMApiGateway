@@ -9,6 +9,7 @@ from ..config.loader import (
     resolve_provider_config_api_key,
     resolve_provider_config_auth_headers,
 )
+from .opencode_zen import resolve_opencode_session
 from .upstream_routing_state import (
     fingerprint_api_key,
 )
@@ -29,8 +30,11 @@ async def resolve_provider_auth_material(
     api_key: str | None = None,
 ) -> ProviderAuthMaterial:
     resolved_api_key = api_key if api_key is not None else resolve_provider_config_api_key(provider_config)
+    headers = resolve_provider_config_auth_headers(provider_config, resolved_api_key)
+    if provider_name == "opencode-zen":
+        headers["x-opencode-session"] = resolve_opencode_session(request)
     return ProviderAuthMaterial(
-        headers=resolve_provider_config_auth_headers(provider_config, resolved_api_key),
+        headers=headers,
         api_key=resolved_api_key,
         upstream_key_fingerprint=fingerprint_api_key(resolved_api_key),
     )

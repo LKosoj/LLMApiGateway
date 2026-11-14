@@ -424,16 +424,6 @@
         "custom_headers": {}
       },
       {
-        "provider": "a6",
-        "model": "claude-opus-5-5",
-        "use_provider_order_as_fallback": false,
-        "retry_delay": 1,
-        "retry_count": 2,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "context_window": 1000000
-      },
-      {
         "provider": "agentrouter",
         "model": "gpt-6.1-sol",
         "use_provider_order_as_fallback": false,
@@ -457,6 +447,16 @@
           "supports_tools",
           "supports_vision"
         ]
+      },
+      {
+        "provider": "a6",
+        "model": "claude-opus-5-5",
+        "use_provider_order_as_fallback": false,
+        "retry_delay": 1,
+        "retry_count": 2,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "context_window": 1000000
       },
       {
         "provider": "anymodel",
@@ -763,21 +763,6 @@
         "custom_headers": {}
       },
       {
-        "provider": "opencode-zen",
-        "model": "glm-5.3-flash-free",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {},
-        "custom_headers": {},
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
-      },
-      {
         "provider": "neuraldeep",
         "model": "qwen3.8-27b",
         "use_provider_order_as_fallback": false,
@@ -785,7 +770,7 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048575,
+        "context_window": 1024000,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -812,7 +797,7 @@
       },
       {
         "provider": "openrouter",
-        "model": "google/gemma-4-31b-it:free",
+        "model": "openrouter/free",
         "use_provider_order_as_fallback": false,
         "retry_delay": 1,
         "retry_count": 1,
@@ -820,7 +805,22 @@
         "custom_headers": {},
         "supports_vision": true,
         "supports_tools": true,
-        "context_window": 262144,
+        "context_window": 200000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
+        "provider": "a6",
+        "model": "deepseek-v4.1-flash-1017",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -999,6 +999,79 @@
         "supports_vision"
       ]
     },
+    "rotate_models": false,
+    "dynamic_penalty": true,
+    "strip_think_tags": true,
+    "compress_tool_results": true,
+    "tool_call_rescue": true
+  },
+  {
+    "gateway_model_name": "llmgateway/coding",
+    "fallback_models": [
+      {
+        "provider": "alibaba",
+        "model": "qwen4-max-preview",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {}
+      },
+      {
+        "provider": "z.ai",
+        "model": "GLM-5.3-Flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
+        "provider": "minimax",
+        "model": "MiniMax-M3.1-Flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      },
+      {
+        "provider": "kimicode",
+        "model": "k3.1-pro",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
+      },
+      {
+        "provider": "z.ai",
+        "model": "GLM-5.3-Flash",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {},
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
+      }
+    ],
     "rotate_models": false,
     "dynamic_penalty": true,
     "strip_think_tags": true,

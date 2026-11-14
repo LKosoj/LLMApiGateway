@@ -20,6 +20,7 @@ from fastapi import HTTPException, Request
 
 from ..utils.usage_tracking import ModelCostRates
 from .accounting import AccountingValidationError
+from .capability_guard import request_needs_vision
 from .chat_accounting import ChatTerminalObservation, ObservedChatResponse
 from .fusion_keepalive import DELEGATE_DISPATCH_STATE_ATTR
 from .operation_accounting import build_token_model_component
@@ -560,7 +561,7 @@ class RouterModelService:
         router_config: dict[str, Any],
         request_body: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any], str, Any, dict[str, Any]]:
-        """Pick a candidate from tool history or the decisions model.
+        """Pick a premium candidate for images, otherwise use tool history or decisions.
 
         Returns the candidate, the decision, its source, the decision billing
         component (``None`` without a model call) and the decision usage in
@@ -575,6 +576,16 @@ class RouterModelService:
             fallback_rules=self._config_loader.fallback_rules,
             providers_config=self._config_loader.providers_config,
         )
+        if request_needs_vision(request_body):
+            selected_candidate = _candidate_for_cost_tier(candidates, "premium")
+            if selected_candidate is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Router image request requires an unambiguous premium target.",
+                )
+            decision = {"candidate_id": selected_candidate["id"], "reason": "image_input", "confidence": None}
+            return selected_candidate, decision, "image", None, {}
+
         direct_decision = _direct_stage_decision(candidates, messages)
         if direct_decision is not None:
             selected_candidate, reason = direct_decision

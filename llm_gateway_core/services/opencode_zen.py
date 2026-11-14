@@ -25,6 +25,16 @@ def _session_id(seed: str) -> str:
     return "ses_" + prefix + "".join(secrets.choice(alphabet) for _ in range(14))
 
 
+def resolve_opencode_session(request: Request) -> str:
+    session = request.headers.get("x-opencode-session")
+    if session:
+        return session
+    seed = request.headers.get("x-session-id") or getattr(request.state, "zen_session_seed", None)
+    if seed is None:
+        seed = request.state.zen_session_seed = str(uuid4())
+    return _session_id(seed)
+
+
 def _prepare_request(request: Request, headers: dict, payload: dict):
     identity_headers = {
         "http-referer", "referer", "x-opencode-request", "user-agent",
@@ -35,10 +45,7 @@ def _prepare_request(request: Request, headers: dict, payload: dict):
         key: value for key, value in headers.items()
         if key.lower() not in identity_headers
     }
-    seed = request.headers.get("x-session-id") or getattr(request.state, "zen_session_seed", None)
-    if seed is None:
-        seed = request.state.zen_session_seed = str(uuid4())
-    session = _session_id(seed)
+    session = resolve_opencode_session(request)
     headers.update({
         "User-Agent": "opencode/1.19.0",
         "x-opencode-project": "global",

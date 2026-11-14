@@ -36,7 +36,7 @@ def provider():
     )
     matches = [entry["opencode-zen"] for entry in entries if "opencode-zen" in entry]
     assert len(matches) == 1
-    return ProviderDetails.model_validate(matches[0])
+    return ProviderDetails.model_validate({**matches[0], "apikey": "public"})
 
 
 @pytest.mark.parametrize("provider_name", ["opencode-zen", "other-provider"])
@@ -176,3 +176,35 @@ def test_free_model_usage_record_preserves_upstream_cost_priority(
     assert db.get_accounting_event(event.event_id).event.usage.cost == expected_cost
     with sqlite3.connect(db.db_path) as connection:
         assert connection.execute("SELECT cost FROM tokens_usage").fetchone() == (expected_cost,)
+
+
+@pytest.mark.parametrize("incoming", [
+    {"x-opencode-session": "ses_client", "x-session-id": "legacy"},
+    {"x-session-id": "legacy"},
+    {},
+])
+def test_operation_auth_includes_stable_opencode_session(provider, incoming):
+    from llm_gateway_core.services.provider_auth import (
+        resolve_provider_auth_headers, resolve_provider_auth_material,
+    )
+
+    request = SimpleNamespace(headers=incoming, state=SimpleNamespace())
+    first = run_async(resolve_provider_auth_headers(
+        request, provider_name="opencode-zen", provider_config=provider, api_key="test",
+    ))
+    second = run_async(resolve_provider_auth_headers(
+        request, provider_name="opencode-zen", provider_config=provider, api_key="test",
+    ))
+    assert first["x-opencode-session"] == second["x-opencode-session"]
+    material = run_async(resolve_provider_auth_material(
+        request, provider_name="opencode-zen", provider_config=provider, api_key="test",
+    ))
+    assert material.headers["x-opencode-session"] == first["x-opencode-session"]
+    if "x-opencode-session" in incoming:
+        assert first["x-opencode-session"] == incoming["x-opencode-session"]
+    else:
+        assert first["x-opencode-session"].startswith("ses_")
+    other = run_async(resolve_provider_auth_headers(
+        request, provider_name="other", provider_config=provider, api_key="test",
+    ))
+    assert "x-opencode-session" not in other

@@ -159,3 +159,14 @@ def test_closing_filtered_stream_closes_upstream():
 
     run_async(run())
     assert closed == [True]
+
+
+def test_explicit_opencode_session_is_preserved():
+    request = _request()
+    request.headers["x-opencode-session"] = "ses_client_conversation"
+    make_request = AsyncMock(return_value=(None, "upstream error"))
+    run_async(make_opencode_zen_request(
+        make_request, request, object(), "url", {}, {"messages": []}, False,
+        stream_event_max_bytes=16384,
+    ))
+    assert make_request.await_args.args[2]["x-opencode-session"] == "ses_client_conversation"
