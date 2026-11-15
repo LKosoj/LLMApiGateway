@@ -36,6 +36,7 @@ from .audio_adapters import (
     transcribe_with_nvidia_riva_grpc,
 )
 from .audio_speakers import merge_transcription_with_diarization
+from .neuraldeep_music import generate_neuraldeep_music
 from .operation_fallback_log import record_operation_route_attempt
 from .operation_proxy import (
     DownstreamHTTPException,
@@ -517,7 +518,7 @@ async def _get_audio_voices_for_model(request: Request, requested_model: str) ->
             detail=f"No audio speech route configured for model '{requested_model}'.",
         )
 
-    if route.voice_input == "manual":
+    if route.voice_input == "manual" or (route.provider == "neuraldeep" and route.target_path == "/music/generate"):
         return []
 
     provider_config = config_loader_instance.providers_config.get(route.provider)
@@ -1134,8 +1135,13 @@ async def _proxy_audio_speech(
         if len(prepared) > 2 and isinstance(prepared[2], str):
             route_fingerprint = prepared[2]
         effective_client = proxy_http_clients.get(route.provider, http_client)
+        speech_proxy = (
+            generate_neuraldeep_music
+            if route.provider == "neuraldeep" and route.target_path == "/music/generate"
+            else proxy_json_raw_to_downstream
+        )
         response_body, downstream_status_code, downstream_content_type = (
-            await proxy_json_raw_to_downstream(
+            await speech_proxy(
                 target_url,
                 headers,
                 route_payload,

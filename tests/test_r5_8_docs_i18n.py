@@ -114,8 +114,9 @@ def test_docs_locale_rerender_uses_snapshot_without_refetching_or_rebuilding() -
 def test_docs_preserve_technical_examples_and_separate_raw_errors() -> None:
     html = (ROOT / "static/gateway-docs.html").read_text(encoding="utf-8")
     source = (ROOT / "static/gateway-docs.js").read_text(encoding="utf-8")
-    # Keep the original examples unchanged; Decisions examples have their own tests.
+    # Keep the original examples unchanged; new sections have their own tests.
     html = re.sub(r'<section id="decisions".*?</section>', "", html, flags=re.DOTALL)
+    html = re.sub(r'<article class="service-card" id="neuraldeep-music-docs".*?</article>', "", html, flags=re.DOTALL)
     blocks = re.findall(
         r'<pre tabindex="0"><code>(.*?)</code></pre>',
         html,
@@ -144,3 +145,27 @@ def test_docs_optional_parameter_labels_use_accessible_text_color() -> None:
     assert ".param-label {" in css
     assert "color: var(--text);" in css
     assert "body.dark-mode .param-label {\n    color: var(--text);\n}" in css
+
+
+def test_music_docs_cover_parameters_and_playground_limits_in_both_locales() -> None:
+    html = (ROOT / "static/gateway-docs.html").read_text(encoding="utf-8")
+    music_section = html.split('id="neuraldeep-music-docs"', 1)[1].split("</article>", 1)[0]
+    parameters = {
+        "input", "lyrics", "vocal_language", "audio_duration", "bpm", "key_scale",
+        "time_signature", "seed", "response_format", "batch_size",
+    }
+    assert "llmgateway/music" in music_section
+    assert "/v1/audio/speech" in music_section
+    assert "--output music.mp3" in music_section
+    for parameter in parameters:
+        assert f"<code>{parameter}</code>" in music_section
+        assert f'data-i18n="docs:sections.audio.music.{parameter}"' in music_section
+    for locale in ("ru", "en"):
+        catalog = json.loads((ROOT / f"static/locales/{locale}/docs.json").read_text(encoding="utf-8"))
+        music = catalog["sections"]["audio"]["music"]
+        assert parameters <= music.keys()
+        assert "360" in music["intro"]
+        assert "504" in music["intro"]
+        assert "Playground" in music["playground"]
+        assert "API" in music["playground"]
+        assert "lyrics" in music["playground"]

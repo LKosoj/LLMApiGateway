@@ -1074,6 +1074,48 @@ Gateway также умеет загружать отдельный конфиг
 Для сцен с несколькими персонажами (например, `fish-audio/drama-3` через RouterAI/OpenRouter) поле `input` можно передать не строкой, а списком реплик: `"input": [{"text": "Добрый вечер!", "voice": "<id голоса 1>"}, {"text": "Здравствуйте.", "voice": "<id голоса 2>"}]`. У каждой реплики должен быть непустой `text`, `voice` и `instructions` у реплики необязательны. Gateway пересылает список без изменений. RouterAI при этом требует и верхнеуровневый `voice` (голос по умолчанию), без него отвечает `voice is missing`. Теги `<|speaker:N|>` в тексте вместе с `reference_id` из собственного API Fish Audio через RouterAI не работают: озвучка выходит одним голосом.
 Для Silero и CosyVoice можно передать `"llm_enhance": false` в JSON-запросе `/v1/audio/speech`, чтобы отключить подготовку текста и автоматическую разметку через LLM. Параметр имеет тип boolean, по умолчанию в этих сервисах равен `true`; gateway пересылает его без изменений. Silero и CosyVoice продолжают делить длинный текст на части и собирать полный аудиофайл независимо от этого параметра. В Playground на вкладке «Текст в речь» есть переключатель «Улучшение речи через LLM (Silero / CosyVoice)», по умолчанию включённый. В CosyVoice инструкции об эмоциях и стиле из поля `instructions` (также поддерживается прежнее `instruct`) передаются и в LLM для расстановки разметки. При `llm_enhance=false` они применяются только при озвучке. Другие TTS-сервисы могут не поддерживать этот параметр.
 
+### Музыка NeuralDeep через Audio Speech
+
+`POST /v1/audio/speech` с `model: "llmgateway/music"` использует NeuralDeep `lyria-3-pro` (Google Lyria 3 Pro). Gateway создаёт задачу в `/music/generate`, опрашивает её каждые 3 секунды и возвращает готовый аудиофайл, а не JSON с номером задачи. Общее ожидание ограничено 360 секундами: превышение даёт HTTP 504, неудачная генерация — HTTP 502. После получения номера задачи повторного создания нет. Каталог голосов для этой модели пустой.
+
+Маршрут в секции `audio_speech` файла `models_operation_rules.json`:
+
+```json
+{
+  "gateway_model_name": "llmgateway/music",
+  "routes": [{"provider": "neuraldeep", "model": "lyria-3-pro", "target_path": "/music/generate"}]
+}
+```
+
+Параметры JSON-запроса:
+
+| Поле | Значение |
+|---|---|
+| `model` | Обязательно: `llmgateway/music`. |
+| `input` | Обязательная непустая строка: описание жанра, инструментов, настроения и вокала. Передаётся NeuralDeep как `prompt`. |
+| `lyrics` | Необязательный текст песни; поддерживаются метки `[verse]`, `[chorus]`, `[bridge]`. Для инструментальной музыки передайте `[instrumental]`. |
+| `vocal_language` | Язык вокала, например `ru` или `en`. |
+| `audio_duration` | Желаемая длина от 10 до 300 секунд. Точная длительность не гарантируется. |
+| `bpm` | Желаемый темп в ударах в минуту. |
+| `key_scale` | Желаемая тональность. |
+| `time_signature` | Желаемый музыкальный размер. |
+| `seed` | Начальное число для повторения результата. |
+| `response_format` | `mp3` (по умолчанию), `wav`, `wav32`, `flac`, `opus`, `aac`. Передаётся как `audio_format` при скачивании готового трека. |
+| `batch_size` | Если указан, только `1`: один трек за запрос. |
+
+Остальные музыкальные параметры необязательны: без них используются настройки NeuralDeep. `bpm`, `key_scale` и `time_signature` — пожелания модели; официальная справка не задаёт для них точных типов и диапазонов. Поле `prompt` отдельно не нужно: оно формируется из `input`. Параметры речи `voice`, `speed`, `instructions` не управляют музыкой. `stream: true` не поддерживается. NeuralDeep молча отбрасывает неизвестные поля; каверы, редактирование фрагментов, отдельные дорожки, файлы и другие `task_type` недоступны.
+
+```bash
+curl http://localhost:9000/v1/audio/speech \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llmgateway/music","input":"Спокойный джаз, пианино и контрабас","lyrics":"[instrumental]","audio_duration":60,"response_format":"mp3"}' \
+  --output music.mp3
+```
+
+[Официальная справка NeuralDeep Music API](https://neuraldeep.ru/docs/music.md). Оплата у провайдера — за готовый трек, не за токены; отдельная цена в USD в конфигурацию gateway этой правкой не добавляется.
+
+
 Эндпоинт `/v1/audio/transcriptions` использует секцию `audio_transcriptions` и принимает `multipart/form-data` с OpenAI-style полями вроде `file`, `model`, `language`, `prompt`, `response_format`, `temperature`, `timestamp_granularities[]`. Для audio transcription routes `target_path` по умолчанию равен `"/audio/transcriptions"`, если его не указать явно. Routes обрабатываются по порядку как fallback chain: внутри одного route сначала применяются `retry_count` и `retry_delay`, а следующий route пробуется после любой HTTP-ошибки провайдера или `503` gateway-уровня, включая сетевые/downstream HTTP-ошибки и невалидный JSON-ответ downstream. Rotation не поддерживается, `stream=true` явно возвращает `400`. По умолчанию route работает как OpenAI-compatible multipart passthrough. Если route задаёт `request_format: "nvidia_riva_grpc"`, публичный OpenAI-compatible запрос gateway преобразует в NVIDIA Riva gRPC downstream-вызов. Для стандартного NVIDIA API Catalog-провайдера `https://integrate.api.nvidia.com/v1` gateway автоматически использует gRPC endpoint `grpc.nvcf.nvidia.com:443` и требует `custom_headers.function-id`; для self-hosted Riva можно указать свой host:port в `provider.baseUrl` (например `https://speech.example:50051`). NVIDIA gRPC adapter поддерживает `response_format` значений `json`, `text`, `verbose_json`, word/segment timestamps через `timestamp_granularities[]`, а NVIDIA-специфичные настройки задаются через `custom_body_params` (`language`, `enable_automatic_punctuation`, `verbatim_transcripts`, `max_alternatives`, `custom_configuration`, `boosted_lm_words`, `boosted_lm_score`, `speaker_diarization` и т.д.). Для API Catalog route gateway не пробрасывает `model` в gRPC `RecognitionConfig`, потому что модель уже выбирается через `function-id`, и сам выбирает offline или streaming RPC по upstream capabilities. Если клиент не передал `language`, gateway пытается вывести provider-driven default из upstream capabilities; сейчас автоподстановка выполняется только для агрегирующих language codes `multi` или `indic`, если их advertises сам NVIDIA API Catalog function, а в остальных случаях endpoint возвращает явную ошибку со списком supported values. Перед downstream-вызовом gateway нормализует входное аудио до WAV через `ffmpeg` при необходимости, извлекает raw PCM и отправляет его в Riva с `RecognitionConfig.encoding = LINEAR_PCM`. OpenAI-поля клиента, у которых нет NVIDIA-эквивалента, gateway для такого route молча игнорирует. Если downstream возвращает JSON, gateway отдаёт JSON; если downstream возвращает plain text / srt / vtt-подобный ответ, gateway проксирует его как есть.
 
 Эндпоинт `/v1/audio/diarize` использует секцию `audio_diarizations`: формат записи такой же, как у `audio_transcriptions` (`gateway_model_name` и `routes`), по умолчанию `target_path` равен `"/audio/diarize"`. Gateway пересылает `file` и остальные поля формы (`response_format`, `min_duration`) downstream-сервису и возвращает его ответ как есть; при любой HTTP-ошибке провайдера пробуется следующий route. Каждый вызов учитывается в статистике как одна операция `audio_diarization`. Пример:

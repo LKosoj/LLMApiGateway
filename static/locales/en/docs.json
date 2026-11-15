@@ -141,7 +141,23 @@
       "text030": "Minimum segment duration in seconds, if supported by the model.",
       "text031": "JSON with a list of",
       "text032": "segments, or RTTM text.",
-      "inputTurns": ". Each turn needs a non-empty text; voice and instructions are optional. The gateway forwards the list unchanged (for example, for fish-audio/drama-3)."
+      "inputTurns": ". Each turn needs a non-empty text; voice and instructions are optional. The gateway forwards the list unchanged (for example, for fish-audio/drama-3).",
+      "music": {
+        "heading": "NeuralDeep music generation",
+        "intro": "POST /v1/audio/speech with model=llmgateway/music uses Google Lyria 3 Pro. The gateway creates a task, polls every 3 seconds and returns the completed audio file. The wait is limited to 360 seconds (HTTP 504); failed generation returns HTTP 502. Once a task ID is received, it is never submitted again.",
+        "input": "Required nonempty string describing genre, instruments, mood and vocals. Sent to NeuralDeep as prompt.",
+        "lyrics": "Lyrics with [verse], [chorus] and [bridge] tags. Use [instrumental] for instrumental music.",
+        "vocal_language": "Vocal language, for example ru or en.",
+        "audio_duration": "Desired duration from 10 to 300 seconds. Exact duration is not guaranteed.",
+        "bpm": "Desired tempo in beats per minute.",
+        "key_scale": "Desired musical key.",
+        "time_signature": "Desired musical meter.",
+        "seed": "Seed for repeating a result.",
+        "response_format": "mp3 (default), wav, wav32, flac, opus or aac. Sent as audio_format when downloading the track.",
+        "batch_size": "Only 1: one track per request.",
+        "limits": "Fields other than model and input are optional. bpm, key_scale and time_signature are model hints; the official reference does not specify exact types or ranges. voice, speed and instructions do not control music; the voice catalog is empty and stream=true is unsupported. NeuralDeep discards unknown fields; covers, fragment editing, separate stems, files and other task_type values are unavailable.",
+        "playground": "In Playground, open Text to Speech, select llmgateway/music, enter the music description, choose a format, disable Dialogue and click Generate speech. Leave Voice and Instructions empty. A player and download link appear when the track is ready. The form currently has no lyrics, vocal_language, audio_duration, bpm, key_scale, time_signature, seed or batch_size fields; send those through the API, as shown below."
+      }
     },
     "auth": {
       "heading": "Authorization and base URL",

@@ -392,6 +392,32 @@ print(response.choices[0].message.content)</code></pre>
                         </tbody>
                     </table>
                 </article>
+                <article class="service-card" id="neuraldeep-music-docs">
+                    <h3><span data-i18n="docs:sections.audio.music.heading">Генерация музыки NeuralDeep</span></h3>
+                    <p><span data-i18n="docs:sections.audio.music.intro">POST /v1/audio/speech с model=llmgateway/music использует Google Lyria 3 Pro. Gateway создаёт задачу, опрашивает статус каждые 3 секунды и возвращает готовый аудиофайл. Предел ожидания — 360 секунд (HTTP 504); неудачная генерация возвращает HTTP 502. После получения номера задачи повторного создания нет.</span></p>
+                    <table class="params-table param-details">
+                        <tbody>
+                            <tr><th><code>model</code></th><td><code>llmgateway/music</code></td></tr>
+                            <tr><th><code>input</code></th><td><span data-i18n="docs:sections.audio.music.input">Обязательная непустая строка: жанр, инструменты, настроение и характер вокала. Передаётся NeuralDeep как prompt.</span></td></tr>
+                            <tr><th><code>lyrics</code></th><td><span data-i18n="docs:sections.audio.music.lyrics">Текст песни с метками [verse], [chorus], [bridge]. Для инструментальной музыки передайте [instrumental].</span></td></tr>
+                            <tr><th><code>vocal_language</code></th><td><span data-i18n="docs:sections.audio.music.vocal_language">Язык вокала, например ru или en.</span></td></tr>
+                            <tr><th><code>audio_duration</code></th><td><span data-i18n="docs:sections.audio.music.audio_duration">Желаемая длительность от 10 до 300 секунд. Точная длина не гарантируется.</span></td></tr>
+                            <tr><th><code>bpm</code></th><td><span data-i18n="docs:sections.audio.music.bpm">Желаемый темп в ударах в минуту.</span></td></tr>
+                            <tr><th><code>key_scale</code></th><td><span data-i18n="docs:sections.audio.music.key_scale">Желаемая тональность.</span></td></tr>
+                            <tr><th><code>time_signature</code></th><td><span data-i18n="docs:sections.audio.music.time_signature">Желаемый музыкальный размер.</span></td></tr>
+                            <tr><th><code>seed</code></th><td><span data-i18n="docs:sections.audio.music.seed">Начальное число для повторения результата.</span></td></tr>
+                            <tr><th><code>response_format</code></th><td><span data-i18n="docs:sections.audio.music.response_format">mp3 (по умолчанию), wav, wav32, flac, opus или aac. Передаётся как audio_format при скачивании трека.</span></td></tr>
+                            <tr><th><code>batch_size</code></th><td><span data-i18n="docs:sections.audio.music.batch_size">Только 1: один трек за запрос.</span></td></tr>
+                        </tbody>
+                    </table>
+                    <p><span data-i18n="docs:sections.audio.music.limits">Кроме model и input, поля необязательны. bpm, key_scale и time_signature — пожелания модели; официальная справка не задаёт точные типы и диапазоны. Поля voice, speed и instructions не управляют музыкой, каталог голосов пустой, stream=true не поддерживается. NeuralDeep отбрасывает неизвестные поля; каверы, правка фрагментов, отдельные дорожки, файлы и другие task_type недоступны.</span></p>
+                    <p><span data-i18n="docs:sections.audio.music.playground">В Playground откройте «Текст в речь», выберите llmgateway/music, напишите описание в поле текста, выберите формат, выключите «Диалог» и нажмите «Сгенерировать речь». Голос и инструкции оставьте пустыми. После ожидания появятся плеер и скачивание. Поля lyrics, vocal_language, audio_duration, bpm, key_scale, time_signature, seed и batch_size в форме пока отсутствуют — передавайте их через API, как в примере ниже.</span></p>
+                    <pre tabindex="0"><code>curl https://gateway.example/v1/audio/speech \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llmgateway/music","input":"Relaxing jazz, piano and double bass","lyrics":"[instrumental]","audio_duration":60,"response_format":"mp3"}' \
+  --output music.mp3</code></pre>
+                </article>
                 <article class="service-card">
                     <h3>GET /v1/audio/voices</h3>
                     <table class="params-table param-details">

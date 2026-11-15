@@ -1072,6 +1072,48 @@ The `/v1/audio/speech` endpoint uses the `audio_speech` section and accepts an O
 For multi-character scenes (for example, `fish-audio/drama-3` via RouterAI/OpenRouter), `input` may be a list of turns instead of a string: `"input": [{"text": "Good evening!", "voice": "<voice id 1>"}, {"text": "Hello.", "voice": "<voice id 2>"}]`. Each turn must have a non-empty `text`; per-turn `voice` and `instructions` are optional. The gateway forwards the list unchanged. RouterAI also requires a top-level `voice` (the default voice) and returns `voice is missing` without it. Fish Audio's native `<|speaker:N|>` text tags with `reference_id` do not work through RouterAI: the result is spoken in a single voice.
 For Silero and CosyVoice, send `"llm_enhance": false` in the `/v1/audio/speech` JSON request to disable LLM text preparation and automatic delivery markup. This boolean defaults to `true` in these services; the gateway forwards it unchanged. Silero and CosyVoice still split long text into parts and assemble one audio file regardless of this parameter. The Playground Text to Speech tab includes an “Enhance speech with LLM (Silero / CosyVoice)” checkbox, enabled by default. For CosyVoice, emotion and style instructions from `instructions` (or the legacy `instruct` field) are also passed to the LLM to guide delivery markup. With `llm_enhance=false`, they apply only during speech synthesis. Other TTS services may not support this parameter.
 
+### NeuralDeep music through Audio Speech
+
+`POST /v1/audio/speech` with `model: "llmgateway/music"` uses NeuralDeep `lyria-3-pro` (Google Lyria 3 Pro). The gateway creates a task at `/music/generate`, polls every 3 seconds and returns the completed audio file rather than a task JSON response. The overall wait is limited to 360 seconds: expiration returns HTTP 504; failed generation returns HTTP 502. Once a task ID is received, the task is never submitted again. This model has an empty voice catalog.
+
+Route in the `audio_speech` section of `models_operation_rules.json`:
+
+```json
+{
+  "gateway_model_name": "llmgateway/music",
+  "routes": [{"provider": "neuraldeep", "model": "lyria-3-pro", "target_path": "/music/generate"}]
+}
+```
+
+JSON request parameters:
+
+| Field | Value |
+|---|---|
+| `model` | Required: `llmgateway/music`. |
+| `input` | Required nonempty string describing genre, instruments, mood and vocals. Sent to NeuralDeep as `prompt`. |
+| `lyrics` | Optional lyrics, supporting `[verse]`, `[chorus]` and `[bridge]` tags. Use `[instrumental]` for instrumental music. |
+| `vocal_language` | Vocal language, for example `ru` or `en`. |
+| `audio_duration` | Desired duration from 10 to 300 seconds. Exact duration is not guaranteed. |
+| `bpm` | Desired tempo in beats per minute. |
+| `key_scale` | Desired musical key. |
+| `time_signature` | Desired musical meter. |
+| `seed` | Seed for repeating a result. |
+| `response_format` | `mp3` (default), `wav`, `wav32`, `flac`, `opus`, `aac`. Sent as `audio_format` when downloading the completed track. |
+| `batch_size` | If provided, only `1`: one track per request. |
+
+Other music parameters are optional and use NeuralDeep defaults when omitted. `bpm`, `key_scale` and `time_signature` are model hints; the official reference does not specify their exact types or ranges. A separate `prompt` field is unnecessary: it is taken from `input`. Speech parameters `voice`, `speed` and `instructions` do not control music. `stream: true` is unsupported. NeuralDeep silently discards unknown fields; covers, fragment editing, separate stems, file inputs and other `task_type` values are unavailable.
+
+```bash
+curl http://localhost:9000/v1/audio/speech \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llmgateway/music","input":"Relaxing jazz, piano and double bass","lyrics":"[instrumental]","audio_duration":60,"response_format":"mp3"}' \
+  --output music.mp3
+```
+
+[Official NeuralDeep Music API reference](https://neuraldeep.ru/docs/music.md). The provider charges per completed track rather than tokens; this change does not configure a separate USD price in the gateway.
+
+
 The `/v1/audio/transcriptions` endpoint uses the `audio_transcriptions` section and accepts `multipart/form-data` with OpenAI-style fields such as `file`, `model`, `language`, `prompt`, `response_format`, `temperature`, and `timestamp_granularities[]`. For audio transcription routes, `target_path` defaults to `"/audio/transcriptions"` when omitted. Routes are processed in order as a fallback chain: within a route, `retry_count` and `retry_delay` are applied first, and the next route is tried after any provider HTTP error or a gateway-level `503`, including network/downstream HTTP failures and invalid downstream JSON. Rotation is not supported, and `stream=true` explicitly returns `400`. By default the route behaves as an OpenAI-compatible multipart passthrough. If the route sets `request_format: "nvidia_riva_grpc"`, the public OpenAI-compatible request is transformed into an NVIDIA Riva gRPC downstream call. For the standard NVIDIA API Catalog provider `https://integrate.api.nvidia.com/v1`, the gateway automatically uses the gRPC endpoint `grpc.nvcf.nvidia.com:443` and requires `custom_headers.function-id`; for self-hosted Riva, set your own host:port in `provider.baseUrl` (for example `https://speech.example:50051`). The NVIDIA gRPC adapter supports `response_format` values `json`, `text`, and `verbose_json`, word/segment timestamps through `timestamp_granularities[]`, and NVIDIA-specific settings via `custom_body_params` (`language`, `enable_automatic_punctuation`, `verbatim_transcripts`, `max_alternatives`, `custom_configuration`, `boosted_lm_words`, `boosted_lm_score`, `speaker_diarization`, and similar). For API Catalog routes the gateway does not forward `model` into the gRPC `RecognitionConfig`, because the model is already selected by `function-id`, and it chooses offline or streaming RPC according to upstream capabilities. If the client omits `language`, the gateway tries to derive a provider-driven default from upstream capabilities; it currently auto-fills only aggregate language codes such as `multi` or `indic` when the NVIDIA API Catalog function advertises them, and otherwise returns an explicit error listing the supported values. Before the downstream call, the gateway normalizes audio to WAV via `ffmpeg` when needed, extracts raw PCM, and sends it to Riva with `RecognitionConfig.encoding = LINEAR_PCM`. OpenAI client fields that have no NVIDIA equivalent are ignored for such routes. If the downstream responds with JSON, the gateway returns JSON; if the downstream responds with plain text / srt / vtt-like content, the gateway proxies it as-is.
 
 The `/v1/audio/diarize` endpoint uses the `audio_diarizations` section: entries have the same shape as `audio_transcriptions` (`gateway_model_name` and `routes`), and `target_path` defaults to `"/audio/diarize"`. The gateway forwards `file` and the other form fields (`response_format`, `min_duration`) to the downstream service and returns its response as-is; after any provider HTTP error the next route is tried. Each call is recorded in usage statistics as one `audio_diarization` operation. Example:

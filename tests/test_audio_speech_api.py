@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
@@ -210,6 +211,44 @@ class AudioSpeechApiTests(unittest.TestCase):
             },
         )
         tokens_usage_db.insert_usage.assert_not_called()
+
+    def test_neuraldeep_music_returns_completed_audio_through_speech_endpoint(self):
+        providers = json.loads(VALID_PROVIDERS_TEXT)
+        providers.append({"neuraldeep": dict(providers[0]["openai"])})
+        self.providers_path.write_text(json.dumps(providers), encoding="utf-8")
+        rules = json.loads(VALID_OPERATION_RULES_TEXT)
+        rules["audio_speech"][0]["routes"][0].update(
+            provider="neuraldeep", model="lyria-3-pro", target_path="/music/generate", custom_body_params={},
+        )
+        self.operation_rules_path.write_text(json.dumps(rules), encoding="utf-8")
+        self.config_loader.load_complete()
+        with self._client(_FakeDownstreamResponse(json_data={"task_id": "track-1"})) as (
+            client, _dispatcher, fake_http_client,
+        ):
+            fake_http_client.get.side_effect = [
+                _FakeDownstreamResponse(json_data={"status": "succeeded"}),
+                _FakeDownstreamResponse(b"completed-music", content_type="audio/wav"),
+            ]
+            response = client.post(
+                "/v1/audio/speech",
+                json={"model": "gateway/audio-speech", "input": "Jazz", "response_format": "wav"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content, b"completed-music")
+            self.assertEqual(response.headers["content-type"], "audio/wav")
+            fake_http_client.post.assert_awaited_once()
+            self.assertEqual(fake_http_client.post.await_args.args[0], "https://openai.example/v1/music/generate")
+            self.assertEqual(fake_http_client.post.await_args.kwargs["json"], {"model": "lyria-3-pro", "prompt": "Jazz"})
+            self.assertEqual(fake_http_client.get.await_count, 2)
+            fake_http_client.get.reset_mock()
+            voices = client.get(
+                "/v1/audio/voices?model=gateway/audio-speech",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            self.assertEqual(voices.status_code, 200)
+            self.assertEqual(voices.json()["data"], [])
+            fake_http_client.get.assert_not_awaited()
 
     def test_audio_speech_preserves_llm_enhance_boolean_for_each_route(self):
         for model in ("gateway/audio-speech", "gateway/audio-speech-alt"):
