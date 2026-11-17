@@ -1099,71 +1099,93 @@ async def _proxy_audio_speech(
     route: OperationRoute,
     requested_model: str,
     request_payload: dict[str, object],
+    fallback_routes: list[OperationRoute] | None = None,
 ) -> object:
     request_started_at = time.monotonic()
-    attempt_started_at = time.monotonic()
-    route_fingerprint: str | None = None
-    try:
-        provider_config = config_loader_instance.providers_config.get(route.provider)
-        if provider_config is None:
-            logger.error(
-                "Provider '%s' for audio speech route '%s' is missing from providers_config.",
-                route.provider,
-                requested_model,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="Internal server error: Provider configuration not available.",
-            )
+    routes = [route, *(fallback_routes or [])]
+    for route_index, route in enumerate(routes):
+        attempt_started_at = time.monotonic()
+        route_fingerprint: str | None = None
+        try:
+            provider_config = config_loader_instance.providers_config.get(route.provider)
+            if provider_config is None:
+                logger.error(
+                    "Provider '%s' for audio speech route '%s' is missing from providers_config.",
+                    route.provider,
+                    requested_model,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="Internal server error: Provider configuration not available.",
+                )
 
-        retry_count, retry_delay = _prepare_audio_request_state(
-            request,
-            dispatcher,
-            route,
-            gateway_model=requested_model,
-            operation=AUDIO_SPEECH_OPERATION,
-        )
-        route_payload = _build_speech_route_payload(request_payload, route)
-        prepared = await _prepare_audio_json_http_request(
-            request,
-            dispatcher,
-            route,
-            provider_config,
-        )
-        target_url = prepared[0]
-        headers = prepared[1]
-        if len(prepared) > 2 and isinstance(prepared[2], str):
-            route_fingerprint = prepared[2]
-        effective_client = proxy_http_clients.get(route.provider, http_client)
-        speech_proxy = (
-            generate_neuraldeep_music
-            if route.provider == "neuraldeep" and route.target_path == "/music/generate"
-            else proxy_json_raw_to_downstream
-        )
-        response_body, downstream_status_code, downstream_content_type = (
-            await speech_proxy(
-                target_url,
-                headers,
-                route_payload,
-                effective_client,
-                retry_count=retry_count,
-                retry_delay=retry_delay,
+            retry_count, retry_delay = _prepare_audio_request_state(
+                request,
+                dispatcher,
+                route,
+                gateway_model=requested_model,
+                operation=AUDIO_SPEECH_OPERATION,
             )
-        )
-    except HTTPException as exc:
-        record_operation_route_attempt(
-            request,
-            operation=AUDIO_SPEECH_OPERATION,
-            gateway_model=requested_model,
-            provider=route.provider,
-            model=route.model,
-            success=False,
-            error=exc,
-            started_at=attempt_started_at,
-            upstream_key_fingerprint=route_fingerprint,
-            use_request_fingerprint=False,
-        )
-        raise
+            route_payload = _build_speech_route_payload(request_payload, route)
+            if route.model == "sa3-medium":
+                route_payload = {
+                    "model": route.model,
+                    "input": route_payload["input"],
+                    "seconds": route_payload.get("audio_duration", route_payload.get("seconds", 30)),
+                    "response_format": route_payload.get("response_format", "mp3"),
+                }
+            prepared = await _prepare_audio_json_http_request(
+                request,
+                dispatcher,
+                route,
+                provider_config,
+            )
+            target_url = prepared[0]
+            headers = prepared[1]
+            if len(prepared) > 2 and isinstance(prepared[2], str):
+                route_fingerprint = prepared[2]
+            effective_client = proxy_http_clients.get(route.provider, http_client)
+            speech_proxy = (
+                generate_neuraldeep_music
+                if route.provider == "neuraldeep" and route.target_path == "/music/generate"
+                else proxy_json_raw_to_downstream
+            )
+            proxy_options = {"retry_count": retry_count, "retry_delay": retry_delay}
+            if speech_proxy is generate_neuraldeep_music:
+                proxy_options.update(
+                    routing_state=cast("AppServices", request.app.state.services).upstream_routing_state,
+                    key_fingerprint=route_fingerprint,
+                )
+            response_body, downstream_status_code, downstream_content_type = (
+                await speech_proxy(
+                    target_url,
+                    headers,
+                    route_payload,
+                    effective_client,
+                    **proxy_options,
+                )
+            )
+        except HTTPException as exc:
+            record_operation_route_attempt(
+                request,
+                operation=AUDIO_SPEECH_OPERATION,
+                gateway_model=requested_model,
+                provider=route.provider,
+                model=route.model,
+                success=False,
+                error=exc,
+                started_at=attempt_started_at,
+                upstream_key_fingerprint=route_fingerprint,
+                use_request_fingerprint=False,
+            )
+            if route_index + 1 < len(routes) and exc.status_code in {502, 503, 504}:
+                logger.warning(
+                    "Music route %s/%s failed with HTTP %s; trying the next configured route.",
+                    route.provider, route.model, exc.status_code,
+                )
+                continue
+            raise
+        break
     record_operation_route_attempt(
         request,
         operation=AUDIO_SPEECH_OPERATION,
@@ -1207,6 +1229,11 @@ async def create_audio_speech(request: Request):
             detail=f"No audio speech route configured for model '{requested_model}'.",
         )
 
+    fallback_routes = (
+        dispatcher.lookup_routes(AUDIO_SPEECH_SECTION, requested_model)[1:]
+        if route.provider == "neuraldeep" and route.target_path == "/music/generate"
+        else []
+    )
     operation = partial(
         _proxy_audio_speech,
         request,
@@ -1215,6 +1242,7 @@ async def create_audio_speech(request: Request):
         config_loader_instance=config_loader_instance,
         proxy_http_clients=proxy_http_clients,
         route=route,
+        fallback_routes=fallback_routes,
         requested_model=requested_model,
         request_payload=request_payload,
     )

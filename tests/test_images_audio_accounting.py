@@ -630,6 +630,51 @@ def test_audio_speech_binary_response_commits_configured_cost_before_return() ->
     run_async(scenario())
 
 
+def test_music_fallback_records_both_attempts_and_bills_successful_provider_once() -> None:
+    async def scenario() -> None:
+        request, services = _request("/v1/audio/speech")
+        routes = [
+            OperationRoute(provider="neuraldeep", model="lyria-3-pro", target_path="/music/generate"),
+            OperationRoute(provider="sa3", model="sa3-medium", target_path="/audio/speech"),
+        ]
+        with _audio_runtime(routes) as (stack, _):
+            stack.enter_context(patch.object(
+                audio, "_parse_audio_speech_request",
+                AsyncMock(return_value=("llmgateway/music", {"model": "llmgateway/music", "input": "Jazz"})),
+            ))
+            stack.enter_context(patch.object(
+                audio, "_prepare_audio_json_http_request",
+                AsyncMock(return_value=("https://provider.example/speech", {})),
+            ))
+            stack.enter_context(patch.object(
+                audio, "generate_neuraldeep_music",
+                AsyncMock(side_effect=DownstreamHTTPException(status_code=503, detail="Quota exhausted")),
+            ))
+            second = stack.enter_context(patch.object(
+                audio, "proxy_json_raw_to_downstream",
+                AsyncMock(return_value=(b"music", 200, "audio/mpeg")),
+            ))
+            _install_successful_commit(services.accounting_service)
+            response = await audio.create_audio_speech(request)
+            assert response.body == b"music"
+            assert second.await_args.args[2] == {
+                "model": "sa3-medium", "input": "Jazz", "seconds": 30, "response_format": "mp3",
+            }
+            attempts = services.fallback_events_db.insert_event.call_args_list
+            assert [(c.kwargs["provider"], c.kwargs["success"], c.kwargs["attempt_number"]) for c in attempts] == [
+                ("neuraldeep", False, 1), ("sa3", True, 2),
+            ]
+            await _send_response(request, response)
+        services.accounting_service.commit.assert_awaited_once()
+        event = services.accounting_service.commit.await_args.args[1]
+        assert event.provider == "sa3"
+        assert event.model == "sa3-medium"
+        services.accounting_service.release.assert_not_awaited()
+        _assert_no_legacy_writes(services)
+
+    run_async(scenario())
+
+
 @contextmanager
 def _transcription_dependencies(
     routes: list[OperationRoute],

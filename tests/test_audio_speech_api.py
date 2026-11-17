@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 import main
@@ -249,6 +250,209 @@ class AudioSpeechApiTests(unittest.TestCase):
             self.assertEqual(voices.status_code, 200)
             self.assertEqual(voices.json()["data"], [])
             fake_http_client.get.assert_not_awaited()
+
+    def _configure_music_fallback(self, *, primary_target_path="/music/generate"):
+        providers = json.loads(VALID_PROVIDERS_TEXT)
+        providers.extend(
+            [
+                {"neuraldeep": {"baseUrl": "https://neuraldeep.example/v1", "apikey": "ND-KEY"}},
+                {
+                    "sa3": {
+                        "baseUrl": "https://sa3.example/v1",
+                        "apikey": "SA3-KEY",
+                    }
+                },
+            ]
+        )
+        self.providers_path.write_text(json.dumps(providers), encoding="utf-8")
+        rules = json.loads(VALID_OPERATION_RULES_TEXT)
+        rules["audio_speech"][0]["routes"] = [
+            {
+                "provider": "neuraldeep",
+                "model": "lyria-3-pro",
+                "target_path": primary_target_path,
+                "custom_body_params": {},
+            },
+            {
+                "provider": "sa3",
+                "model": "sa3-medium",
+                "target_path": "/audio/speech",
+                "custom_body_params": {"seconds": 30},
+            },
+        ]
+        self.operation_rules_path.write_text(json.dumps(rules), encoding="utf-8")
+        self.config_loader.load_complete()
+
+    def test_neuraldeep_music_falls_back_to_sa3_on_unavailable_primary(self):
+        for primary_failure in (
+            _FakeDownstreamResponse(status_code=429),
+            _FakeDownstreamResponse(status_code=503),
+            httpx.ConnectError(
+                "NeuralDeep unavailable",
+                request=httpx.Request("POST", "https://neuraldeep.example/v1/music/generate"),
+            ),
+        ):
+            with self.subTest(primary_failure=primary_failure):
+                self._configure_music_fallback()
+                with self._client(primary_failure) as (client, _dispatcher, fake_http_client):
+                    fake_http_client.post.side_effect = [
+                        primary_failure,
+                        _FakeDownstreamResponse(b"sa3-music", content_type="audio/mpeg"),
+                    ]
+                    response = client.post(
+                        "/v1/audio/speech",
+                        json={
+                            "model": "gateway/audio-speech",
+                            "input": "lofi house loop, warm Rhodes piano",
+                            "audio_duration": 45,
+                            "response_format": "mp3",
+                        },
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.content, b"sa3-music")
+                self.assertEqual(fake_http_client.post.await_count, 2)
+                self.assertEqual(fake_http_client.post.await_args_list[1].args[0], "https://sa3.example/v1/audio/speech")
+                self.assertEqual(
+                    fake_http_client.post.await_args_list[1].kwargs["headers"]["Authorization"],
+                    "Bearer SA3-KEY",
+                )
+                self.assertEqual(
+                    fake_http_client.post.await_args_list[1].kwargs["json"],
+                    {
+                        "model": "sa3-medium",
+                        "input": "lofi house loop, warm Rhodes piano",
+                        "seconds": 45,
+                        "response_format": "mp3",
+                    },
+                )
+
+    def test_music_quota_cooldown_skips_neuraldeep_on_the_next_request(self):
+        self._configure_music_fallback()
+        quota = _FakeDownstreamResponse(status_code=429, json_data={"error": {"type": "quota_exceeded"}})
+        quota.headers["retry-after"] = "120"
+        with self._client(quota) as (client, _dispatcher, fake_http_client):
+            fake_http_client.post.side_effect = [
+                quota, _FakeDownstreamResponse(b"sa3-music", content_type="audio/mpeg"),
+            ]
+            payload = {"model": "gateway/audio-speech", "input": "lofi music"}
+            headers = {"Authorization": "Bearer test-gateway-key"}
+            first = client.post("/v1/audio/speech", json=payload, headers=headers)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(fake_http_client.post.await_count, 2)
+            fake_http_client.post.reset_mock()
+            fake_http_client.post.side_effect = None
+            fake_http_client.post.return_value = _FakeDownstreamResponse(b"sa3-again", content_type="audio/mpeg")
+            second = client.post("/v1/audio/speech", json=payload, headers=headers)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(second.content, b"sa3-again")
+            fake_http_client.post.assert_awaited_once()
+            self.assertEqual(fake_http_client.post.await_args.args[0], "https://sa3.example/v1/audio/speech")
+
+    def test_music_fallback_uses_default_seconds_and_drops_music_only_fields(self):
+        self._configure_music_fallback()
+        with self._client(_FakeDownstreamResponse(status_code=503)) as (client, _dispatcher, fake_http_client):
+            fake_http_client.post.side_effect = [
+                _FakeDownstreamResponse(status_code=503),
+                _FakeDownstreamResponse(b"sa3-music", content_type="audio/mpeg"),
+            ]
+            response = client.post(
+                "/v1/audio/speech",
+                json={
+                    "model": "gateway/audio-speech",
+                    "input": "lofi house loop",
+                    "lyrics": "[instrumental]",
+                    "vocal_language": "en",
+                    "bpm": 90,
+                    "response_format": "mp3",
+                },
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(fake_http_client.post.await_args_list[1].kwargs["json"], {
+            "model": "sa3-medium",
+            "input": "lofi house loop",
+            "seconds": 30,
+            "response_format": "mp3",
+        })
+
+    def test_music_client_errors_do_not_fallback_on_nonavailability_statuses(self):
+        for status_code in (400, 401, 402, 422):
+            with self.subTest(status_code=status_code):
+                self._configure_music_fallback()
+                with self._client(_FakeDownstreamResponse(status_code=status_code)) as (
+                    client,
+                    _dispatcher,
+                    fake_http_client,
+                ):
+                    response = client.post(
+                        "/v1/audio/speech",
+                        json={"model": "gateway/audio-speech", "input": "music"},
+                        headers={"Authorization": "Bearer test-gateway-key"},
+                    )
+
+                self.assertEqual(response.status_code, status_code)
+                fake_http_client.post.assert_awaited_once()
+
+    def test_successful_neuraldeep_music_does_not_call_sa3(self):
+        self._configure_music_fallback()
+        with self._client(_FakeDownstreamResponse(json_data={"task_id": "track-1"})) as (
+            client,
+            _dispatcher,
+            fake_http_client,
+        ):
+            fake_http_client.get.side_effect = [
+                _FakeDownstreamResponse(json_data={"status": "succeeded"}),
+                _FakeDownstreamResponse(b"neuraldeep-music", content_type="audio/mpeg"),
+            ]
+            response = client.post(
+                "/v1/audio/speech",
+                json={"model": "gateway/audio-speech", "input": "music"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"neuraldeep-music")
+        fake_http_client.post.assert_awaited_once()
+
+    def test_non_neuraldeep_speech_uses_only_first_route(self):
+        self._configure_music_fallback(primary_target_path="/audio/speech")
+        for downstream_response, expected_status in (
+            (_FakeDownstreamResponse(b"speech", content_type="audio/mpeg"), 200),
+            (_FakeDownstreamResponse(status_code=503), 503),
+        ):
+            with self.subTest(expected_status=expected_status), self._client(downstream_response) as (
+                client,
+                _dispatcher,
+                fake_http_client,
+            ):
+                response = client.post(
+                    "/v1/audio/speech",
+                    json={"model": "gateway/audio-speech", "input": "speech"},
+                    headers={"Authorization": "Bearer test-gateway-key"},
+                )
+
+            self.assertEqual(response.status_code, expected_status)
+            fake_http_client.post.assert_awaited_once()
+            self.assertEqual(fake_http_client.post.await_args.args[0], "https://neuraldeep.example/v1/audio/speech")
+
+    def test_music_fallback_returns_final_error_when_sa3_also_fails(self):
+        self._configure_music_fallback()
+        with self._client(_FakeDownstreamResponse(status_code=503)) as (client, _dispatcher, fake_http_client):
+            fake_http_client.post.side_effect = [
+                _FakeDownstreamResponse(status_code=503),
+                _FakeDownstreamResponse(status_code=503),
+            ]
+            response = client.post(
+                "/v1/audio/speech",
+                json={"model": "gateway/audio-speech", "input": "music"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(fake_http_client.post.await_count, 2)
 
     def test_audio_speech_preserves_llm_enhance_boolean_for_each_route(self):
         for model in ("gateway/audio-speech", "gateway/audio-speech-alt"):

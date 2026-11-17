@@ -109,6 +109,26 @@ def test_bettertoken_reference_translation():
     assert direct['input_references'][1]['video_url']['url'] == 'https://example.com/a.mp4'
 
 
+@pytest.mark.parametrize('extend', [False, True])
+def test_video_prompt_expansion_option_reaches_bettertoken(tmp_path, extend):
+    async def scenario():
+        def handler(request):
+            payload = json.loads(request.content)
+            assert payload['provider_options'] == {'alibaba': {'prompt_extend': extend}}
+            return httpx.Response(200, json={'id': 'upstream-option', 'status': 'queued'})
+        async with video_client(tmp_path, handler) as (client, _, _):
+            response = await client.post('/v1/videos', json={
+                **BODY, 'provider_options': {'alibaba': {'prompt_extend': extend}}})
+            assert response.status_code == 200, response.text
+    asyncio.run(scenario())
+
+
+def test_video_prompt_expansion_requires_boolean():
+    with pytest.raises(ValidationError) as error:
+        VideoRequest(**BODY, provider_options={'alibaba': {'prompt_extend': 'false'}})
+    assert error.value.errors()[0]['loc'] == ('provider_options', 'alibaba', 'prompt_extend')
+
+
 def test_first_frame_translation_and_validation():
     frame = {'type': 'image_url', 'image_url': {'url': 'https://example.com/frame.jpg'}, 'frame_type': 'first_frame'}
     payload = build_video_payload(VideoRequest(**BODY, frame_images=[frame]), 'wan3.0-video', 'bettertoken_videos')

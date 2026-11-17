@@ -26,6 +26,18 @@ class VideoReference(BaseModel):
         return self
 
 
+class AlibabaVideoOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_extend: StrictBool | None = None
+
+
+class VideoProviderOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alibaba: AlibabaVideoOptions | None = None
+
+
 class VideoRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -36,6 +48,7 @@ class VideoRequest(BaseModel):
     aspect_ratio: Literal["16:9", "4:3", "1:1", "3:4", "9:16"] | None = None
     seed: StrictInt | None = None
     generate_audio: StrictBool = True
+    provider_options: VideoProviderOptions | None = None
     frame_images: list[VideoReference] = Field(default_factory=list)
     input_references: list[VideoReference] = Field(default_factory=list)
 
@@ -74,6 +87,8 @@ def build_video_payload(body: VideoRequest, model: str, request_format: str | No
             payload["output"][name] = getattr(body, name)
     if body.seed is not None:
         payload["seed"] = body.seed
+    if body.provider_options is not None:
+        payload["provider_options"] = body.provider_options.model_dump(exclude_none=True)
     media = []
     for index, reference in enumerate(body.frame_images + body.input_references):
         media_type = reference.type.removesuffix("_url")

@@ -20,6 +20,8 @@ RETRYABLE_OPERATION_STATUS_CODES = frozenset({408, 409, 429})
 class DownstreamHTTPException(HTTPException):
     """An HTTP error returned by a provider, rather than local request validation."""
 
+    upstream_response: httpx.Response | None = None
+
 
 def _response_body_length(response: httpx.Response) -> int | None:
     content = getattr(response, "content", None)
@@ -204,7 +206,9 @@ async def proxy_json_to_downstream(
                     f"retryable downstream status {response.status_code}",
                 )
                 continue
-            raise DownstreamHTTPException(status_code=downstream_error_status_code(response.status_code), detail=detail)
+            error = DownstreamHTTPException(status_code=downstream_error_status_code(response.status_code), detail=detail)
+            error.upstream_response = response
+            raise error
 
         try:
             return response.json(), response.status_code

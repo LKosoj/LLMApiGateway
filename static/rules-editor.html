@@ -246,7 +246,7 @@
                         <div class="rules-toolbar-copy">
                             <strong data-i18n="editor:sections.audioSpeech.title">Audio Speech Routes</strong>
                             <span data-i18n="editor:sections.audioSpeech.description">Configure routes for /v1/audio/speech and the voice catalog used by /v1/audio/voices.</span>
-                            <span data-i18n="editor:sections.audioSpeech.hint">Text-to-speech uses the first route for each gateway model. Retry settings and the voice catalog path are in advanced options.</span>
+                            <span data-i18n="editor:sections.audioSpeech.hint">Music starting with a NeuralDeep /music/generate route tries subsequent entries on quota exhaustion or unavailability. Route order sets priority. Other TTS models use the first route. Retry and voice catalog settings are in advanced options. When NeuralDeep supplies a quota reset time, requests go directly to the next route until then.</span>
                         </div>
                         <button id="addAudioSpeechButton" type="button" class="secondary-button" data-i18n="editor:actions.addSpeechModel">Add Speech Model</button>
                     </div>

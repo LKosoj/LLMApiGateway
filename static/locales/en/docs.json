@@ -144,7 +144,7 @@
       "inputTurns": ". Each turn needs a non-empty text; voice and instructions are optional. The gateway forwards the list unchanged (for example, for fish-audio/drama-3).",
       "music": {
         "heading": "NeuralDeep music generation",
-        "intro": "POST /v1/audio/speech with model=llmgateway/music uses Google Lyria 3 Pro. The gateway creates a task, polls every 3 seconds and returns the completed audio file. The wait is limited to 360 seconds (HTTP 504); failed generation returns HTTP 502. Once a task ID is received, it is never submitted again.",
+        "intro": "POST /v1/audio/speech with model=llmgateway/music uses Google Lyria 3 Pro. The gateway creates a task, polls every 3 seconds and returns the completed audio file. The wait is limited to 360 seconds (HTTP 504); failed generation returns HTTP 502. Once a task ID is received, it is never submitted again. If a backup route is configured, these errors trigger switching to it.",
         "input": "Required nonempty string describing genre, instruments, mood and vocals. Sent to NeuralDeep as prompt.",
         "lyrics": "Lyrics with [verse], [chorus] and [bridge] tags. Use [instrumental] for instrumental music.",
         "vocal_language": "Vocal language, for example ru or en.",
@@ -156,7 +156,23 @@
         "response_format": "mp3 (default), wav, wav32, flac, opus or aac. Sent as audio_format when downloading the track.",
         "batch_size": "Only 1: one track per request.",
         "limits": "Fields other than model and input are optional. bpm, key_scale and time_signature are model hints; the official reference does not specify exact types or ranges. voice, speed and instructions do not control music; the voice catalog is empty and stream=true is unsupported. NeuralDeep discards unknown fields; covers, fragment editing, separate stems, files and other task_type values are unavailable.",
-        "playground": "In Playground, open Text to Speech, select llmgateway/music, enter the music description, choose a format, disable Dialogue and click Generate speech. Leave Voice and Instructions empty. A player and download link appear when the track is ready. The form currently has no lyrics, vocal_language, audio_duration, bpm, key_scale, time_signature, seed or batch_size fields; send those through the API, as shown below."
+        "playground": "In Playground, open Text to Speech, select llmgateway/music, enter the music description, choose a format, disable Dialogue and click Generate speech. Leave Voice and Instructions empty. A player and download link appear when the track is ready. The form currently has no lyrics, vocal_language, audio_duration, bpm, key_scale, time_signature, seed or batch_size fields; send those through the API, as shown below.",
+        "fallback": "For music routes starting with NeuralDeep /music/generate, subsequent entries are tried on quota exhaustion (HTTP 429), provider 5xx errors, network errors or timeouts. llmgateway/music is configured as NeuralDeep → sa3/sa3-medium. Request errors 400/401/402/422 do not trigger switching. For sa3-medium, audio_duration is sent as seconds; the default is 30 seconds when no duration is supplied. The backup request contains only model, input, seconds and response_format: lyrics and other NeuralDeep-specific parameters are not forwarded. Attempts appear in the fallback log; a successful call is billed once against the provider that returned the audio.",
+        "cooldown": "When NeuralDeep returns 429 with a reset time in Retry-After, X-Quota-Reset or error.reset_at, the gateway stores a cooldown, a temporary pause for that model and key. New requests skip NeuralDeep and use the next route until that time; afterwards NeuralDeep is tried again. The latest valid reset time wins when several are supplied. No cooldown is assigned without a valid future reset time. State is kept in process memory and is cleared on restart."
+      },
+      "sfx": {
+        "heading": "SFX: sound effect prompt rules",
+        "intro": "Use POST /v1/audio/speech with model=llmgateway/small-sfx. Describe the audible result in input using ordinary Russian or English. Russian descriptions are automatically translated and refined; special tags and model commands are unnecessary.",
+        "audible": "Describe the source, action, sound character, distance, surroundings and development over time. Appearance and plot matter only when they affect the sound.",
+        "kinds": "Distinguish a single effect, continuous ambience and a scene with events. The service chooses how to prepare the sound; for a scene, it prepares sources separately and places them on the timeline.",
+        "duration": "State the total duration explicitly, preferably as a whole number of seconds, up to 120. If omitted, the service chooses it: typical guidelines are 2–6 seconds for an effect, 10–20 for ambience and 15–40 for a sequence. An event timestamp does not specify total recording length.",
+        "fraction": "Fractional duration is rounded up: 1.2 seconds produces a 2-second recording with a gradual fade after 1.2 seconds. The separate duration parameter takes precedence over duration in input; keep them consistent.",
+        "timeline": "For complex scenes, specify each source’s start and end, continuous background, pauses, event counts and volume changes. Give separate timestamps for three impacts; describe differences if they should sound different.",
+        "acoustics": "Replace “epic” or “high quality” with audible properties: a dull low impact, a thin chime with a long decay, a dry close click without echo. Start with the main sound, avoid contradictions and leave time for pauses and decay.",
+        "quality": "Request effects separately for independent control. A timeline does not guarantee subsecond onset accuracy within generated fragments. Listen to check character, impact count, unwanted noise and seamless looping. Automatic quality checks and regeneration are not currently available.",
+        "exampleTitle": "Example scene with events",
+        "example": "Total duration 18 seconds. Quiet wind rustles the leaves throughout. Birdsong is audible from the beginning until second 6. At second 6, one distant gunshot sounds; the birds fall silent at that moment. From second 10, the birds return and sing slightly louder until the end. The wind continues without interruption. No speech or music.",
+        "guide": "Full agent instructions: all 7 rules, examples and a universal template. Open or download the Markdown file to pass it to an agent."
       }
     },
     "auth": {
@@ -234,7 +250,8 @@
       "text015": "How many variants to return.",
       "text016": "Result format.",
       "text017": "OpenAI-compatible image response with",
-      "text018": ". Streaming is not supported."
+      "text018": ". Streaming is not supported.",
+      "videoPromptExpansion": "For WAN via POST /v1/videos, the option below disables automatic provider-side prompt expansion. It is optional; omitting it preserves provider behavior. Send false as a JSON boolean, not a string."
     },
     "keys": {
       "heading": "Virtual key access",
