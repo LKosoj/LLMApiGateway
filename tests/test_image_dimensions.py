@@ -136,3 +136,24 @@ def test_invalid_exact_size_fails_before_generation(endpoint, size):
         )
         upstream.post.assert_not_awaited()
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize(("gif_requested", "image_format", "fits"), [
+    (True, "GIF", True), (False, "GIF", False), (True, "PNG", False),
+])
+def test_requested_gif_is_accepted_without_size_check(gif_requested, image_format, fits):
+    payload = {"data": [{"b64_json": encoded_image(16, 16, image_format)}]}
+    assert asyncio.run(image_dimensions_match(payload, (32, 64), AsyncMock(), gif_requested=gif_requested)) is fits
+
+
+def test_gif_response_to_gif_request_is_returned_without_retry(endpoint):
+    result = {"data": [{"b64_json": encoded_image(16, 16, "GIF")}]}
+    with endpoint._client(endpoint_support._FakeDownstreamResponse(result)) as (client, _, upstream):
+        response = client.post(
+            "/v1/images/generations",
+            json={"model": "gateway/image-gen", "prompt": "Draw a tree", "size": "32x64", "output_format": "gif"},
+            headers={"Authorization": "Bearer test-gateway-key"},
+        )
+    assert response.status_code == 200
+    upstream.post.assert_awaited_once()
+    assert response.json() == result

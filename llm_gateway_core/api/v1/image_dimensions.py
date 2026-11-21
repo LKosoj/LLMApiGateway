@@ -25,6 +25,8 @@ async def image_dimensions_match(
     payload: dict,
     expected: tuple[int, int],
     http_client: httpx.AsyncClient,
+    *,
+    gif_requested: bool = False,
 ) -> bool:
     items = payload.get("data")
     if not isinstance(items, list) or not items:
@@ -44,6 +46,9 @@ async def image_dimensions_match(
             else:
                 raise ValueError("Missing image content")
             with Image.open(io.BytesIO(content)) as image:
+                if gif_requested and image.format == "GIF":
+                    # Анимацию провайдер режет из одного листа кадров: размер кадра меньше заказанного
+                    continue
                 matches = all(abs(actual - wanted) <= wanted * SIZE_TOLERANCE
                               for actual, wanted in zip(image.size, expected)) and matches
             del content

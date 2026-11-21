@@ -361,6 +361,7 @@ async def _proxy_image_with_fallback(
     source_transport: str,
 ) -> object:
     expected_dimensions = requested_image_dimensions(request_payload)
+    gif_requested = str(request_payload.get("output_format", "")).strip().lower() == "gif"
     request_started_at = time.monotonic()
 
     for route_index, route in enumerate(routes):
@@ -486,7 +487,7 @@ async def _proxy_image_with_fallback(
                             detail=f"Invalid downstream image response: {exc}",
                         ) from exc
                     if expected_dimensions is None or await image_dimensions_match(
-                        response_payload, expected_dimensions, http_client,
+                        response_payload, expected_dimensions, http_client, gif_requested=gif_requested,
                     ):
                         break
                     logger.warning(

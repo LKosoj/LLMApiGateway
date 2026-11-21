@@ -22,11 +22,11 @@
       },
       {
         "provider": "nvidia",
-        "model": "nvidia/nemotron-4-340b-instruct",
+        "model": "z-ai/glm-5.3-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -216,11 +216,11 @@
       },
       {
         "provider": "nvidia",
-        "model": "nvidia/nemotron-4-340b-instruct",
+        "model": "z-ai/glm-5.3-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -425,7 +425,7 @@
       },
       {
         "provider": "agentrouter",
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -580,14 +580,14 @@
         ]
       },
       {
-        "provider": "z.ai",
-        "model": "glm-5-turbo",
+        "provider": "gem",
+        "model": "gemini-3.7-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
-        "context_window": 202752,
+        "context_window": 1048576,
         "capabilities_autofilled": [
           "context_window",
           "supports_tools",
@@ -854,11 +854,11 @@
     "fallback_models": [
       {
         "provider": "nvidia",
-        "model": "nvidia/nemotron-4-340b-instruct",
+        "model": "z-ai/glm-5.3-flash",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
         "context_window": 1048576,
         "capabilities_autofilled": [
@@ -868,14 +868,14 @@
         ]
       },
       {
-        "provider": "agentrouter",
-        "model": "deepseek-v4-flash",
+        "provider": "neuraldeep",
+        "model": "qwen3.8-27b",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
-        "supports_vision": false,
+        "supports_vision": true,
         "supports_tools": true,
-        "context_window": 1048576,
+        "context_window": 1024000,
         "capabilities_autofilled": [
           "context_window",
           "supports_vision"
@@ -1013,7 +1013,15 @@
         "model": "qwen4-max-preview",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {},
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 1000000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "z.ai",
