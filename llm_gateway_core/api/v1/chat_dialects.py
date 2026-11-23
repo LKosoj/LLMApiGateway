@@ -685,6 +685,8 @@ def _anthropic_usage_to_openai_usage(usage_src: object) -> dict:
     }
     if cache_creation_input_tokens or cache_read_input_tokens:
         usage["prompt_tokens_details"] = {"cached_tokens": cache_read_input_tokens}
+    if "cost" in usage_src:
+        usage["cost"] = usage_src["cost"]
 
     return usage
 
@@ -911,6 +913,7 @@ def _openai_response_to_anthropic(response_data: dict, requested_model: str) -> 
         "usage": {
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
+            **({"cost": usage["cost"]} if "cost" in usage else {}),
         },
     }
 

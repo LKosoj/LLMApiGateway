@@ -86,6 +86,7 @@ async def generate_neuraldeep_music(
     retry_delay: float = 0.0,
     routing_state: UpstreamRoutingState | None = None,
     key_fingerprint: str | None = None,
+    completed_usage: dict | None = None,
 ) -> tuple[bytes, int, str | None]:
     music_payload = dict(payload)
     description = music_payload.pop("input")
@@ -132,6 +133,8 @@ async def generate_neuraldeep_music(
                 task = _task_json(await http_client.get(task_url, headers=headers))
                 status = task.get("status")
                 if status == "succeeded":
+                    if completed_usage is not None:
+                        completed_usage["usage"] = task.get("usage")
                     break
                 if status == "failed":
                     raise HTTPException(status_code=502, detail="NeuralDeep music generation failed.")

@@ -396,6 +396,12 @@ async def _finalize_pdf_job_response(
 ) -> Response:
     if not _pdf_job_succeeded(payload):
         await release_operation(owner)
+        if isinstance(payload, dict) and 200 <= response.status_code < 300:
+            usage = payload.get("usage")
+            return JSONResponse(
+                {**payload, "usage": {**(usage if isinstance(usage, dict) else {}), "cost": None}},
+                status_code=response.status_code,
+            )
         return response
 
     job_id = _terminal_pdf_job_id(payload, expected_job_id=expected_job_id)
@@ -570,7 +576,10 @@ async def get_pdf_job_result(job_id: str, model: str, request: Request):
         retry_count=retry_count,
         retry_delay=retry_delay,
     )
-    return _response_from_raw_body(response_body, status_code, content_type, response_headers)
+    response = _response_from_raw_body(response_body, status_code, content_type, response_headers)
+    if 200 <= status_code < 300:
+        response.headers["X-Cost-USD"] = "0"
+    return response
 
 
 @router.get("/pdf/jobs/{job_id}/download/{artifact:path}")
@@ -583,4 +592,7 @@ async def download_pdf_job_artifact(job_id: str, artifact: str, model: str, requ
         retry_count=retry_count,
         retry_delay=retry_delay,
     )
-    return _response_from_raw_body(response_body, status_code, content_type, response_headers)
+    response = _response_from_raw_body(response_body, status_code, content_type, response_headers)
+    if 200 <= status_code < 300:
+        response.headers["X-Cost-USD"] = "0"
+    return response

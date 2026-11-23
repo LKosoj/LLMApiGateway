@@ -1083,6 +1083,7 @@ def configure_cors(app: FastAPI, cors_allow_origins: list[str] | None = None) ->
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Cost-USD"],
     )
 
 

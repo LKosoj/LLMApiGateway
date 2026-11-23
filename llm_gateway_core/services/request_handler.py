@@ -744,6 +744,7 @@ class RequestErrorDetail(str):
     retry_after_uncapped: float | None
     status_code: int | None
     diagnostic_detail: str | None
+    upstream_usage: dict | None
 
     def __new__(
         cls,
@@ -753,12 +754,14 @@ class RequestErrorDetail(str):
         retry_after_uncapped: float | None = None,
         status_code: int | None = None,
         diagnostic_detail: str | None = None,
+        upstream_usage: dict | None = None,
     ) -> "RequestErrorDetail":
         instance = super().__new__(cls, message)
         instance.retry_after = retry_after
         instance.retry_after_uncapped = retry_after_uncapped
         instance.status_code = status_code
         instance.diagnostic_detail = diagnostic_detail
+        instance.upstream_usage = upstream_usage
         return instance
 
 
@@ -1325,7 +1328,7 @@ async def _make_streaming_request(
 
     error_in_stream = False
     error_detail = None
-    tokens_usage = None
+    observed_usage: dict = {}
     upstream_done = False
     saw_finish_reason = False
     framer = SSEFramer(max_event_bytes=stream_event_max_bytes)
@@ -1333,7 +1336,7 @@ async def _make_streaming_request(
 
     def inspect_events(events: tuple[SSEEvent, ...]) -> bool:
         nonlocal error_detail, error_in_stream, saw_real_data_chunk
-        nonlocal tokens_usage, upstream_done, first_content_at
+        nonlocal upstream_done, first_content_at
         nonlocal saw_finish_reason
 
         for event in events:
@@ -1360,6 +1363,17 @@ async def _make_streaming_request(
             if chunk_json is None:
                 continue
 
+            if isinstance(chunk_json, dict):
+                usage = chunk_json.get("usage")
+                if chunk_json.get("type") == "message_start":
+                    message = chunk_json.get("message")
+                    usage = message.get("usage") if isinstance(message, dict) else None
+                elif chunk_json.get("type") in {"response.completed", "response.incomplete", "response.failed"}:
+                    result = chunk_json.get("response")
+                    usage = result.get("usage") if isinstance(result, dict) else None
+                if isinstance(usage, dict):
+                    observed_usage.update(usage)
+
             error_detail_candidate = _extract_stream_error_detail(chunk_json)
             if error_detail_candidate:
                 _log_stream_inspection_failure(
@@ -1374,12 +1388,9 @@ async def _make_streaming_request(
                 error_in_stream = True
                 return True
 
-            if isinstance(chunk_json, dict) and "usage" in chunk_json:
-                tokens_usage = chunk_json.get("usage")
             if isinstance(chunk_json, dict) and chunk_json.get("type") in {
                 "response.completed", "response.incomplete",
             }:
-                tokens_usage = (chunk_json.get("response") or {}).get("usage")
                 upstream_done = True
             if _stream_chunk_has_finish_reason(chunk_json):
                 saw_finish_reason = True
@@ -1621,13 +1632,18 @@ async def _make_streaming_request(
                 break
 
         if error_in_stream:
+            if observed_usage.get("cost") is not None or (upstream_done and observed_usage):
+                error_detail = RequestErrorDetail(str(error_detail), upstream_usage=observed_usage)
             return None, error_detail
 
         if not primed_payload or not saw_real_data_chunk:
-            return None, "Stream ended before any content chunks were received."
+            return None, RequestErrorDetail(
+                "Stream ended before any content chunks were received.",
+                upstream_usage=observed_usage or None,
+            )
 
         async def combined_generator():
-            nonlocal error_in_stream, error_detail, tokens_usage, saw_real_data_chunk
+            nonlocal error_in_stream, error_detail, saw_real_data_chunk
             nonlocal upstream_done, terminal_clip_bytes
             try:
                 try:
@@ -1742,6 +1758,7 @@ async def _make_streaming_request(
         streaming_response.llmgateway_ttft_ms = max(
             0, int((first_content_at - stream_started_at) * 1000)
         )
+        streaming_response.llmgateway_upstream_usage = observed_usage
         result = _build_streaming_response_result(streaming_response, error_detail)
         stream_handed_off = True
         return result
@@ -1828,6 +1845,9 @@ async def _make_json_request(
             error_detail = None
         error_detail = error_detail or response_json.get("detail")
         logging.warning(f"Error detected in non-stream response from {target_url}: {error_detail}")
+        usage = response_json.get("usage")
+        if error_detail and isinstance(usage, dict):
+            error_detail = RequestErrorDetail(str(error_detail), upstream_usage=usage)
         return None, error_detail
     return response_json, None
 

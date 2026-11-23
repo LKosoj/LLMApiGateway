@@ -19,6 +19,10 @@ from uuid import uuid4
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from ...services.accounting import BillingComponent
+from ...services.chat_accounting import ChatTerminalObservation
+from .chat_accounting import ChatTerminalHandoff, get_chat_terminal_handoff
+
 _HOSTED_WEB_SEARCH_DESCRIPTION = (
     "Search the web for up-to-date information. "
     "Returns a list of results with url, title and snippet."
@@ -143,14 +147,23 @@ async def complete_responses_web_search(
     working["messages"] = messages
     working["stream"] = False
     working.pop("stream_options", None)
-    search_call = search or _default_gateway_search
+    components: list[BillingComponent] = []
+
+    async def observed_search(request: Request, **kwargs) -> str:
+        return await _default_gateway_search(request, components=components, **kwargs)
+
+    search_call = search or observed_search
 
     response_data: dict | None = None
+    observation: ChatTerminalObservation | None = None
     usages: list[object] = []
     for round_index in range(_MAX_MODEL_ROUNDS):
-        dispatched = await dispatch(request, working, accounting_handoff=None)
+        handoff = ChatTerminalHandoff()
+        dispatched = await dispatch(request, working, accounting_handoff=handoff)
         if not isinstance(dispatched, dict):
             raise HTTPException(status_code=500, detail="Internal server error: expected JSON response")
+        observation = handoff.take()
+        components.extend(observation.components)
         response_data = dispatched
         usages.append(response_data.get("usage"))
         tool_calls = _message_tool_calls(response_data)
@@ -164,28 +177,17 @@ async def complete_responses_web_search(
         finally:
             _restore_provider(request, snapshot)
 
-    if response_data is None:
+    if response_data is None or observation is None:
         raise HTTPException(status_code=500, detail="Internal server error: expected JSON response")
     response_data["usage"] = _combine_usage(usages)
-    return response_data
-
-
-def publish_responses_chat_observation(request: Request, response_data: dict) -> None:
-    """Bill the finished model turn once. Search rounds are already included in its usage."""
-    from ...services.chat_accounting import build_direct_chat_terminal_observation
-    from .chat_accounting import get_chat_terminal_handoff
-
-    provider = getattr(request.state, "llmgateway_provider", None)
-    model = getattr(request.state, "llmgateway_provider_model", None)
-    if not isinstance(provider, str) or not provider or not isinstance(model, str) or not model:
-        raise HTTPException(status_code=500, detail="Internal server error: chat provider was not recorded")
-    observation = build_direct_chat_terminal_observation(
-        response_data,
-        provider=provider,
-        model=model,
-        cost_rate_registry=request.state.runtime_snapshot.cost_rate_registry,
+    total = ChatTerminalObservation(
+        top_provider=observation.top_provider,
+        top_model=observation.top_model,
+        components=tuple(components),
     )
-    get_chat_terminal_handoff(request).publish(observation)
+    response_data["usage"]["cost"] = total.usage.cost
+    get_chat_terminal_handoff(request).publish(total)
+    return response_data
 
 
 def responses_chat_to_sse(response_data: dict, requested_model: str) -> StreamingResponse:
@@ -387,6 +389,7 @@ async def _search_text(
 async def _default_gateway_search(
     request: Request,
     *,
+    components: list[BillingComponent],
     query: str,
     max_results: int,
     include_domains: list[str],
@@ -396,7 +399,7 @@ async def _default_gateway_search(
         _UsageAccumulator,
         _get_operation_runtime,
         _resolve_service_model,
-        _search_with_model,
+        _search_with_model_observed,
     )
 
     _dispatcher, _http_client, config_loader, _proxy_clients = _get_operation_runtime(request)
@@ -406,18 +409,25 @@ async def _default_gateway_search(
         None,
         field_name="model",
     )
-    results = await _search_with_model(
-        request,
-        search_model=search_model,
-        query=query,
-        max_results=max_results,
-        num_queries=1,
-        language="en",
-        usage_accumulator=_UsageAccumulator(),
-        expand_query=False,
-        include_domains=include_domains or None,
-    )
-    return _format_search_results(results)
+    internal_components: list[BillingComponent] = []
+    try:
+        result = await _search_with_model_observed(
+            request,
+            search_model=search_model,
+            query=query,
+            max_results=max_results,
+            num_queries=1,
+            language="en",
+            usage_accumulator=_UsageAccumulator(),
+            expand_query=False,
+            include_domains=include_domains or None,
+            _component_accumulator=internal_components,
+        )
+    except Exception:
+        components.extend(internal_components)
+        raise
+    components.extend(result.components)
+    return _format_search_results(result.result)
 
 
 def _format_search_results(results: object) -> str:
@@ -446,8 +456,6 @@ def _combine_usage(usages: list[object]) -> dict:
     reasoning = 0
     saw_cached = False
     saw_reasoning = False
-    cost = 0.0
-    saw_cost = False
     for usage in usages:
         if not isinstance(usage, dict):
             continue
@@ -462,17 +470,12 @@ def _combine_usage(usages: list[object]) -> dict:
         if isinstance(completion_details, dict) and "reasoning_tokens" in completion_details:
             saw_reasoning = True
             reasoning += _usage_int(completion_details.get("reasoning_tokens"))
-        if isinstance(usage.get("cost"), (int, float)) and not isinstance(usage.get("cost"), bool):
-            saw_cost = True
-            cost += float(usage["cost"])
     if total["total_tokens"] == 0:
         total["total_tokens"] = total["prompt_tokens"] + total["completion_tokens"]
     if saw_cached:
         total["prompt_tokens_details"] = {"cached_tokens": cached}
     if saw_reasoning:
         total["completion_tokens_details"] = {"reasoning_tokens": reasoning}
-    if saw_cost and cost > 0:
-        total["cost"] = cost
     return total
 
 

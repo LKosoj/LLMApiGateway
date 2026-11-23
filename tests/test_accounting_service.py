@@ -988,6 +988,7 @@ def test_record_keyed_charge_returns_exact_receipt_and_acknowledges_source() -> 
         assert receipt.projection_status is ProjectionStatus.APPLIED
         assert receipt.event_id == "event-charge"
         assert receipt.usage_row_id == 1
+        assert receipt.response_cost_usd == 0.25
         assert sink.calls == ["event-charge"]
         assert source.projected_calls == ["event-charge"]
         await service.stop()

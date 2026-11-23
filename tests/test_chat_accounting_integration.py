@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -830,6 +831,49 @@ def _openai_stream_response() -> StreamingResponse:
         yield b"data: [DONE]\n\n"
 
     return StreamingResponse(body(), media_type="text/event-stream")
+
+
+def test_paid_empty_completion_and_accepted_fallback_are_billed_and_returned_together() -> None:
+    async def scenario() -> None:
+        app, service, _events = _app()
+        _install_chat_routes(app)
+        loader = app.state.snapshot.config_loader
+        loader.providers_config = {"provider-a": _provider_config()}
+        loader.fallback_rules = {
+            "gateway-model": {"rotate_models": False, "fallback_models": [
+                {"provider": "provider-a", "model": "discarded"},
+                {"provider": "provider-a", "model": "model-a"},
+            ]},
+        }
+        loader.model_rules = {}
+        first = {
+            "choices": [{"message": {"content": ""}, "finish_reason": "stop"}],
+            "usage": {"cost": 0.01},
+        }
+        second = _openai_json_response()
+        second["usage"]["cost"] = 0.03
+
+        async def commit(_reservation, event):
+            return replace(_receipt(event), response_cost_usd=event.usage.cost)
+
+        service.commit.side_effect = commit
+        with (
+            patch.object(chat_api, "resolve_provider_auth_material", new=AsyncMock(
+                return_value=SimpleNamespace(headers={"Authorization": "Bearer test"}, upstream_key_fingerprint=None)
+            )),
+            patch.object(chat_api, "make_llm_request", new=AsyncMock(side_effect=[(first, None), (second, None)])),
+        ):
+            sent = await _run_app(app)
+        assert sent[0]["status"] == 200
+        assert dict(sent[0]["headers"])[b"x-cost-usd"] == b"0.04"
+        assert json.loads(b"".join(message.get("body", b"") for message in sent))["usage"]["cost"] == 0.04
+        service.commit.assert_awaited_once()
+        event = service.commit.await_args.args[1]
+        assert [(component.model, component.usage.cost) for component in event.components] == [
+            ("discarded", 0.01), ("model-a", 0.03),
+        ]
+
+    run_async(scenario())
 
 
 @pytest.mark.parametrize(

@@ -554,7 +554,8 @@ def test_successful_json_commits_rollup_before_start_and_finishes_active_once() 
         )
 
         assert messages[0]["status"] == 201
-        assert _body(messages) == response.body
+        assert json.loads(_body(messages)) == {"result": "exact", "usage": {"cost": seal.aggregate_usage.cost}}
+        assert dict(messages[0]["headers"])[b"x-cost-usd"] == str(seal.aggregate_usage.cost).encode()
         assert response.headers["x-exact"] == "yes"
         service.commit.assert_awaited_once()
         service.release.assert_not_awaited()

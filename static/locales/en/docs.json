@@ -97,6 +97,7 @@
       "title": "3. Python SDK"
     },
     "usage": {
+      "cost": "The final charge in USD is in usage.cost for JSON, X-Cost-USD for files and text, and the usage event for streams. The total includes accounted components and billable attempts before fallback. For background PDF and video jobs, the amount appears after confirmation.",
       "linkText": "Analytics",
       "text001": "Usage by key and model is available on the",
       "text002": "page.",
@@ -251,7 +252,8 @@
       "text016": "Result format.",
       "text017": "OpenAI-compatible image response with",
       "text018": ". Streaming is not supported.",
-      "videoPromptExpansion": "For WAN via POST /v1/videos, the option below disables automatic provider-side prompt expansion. It is optional; omitting it preserves provider behavior. Send false as a JSON boolean, not a string."
+      "videoPromptExpansion": "For WAN via POST /v1/videos, the option below disables automatic provider-side prompt expansion. It is optional; omitting it preserves provider behavior. Send false as a JSON boolean, not a string.",
+      "videoMischief": "accepts a prompt, a duration of 3 or 5 seconds, and one image in frame_images with type first_frame."
     },
     "keys": {
       "heading": "Virtual key access",

@@ -526,7 +526,7 @@ def test_pdf_job_non_success_releases_without_charge(method: str, status: str) -
                 response = await pdf.get_pdf_job("job-1", "gateway/pdf", request)
 
         assert response.status_code == 200
-        assert _response_json(response) == payload
+        assert _response_json(response) == {**payload, "usage": {"cost": None}}
         services.accounting_service.commit.assert_not_awaited()
         services.accounting_service.release.assert_awaited_once()
         messages = await _send_response(request, response)

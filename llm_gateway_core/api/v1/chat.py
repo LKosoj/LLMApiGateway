@@ -265,7 +265,6 @@ async def openai_responses(request: Request):
     if web_search_bindings:
         from .responses_web_search import (
             complete_responses_web_search,
-            publish_responses_chat_observation,
             responses_chat_to_sse,
         )
 
@@ -276,7 +275,6 @@ async def openai_responses(request: Request):
             web_search_bindings,
             dispatch=_dispatch_chat_request,
         )
-        publish_responses_chat_observation(request, response_data)
         _update_request_usage_tracker(request, response_data.get("usage"))
         if client_streams:
             return responses_chat_to_sse(response_data, requested_model)

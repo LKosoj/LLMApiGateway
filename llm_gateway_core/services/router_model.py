@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from ..utils.usage_tracking import ModelCostRates
-from .accounting import AccountingValidationError
+from .accounting import BillingComponent
 from .capability_guard import request_needs_vision
 from .chat_accounting import ChatTerminalObservation, ObservedChatResponse
 from .fusion_keepalive import DELEGATE_DISPATCH_STATE_ATTR
@@ -414,14 +414,20 @@ class _PrefixedChatHandoff:
     def __init__(self, handoff: Any, components: tuple[Any, ...]) -> None:
         self._handoff = handoff
         self._components = components
+        self._rejected_components: list[BillingComponent] = []
 
     def _prefixed(self, observation: ChatTerminalObservation | None) -> ChatTerminalObservation | None:
         if observation is None:
             return None
-        return dataclasses.replace(observation, components=self._components + tuple(observation.components))
+        return dataclasses.replace(
+            observation, components=(*self._components, *self._rejected_components, *observation.components)
+        )
 
     def publish(self, observation: ChatTerminalObservation) -> None:
         self._handoff.publish(self._prefixed(observation))
+
+    def record_rejected_component(self, component: BillingComponent) -> None:
+        self._rejected_components.append(component)
 
     def publish_stream_observer(self, observer: Any, *, build_partial: Any = None) -> None:
         self._handoff.publish_stream_observer(
@@ -466,14 +472,14 @@ class RouterModelService:
         accounting_handoff: Any = None,
     ) -> Any:
         """Select a target, then return its stream; the decision cost joins the stream accounting."""
-        selected_candidate, _decision, _source, selector_component, _usage = await self._select(
+        selected_candidate, _decision, _source, selector_components, _usage = await self._select(
             request=request,
             router_config=router_config,
             request_body=request_body,
         )
         handoff = accounting_handoff
-        if accounting_handoff is not None and selector_component is not None:
-            handoff = _PrefixedChatHandoff(accounting_handoff, (selector_component,))
+        if accounting_handoff is not None and selector_components:
+            handoff = _PrefixedChatHandoff(accounting_handoff, selector_components)
         return await self._dispatch_selected_target(
             request=request,
             request_body=request_body,
@@ -489,20 +495,24 @@ class RouterModelService:
         router_config: dict[str, Any],
         request_body: dict[str, Any],
     ) -> ObservedChatResponse:
+        from ..api.v1.chat_accounting import ChatTerminalHandoff
+
         if request_body.get("stream", False):
             raise HTTPException(status_code=400, detail="Use run_stream for streaming Router requests.")
 
-        selected_candidate, decision, decision_source, selector_component, selector_usage = await self._select(
+        selected_candidate, decision, decision_source, selector_components, selector_usage = await self._select(
             request=request,
             router_config=router_config,
             request_body=request_body,
         )
         selected_id = selected_candidate["id"]
 
+        handoff = ChatTerminalHandoff()
         response = await self._dispatch_selected_target(
             request=request,
             request_body=request_body,
             selected_candidate=selected_candidate,
+            accounting_handoff=handoff,
         )
 
         if not isinstance(response, dict):
@@ -514,25 +524,11 @@ class RouterModelService:
         if "choices" not in response and not is_anthropic_raw:
             raise HTTPException(status_code=502, detail="Router delegate returned an invalid chat response.")
 
-        delegate_provider = getattr(request.state, "llmgateway_provider", None)
-        delegate_model = getattr(request.state, "llmgateway_provider_model", None)
-        if not isinstance(delegate_provider, str) or not isinstance(delegate_model, str):
-            raise AccountingValidationError
-        delegate_component = build_token_model_component(
-            response,
-            provider=delegate_provider,
-            model=delegate_model,
-            cost_rate_registry=self._cost_rate_registry,
-        )
-        components = (delegate_component,) if selector_component is None else (
-            selector_component,
-            delegate_component,
-        )
-        observation = ChatTerminalObservation(
-            top_provider=delegate_provider,
-            top_model=delegate_model,
-            components=components,
-        )
+        observation = handoff.take()
+        if selector_components:
+            observation = dataclasses.replace(
+                observation, components=(*selector_components, *observation.components)
+            )
 
         response_usage = response.get("usage")
         if not isinstance(response_usage, dict):
@@ -560,11 +556,11 @@ class RouterModelService:
         request: Request,
         router_config: dict[str, Any],
         request_body: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any], str, Any, dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any], str, tuple[BillingComponent, ...], dict[str, Any]]:
         """Pick a premium candidate for images, otherwise use tool history or decisions.
 
         Returns the candidate, the decision, its source, the decision billing
-        component (``None`` without a model call) and the decision usage in
+        components and the decision usage in
         chat ``prompt_tokens``/``completion_tokens`` form.
         """
         messages = request_body.get("messages")
@@ -584,15 +580,15 @@ class RouterModelService:
                     detail="Router image request requires an unambiguous premium target.",
                 )
             decision = {"candidate_id": selected_candidate["id"], "reason": "image_input", "confidence": None}
-            return selected_candidate, decision, "image", None, {}
+            return selected_candidate, decision, "image", (), {}
 
         direct_decision = _direct_stage_decision(candidates, messages)
         if direct_decision is not None:
             selected_candidate, reason = direct_decision
             decision = {"candidate_id": selected_candidate["id"], "reason": reason, "confidence": None}
-            return selected_candidate, decision, "tool_history", None, {}
+            return selected_candidate, decision, "tool_history", (), {}
 
-        decision_response, selector_component = await self._call_decision_model(
+        decision_response, selector_components = await self._call_decision_model(
             request=request,
             selector_model=router_config["selector_model"],
             payload=_decision_payload(
@@ -615,7 +611,7 @@ class RouterModelService:
             )
         usage = decision_response.get("usage")
         selector_usage = _usage_for_cost(usage) if isinstance(usage, dict) else {}
-        return selected_candidate, decision, "decision_model", selector_component, selector_usage
+        return selected_candidate, decision, "decision_model", selector_components, selector_usage
 
     async def _call_decision_model(
         self,
@@ -623,7 +619,7 @@ class RouterModelService:
         request: Request,
         selector_model: str,
         payload: dict[str, Any],
-    ) -> tuple[dict[str, Any], Any]:
+    ) -> tuple[dict[str, Any], tuple[BillingComponent, ...]]:
         from ..api.v1.decisions import call_decision_routes
 
         routes = request.state.runtime_snapshot.operation_dispatcher.lookup_routes("decisions", selector_model)
@@ -647,6 +643,7 @@ class RouterModelService:
             name: getattr(request.state, name, None)
             for name in ("llmgateway_gateway_model", "llmgateway_operation", "llmgateway_target_path")
         }
+        rejected_components: list[BillingComponent] = []
         try:
             response, _status_code, component = await call_decision_routes(
                 request,
@@ -655,11 +652,12 @@ class RouterModelService:
                 routes,
                 cost_rate_registry=self._cost_rate_registry,
                 observe=observe,
+                rejected_components=rejected_components,
             )
         finally:
             for name, value in saved_state.items():
                 setattr(request.state, name, value)
-        return response, component
+        return response, (*rejected_components, component)
 
     async def _dispatch_selected_target(
         self,

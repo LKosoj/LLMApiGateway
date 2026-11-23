@@ -13,6 +13,7 @@ from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..api.error_envelope import error_response
+from ..services.accounting import AccountingReceipt
 from ..services.fusion_keepalive import json_keepalive_enabled
 from ..services.runtime_config import AppServices
 from ..services.stream_observation import (
@@ -22,6 +23,7 @@ from ..services.stream_observation import (
     StreamObservationCapacity,
     StreamObservationError,
     StreamObservationLease,
+    parse_sse_json,
 )
 from .response_observation_contracts import (
     FinalizationResult,
@@ -215,9 +217,11 @@ class _ResponseObserver:
         "_leases",
         "_observation",
         "_pending_start",
+        "_response_cost_usd",
         "_send",
         "_services",
         "_settled",
+        "_sse_cost_payload",
         "_sse_validated_event",
         "_sse_framer",
         "_start",
@@ -234,6 +238,7 @@ class _ResponseObserver:
         self._services = services
         self._observation = observation
         self._pending_start: Message | None = None
+        self._response_cost_usd: float | None = None
         self._start: ResponseStart | None = None
         self._body_messages: list[Message] = []
         self._json_keepalive = False
@@ -241,6 +246,7 @@ class _ResponseObserver:
         self._sse_framer: SSEFramer | None = None
         self._sse_validated_event = False
         self._settled = False
+        self._sse_cost_payload: dict = {"type": "usage"}
         self._actual_started = False
         self._actual_completed = False
 
@@ -396,7 +402,7 @@ class _ResponseObserver:
         try:
             assert self._start is not None
             decoded = payload.decode(self._start.charset, errors="strict")
-            json.loads(decoded, parse_constant=_reject_json_constant)
+            document = json.loads(decoded, parse_constant=_reject_json_constant)
         except (UnicodeError, LookupError, RecursionError, ValueError) as exc:
             raise _ObservationFailure(_FailureKind.PROTOCOL) from exc
         try:
@@ -412,6 +418,23 @@ class _ResponseObserver:
         except BaseException as exc:
             raise _ObservationFailure(_FailureKind.PROTOCOL) from exc
         await self._settle_classified_reason(reason)
+        cost = self._response_cost_usd
+        if cost is not None and isinstance(document, dict):
+            usage = document.get("usage")
+            if not isinstance(usage, dict):
+                usage = document["usage"] = {}
+            existing_cost = usage.get("cost")
+            if isinstance(existing_cost, bool) or existing_cost != cost:
+                usage["cost"] = cost
+                payload = json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode(
+                    self._start.charset
+                )
+                self._body_messages = [{**message, "body": payload}]
+                assert self._pending_start is not None
+                self._pending_start["headers"] = [
+                    (name, str(len(payload)).encode() if name.lower() == b"content-length" else value)
+                    for name, value in self._pending_start["headers"]
+                ]
         await self._flush_start()
         for body_message in self._body_messages:
             await self._send_body(body_message)
@@ -438,6 +461,7 @@ class _ResponseObserver:
             if batch.events:
                 self._sse_validated_event = True
             terminal_reason = await self._classify_sse_events(batch.events)
+            terminal_bytes = batch.last_event_bytes if terminal_reason is not None else 0
             if terminal_reason is not None and (
                 framer.buffered_bytes or batch.trailing_frame_bytes
             ):
@@ -447,6 +471,8 @@ class _ResponseObserver:
                 if final_batch.events:
                     self._sse_validated_event = True
                 final_reason = await self._classify_sse_events(final_batch.events)
+                if final_reason is not None:
+                    terminal_bytes = final_batch.last_event_bytes
                 terminal_reason = terminal_reason or final_reason
                 if terminal_reason is None:
                     terminal_reason = (
@@ -479,6 +505,14 @@ class _ResponseObserver:
 
         if not self._actual_started:
             await self._flush_start()
+        if self._response_cost_usd is not None:
+            cost_payload = self._sse_cost_payload
+            usage = cost_payload.setdefault("usage", {})
+            usage["cost"] = self._response_cost_usd
+            cost_event = b"event: usage\ndata: " + json.dumps(cost_payload, separators=(",", ":")).encode() + b"\n\n"
+            payload = b"".join(_message_body(item) for item in self._body_messages)
+            prefix, terminal = payload[:-terminal_bytes], payload[-terminal_bytes:]
+            self._body_messages = [{**message, "body": prefix + cost_event + terminal}]
         for body_message in self._body_messages:
             await self._send_body(body_message)
         self._body_messages.clear()
@@ -512,7 +546,31 @@ class _ResponseObserver:
                 raise _ObservationFailure(_FailureKind.PROTOCOL) from exc
             if reason is not None:
                 terminal_reason = reason
+            self._remember_sse_usage(event)
         return terminal_reason
+
+    def _remember_sse_usage(self, event: SSEEvent) -> None:
+        if event.done:
+            return
+        try:
+            payload = parse_sse_json(event)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(payload, dict):
+            return
+        if payload.get("object") == "chat.completion.chunk":
+            for key in ("id", "object", "created", "model"):
+                if key in payload:
+                    self._sse_cost_payload[key] = payload[key]
+            self._sse_cost_payload["choices"] = []
+            usage = payload.get("usage")
+            if isinstance(usage, dict):
+                self._sse_cost_payload["usage"] = usage
+        elif payload.get("type") == "response.completed":
+            self._sse_cost_payload["type"] = "response.usage"
+            sequence = payload.get("sequence_number")
+            if type(sequence) is int:
+                self._sse_cost_payload["sequence_number"] = sequence + 1
 
     async def _settle_classified_reason(self, reason: TerminalReason) -> None:
         await self._settle_or_accounting_failure(reason)
@@ -530,9 +588,11 @@ class _ResponseObserver:
             raise _ObservationFailure(_FailureKind.ACCOUNTING) from exc
 
     async def _settle(self, reason: TerminalReason) -> None:
-        await self._observation.finalizer.finalize(
+        result = await self._observation.finalizer.finalize(
             TerminalSignal(reason=reason, start=self._start)
         )
+        if reason is TerminalReason.COMPLETE and isinstance(result.value, AccountingReceipt):
+            self._response_cost_usd = result.value.response_cost_usd
         self._settled = True
 
     def _retain_body_message(
@@ -559,6 +619,16 @@ class _ResponseObserver:
             return
         if self._pending_start is None:
             raise _ObservationFailure(_FailureKind.PROTOCOL)
+        if self._start is not None and self._start.wire_mode is WireMode.SSE:
+            self._pending_start["headers"] = [
+                (name, value) for name, value in self._pending_start["headers"]
+                if name.lower() != b"content-length"
+            ]
+        if self._response_cost_usd is not None:
+            headers = self._pending_start["headers"]
+            self._pending_start["headers"] = [
+                (name, value) for name, value in headers if name.lower() != b"x-cost-usd"
+            ] + [(b"x-cost-usd", str(self._response_cost_usd).encode())]
         await self._send(self._pending_start)
         self._actual_started = True
 

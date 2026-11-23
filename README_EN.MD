@@ -97,6 +97,14 @@ For chat models (including `llmgateway/ocr`) with `supports_vision=true` on at l
   For regular text chat replies and SSE streams, literal `<think>...</think>` blocks can be controlled per gateway model through the fallback-rule field `strip_think_tags`. When it is `true`, the gateway removes those blocks from `message.content` and streaming `delta.content`; when it is `false`, the text is preserved as returned by the provider. For native Anthropic replies (`/v1/messages` through an `anthropic`-type provider, when the response is forwarded in Anthropic shape without the OpenAI round-trip) the stripping is applied in their own shape: from the `content` text blocks of a non-stream reply and from `content_block_delta` (text-delta) SSE events. The JSON-object sanitization above remains mandatory so the JSON contract stays valid.
 
 
+### Response cost
+
+The gateway returns the cost of a completed billable request in USD in `usage.cost` for JSON and in the `X-Cost-USD` header for file or text responses. In SSE streams, the final cost arrives in an `event: usage` event as `usage.cost` before the closing event. For Chat Completions, this event uses the chunk format with an empty `choices` array.
+
+The amount matches gateway accounting. A valid provider `usage.cost` takes precedence, including zero. Composite requests include all accounted components. When a fallback succeeds, the total includes rejected attempts for which the gateway received a cost or enough data to calculate it. Speaker transcription includes the cost of transcription and diarization. Each part uses the provider charge or the configured rate for that model.
+
+For background PDF and video jobs, `usage.cost` is `null` until the final cost is confirmed. Repeated polls of a completed job return the same cost. Downloading a generated file is free of additional charges and returns `X-Cost-USD: 0`.
+
 ## Configuration
 
 ### Edit providers and fallback rules
@@ -1178,7 +1186,7 @@ For OpenAI-compatible image routes where the downstream is almost compatible wit
 
 The `models_operation_rules.json` structure consists of `embeddings`, `decisions`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_diarizations`, `audio_speaker_transcriptions`, `pdf_conversions`, `web_search`, `web_read`, `web_research`, and `web_deep_research` sections. Route-based section entries (`embeddings`, `decisions`, `rerank`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_diarizations`, `pdf_conversions`) contain `gateway_model_name` and a `routes` list where each route can define `provider`, `model`, `target_path`, `custom_headers`, `custom_body_params`, `payload_transforms`, `retry_count`, and `retry_delay`; `audio_speech` routes can also define `voices_target_path` when the voice list is not available at `"/voices"`. For `embeddings`, `decisions`, `rerank`, `images_generations`, `images_edits`, and `audio_transcriptions`, the route order defines the fallback chain; for `audio_speech` and `pdf_conversions`, the first route is used. Image routes can also define `request_format`, `response_format`, `request_mapping`, and `response_mapping`; rerank routes can define the optional `request_format`, `response_format`, and `response_output_format` fields; and audio transcription routes can define `request_format`. The `web_search` and `web_read` sections do not contain downstream routes at all: an entry holds just `gateway_model_name` (and optionally `query_model` for `web_search`), while the actual search/reader providers are built into the gateway and enabled by the presence of the env vars `PROXY_URL` / `TAVILY_API_KEY` / `JINA_API_KEY` / `ZAI_API_KEY`. Legacy `routes` fields are no longer accepted under `web_search`/`web_read`: if they are still present in `models_operation_rules.json`, the gateway refuses to start and returns an explicit validation error — you must remove the `routes` block from these sections manually. A `web_research` entry defines the service model, gateway search/read references (`search_model`, `read_model`), the ranking model (`rerank_model`), and the analysis chat model (`analysis_model`). A `web_deep_research` entry has no downstream routes either: it defines the service model, gateway search/read references (`search_model`, `read_model`), GPT Researcher models (`fast_model`, `smart_model`, `strategic_model`, `embedding_model`), and image settings (`image_generation_model`, `image_generation_size`). `image_generation_model` always references a gateway model from `images_generations`. When operation routes are saved, the gateway additionally validates cross-section references: `analysis_model`, `fast_model`, `smart_model`, `strategic_model` must be declared in fallback rules, `rerank_model` in `rerank`, `embedding_model` in `embeddings`, `image_generation_model` in `images_generations`, and `search_model` / `read_model` in `web_search` / `web_read`. In the rules editor Web tab all these fields are backed by dropdowns that refresh automatically as the related sections change.
 
-Image, audio, PDF, and web gateway models may define a fixed-cost policy at model level: `"cost_calculator": {"unit": "operation", "rate_usd": 0.25}`. `rate_usd` is expressed in USD and must be a finite non-negative number; an explicit `0` makes the operation free, while a missing calculator selects the `0.1 USD` per-operation policy. The durable accounting service now applies this policy: a valid upstream `usage.cost`, including `0`, remains the source of truth; otherwise the selected rate is charged exactly once for a successfully completed client request, without multiplying internal retry/fallback attempts. Errors, cancellations, and incomplete PDF jobs are not billed; repeated successful polling of the same PDF job is idempotent. Rules Editor exposes this field on the Images, Audio, and Web tabs; PDF remains JSON-only, but its `cost_calculator` is preserved when another tab saves the operation document.
+Image, audio, PDF, and web gateway models may define a fixed-cost policy at model level: `"cost_calculator": {"unit": "operation", "rate_usd": 0.25}`. `rate_usd` is expressed in USD and must be a finite non-negative number; an explicit `0` makes the operation free, while a missing calculator selects the `0.1 USD` per-operation policy. The durable accounting service now applies this policy: a valid upstream `usage.cost`, including `0`, remains the source of truth; otherwise the selected rate is charged exactly once for a successfully completed client request, including completed billable attempts whose cost the gateway can determine. Errors, cancellations, and incomplete PDF jobs are not billed; repeated successful polling of the same PDF job is idempotent. Rules Editor exposes this field on the Images, Audio, and Web tabs; PDF remains JSON-only, but its `cost_calculator` is preserved when another tab saves the operation document.
 Each `gateway_model_name` must be unique within its section. Each `provider` must exist in `providers.json`. For `rerank`, the `target_path` field defaults to `"/score"` when omitted, for `images_edits` to `"/images/edits"`, for `audio_speech` to `"/audio/speech"`, for `audio_transcriptions` to `"/audio/transcriptions"`, and for `pdf_conversions` to `"/api"`. `target_path` may be either a relative path starting with `/` or an absolute `http(s)` URL. For audio routes with `request_format: "nvidia_riva_grpc"`, keep `target_path` at the default `"/audio/transcriptions"` because the real downstream uses gRPC transport rather than an HTTP path. The same `gateway_model_name` is allowed in both chat rules and operation rules because they are separate configuration namespaces.
 
 ```json
@@ -1430,9 +1438,9 @@ The **Target Path** field in the Decisions tab is editable: enter a path relativ
 
 Existing fallback chains for Embeddings, Rerank, image generation and editing, audio transcription and diarization advance to the next configured route after any provider HTTP error (including `400`, `401`, `403`, `404`). Incoming request validation errors and local gateway limits are not treated as provider responses. No fallback occurs after response delivery or accounting commit starts.
 
-`POST /v1/decisions` accepts `model` (gateway model name), `state` (text, JSON object or array) and a non-empty `questions` dictionary. Question types are `noul` (probability of yes), `choice` (selection from a `criteria` object), and `score` (rating on a `criteria` array). Each question requires `instructions`. Provider `answers` and the original `usage` are returned unchanged; streaming is unsupported.
+`POST /v1/decisions` accepts `model` (gateway model name), `state` (text, JSON object or array) and a non-empty `questions` dictionary. Question types are `noul` (probability of yes), `choice` (selection from a `criteria` object), and `score` (rating on a `criteria` array). Each question requires `instructions`. The gateway preserves provider `answers` and usage fields and returns the USD total in `usage.cost`; streaming is unsupported.
 
-The rules editor includes a **Decisions** tab. The `decisions` section in `models_operation_rules.json` uses `gateway_model_name` and `routes`, like Embeddings; the default path is `/decisions`. Routes run in order: `opencode-zen / jev-1.13-free` → `routerai / ~typesafe/jev-latest` → `aitunnel / pplx-decider-v1.1-27b`. On any provider HTTP error or response accounting error, the gateway tries the next route before accounting commit starts. Invalid incoming requests are rejected before contacting providers; only the successful response is recorded. Model IDs, question limits and image support depend on the provider. For example, AITUNNEL accepts `jev-1.13`; `gpt-6-luna-decisions` supports images in `state`, while `span-01` only supports `noul`.
+The rules editor includes a **Decisions** tab. The `decisions` section in `models_operation_rules.json` uses `gateway_model_name` and `routes`, like Embeddings; the default path is `/decisions`. Routes run in order: `opencode-zen / jev-1.13-free` → `routerai / ~typesafe/jev-latest` → `aitunnel / pplx-decider-v1.1-27b`. On any provider HTTP error or response accounting error, the gateway tries the next route before accounting commit starts. Invalid incoming requests are rejected before contacting providers; accounting for a successful result includes rejected attempts with a known cost. Model IDs, question limits and image support depend on the provider. For example, AITUNNEL accepts `jev-1.13`; `gpt-6-luna-decisions` supports images in `state`, while `span-01` only supports `noul`.
 
 Gateway model `llmgateway/decision` uses OpenCode Zen `jev-1.13-free` at the full URL above first, then RouterAI `~typesafe/jev-latest` (`https://routerai.ru/api/v1/decisions`), then AITUNNEL `pplx-decider-v1.1-27b` at `/decisions`. The prices of `jev-1.13-free` and `~typesafe/jev-latest` match AITUNNEL `jev-1.13`. `providers.json` uses the exact `typesafe/jev-1.13` prices from the [OpenRouter catalog](https://openrouter.ai/api/v1/models?output_modalities=decisions): $0.042 per million input tokens and $0 for output. This is the OpenRouter price for USD accounting, rather than a conversion of the AITUNNEL RUB tariff. Valid upstream `usage.cost` in USD takes precedence; otherwise cost is calculated from configured prices and actual tokens. `usage.cost_rub` remains in the response and is never treated as USD. Without USD cost or a model price, the request fails with an accounting error.
 
@@ -1477,6 +1485,29 @@ This illustrates the response shape, rather than an actual request result. `noul
 Contract: [AITUNNEL Decisions API](https://aitunnel.ru/docs/decisions).
 
 ## Video generation
+
+### Mischief 1
+
+The `llmgateway/mischief-1` model uses [RouterAI](https://routerai.ru/models/tbc/mischief-1) with the existing `APIKEY_ROUTERAI` key. Provide a non-blank prompt, a duration of `3` or `5` seconds, and exactly one image with `frame_type: "first_frame"`. The image can be a URL or a data URI. The gateway supplies `480p` and `16:9` when those fields are omitted.
+
+Configure the model under `videos_generations` in the local `models_operation_rules.json` with one route `{"provider":"routerai","model":"tbc/mischief-1","target_path":"/videos","request_format":"routerai_videos"}`.
+
+Request body for `POST /v1/videos`:
+
+```json
+{
+  "model": "llmgateway/mischief-1",
+  "prompt": "A bird takes off over the sea",
+  "duration": 3,
+  "frame_images": [
+    {"type": "image_url", "image_url": {"url": "https://example.com/first.jpg"}, "frame_type": "first_frame"}
+  ]
+}
+```
+
+Check the status at `polling_url` and download the completed video from `content_url` using the same gateway key.
+
+### Wan 3.0
 
 The `llmgateway/wan3.0` model creates videos through BetterToken (`wan3.0-video`), then RouterAI (`alibaba/wan-3.0`) if the first provider explicitly refuses task creation. Fill in `APIKEY_BETTERTOKEN=` in the local `.env`; RouterAI uses the existing `APIKEY_ROUTERAI`.
 

@@ -80,10 +80,12 @@ def _task_payload(response: httpx.Response) -> dict:
     return payload
 
 
-def _public_task(payload: dict, job: dict) -> dict:
+def _public_task(payload: dict, job: dict, cost: float | None = None) -> dict:
     result = dict(payload)
     # Ссылки провайдера открываются только его ключом; клиент качает через content_url.
     result.pop("unsigned_urls", None)
+    usage = payload.get("usage")
+    result["usage"] = {**(usage if isinstance(usage, dict) else {}), "cost": cost}
     result.update(
         id=job["id"], model=job["gateway_model"],
         polling_url=f"/v1/videos/{job['id']}",
@@ -100,10 +102,10 @@ async def _load_job(request: Request, job_id: str) -> dict:
     return job
 
 
-async def _account_task(request: Request, owner, response: JSONResponse, payload: dict, job: dict):
+async def _account_task(request: Request, owner, payload: dict, job: dict, status_code: int = 200):
     if payload.get("status") != "completed":
         await release_operation(owner)
-        return response
+        return JSONResponse(_public_task(payload, job), status_code=status_code)
     try:
         cost = video_cost_usd(payload)
     except (ValueError, TypeError, OverflowError) as exc:
@@ -114,7 +116,7 @@ async def _account_task(request: Request, owner, response: JSONResponse, payload
     if billing is None:
         # Missing settlement is unknown, not a free or flat-priced generation.
         await release_operation(owner)
-        return response
+        return JSONResponse(_public_task(payload, job), status_code=status_code)
     observation = parse_upstream_operation_observation(
         billing, policy=owner.context.policy, gateway_model=job["gateway_model"],
         provider=None, model=None, cost_rate_registry=owner.cost_rate_registry,
@@ -123,7 +125,7 @@ async def _account_task(request: Request, owner, response: JSONResponse, payload
     )
     route = job["route"]
     return await finalize_buffered_operation(
-        owner, response, observation,
+        owner, JSONResponse(_public_task(payload, job, observation.usage.cost), status_code=status_code), observation,
         provenance=OperationEventProvenance(
             event_id=job["id"], method="POST", route_template="/v1/videos",
             provider=route["provider"], model=route["model"],
@@ -208,8 +210,7 @@ async def create_video(body: VideoRequest, request: Request):
                 request, operation=OPERATION, gateway_model=body.model, provider=route.provider,
                 model=route.model, success=True, started_at=started_at,
             )
-            response = JSONResponse(_public_task(payload, job), status_code=upstream.status_code)
-            return await _account_task(request, owner, response, payload, job)
+            return await _account_task(request, owner, payload, job, upstream.status_code)
         raise HTTPException(502, "All video providers refused task creation")
 
     return await _with_accounting(request, operation)
@@ -230,7 +231,7 @@ async def get_video(job_id: str, request: Request):
         payload = _task_payload(upstream)
         if payload["id"] != job["upstream_id"]:
             raise HTTPException(502, "Video provider returned a different task ID")
-        return await _account_task(request, owner, JSONResponse(_public_task(payload, job)), payload, job)
+        return await _account_task(request, owner, payload, job)
 
     return await _with_accounting(request, operation)
 
@@ -263,6 +264,7 @@ async def get_video_content(job_id: str, request: Request):
         for key in ("content-type", "content-disposition", "content-range", "accept-ranges")
         if key in upstream.headers
     }
+    response_headers["x-cost-usd"] = "0"
     return StreamingResponse(
         content(), status_code=upstream.status_code, headers=response_headers,
         background=BackgroundTask(upstream.aclose),

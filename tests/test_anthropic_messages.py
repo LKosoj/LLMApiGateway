@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import anthropic
 import httpx
+import httpx2
 import tiktoken
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
@@ -243,7 +244,7 @@ class AnthropicMessagesTests(unittest.TestCase):
                 "content": [{"type": "text", "text": "Hello!"}],
                 "stop_reason": "end_turn",
                 "stop_sequence": None,
-                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "usage": {"input_tokens": 10, "output_tokens": 5, "cost": 0.045},
             },
         )
 
@@ -1064,7 +1065,9 @@ class AnthropicMessagesTests(unittest.TestCase):
         async def scenario():
             fake_config_loader = _build_fake_config_loader()
             transport = httpx.ASGITransport(app=main.app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as sdk_http_client:
+            async with httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=main.app), base_url="http://testserver",
+            ) as sdk_http_client:
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as app_http_client:
                     sdk = anthropic.AsyncAnthropic(
                         api_key="test-gateway-key",
@@ -1108,7 +1111,9 @@ class AnthropicMessagesTests(unittest.TestCase):
         async def scenario():
             fake_config_loader = _build_fake_config_loader()
             transport = httpx.ASGITransport(app=main.app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as sdk_http_client:
+            async with httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=main.app), base_url="http://testserver",
+            ) as sdk_http_client:
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as app_http_client:
                     sdk = anthropic.AsyncAnthropic(
                         api_key="test-gateway-key",
@@ -1273,7 +1278,9 @@ class AnthropicMessagesTests(unittest.TestCase):
         async def scenario():
             fake_config_loader = _build_fake_config_loader()
             transport = httpx.ASGITransport(app=main.app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as sdk_http_client:
+            async with httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=main.app), base_url="http://testserver",
+            ) as sdk_http_client:
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as app_http_client:
                     sdk = anthropic.AsyncAnthropic(
                         api_key="test-gateway-key",

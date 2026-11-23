@@ -28,10 +28,12 @@ from ...services.accounting import (
     AccountingError,
     AccountingErrorCode,
     AccountingValidationError,
+    BillingComponent,
 )
 from ...services.operation_accounting import (
     OperationTerminalObservation,
     parse_upstream_operation_observation,
+    rejected_token_component,
 )
 from ...services.payload_transform import apply_payload_transforms
 from ...services.provider_auth import resolve_provider_auth_headers
@@ -378,6 +380,7 @@ def _embeddings_stream_terminal_observer(
     gateway_model: str,
     route: OperationRoute,
     request_started_at: float,
+    rejected_components: list[BillingComponent],
 ):
     usage_payload: Mapping[str, object] | None = None
 
@@ -388,13 +391,14 @@ def _embeddings_stream_terminal_observer(
         if event.done:
             if usage_payload is None:
                 raise AccountingCostError(AccountingErrorCode.COST_UNAVAILABLE)
-            return _parse_terminal_observation(
+            observation = _parse_terminal_observation(
                 owner,
                 usage_payload,
                 gateway_model=gateway_model,
                 route=route,
                 duration_ms=request_duration_ms(request_started_at),
             )
+            return observation.with_rejected_attempts(rejected_components)
 
         try:
             payload = parse_sse_json(event)
@@ -459,9 +463,11 @@ async def create_embeddings(request: Request):
         )
 
     request_started_at = time.monotonic()
+    rejected_components: list[BillingComponent] = []
 
     try:
         for route_index, route in enumerate(routes):
+            downstream_json = None
             clear_route_key_fingerprint(request)
             attempt_started_at = time.monotonic()
 
@@ -526,6 +532,7 @@ async def create_embeddings(request: Request):
                             gateway_model=requested_model,
                             route=route,
                             request_started_at=request_started_at,
+                            rejected_components=rejected_components,
                         ),
                     )
                     record_attempt(True)
@@ -543,6 +550,13 @@ async def create_embeddings(request: Request):
             except (HTTPException, AccountingError) as exc:
                 record_attempt(False, exc)
                 if _should_try_next_route(exc, route_index, routes):
+                    if isinstance(downstream_json, Mapping):
+                        component = rejected_token_component(
+                            downstream_json, provider=route.provider, model=route.model,
+                            cost_rate_registry=owner.cost_rate_registry, input_only=True,
+                        )
+                        if component is not None:
+                            rejected_components.append(component)
                     _log_route_fallback("Embeddings", requested_model, route, route_index, routes, exc)
                     continue
                 raise
@@ -550,7 +564,7 @@ async def create_embeddings(request: Request):
             return await finalize_buffered_operation(
                 owner,
                 response,
-                observation,
+                observation.with_rejected_attempts(rejected_components),
             )
 
         raise HTTPException(status_code=503, detail="Embeddings request failed after exhausting fallback routes.")
@@ -611,9 +625,11 @@ async def create_rerank(request: Request):
         )
 
     request_started_at = time.monotonic()
+    rejected_components: list[BillingComponent] = []
 
     try:
         for route_index, route in enumerate(routes):
+            downstream_json = None
             clear_route_key_fingerprint(request)
             attempt_started_at = time.monotonic()
 
@@ -702,6 +718,13 @@ async def create_rerank(request: Request):
             except (HTTPException, AccountingError) as exc:
                 record_attempt(False, exc)
                 if _should_try_next_route(exc, route_index, routes):
+                    if isinstance(downstream_json, Mapping):
+                        component = rejected_token_component(
+                            downstream_json, provider=route.provider, model=route.model,
+                            cost_rate_registry=owner.cost_rate_registry, input_only=True,
+                        )
+                        if component is not None:
+                            rejected_components.append(component)
                     _log_route_fallback("Rerank", requested_model, route, route_index, routes, exc)
                     continue
                 raise
@@ -709,7 +732,7 @@ async def create_rerank(request: Request):
             return await finalize_buffered_operation(
                 owner,
                 response,
-                observation,
+                observation.with_rejected_attempts(rejected_components),
             )
 
         raise HTTPException(status_code=503, detail="Rerank request failed after exhausting fallback routes.")

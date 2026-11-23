@@ -363,10 +363,21 @@ async def _proxy_image_with_fallback(
     expected_dimensions = requested_image_dimensions(request_payload)
     gif_requested = str(request_payload.get("output_format", "")).strip().lower() == "gif"
     request_started_at = time.monotonic()
+    rejected_components = []
 
     for route_index, route in enumerate(routes):
         clear_route_key_fingerprint(request)
         attempt_started_at = time.monotonic()
+
+        def record_rejected_image(payload: Mapping[str, object]) -> None:
+            try:
+                observation = _parse_image_terminal_observation(
+                    owner, payload, gateway_model=requested_model, route=route,
+                    duration_ms=request_duration_ms(attempt_started_at),
+                )
+            except AccountingError:
+                return
+            rejected_components.append(observation.as_component())
 
         def record_attempt(success: bool, error: BaseException | None = None) -> None:
             record_operation_route_attempt(
@@ -482,6 +493,7 @@ async def _proxy_image_with_fallback(
                             detail="Internal server error: Invalid image route configuration.",
                         ) from exc
                     except ImageDownstreamResponseError as exc:
+                        record_rejected_image(downstream_json)
                         raise HTTPException(
                             status_code=503,
                             detail=f"Invalid downstream image response: {exc}",
@@ -490,6 +502,7 @@ async def _proxy_image_with_fallback(
                         response_payload, expected_dimensions, http_client, gif_requested=gif_requested,
                     ):
                         break
+                    record_rejected_image(downstream_json)
                     logger.warning(
                         "%s returned images with size different from %sx%s; attempt=%s/3 provider=%s model=%s",
                         operation_label, *expected_dimensions, size_attempt + 1, route.provider, route.model,
@@ -504,12 +517,10 @@ async def _proxy_image_with_fallback(
             else:
                 response = json_response(response_payload, downstream_status_code)
                 observation = _parse_image_terminal_observation(
-                    owner,
-                    downstream_json,
-                    gateway_model=requested_model,
-                    route=route,
+                    owner, downstream_json, gateway_model=requested_model, route=route,
                     duration_ms=request_duration_ms(request_started_at),
                 )
+                observation = observation.with_rejected_attempts(rejected_components)
                 record_attempt(True)
                 return await finalize_buffered_operation(owner, response, observation)
 

@@ -40,17 +40,25 @@ ROUTES = [
 ]
 RULES = {'videos_generations': {MODEL: {'routes': ROUTES}}}
 BODY = dict(model=MODEL, prompt='A bird flies', duration=5, resolution='720p')
+MISCHIEF = 'llmgateway/mischief-1'
+FIRST_FRAME = {
+    'type': 'image_url', 'image_url': {'url': 'https://example.com/frame.jpg'}, 'frame_type': 'first_frame',
+}
+MISCHIEF_BODY = dict(model=MISCHIEF, prompt='A bird flies', duration=3, frame_images=[FIRST_FRAME])
+MISCHIEF_ROUTES = [
+    dict(provider='routerai', model='tbc/mischief-1', target_path='/videos', request_format='routerai_videos'),
+]
 
 
 @asynccontextmanager
-async def video_client(tmp_path, handler, *, key_id=7):
+async def video_client(tmp_path, handler, *, key_id=7, rules=RULES):
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     providers = {
         name: ProviderDetails(baseUrl=f'https://{name}.example/v1', apikey='test-key')
         for name in ('bettertoken', 'routerai')
     }
-    loader = SimpleNamespace(providers_config=providers, operation_rules=RULES)
-    dispatcher = OperationDispatcher(providers, RULES, upstream)
+    loader = SimpleNamespace(providers_config=providers, operation_rules=rules)
+    dispatcher = OperationDispatcher(providers, rules, upstream)
     snapshot = make_runtime_snapshot(config_loader=loader, operation_dispatcher=dispatcher)
     store = VideoJobsDB(tmp_path / 'videos.db')
     services = make_app_services(http_client=upstream, video_jobs_db=store)
@@ -141,6 +149,69 @@ def test_first_frame_translation_and_validation():
         VideoRequest(**BODY, frame_images=[frame, frame])
     with pytest.raises(ValidationError):
         VideoRequest(**{**BODY, 'duration': True})
+
+
+@pytest.mark.parametrize('duration', [3, 5])
+def test_mischief_creates_polls_and_downloads_through_routerai(tmp_path, duration):
+    rules = ConfigLoader()._build_operation_config({
+        'videos_generations': [{'gateway_model_name': MISCHIEF, 'routes': MISCHIEF_ROUTES}],
+    })
+    models = {}
+    _add_gateway_operation_models(models, rules)
+    assert models[MISCHIEF]['type'] == 'video'
+    assert models[MISCHIEF]['architecture'] == {
+        'input_modalities': ['text', 'image'], 'output_modalities': ['video'],
+    }
+
+    async def scenario():
+        def handler(request):
+            assert request.url.host == 'routerai.example'
+            if request.method == 'POST':
+                assert request.url.path == '/v1/videos'
+                assert json.loads(request.content) == {
+                    **MISCHIEF_BODY, 'model': 'tbc/mischief-1', 'duration': duration,
+                    'resolution': '480p', 'aspect_ratio': '16:9',
+                }
+                return httpx.Response(202, json={'id': 'mischief-job', 'status': 'pending'})
+            if request.url.path == '/v1/videos/mischief-job':
+                return httpx.Response(200, json={'id': 'mischief-job', 'status': 'completed'})
+            assert request.url.path == '/v1/videos/mischief-job/content'
+            return httpx.Response(200, content=b'video-bytes', headers={'content-type': 'video/mp4'})
+
+        async with video_client(tmp_path, handler, rules=rules) as (client, _, _):
+            created = await client.post('/v1/videos', json={**MISCHIEF_BODY, 'duration': duration})
+            assert created.status_code == 202, created.text
+            task = created.json()
+            assert task['model'] == MISCHIEF
+            status = await client.get(task['polling_url'])
+            assert status.json()['status'] == 'completed'
+            content = await client.get(task['content_url'])
+            assert content.headers['content-type'] == 'video/mp4'
+            assert content.content == b'video-bytes'
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('override', [
+    {'duration': None},
+    {'duration': 4},
+    {'prompt': ' '},
+    {'frame_images': []},
+    {'frame_images': [{**FIRST_FRAME, 'frame_type': 'last_frame'}]},
+    {'frame_images': [FIRST_FRAME, {**FIRST_FRAME, 'frame_type': 'last_frame'}]},
+    {'input_references': [{'type': 'video_url', 'video_url': {'url': 'https://example.com/reference.mp4'}}]},
+])
+def test_mischief_rejects_invalid_inputs(tmp_path, override):
+    async def scenario():
+        def handler(_request):
+            pytest.fail('Invalid requests must not reach the provider')
+
+        rules = {'videos_generations': {MISCHIEF: {'routes': MISCHIEF_ROUTES}}}
+        async with video_client(tmp_path, handler, rules=rules) as (client, _, _):
+            response = await client.post('/v1/videos', json={**MISCHIEF_BODY, **override})
+            assert response.status_code == 422, response.text
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize('refusal', [400, 401, 402, 403, 404, 413, 415, 422])
@@ -269,8 +340,11 @@ def test_bettertoken_job_billing_and_idempotent_creation(tmp_path, monkeypatch):
             first = await client.post('/v1/videos', json=BODY, headers={'Idempotency-Key': 'same-request'})
             second = await client.post('/v1/videos', json=BODY, headers={'Idempotency-Key': 'same-request'})
             assert first.json()['id'] == second.json()['id']
+            assert first.json()['usage']['cost'] is None
             poll = first.json()['polling_url']
-            assert (await client.get(poll)).status_code == 200
+            completed = await client.get(poll)
+            assert completed.status_code == 200
+            assert completed.json()['usage']['cost'] == 0.47
             assert (await client.get(poll)).status_code == 200
             assert len(events) == 2
             assert events[0].event_id == events[1].event_id
@@ -299,7 +373,9 @@ def test_missing_usd_settlement_has_no_invented_charge(tmp_path, usage):
         def handler(request):
             return httpx.Response(200, json={'id': 'done', 'status': 'completed', 'billing': usage})
         async with video_client(tmp_path, handler) as (client, services, events):
-            assert (await client.post('/v1/videos', json=BODY)).status_code == 200
+            response = await client.post('/v1/videos', json=BODY)
+            assert response.status_code == 200
+            assert response.json()['usage']['cost'] is None
             assert events == []
             services.accounting_service.release.assert_awaited_once()
     asyncio.run(scenario())

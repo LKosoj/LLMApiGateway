@@ -89,6 +89,7 @@ print(response.choices[0].message.content)</code></pre>
                 <article class="quickstart-card">
                     <h3><span data-i18n="docs:quickstart.usage.title">4. Посмотрите расход</span></h3>
                     <p><span data-i18n="docs:quickstart.usage.text001">Расход по ключам и моделям доступен на странице</span> <a href="/v1/ui/usage-stats"><span data-i18n="docs:quickstart.usage.linkText">Аналитика</span></a><span data-i18n="docs:quickstart.usage.text002">.</span></p>
+                    <p data-i18n="docs:quickstart.usage.cost">Итог платного вызова в USD приходит в usage.cost для JSON, в X-Cost-USD для файлов и текста и в событии usage для потока. Сумма включает учтённые части запроса и платные попытки перед переключением на запасной вариант. Для фоновых PDF и видео цена появляется после подтверждения.</p>
                 </article>
             </div>
         </section>
@@ -371,6 +372,7 @@ print(response.choices[0].message.content)</code></pre>
                     <h3>POST /v1/videos</h3>
                     <p data-i18n="docs:sections.images.videoPromptExpansion">For WAN, disable automatic provider-side prompt expansion with the optional JSON boolean below.</p>
                     <code>{"provider_options":{"alibaba":{"prompt_extend":false}}}</code>
+                    <p><code>llmgateway/mischief-1</code> <span data-i18n="docs:sections.images.videoMischief">принимает промпт, длительность 3 или 5 секунд и одно изображение в frame_images с типом first_frame.</span></p>
                 </article>
             </div>
         </section>

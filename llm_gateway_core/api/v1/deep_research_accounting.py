@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 import uuid
@@ -99,6 +100,7 @@ class DeepResearchTerminalOwner:
         "_handle",
         "_operation_cost_calculator_registry",
         "_rollup_event",
+        "_response_cost_usd",
         "_state",
         "_token",
         "_transport_finished",
@@ -131,6 +133,7 @@ class DeepResearchTerminalOwner:
         self._handle: DeepResearchParentHandle | None = None
         self._token: str | None = None
         self._rollup_event = None
+        self._response_cost_usd: float | None = None
         self._state = _OwnerState.OPEN
         self._transport_finished = False
 
@@ -282,6 +285,7 @@ class DeepResearchTerminalOwner:
             occurred_at=datetime.now(timezone.utc),
             x_title=self._context.x_title,
         )
+        self._response_cost_usd = seal.aggregate_usage.cost
         self._state = _OwnerState.READY
         return seal
 
@@ -338,7 +342,7 @@ class DeepResearchTerminalOwner:
             raise
         finally:
             self._state = _OwnerState.CLOSED
-        return receipt
+        return dataclasses.replace(receipt, response_cost_usd=self._response_cost_usd)
 
     async def _finalize(self, signal: TerminalSignal) -> object:
         if not isinstance(signal, TerminalSignal):

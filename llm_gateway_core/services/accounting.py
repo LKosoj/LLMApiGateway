@@ -808,8 +808,13 @@ class AccountingReceipt:
     usage_row_id: int | None = None
     child_event_ids: tuple[str, ...] = ()
     child_fingerprints: tuple[str, ...] = ()
+    response_cost_usd: float | None = None
 
     def __post_init__(self) -> None:
+        if self.response_cost_usd is not None:
+            object.__setattr__(
+                self, "response_cost_usd", _normalize_float(self.response_cost_usd, non_negative=True)
+            )
         object.__setattr__(
             self,
             "source_status",

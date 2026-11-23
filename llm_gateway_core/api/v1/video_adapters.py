@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
+MISCHIEF_MODEL = "llmgateway/mischief-1"
+
 
 class VideoReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -61,11 +63,23 @@ class VideoRequest(BaseModel):
             raise ValueError("Duplicate frame_type")
         if any(reference.frame_type for reference in self.input_references):
             raise ValueError("frame_type belongs in frame_images")
+        if self.model == MISCHIEF_MODEL:
+            if self.duration not in (3, 5):
+                raise ValueError("Mischief 1 requires a duration of 3 or 5 seconds")
+            if [frame.frame_type for frame in self.frame_images] != ["first_frame"] or self.input_references:
+                raise ValueError("Mischief 1 requires exactly one first frame and no input references")
+            if not self.prompt.strip():
+                raise ValueError("Mischief 1 requires a prompt")
         return self
 
 
 def build_video_payload(body: VideoRequest, model: str, request_format: str | None) -> dict:
     if request_format in (None, "routerai_videos"):
+        if model == "tbc/mischief-1":
+            payload = body.model_dump(exclude_none=True, exclude_unset=True, exclude={"input_references"})
+            payload.setdefault("aspect_ratio", "16:9")
+            payload.setdefault("resolution", "480p")
+            return {**payload, "model": model}
         return {**body.model_dump(exclude_none=True), "model": model}
     if request_format != "bettertoken_videos":
         raise ValueError("Unsupported video request format")

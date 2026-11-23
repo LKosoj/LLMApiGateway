@@ -22,6 +22,7 @@ from ...services.model_policy import (
 )
 from ...services.provider_models import provider_explicit_models
 from ...services.provider_auth import resolve_provider_auth_headers
+from .video_adapters import MISCHIEF_MODEL
 
 if TYPE_CHECKING:
     from ...services.runtime_config import AppServices, RuntimeSnapshot
@@ -174,7 +175,10 @@ def _refresh_gateway_model_metadata(model_entry: dict) -> None:
     input_modalities = {
         modality
         for capability in capabilities
-        for modality in INPUT_MODALITIES_BY_CAPABILITY.get(capability, ())
+        for modality in (
+            ("text", "image") if capability == "videos" and model_entry["id"] == MISCHIEF_MODEL
+            else INPUT_MODALITIES_BY_CAPABILITY.get(capability, ())
+        )
     }
     output_modalities = {
         modality

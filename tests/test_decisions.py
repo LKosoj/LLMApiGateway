@@ -94,7 +94,10 @@ def test_decisions_config_defaults_and_structured_roundtrip():
         ModelsOperationConfig.model_validate(bad)
 
 
-def _endpoint_case(monkeypatch, *, usage, rates=True, unknown=False, input_rate=2.0, upstream_errors=None, operation_rules=None):
+def _endpoint_case(
+    monkeypatch, *, usage, rates=True, unknown=False, input_rate=2.0, upstream_errors=None,
+    operation_rules=None, rejected_usage=None,
+):
     async def run():
         calls = []
 
@@ -103,6 +106,8 @@ def _endpoint_case(monkeypatch, *, usage, rates=True, unknown=False, input_rate=
             status = (upstream_errors or {}).get(calls[-1]["model"], 200)
             if status != 200:
                 return httpx.Response(status, json={"error": "upstream failed"})
+            if rejected_usage is not None and calls[-1]["model"] == "jev-1.13":
+                return httpx.Response(200, json={"answers": [], "usage": rejected_usage})
             return httpx.Response(200, json={"model": "jev-snapshot", "answers": {"refund": {"type": "noul", "noul": 0.9}}, "usage": usage})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
@@ -137,7 +142,8 @@ def _endpoint_case(monkeypatch, *, usage, rates=True, unknown=False, input_rate=
 
             async def commit(reservation, event):
                 return AccountingReceipt(source_status=SourceStatus.ACCEPTED, projection_status=ProjectionStatus.APPLIED,
-                                         event_id=event.event_id, billing_fingerprint=event.billing_fingerprint, usage_row_id=1)
+                                         event_id=event.event_id, billing_fingerprint=event.billing_fingerprint, usage_row_id=1,
+                                         response_cost_usd=event.usage.cost)
 
             services.accounting_service.commit.side_effect = commit
             try:
@@ -170,6 +176,7 @@ def test_decisions_records_usage_and_preserves_answers(monkeypatch, upstream_cos
     assert status == 200
     assert body["answers"]["refund"]["noul"] == 0.9
     assert body["usage"]["cost_rub"] == 0.84
+    assert body["usage"]["cost"] == pytest.approx(expected)
     assert calls == [{**PAYLOAD, "model": "jev-1.13"}]
     event = service.commit.call_args.args[1]
     assert event.usage.prompt_tokens == 1000
@@ -177,6 +184,19 @@ def test_decisions_records_usage_and_preserves_answers(monkeypatch, upstream_cos
     assert event.route_template == "/v1/decisions"
     assert event.model == "jev-1.13"
     assert event.provider == "aitunnel"
+
+
+def test_decisions_includes_paid_attempt_with_invalid_answers(monkeypatch):
+    status, body, calls, service = _endpoint_case(
+        monkeypatch,
+        usage={"input_tokens": 4, "cost": 0.03},
+        rejected_usage={"cost": 0.01},
+    )
+    assert status == 200
+    assert [call["model"] for call in calls] == ["jev-1.13", "other"]
+    assert body["usage"]["cost"] == 0.04
+    event = service.commit.call_args.args[1]
+    assert [component.usage.cost for component in event.components] == [0.01, 0.03]
 
 
 def test_decisions_does_not_replace_usd_with_rubles_or_default_cost(monkeypatch):

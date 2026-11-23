@@ -43,6 +43,7 @@ from ...services.chat_accounting import (
 )
 from ...services import fusion_keepalive
 from ...services.model_policy import resolve_model_name
+from ...services.operation_accounting import rejected_token_component
 from ...services.payload_transform import apply_payload_transforms
 from ...services.ratelimit_headers import parse_ratelimit_headers
 from ...services.request_handler import (
@@ -755,6 +756,30 @@ async def attempt_model_fallback_rule(
         )
         return response_data
 
+    def _record_rejected_response(response: object, error: object) -> None:
+        if chat_accounting_handoff is None:
+            return
+        if not isinstance(response, Mapping):
+            usage = getattr(error, "upstream_usage", None)
+            if usage is None:
+                observed_usage = getattr(response, "llmgateway_upstream_usage", None)
+                if isinstance(observed_usage, Mapping) and observed_usage.get("cost") is not None:
+                    usage = observed_usage
+            if isinstance(usage, Mapping) and usage:
+                response = {"usage": usage}
+        if not isinstance(response, Mapping):
+            return
+        if not isinstance(cost_rate_registry, Mapping):
+            raise AccountingValidationError
+        component = rejected_token_component(
+            response,
+            provider=provider_name,
+            model=provider_model,
+            cost_rate_registry=cost_rate_registry,
+        )
+        if component is not None:
+            chat_accounting_handoff.record_rejected_component(component)
+
     if is_anthropic_provider:
         headers = {
             "Content-Type": "application/json",
@@ -1152,6 +1177,7 @@ async def attempt_model_fallback_rule(
             except BaseException:
                 concurrency_lease.release()
                 raise
+            upstream_response = response_data if error_detail is None else None
             if is_streaming and response_data is not None and error_detail is None:
                 response_data = await _attach_stream_slot(response_data, concurrency_lease)
             elif not is_streaming or response_data is None or error_detail is not None:
@@ -1246,6 +1272,9 @@ async def attempt_model_fallback_rule(
                         )
                         error_detail = rescue_failure
                         response_data = None
+
+            if error_detail is not None:
+                _record_rejected_response(upstream_response, error_detail)
 
             if response_data and error_detail is None:
                 try:
@@ -1421,6 +1450,7 @@ async def attempt_model_fallback_rule(
                     except BaseException:
                         concurrency_lease.release()
                         raise
+                    upstream_response = response_data if error_detail is None else None
                     if is_streaming and response_data is not None and error_detail is None:
                         response_data = await _attach_stream_slot(response_data, concurrency_lease)
                     elif not is_streaming or response_data is None or error_detail is not None:
@@ -1519,6 +1549,9 @@ async def attempt_model_fallback_rule(
                                 )
                                 error_detail = rescue_failure
                                 response_data = None
+
+                    if error_detail is not None:
+                        _record_rejected_response(upstream_response, error_detail)
 
                     if response_data and error_detail is None:
                         try:

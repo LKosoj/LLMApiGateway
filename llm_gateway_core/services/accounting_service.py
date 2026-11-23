@@ -2129,6 +2129,7 @@ class AccountingService:
             usage_row_id=stored.usage_row_id,
             child_event_ids=stored.event.child_event_ids,
             child_fingerprints=stored.event.child_fingerprints,
+            response_cost_usd=stored.event.usage.cost,
         )
 
     async def _project_stored(

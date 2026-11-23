@@ -420,6 +420,7 @@ class SSEFrameBatch:
     events: tuple[SSEEvent, ...]
     consumed_bytes: int
     trailing_frame_bytes: int = 0
+    last_event_bytes: int = 0
 
 
 class SSEFramer:
@@ -473,11 +474,12 @@ class SSEFramer:
 
         total_owned_bytes = len(self._buffer) + len(data)
         self._buffer.extend(data)
-        events, trailing_frame_bytes = self._extract_complete_events()
+        events, trailing_frame_bytes, last_event_bytes = self._extract_complete_events()
         return SSEFrameBatch(
             events=tuple(events),
             consumed_bytes=total_owned_bytes - len(self._buffer),
             trailing_frame_bytes=trailing_frame_bytes,
+            last_event_bytes=last_event_bytes,
         )
 
     def finish(self) -> SSEFrameBatch:
@@ -498,7 +500,11 @@ class SSEFramer:
                 self._terminal = event.done
             self._buffer.clear()
         self._finished = True
-        return SSEFrameBatch(events=tuple(events), consumed_bytes=consumed_bytes)
+        return SSEFrameBatch(
+            events=tuple(events),
+            consumed_bytes=consumed_bytes,
+            last_event_bytes=consumed_bytes if events else 0,
+        )
 
     def abort(self) -> int:
         """Idempotently discard and return the number of retained raw bytes."""
@@ -509,10 +515,11 @@ class SSEFramer:
         self._finished = True
         return retained_bytes
 
-    def _extract_complete_events(self) -> tuple[list[SSEEvent], int]:
+    def _extract_complete_events(self) -> tuple[list[SSEEvent], int, int]:
         events: list[SSEEvent] = []
         consumed_end = 0
         last_event_end = 0
+        last_event_bytes = 0
         while not self._terminal:
             boundary = self._find_event_boundary()
             if boundary is None:
@@ -521,6 +528,7 @@ class SSEFramer:
 
             frame_end, delimiter_end = boundary
             self._enforce_event_limit(frame_end - consumed_end)
+            event_bytes = delimiter_end - consumed_end
             event = self._parse_event(
                 bytes(self._buffer[consumed_end:frame_end])
             )
@@ -530,6 +538,7 @@ class SSEFramer:
             if event is None:
                 continue
             events.append(event)
+            last_event_bytes = event_bytes
             last_event_end = consumed_end
             if event.done:
                 self._terminal = True
@@ -539,7 +548,7 @@ class SSEFramer:
             del self._buffer[:consumed_end]
             self._line_start = max(self._line_start - consumed_end, 0)
             self._search_start = max(self._search_start - consumed_end, 0)
-        return events, consumed_end - last_event_end
+        return events, consumed_end - last_event_end, last_event_bytes
 
     def _find_event_boundary(self) -> tuple[int, int] | None:
         while True:

@@ -21,6 +21,7 @@ from llm_gateway_core.middleware.response_observation import (
     WireMode,
     publish_response_observation,
 )
+from llm_gateway_core.services.accounting import AccountingReceipt, ProjectionStatus, SourceStatus
 from llm_gateway_core.services.stream_observation import (
     StreamObservationCapacity,
 )
@@ -75,13 +76,14 @@ def _observation(
     probe: _Probe,
     *,
     finalize_hook: Callable[[TerminalSignal], Awaitable[None]] | None = None,
+    receipt: AccountingReceipt | None = None,
 ) -> ResponseObservation:
     async def finalize(signal: TerminalSignal) -> object:
         probe.signals.append(signal)
         probe.order.append(("finalize", signal.reason))
         if finalize_hook is not None:
             await finalize_hook(signal)
-        return object()
+        return receipt
 
     def classify_json(start: ResponseStart, payload: bytes) -> TerminalReason:
         probe.json_payloads.append((start, payload))
@@ -185,6 +187,57 @@ def _assert_capacity_zero(services: object) -> None:
         assert snapshot.active_items == 0
         assert snapshot.active_bytes == 0
         assert snapshot.waiters == 0
+
+
+@pytest.mark.parametrize("content_type", [b"application/json", b"application/octet-stream", b"text/event-stream"])
+def test_committed_cost_is_exposed_without_changing_binary_bytes(content_type: bytes) -> None:
+    async def scenario() -> None:
+        services = make_app_services()
+        probe = _Probe()
+        receipt = AccountingReceipt(
+            source_status=SourceStatus.ACCEPTED,
+            projection_status=ProjectionStatus.APPLIED,
+            event_id="request-1",
+            billing_fingerprint="a" * 64,
+            response_cost_usd=0.0,
+        )
+        chunk = (
+            b'data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[],'
+            b'"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n\n'
+        )
+        if content_type == b"text/event-stream":
+            body = chunk + b"data: [DONE]\n\n"
+        elif content_type == b"application/json":
+            body = b'{"data":[1],"usage":{"cost":5,"total_tokens":3}}'
+        else:
+            body = b"\x00\xff"
+        start = _start(content_type)
+        start["headers"].append((b"content-length", str(len(body)).encode()))
+        sent = await _run_observed(
+            [start, {"type": "http.response.body", "body": body}],
+            services=services,
+            observation=_observation(services, probe, receipt=receipt),
+            probe=probe,
+        )
+        headers = dict(sent[0]["headers"])
+        assert headers[b"x-cost-usd"] == b"0.0"
+        result = _body(sent)
+        if content_type == b"text/event-stream":
+            assert b"content-length" not in headers
+            assert result.startswith(chunk + b"event: usage\n")
+            assert result.endswith(b"data: [DONE]\n\n")
+            data = result.split(b"event: usage\ndata: ")[1].split(b"\n")[0]
+            assert json.loads(data)["usage"] == {
+                "prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3, "cost": 0.0,
+            }
+        elif content_type == b"application/json":
+            assert json.loads(result) == {"data": [1], "usage": {"cost": 0.0, "total_tokens": 3}}
+            assert int(headers[b"content-length"]) == len(result)
+        else:
+            assert result == body
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
 
 
 @pytest.mark.parametrize(

@@ -1394,6 +1394,7 @@ def _anthropic_stream_to_openai(
         cache_creation_input_tokens = 0
         cache_read_input_tokens = 0
         output_tokens = 0
+        upstream_cost = {}
         stop_reason: str | None = None
         role_emitted = False
 
@@ -1428,6 +1429,8 @@ def _anthropic_stream_to_openai(
                     upstream_model = model_name
                 usage = message.get("usage") or {}
                 if isinstance(usage, dict):
+                    if "cost" in usage:
+                        upstream_cost["cost"] = usage["cost"]
                     input_tokens = _coerce_anthropic_usage_token_count(usage.get("input_tokens"))
                     cache_creation_input_tokens = _coerce_anthropic_usage_token_count(
                         usage.get("cache_creation_input_tokens")
@@ -1513,6 +1516,8 @@ def _anthropic_stream_to_openai(
                     stop_reason = reason
                 usage = event_data.get("usage") or {}
                 if isinstance(usage, dict):
+                    if "cost" in usage:
+                        upstream_cost["cost"] = usage["cost"]
                     if "output_tokens" in usage:
                         output_tokens = _coerce_anthropic_usage_token_count(usage.get("output_tokens"))
                     if "input_tokens" in usage:
@@ -1618,6 +1623,7 @@ def _anthropic_stream_to_openai(
                 "cache_creation_input_tokens": cache_creation_input_tokens,
                 "cache_read_input_tokens": cache_read_input_tokens,
                 "output_tokens": output_tokens,
+                **upstream_cost,
             }
         )
         _update_request_usage_tracker(request, final_chunk["usage"])
@@ -1720,6 +1726,8 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
                     usage["prompt_tokens"] = chunk_usage["prompt_tokens"]
                 if "completion_tokens" in chunk_usage:
                     usage["completion_tokens"] = chunk_usage["completion_tokens"]
+                if "cost" in chunk_usage:
+                    usage["cost"] = chunk_usage["cost"]
 
             if not started:
                 started = True
@@ -1970,6 +1978,7 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
                 "usage": {
                     "input_tokens": usage.get("prompt_tokens", 0),
                     "output_tokens": usage.get("completion_tokens", 0),
+                    **({"cost": usage["cost"]} if "cost" in usage else {}),
                 },
             },
         )

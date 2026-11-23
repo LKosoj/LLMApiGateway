@@ -9,8 +9,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ..accounting_http import AccountingHttpUse, accounting_error_response
 from ...services.access_control import enforce_virtual_key_access
-from ...services.accounting import AccountingCostError, AccountingError, AccountingErrorCode
-from ...services.operation_accounting import parse_upstream_operation_observation
+from ...services.accounting import AccountingCostError, AccountingError, AccountingErrorCode, BillingComponent
+from ...services.operation_accounting import parse_upstream_operation_observation, rejected_token_component
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import normalize_retry_settings
 from .operation_accounting import (
@@ -60,12 +60,13 @@ def validate_decisions_request(payload: dict) -> str:
 
 
 async def call_decision_routes(request: Request, requested_model: str, payload: dict, routes, *,
-                               cost_rate_registry, observe):
+                               cost_rate_registry, observe, rejected_components: list[BillingComponent]):
     """Try decisions routes in order; ``observe(json, route)`` builds the accounting observation."""
     snapshot = request.state.runtime_snapshot
     services = request.app.state.services
     dispatcher = snapshot.operation_dispatcher
     for route_index, route in enumerate(routes):
+        downstream_json = None
         try:
             provider_config = snapshot.config_loader.providers_config.get(route.provider)
             if provider_config is None:
@@ -100,6 +101,17 @@ async def call_decision_routes(request: Request, requested_model: str, payload: 
         except (HTTPException, AccountingError) as exc:
             if route_index == len(routes) - 1:
                 raise
+            if isinstance(downstream_json, dict):
+                usage = downstream_json.get("usage")
+                if (route.provider, route.model) in cost_rate_registry or (
+                    isinstance(usage, Mapping) and usage.get("cost") is not None
+                ):
+                    component = rejected_token_component(
+                        downstream_json, provider=route.provider, model=route.model,
+                        cost_rate_registry=cost_rate_registry, input_only=True,
+                    )
+                    if component is not None:
+                        rejected_components.append(component)
             logger.warning(
                 "Decisions route failed for gateway model '%s'; trying next route. "
                 "provider=%s model=%s reason=%s",
@@ -138,12 +150,15 @@ async def create_decisions(request: Request):
         )
 
     try:
+        rejected_components: list[BillingComponent] = []
         downstream_json, status_code, observation = await call_decision_routes(
             request, requested_model, payload, routes,
             cost_rate_registry=owner.cost_rate_registry, observe=observe,
+            rejected_components=rejected_components,
         )
         return await finalize_buffered_operation(
-            owner, json_response(downstream_json, status_code), observation,
+            owner, json_response(downstream_json, status_code),
+            observation.with_rejected_attempts(rejected_components),
         )
     except AccountingError as exc:
         await release_operation_if_open(owner, primary_error=exc)

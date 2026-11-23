@@ -1,18 +1,22 @@
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from llm_gateway_core.api.v1.chat_accounting import install_chat_terminal_handoff
+from llm_gateway_core.api.v1 import web_adapters
+from llm_gateway_core.api.v1.chat_accounting import get_chat_terminal_handoff, install_chat_terminal_handoff
 from llm_gateway_core.api.v1.chat_dialects import _translate_responses_request
 from llm_gateway_core.api.v1.responses_web_search import (
     complete_responses_web_search,
     parse_web_search_query,
-    publish_responses_chat_observation,
     responses_chat_to_sse,
     ResponsesWebSearchBinding,
     external_web_access_allowed,
     responses_web_search_binding,
 )
+from llm_gateway_core.services.chat_accounting import build_direct_chat_terminal_observation
+from llm_gateway_core.services.accounting import AccountingUsage, BillingComponent, BillingComponentKind, CostSource
 from llm_gateway_core.utils.usage_tracking import ModelCostRates
 from tests._async_compat import run_async
 
@@ -31,7 +35,23 @@ def _request() -> Request:
         "server": ("test", 80),
         "state": {},
     }
-    return Request(scope)
+    request = Request(scope)
+    install_chat_terminal_handoff(request)
+    return request
+
+
+def _observed_dispatch(dispatch):
+    async def observed(request, payload, *, accounting_handoff):
+        response = await dispatch(request, payload)
+        accounting_handoff.publish(build_direct_chat_terminal_observation(
+            response,
+            provider="openai",
+            model="gpt-test",
+            cost_rate_registry={("openai", "gpt-test"): ModelCostRates(1.0, 2.0)},
+        ))
+        return response
+
+    return observed
 
 
 def _chat_response(content: str, usage: dict) -> dict:
@@ -177,7 +197,7 @@ def test_false_flag_blocks_search_even_if_the_model_asks():
     searches = []
     tool_messages = []
 
-    async def dispatch(request, payload, accounting_handoff=None):
+    async def dispatch(request, payload):
         request.state.llmgateway_provider = "openai"
         request.state.llmgateway_provider_model = "gpt-test"
         if payload["messages"][-1]["role"] == "tool":
@@ -206,7 +226,7 @@ def test_false_flag_blocks_search_even_if_the_model_asks():
             request,
             {"model": "m", "messages": [{"role": "user", "content": "hi"}]},
             [binding],
-            dispatch=dispatch,
+            dispatch=_observed_dispatch(dispatch),
             search=search,
         )
     )
@@ -221,8 +241,7 @@ def test_gateway_search_runs_when_external_web_access_is_true():
     payloads = []
     searches = []
 
-    async def dispatch(request, payload, accounting_handoff=None):
-        assert accounting_handoff is None
+    async def dispatch(request, payload):
         assert payload["stream"] is False
         payloads.append(payload)
         request.state.llmgateway_provider = "openai"
@@ -265,14 +284,17 @@ def test_gateway_search_runs_when_external_web_access_is_true():
             request,
             payload,
             bindings,
-            dispatch=dispatch,
+            dispatch=_observed_dispatch(dispatch),
             search=search,
         )
     )
 
     assert searches == [("codex docs", 3, ["docs.python.org"])]
     assert result["choices"][0]["message"]["content"] == "found it"
-    assert result["usage"] == {"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12}
+    assert result["usage"] == {"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12, "cost": 0.000017}
+    observation = get_chat_terminal_handoff(request).take()
+    assert observation.usage.cost == pytest.approx(0.000017)
+    assert [component.usage.total_tokens for component in observation.components] == [3, 9]
     assert payloads[1]["messages"][-1]["role"] == "tool"
     assert "https://docs.python.org" in payloads[1]["messages"][-1]["content"]
     assert request.state.llmgateway_provider == "openai"
@@ -281,11 +303,40 @@ def test_gateway_search_runs_when_external_web_access_is_true():
     assert payload["stream"] is True
 
 
+def test_hosted_search_cost_is_added_to_model_rounds(monkeypatch):
+    request = _request()
+    search_component = BillingComponent(
+        provider=None, model=None, usage=AccountingUsage(cost=0.1),
+        cost_source=CostSource.OPERATION_CONFIGURED, component_kind=BillingComponentKind.OPERATION,
+        operation="web_search", gateway_model="gateway/search",
+    )
+    search = AsyncMock(return_value=web_adapters._ObservedWebToolResult([], (search_component,)))
+    monkeypatch.setattr(web_adapters, "_get_operation_runtime", lambda request: (None, None, None, None))
+    monkeypatch.setattr(web_adapters, "_resolve_service_model", lambda *args, **kwargs: "gateway/search")
+    monkeypatch.setattr(web_adapters, "_search_with_model_observed", search)
+    dispatch = AsyncMock(side_effect=[
+        _tool_response([_web_call('{"query":"docs"}')], {
+            "prompt_tokens": 2, "completion_tokens": 1, "cost": 0.03,
+        }),
+        _chat_response("done", {"prompt_tokens": 5, "completion_tokens": 2, "cost": 0}),
+    ])
+    result = run_async(complete_responses_web_search(
+        request,
+        {"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+        [responses_web_search_binding({"type": "web_search"}, "web_search")],
+        dispatch=_observed_dispatch(dispatch),
+    ))
+    search.assert_awaited_once()
+    observation = get_chat_terminal_handoff(request).take()
+    assert [component.usage.cost for component in observation.components] == [0.03, 0.1, 0]
+    assert result["usage"]["cost"] == pytest.approx(0.13)
+
+
 def test_mixed_client_tool_call_is_not_searched():
     request = _request()
     searches = []
 
-    async def dispatch(request, payload, accounting_handoff=None):
+    async def dispatch(request, payload):
         request.state.llmgateway_provider = "openai"
         request.state.llmgateway_provider_model = "gpt-test"
         return _tool_response(
@@ -315,7 +366,7 @@ def test_mixed_client_tool_call_is_not_searched():
         }
     )
     result = run_async(
-        complete_responses_web_search(request, payload, bindings, dispatch=dispatch, search=search)
+        complete_responses_web_search(request, payload, bindings, dispatch=_observed_dispatch(dispatch), search=search)
     )
 
     assert searches == []
@@ -328,7 +379,7 @@ def test_search_stops_after_three_model_calls():
     dispatch_count = 0
     search_count = 0
 
-    async def dispatch(request, payload, accounting_handoff=None):
+    async def dispatch(request, payload):
         nonlocal dispatch_count
         dispatch_count += 1
         request.state.llmgateway_provider = "openai"
@@ -349,34 +400,13 @@ def test_search_stops_after_three_model_calls():
             request,
             {"model": "m", "messages": [{"role": "user", "content": "hi"}], "stream": True},
             [binding],
-            dispatch=dispatch,
+            dispatch=_observed_dispatch(dispatch),
             search=search,
         )
     )
 
     assert dispatch_count == 3
     assert search_count == 2
-
-
-def test_publish_bills_the_recorded_chat_provider():
-    request = _request()
-    request.state.llmgateway_provider = "openai"
-    request.state.llmgateway_provider_model = "gpt-test"
-    request.state.runtime_snapshot = type(
-        "Snapshot",
-        (),
-        {"cost_rate_registry": {("openai", "gpt-test"): ModelCostRates(1.0, 2.0)}},
-    )()
-    handoff = install_chat_terminal_handoff(request)
-    publish_responses_chat_observation(
-        request,
-        _chat_response("ok", {"prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10}),
-    )
-    observation = handoff.take()
-    assert observation.top_provider == "openai"
-    assert observation.top_model == "gpt-test"
-    assert observation.usage.prompt_tokens == 4
-    assert observation.usage.completion_tokens == 6
 
 
 def test_responses_sse_includes_text_completed_and_done():

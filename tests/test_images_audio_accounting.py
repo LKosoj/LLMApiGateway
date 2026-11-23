@@ -630,7 +630,8 @@ def test_audio_speech_binary_response_commits_configured_cost_before_return() ->
     run_async(scenario())
 
 
-def test_music_fallback_records_both_attempts_and_bills_successful_provider_once() -> None:
+@pytest.mark.parametrize("completed_cost", [None, 0.2])
+def test_music_fallback_includes_completed_music_when_download_fails(completed_cost: float | None) -> None:
     async def scenario() -> None:
         request, services = _request("/v1/audio/speech")
         routes = [
@@ -646,9 +647,14 @@ def test_music_fallback_records_both_attempts_and_bills_successful_provider_once
                 audio, "_prepare_audio_json_http_request",
                 AsyncMock(return_value=("https://provider.example/speech", {})),
             ))
+            async def rejected_music(*_args, completed_usage, **_kwargs):
+                if completed_cost is not None:
+                    completed_usage["usage"] = {"cost": completed_cost}
+                raise DownstreamHTTPException(status_code=503, detail="Music unavailable")
+
             stack.enter_context(patch.object(
                 audio, "generate_neuraldeep_music",
-                AsyncMock(side_effect=DownstreamHTTPException(status_code=503, detail="Quota exhausted")),
+                AsyncMock(side_effect=rejected_music),
             ))
             second = stack.enter_context(patch.object(
                 audio, "proxy_json_raw_to_downstream",
@@ -669,6 +675,10 @@ def test_music_fallback_records_both_attempts_and_bills_successful_provider_once
         event = services.accounting_service.commit.await_args.args[1]
         assert event.provider == "sa3"
         assert event.model == "sa3-medium"
+        assert event.usage.cost == pytest.approx((completed_cost or 0) + DEFAULT_OPERATION_COST_USD)
+        assert [component.usage.cost for component in event.components] == (
+            [] if completed_cost is None else [completed_cost, DEFAULT_OPERATION_COST_USD]
+        )
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
 
@@ -719,6 +729,47 @@ def _transcription_dependencies(
             patch.object(audio, "proxy_multipart_raw_to_downstream", proxy)
         )
         yield stack, dispatcher, proxy
+
+
+def test_speaker_transcription_accounts_for_transcription_and_diarization() -> None:
+    async def scenario() -> None:
+        request, services = _request(
+            "/v1/audio/transcriptions",
+            calculators={
+                ("audio_diarization", "gateway/diarization"): OperationCostCalculator(
+                    unit="operation", rate_usd=0.08,
+                ),
+            },
+        )
+        transcription = _route("provider-a", "transcriber")
+        diarization = _route("provider-b", "diarizer")
+        with _transcription_dependencies([transcription, diarization], None) as (stack, dispatcher, _proxy):
+            dispatcher.lookup_routes.side_effect = lambda section, model: {
+                "gateway/transcription": [transcription], "gateway/diarization": [diarization],
+            }.get(model, [])
+            stack.enter_context(patch.object(audio, "_speaker_transcription_config", return_value={
+                "transcription_model": "gateway/transcription", "diarization_model": "gateway/diarization",
+            }))
+
+            async def child(_request, *, routes, **_kwargs):
+                route = routes[0]
+                if route is transcription:
+                    payload = {"segments": [{"start": 0, "end": 1, "text": "Test"}], "usage": {"cost": 0.02}}
+                else:
+                    payload = {"segments": [{"start": 0, "end": 1, "speaker": "SPEAKER_0"}]}
+                return audio._AudioRouteResult(route, 200, "application/json", payload, True, False)
+
+            stack.enter_context(patch.object(audio, "_call_multipart_audio_routes", side_effect=child))
+            _install_successful_commit(services.accounting_service)
+            response = await audio.create_audio_transcription(request)
+            await _send_response(request, response)
+        event = services.accounting_service.commit.await_args.args[1]
+        assert event.usage.cost == pytest.approx(0.1)
+        assert [(part.operation, part.usage.cost) for part in event.components] == [
+            ("audio_transcription", 0.02), ("audio_diarization", 0.08),
+        ]
+
+    run_async(scenario())
 
 
 def test_audio_transcription_json_uses_upstream_zero_cost() -> None:
@@ -881,7 +932,7 @@ def test_audio_cancellation_releases_without_commit() -> None:
 
 
 @pytest.mark.parametrize("matches", [True, False])
-def test_image_size_retries_commit_only_accepted_result(matches: bool) -> None:
+def test_image_size_retries_include_rejected_results_in_total_cost(matches: bool) -> None:
     async def scenario() -> None:
         request, services = _request("/v1/images/generations")
         _install_successful_commit(services.accounting_service)
@@ -901,7 +952,8 @@ def test_image_size_retries_commit_only_accepted_result(matches: bool) -> None:
                 await _send_response(request, response)
                 services.accounting_service.commit.assert_awaited_once()
                 event = services.accounting_service.commit.await_args.args[1]
-                assert event.usage.cost == 0.3
+                assert event.usage.cost == pytest.approx(0.6)
+                assert [component.usage.cost for component in event.components] == [0.1, 0.2, 0.3]
                 services.accounting_service.release.assert_not_awaited()
             else:
                 with pytest.raises(HTTPException) as exc:

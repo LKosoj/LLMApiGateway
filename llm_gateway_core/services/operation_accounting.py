@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from ..middleware.accounting_admission import AccountingRequestContext
@@ -14,6 +14,7 @@ from .accounting import (
     ACCOUNTING_EVENT_VERSION,
     DEFAULT_OPERATION_COST_USD,
     AccountingCostError,
+    AccountingError,
     AccountingErrorCode,
     AccountingEvent,
     AccountingEventKind,
@@ -25,6 +26,7 @@ from .accounting import (
     BillingUnit,
     CostSource,
     OperationCostCalculator,
+    build_component_sum_usage,
     classify_billing_policy,
     resolve_operation_cost,
 )
@@ -73,6 +75,27 @@ class OperationTerminalObservation:
     usage: AccountingUsage
     cost_source: CostSource
     occurred_at: datetime
+    components: tuple[BillingComponent, ...] = ()
+
+    def with_rejected_attempts(self, attempts: list[BillingComponent]) -> OperationTerminalObservation:
+        if not attempts:
+            return self
+        return replace(self, components=(*attempts, self.as_component()))
+
+    def as_component(self) -> BillingComponent:
+        if self.policy.unit is BillingUnit.TOKEN:
+            return BillingComponent(
+                provider=self.provider, model=self.model, usage=self.usage, cost_source=self.cost_source
+            )
+        return BillingComponent(
+            provider=None,
+            model=None,
+            usage=self.usage,
+            cost_source=self.cost_source,
+            component_kind=BillingComponentKind.OPERATION,
+            operation=self.policy.operation,
+            gateway_model=self.gateway_model,
+        )
 
     def __post_init__(self) -> None:
         if not isinstance(self.policy, BillingPolicy):
@@ -101,12 +124,7 @@ class OperationTerminalObservation:
         if self.policy.unit is BillingUnit.TOKEN:
             if self.usage.total_tokens == 0:
                 raise AccountingValidationError
-            BillingComponent(
-                provider=self.provider,
-                model=self.model,
-                usage=self.usage,
-                cost_source=self.cost_source,
-            )
+            self.as_component()
             if self.cost_source not in {
                 CostSource.UPSTREAM,
                 CostSource.TOKEN_REGISTRY,
@@ -116,15 +134,7 @@ class OperationTerminalObservation:
             return
 
         # The cost component cannot name a route. The usage row can.
-        BillingComponent(
-            provider=None,
-            model=None,
-            usage=self.usage,
-            cost_source=self.cost_source,
-            component_kind=BillingComponentKind.OPERATION,
-            operation=self.policy.operation,
-            gateway_model=self.gateway_model,
-        )
+        self.as_component()
         provider = _optional_route_name(self.provider)
         model = _optional_route_name(self.model)
         if (provider is None) != (model is None):
@@ -529,6 +539,37 @@ def build_token_model_component(
     )
 
 
+def rejected_token_component(
+    payload: Mapping[str, object],
+    *,
+    provider: str,
+    model: str,
+    cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
+    input_only: bool = False,
+) -> BillingComponent | None:
+    """Keep a billed attempt even when its result or token details were unusable."""
+    try:
+        return build_token_model_component(
+            payload,
+            provider=provider,
+            model=model,
+            cost_rate_registry=cost_rate_registry,
+            input_only=input_only,
+        )
+    except AccountingError:
+        usage = payload.get("usage")
+        if isinstance(usage, Mapping) and usage.get("cost") is not None:
+            try:
+                cost = _strict_upstream_cost(usage["cost"])
+            except AccountingCostError:
+                return None
+            return BillingComponent(
+                provider=provider, model=model,
+                usage=AccountingUsage(cost=cost), cost_source=CostSource.UPSTREAM,
+            )
+        return None
+
+
 def _parse_operation_observation(
     payload: Mapping[str, object],
     *,
@@ -696,6 +737,13 @@ def build_operation_accounting_event(
         provider = provenance.provider or observation.provider
         model = provenance.model or observation.model
 
+    components = observation.components
+    usage = observation.usage
+    cost_source = observation.cost_source
+    if components:
+        usage = build_component_sum_usage(components, duration_ms=usage.duration_ms)
+        cost_source = CostSource.COMPONENT_SUM
+
     return AccountingEvent(
         version=ACCOUNTING_EVENT_VERSION,
         event_id=event_id,
@@ -707,8 +755,9 @@ def build_operation_accounting_event(
         gateway_model=observation.gateway_model,
         provider=provider,
         model=model,
-        usage=observation.usage,
-        cost_source=observation.cost_source,
+        usage=usage,
+        cost_source=cost_source,
+        components=components,
         occurred_at=observation.occurred_at,
         request_id=context.reservation.request_id,
         parent_event_id=context.parent_event_id,

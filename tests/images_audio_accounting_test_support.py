@@ -1,17 +1,29 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from datetime import datetime, timezone
 from unittest.mock import create_autospec, patch
 
 from llm_gateway_core.api.v1 import audio, images
-from llm_gateway_core.services.accounting import AccountingReservation
+from llm_gateway_core.services.accounting import (
+    AccountingReservation, AccountingUsage, BillingPolicy, BillingUnit, CostSource,
+)
 from llm_gateway_core.services.accounting_service import AccountingService
+from llm_gateway_core.services.operation_accounting import OperationTerminalObservation
 
 
 def install_images_audio_accounting_passthrough(stack: ExitStack) -> None:
     """Keep compatibility tests focused on image/audio HTTP behavior."""
     owner = object()
-    observation = object()
+    observation = OperationTerminalObservation(
+        policy=BillingPolicy(operation="audio_transcription", unit=BillingUnit.OPERATION),
+        gateway_model="test-model",
+        provider=None,
+        model=None,
+        usage=AccountingUsage(),
+        cost_source=CostSource.OPERATION_DEFAULT,
+        occurred_at=datetime.now(timezone.utc),
+    )
     accounting_service = create_autospec(
         AccountingService,
         instance=True,

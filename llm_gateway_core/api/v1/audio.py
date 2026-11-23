@@ -21,7 +21,7 @@ from ..accounting_http import AccountingHttpUse, accounting_error_response
 from ...config.loader import ConfigLoader, OperationRoute, REQUEST_FORMAT_NVIDIA_RIVA_GRPC, resolve_provider_config_api_key
 from ...config.settings import settings
 from ...services.access_control import enforce_virtual_key_access
-from ...services.accounting import AccountingError
+from ...services.accounting import AccountingError, BillingPolicy, BillingUnit
 from ...services.operation_accounting import (
     OperationTerminalObservation,
     parse_synthesized_operation_observation,
@@ -586,6 +586,7 @@ def _parse_audio_terminal_observation(
     route: OperationRoute,
     duration_ms: int,
     synthesized: bool,
+    policy: BillingPolicy | None = None,
 ) -> OperationTerminalObservation:
     parser = (
         parse_synthesized_operation_observation
@@ -594,7 +595,7 @@ def _parse_audio_terminal_observation(
     )
     return parser(
         payload,
-        policy=owner.context.policy,
+        policy=policy or owner.context.policy,
         gateway_model=gateway_model,
         provider=route.provider,
         model=route.model,
@@ -962,21 +963,26 @@ async def _proxy_audio_speaker_transcription(
             raise group.exceptions[0] from None
 
     transcription_result = transcription_task.result()
-    merged = merge_transcription_with_diarization(
-        _child_json_body(transcription_result, "audio transcription"),
-        _child_json_body(diarization_task.result(), "audio diarization"),
-    )
+    diarization_result = diarization_task.result()
+    transcription_body = _child_json_body(transcription_result, "audio transcription")
+    diarization_body = _child_json_body(diarization_result, "audio diarization")
+    merged = merge_transcription_with_diarization(transcription_body, diarization_body)
     if response_format == "text":
         response: Response = PlainTextResponse(content=str(merged["text"]))
     else:
         response = JSONResponse(content=merged)
-    observation = _parse_audio_terminal_observation(
-        owner,
-        {},
-        gateway_model=requested_model,
-        route=transcription_result.route,
-        duration_ms=request_duration_ms(request_started_at),
-        synthesized=True,
+    duration_ms = request_duration_ms(request_started_at)
+    transcription = _parse_audio_terminal_observation(
+        owner, transcription_body, gateway_model=transcription_model,
+        route=transcription_result.route, duration_ms=duration_ms, synthesized=transcription_result.synthesized,
+    )
+    diarization = _parse_audio_terminal_observation(
+        owner, diarization_body, gateway_model=diarization_model,
+        route=diarization_result.route, duration_ms=duration_ms, synthesized=diarization_result.synthesized,
+        policy=BillingPolicy(operation=AUDIO_DIARIZATION_OPERATION, unit=BillingUnit.OPERATION),
+    )
+    observation = dataclasses.replace(
+        transcription, gateway_model=requested_model, components=(transcription.as_component(), diarization.as_component()),
     )
     return await finalize_buffered_operation(owner, response, observation)
 
@@ -1103,9 +1109,11 @@ async def _proxy_audio_speech(
 ) -> object:
     request_started_at = time.monotonic()
     routes = [route, *(fallback_routes or [])]
+    rejected_components = []
     for route_index, route in enumerate(routes):
         attempt_started_at = time.monotonic()
         route_fingerprint: str | None = None
+        completed_usage: dict = {}
         try:
             provider_config = config_loader_instance.providers_config.get(route.provider)
             if provider_config is None:
@@ -1155,6 +1163,7 @@ async def _proxy_audio_speech(
                 proxy_options.update(
                     routing_state=cast("AppServices", request.app.state.services).upstream_routing_state,
                     key_fingerprint=route_fingerprint,
+                    completed_usage=completed_usage,
                 )
             response_body, downstream_status_code, downstream_content_type = (
                 await speech_proxy(
@@ -1179,6 +1188,16 @@ async def _proxy_audio_speech(
                 use_request_fingerprint=False,
             )
             if route_index + 1 < len(routes) and exc.status_code in {502, 503, 504}:
+                if completed_usage:
+                    try:
+                        rejected = _parse_audio_terminal_observation(
+                            owner, completed_usage, gateway_model=requested_model, route=route,
+                            duration_ms=request_duration_ms(attempt_started_at), synthesized=False,
+                        )
+                    except AccountingError:
+                        logger.warning("Could not determine the cost of rejected music from %s/%s.", route.provider, route.model)
+                    else:
+                        rejected_components.append(rejected.as_component())
                 logger.warning(
                     "Music route %s/%s failed with HTTP %s; trying the next configured route.",
                     route.provider, route.model, exc.status_code,
@@ -1204,15 +1223,24 @@ async def _proxy_audio_speech(
         status_code=downstream_status_code,
         headers=response_headers,
     )
+    if not completed_usage and _is_json_content_type(downstream_content_type):
+        try:
+            payload = json.loads(response_body)
+        except (ValueError, UnicodeError):
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("usage"), dict):
+            completed_usage = {"usage": payload["usage"]}
     observation = _parse_audio_terminal_observation(
         owner,
-        {},
+        completed_usage,
         gateway_model=requested_model,
         route=route,
         duration_ms=request_duration_ms(request_started_at),
-        synthesized=True,
+        synthesized=not completed_usage,
     )
-    return await finalize_buffered_operation(owner, response, observation)
+    return await finalize_buffered_operation(
+        owner, response, observation.with_rejected_attempts(rejected_components)
+    )
 
 
 @router.post("/audio/speech")

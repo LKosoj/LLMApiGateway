@@ -29,6 +29,7 @@ from ...services.accounting import (
     AccountingErrorCode,
     AccountingReceipt,
     AccountingValidationError,
+    BillingComponent,
 )
 from ...services.accounting_service import AccountingService
 from ...services.chat_accounting import (
@@ -68,7 +69,7 @@ class _OwnerState(StrEnum):
 class ChatTerminalHandoff:
     """One-shot typed handoff from chat dispatch to the middleware owner."""
 
-    __slots__ = ("_observation", "_partial_builder", "_stream_observer")
+    __slots__ = ("_observation", "_partial_builder", "_rejected_components", "_stream_observer")
 
     def __init__(self) -> None:
         self._observation: object = _EMPTY_HANDOFF
@@ -76,6 +77,17 @@ class ChatTerminalHandoff:
             Callable[[SSEEvent], ChatTerminalObservation | None] | None
         ) = None
         self._partial_builder: Callable[[], ChatTerminalObservation | None] | None = None
+        self._rejected_components: list[BillingComponent] = []
+
+    def record_rejected_component(self, component: BillingComponent) -> None:
+        self._rejected_components.append(component)
+
+    def _with_rejected_components(self, observation: ChatTerminalObservation) -> ChatTerminalObservation:
+        if not self._rejected_components:
+            return observation
+        return dataclasses.replace(
+            observation, components=(*self._rejected_components, *observation.components)
+        )
 
     def publish(self, observation: ChatTerminalObservation) -> None:
         if (
@@ -122,7 +134,7 @@ class ChatTerminalHandoff:
         if not isinstance(observation, ChatTerminalObservation):
             raise AccountingValidationError
         self._observation = _CONSUMED_HANDOFF
-        return observation
+        return self._with_rejected_components(observation)
 
     def take_partial(self) -> ChatTerminalObservation | None:
         """Best-effort recovery for a request that never reached ``take()``.
@@ -136,7 +148,7 @@ class ChatTerminalHandoff:
         observation = self._observation
         if isinstance(observation, ChatTerminalObservation):
             self._observation = _CONSUMED_HANDOFF
-            return observation
+            return self._with_rejected_components(observation)
         build_partial = self._partial_builder
         self._stream_observer = None
         self._partial_builder = None
@@ -148,7 +160,7 @@ class ChatTerminalHandoff:
         if not isinstance(partial, ChatTerminalObservation):
             raise AccountingValidationError
         self._observation = _CONSUMED_HANDOFF
-        return partial
+        return self._with_rejected_components(partial)
 
     def __repr__(self) -> str:
         return "<ChatTerminalHandoff>"

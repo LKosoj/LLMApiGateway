@@ -75,7 +75,7 @@ def _build_anthropic_cached_text_stream() -> StreamingResponse:
             b'"model":"claude-sonnet-4-6","content":[],"stop_reason":null,'
             b'"stop_sequence":null,"usage":{'
             b'"input_tokens":13,"cache_creation_input_tokens":100,'
-            b'"cache_read_input_tokens":13120,"output_tokens":0}}}\n\n'
+            b'"cache_read_input_tokens":13120,"output_tokens":0,"cost":0.12}}}\n\n'
         )
         yield b'event: content_block_start\n'
         yield (
@@ -92,7 +92,7 @@ def _build_anthropic_cached_text_stream() -> StreamingResponse:
         yield b'event: message_delta\n'
         yield (
             b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
-            b'"usage":{"output_tokens":5}}\n\n'
+            b'"usage":{"output_tokens":5,"cost":0}}\n\n'
         )
         yield b'event: message_stop\n'
         yield b'data: {"type":"message_stop"}\n\n'
@@ -406,6 +406,7 @@ class AnthropicResponseToOpenAITests(unittest.TestCase):
                 "cache_creation_input_tokens": 100,
                 "cache_read_input_tokens": 13120,
                 "output_tokens": 5,
+                "cost": 0,
             },
         }
 
@@ -419,6 +420,7 @@ class AnthropicResponseToOpenAITests(unittest.TestCase):
                 "prompt_tokens": 13233,
                 "completion_tokens": 5,
                 "total_tokens": 13238,
+                "cost": 0,
                 "prompt_tokens_details": {"cached_tokens": 13120},
             },
         )
@@ -519,7 +521,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
                 "model": "claude-sonnet-4-6",
                 "content": [{"type": "text", "text": "Hello"}],
                 "stop_reason": "end_turn",
-                "usage": {"input_tokens": 7, "output_tokens": 2},
+                "usage": {"input_tokens": 7, "output_tokens": 2, "cost": 0.04},
             },
             None,
         )
@@ -563,7 +565,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
         self.assertEqual(body["choices"][0]["finish_reason"], "stop")
         self.assertEqual(
             body["usage"],
-            {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9},
+            {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9, "cost": 0.04},
         )
 
     @patch("llm_gateway_core.api.v1.chat.make_llm_request")
@@ -937,6 +939,7 @@ class DispatcherAnthropicProviderTests(unittest.TestCase):
                 "prompt_tokens": 13233,
                 "completion_tokens": 5,
                 "total_tokens": 13238,
+                "cost": 0,
                 "prompt_tokens_details": {"cached_tokens": 13120},
             },
         )
