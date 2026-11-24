@@ -96,7 +96,7 @@ def test_decisions_config_defaults_and_structured_roundtrip():
 
 def _endpoint_case(
     monkeypatch, *, usage, rates=True, unknown=False, input_rate=2.0, upstream_errors=None,
-    operation_rules=None, rejected_usage=None,
+    operation_rules=None, rejected_usage=None, usage_currency="USD",
 ):
     async def run():
         calls = []
@@ -113,7 +113,11 @@ def _endpoint_case(
         async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
             loader = ConfigLoader()
             loader.providers_config = {
-                route["provider"]: ProviderDetails(baseUrl="https://upstream/v1", apikey="test")
+                route["provider"]: ProviderDetails(
+                    baseUrl="https://upstream/v1", apikey="test",
+                    usage_cost_currency=usage_currency,
+                    usage_cost_units_per_usd=80 if usage_currency == "RUB" else None,
+                )
                 for route in (operation_rules or RULES)["decisions"][0]["routes"]
             }
             loader.operation_rules = loader._build_operation_config(operation_rules or RULES)
@@ -121,10 +125,10 @@ def _endpoint_case(
             services.accounting_service.release.return_value = True
             snapshot = make_runtime_snapshot(
                 config_loader=loader, http_client=client,
-                cost_rate_registry={
+                cost_rate_registry=build_model_cost_rate_registry(loader.providers_config) | ({
                     (route["provider"], route["model"]): ModelCostRates(input_rate, 0.0)
                     for route in (operation_rules or RULES)["decisions"][0]["routes"]
-                } if rates else {},
+                } if rates else {}),
             )
             app = FastAPI()
             app.state.services = services
@@ -143,7 +147,7 @@ def _endpoint_case(
             async def commit(reservation, event):
                 return AccountingReceipt(source_status=SourceStatus.ACCEPTED, projection_status=ProjectionStatus.APPLIED,
                                          event_id=event.event_id, billing_fingerprint=event.billing_fingerprint, usage_row_id=1,
-                                         response_cost_usd=event.usage.cost)
+                                         response_cost_usd=event.usage.cost, native_costs=event.usage.native_costs)
 
             services.accounting_service.commit.side_effect = commit
             try:
@@ -197,6 +201,17 @@ def test_decisions_includes_paid_attempt_with_invalid_answers(monkeypatch):
     assert body["usage"]["cost"] == 0.04
     event = service.commit.call_args.args[1]
     assert [component.usage.cost for component in event.components] == [0.01, 0.03]
+
+
+def test_decisions_converts_explicit_rubles_without_a_token_rate(monkeypatch):
+    status, body, calls, service = _endpoint_case(
+        monkeypatch, usage={"input_tokens": 1000, "cost_rub": 2.67}, rates=False, usage_currency="RUB",
+    )
+    assert status == 200
+    assert len(calls) == 1
+    assert body["usage"]["cost"] == 0.033375
+    assert body["billing"] == {"currency": "RUB", "net_amount": 2.67, "status": "settled"}
+    assert service.commit.call_args.args[1].usage.cost == 0.033375
 
 
 def test_decisions_does_not_replace_usd_with_rubles_or_default_cost(monkeypatch):

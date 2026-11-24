@@ -6,12 +6,14 @@ from unittest.mock import create_autospec, patch
 from llm_gateway_core.api.v1 import embeddings
 from llm_gateway_core.services.accounting import AccountingReservation
 from llm_gateway_core.services.accounting_service import AccountingService
+from llm_gateway_core.services.operation_accounting import OperationTerminalObservation
 
 
 def install_embeddings_rerank_accounting_passthrough(stack: ExitStack) -> None:
     """Keep legacy endpoint tests focused on HTTP behavior during atomic cutover."""
     owner = object()
-    observation = object()
+    observation = create_autospec(OperationTerminalObservation, instance=True, spec_set=True)
+    observation.with_rejected_attempts.return_value = observation
     accounting_service = create_autospec(
         AccountingService,
         instance=True,

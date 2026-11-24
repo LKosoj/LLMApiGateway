@@ -2,6 +2,7 @@
 
 import logging
 import time
+from dataclasses import replace
 from datetime import datetime
 from typing import cast
 from urllib.parse import quote
@@ -16,9 +17,14 @@ from ...config.schemas import OperationRoute
 from ...db.video_jobs_db import VideoJobsDB
 from ...services.access_control import enforce_virtual_key_access
 from ...services.accounting import AccountingError
-from ...services.operation_accounting import OperationEventProvenance, parse_upstream_operation_observation
+from ...services.operation_accounting import (
+    OperationEventProvenance,
+    parse_upstream_operation_observation,
+    resolve_provider_usage_cost,
+)
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.runtime_config import AppServices, RuntimeSnapshot
+from ...utils.usage_tracking import get_provider_cost_currency
 from ..accounting_http import AccountingHttpUse, accounting_error_response
 from .operation_accounting import (
     finalize_buffered_operation,
@@ -27,7 +33,7 @@ from .operation_accounting import (
     take_operation_terminal_owner,
 )
 from .operation_fallback_log import clear_route_key_fingerprint, record_operation_route_attempt
-from .video_adapters import VideoRequest, build_video_payload, video_cost_usd
+from .video_adapters import VideoRequest, build_video_payload, video_cost
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -80,12 +86,21 @@ def _task_payload(response: httpx.Response) -> dict:
     return payload
 
 
-def _public_task(payload: dict, job: dict, cost: float | None = None) -> dict:
+def _public_task(
+    payload: dict, job: dict, cost: float | None = None, *,
+    currency: str = "USD", native_cost: float | None = None,
+) -> dict:
     result = dict(payload)
     # Ссылки провайдера открываются только его ключом; клиент качает через content_url.
     result.pop("unsigned_urls", None)
     usage = payload.get("usage")
-    result["usage"] = {**(usage if isinstance(usage, dict) else {}), "cost": cost}
+    usage = dict(usage) if isinstance(usage, dict) else {}
+    if currency != "USD":
+        result.pop("billing", None)
+        if native_cost is not None:
+            result["billing"] = {"currency": currency, "net_amount": native_cost, "status": "settled"}
+    usage["cost"] = cost
+    result["usage"] = usage
     result.update(
         id=job["id"], model=job["gateway_model"],
         polling_url=f"/v1/videos/{job['id']}",
@@ -103,29 +118,53 @@ async def _load_job(request: Request, job_id: str) -> dict:
 
 
 async def _account_task(request: Request, owner, payload: dict, job: dict, status_code: int = 200):
+    route = job["route"]
+    provider = route["provider"]
+    registry = owner.cost_rate_registry
+    exchange = get_provider_cost_currency(registry, provider)
+    currency = exchange.currency if exchange else "USD"
     if payload.get("status") != "completed":
         await release_operation(owner)
-        return JSONResponse(_public_task(payload, job), status_code=status_code)
+        return JSONResponse(_public_task(payload, job, currency=currency), status_code=status_code)
     try:
-        cost = video_cost_usd(payload)
+        amount = video_cost(payload, currency=currency)
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(502, "Video provider returned an invalid cost") from exc
     billing = job["billing_payload"]
-    if billing is None and cost is not None:
-        billing = await _store(request).freeze_billing(job["id"], {"usage": {"cost": cost}})
+    cost_usd = None
+    if amount is not None:
+        cost_usd, native_costs = resolve_provider_usage_cost(amount, provider, registry)
+        if billing is None:
+            billing = await _store(request).freeze_billing(
+                job["id"], {"usage": {"cost": cost_usd}, **({"native_costs": native_costs} if native_costs else {})},
+            )
+    if exchange is not None and billing is not None and "native_costs" not in billing:
+        # A legacy task may already have a USD charge with this event ID.
+        await release_operation(owner)
+        return JSONResponse(
+            _public_task(payload, job, cost_usd, currency=currency, native_cost=amount), status_code=status_code,
+        )
     if billing is None:
         # Missing settlement is unknown, not a free or flat-priced generation.
         await release_operation(owner)
-        return JSONResponse(_public_task(payload, job), status_code=status_code)
+        return JSONResponse(_public_task(payload, job, currency=currency), status_code=status_code)
     observation = parse_upstream_operation_observation(
         billing, policy=owner.context.policy, gateway_model=job["gateway_model"],
         provider=None, model=None, cost_rate_registry=owner.cost_rate_registry,
         operation_cost_calculator_registry=owner.operation_cost_calculator_registry,
         occurred_at=datetime.fromisoformat(job["created_at"]),
     )
-    route = job["route"]
+    native_costs = tuple(billing.get("native_costs", ()))
+    if native_costs:
+        observation = replace(observation, usage=replace(observation.usage, native_costs=native_costs))
+        currency, amount = observation.usage.native_costs[0]
+    else:
+        amount = None
     return await finalize_buffered_operation(
-        owner, JSONResponse(_public_task(payload, job, observation.usage.cost), status_code=status_code), observation,
+        owner, JSONResponse(
+            _public_task(payload, job, observation.usage.cost, currency=currency, native_cost=amount),
+            status_code=status_code,
+        ), observation,
         provenance=OperationEventProvenance(
             event_id=job["id"], method="POST", route_template="/v1/videos",
             provider=route["provider"], model=route["model"],
@@ -264,7 +303,9 @@ async def get_video_content(job_id: str, request: Request):
         for key in ("content-type", "content-disposition", "content-range", "accept-ranges")
         if key in upstream.headers
     }
-    response_headers["x-cost-usd"] = "0"
+    snapshot = cast(RuntimeSnapshot, request.state.runtime_snapshot)
+    if get_provider_cost_currency(snapshot.cost_rate_registry, route.provider) is None:
+        response_headers["x-cost-usd"] = "0"
     return StreamingResponse(
         content(), status_code=upstream.status_code, headers=response_headers,
         background=BackgroundTask(upstream.aclose),

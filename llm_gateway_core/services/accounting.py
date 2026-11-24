@@ -447,6 +447,7 @@ class AccountingUsage:
     ttft_ms: int | None = None
     is_estimated: bool = False
     cost_unavailable: bool = False
+    native_costs: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -481,6 +482,14 @@ class AccountingUsage:
             _invalid_contract()
         if not isinstance(self.cost_unavailable, bool):
             _invalid_contract()
+        native_costs = []
+        for currency, amount in self.native_costs:
+            if not isinstance(currency, str) or re.fullmatch(r"[A-Z]{3}", currency) is None or currency == "USD":
+                _invalid_contract()
+            native_costs.append((currency, _normalize_float(amount, non_negative=True)))
+        if len({currency for currency, _ in native_costs}) != len(native_costs):
+            _invalid_contract()
+        object.__setattr__(self, "native_costs", tuple(sorted(native_costs)))
 
     def _billing_payload(self) -> dict[str, int | str]:
         return {
@@ -607,6 +616,11 @@ def build_component_sum_usage(
     try:
         cost = math.fsum(component.usage.cost for component in normalized_components)
         cost_saved = math.fsum(component.usage.cost_saved for component in normalized_components)
+        amounts_by_currency: dict[str, list[float]] = {}
+        for component in normalized_components:
+            for currency, amount in component.usage.native_costs:
+                amounts_by_currency.setdefault(currency, []).append(amount)
+        native_costs = tuple((currency, math.fsum(amounts)) for currency, amounts in amounts_by_currency.items())
     except (OverflowError, ValueError):
         _invalid_contract()
 
@@ -622,6 +636,7 @@ def build_component_sum_usage(
         ttft_ms=ttft_ms,
         is_estimated=any(component.usage.is_estimated for component in normalized_components),
         cost_unavailable=any(component.usage.cost_unavailable for component in normalized_components),
+        native_costs=native_costs,
     )
 
 
@@ -791,6 +806,7 @@ class AccountingEvent:
                 "provider": self.provider,
                 "route_template": self.route_template,
                 "usage": self.usage._billing_payload(),
+                **({"native_costs": self.usage.native_costs} if self.usage.native_costs else {}),
                 "version": self.version,
             }
         )
@@ -809,6 +825,8 @@ class AccountingReceipt:
     child_event_ids: tuple[str, ...] = ()
     child_fingerprints: tuple[str, ...] = ()
     response_cost_usd: float | None = None
+    native_costs: tuple[tuple[str, float], ...] = ()
+    publish_cost_header: bool = True
 
     def __post_init__(self) -> None:
         if self.response_cost_usd is not None:

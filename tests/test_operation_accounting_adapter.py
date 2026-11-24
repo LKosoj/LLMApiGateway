@@ -28,7 +28,7 @@ from llm_gateway_core.services.operation_accounting import (
     parse_synthesized_operation_observation,
     parse_upstream_operation_observation,
 )
-from llm_gateway_core.utils.usage_tracking import ModelCostRates
+from llm_gateway_core.utils.usage_tracking import ModelCostRates, build_model_cost_rate_registry
 
 
 NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
@@ -71,6 +71,31 @@ def _parse_flat(
         operation_cost_calculator_registry=calculators,
         occurred_at=NOW,
     )
+
+
+@pytest.mark.parametrize("field", ["cost", "cost_rub"])
+@pytest.mark.parametrize("route", ["/v1/decisions", "/v1/images/generations"])
+def test_operation_cost_converts_reported_amount_but_keeps_usd_registry_rates(field, route) -> None:
+    registry = build_model_cost_rate_registry({
+        "trusted-provider": {
+            "usage_cost_currency": "RUB", "usage_cost_units_per_usd": 80,
+            "models": {"trusted-model": {"input_rate": 2, "output_rate": 4}},
+        },
+    })
+    options = dict(
+        policy=_policy("POST", route), gateway_model="gateway-model",
+        provider="trusted-provider", model="trusted-model", cost_rate_registry=registry,
+        operation_cost_calculator_registry={}, occurred_at=NOW,
+    )
+    tokens = {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+    observation = parse_upstream_operation_observation({"usage": {**tokens, field: 2.67}}, **options)
+    assert observation.usage.cost == 0.033375
+    assert observation.usage.native_costs == (("RUB", 2.67),)
+    assert observation.cost_source is CostSource.UPSTREAM
+
+    priced = parse_upstream_operation_observation({"usage": tokens}, **options)
+    assert priced.usage.cost == (pytest.approx(0.000014) if route == "/v1/decisions" else 0.1)
+    assert priced.usage.native_costs == ()
 
 
 def test_token_observation_is_frozen_safe_repr_and_uses_trusted_identity() -> None:

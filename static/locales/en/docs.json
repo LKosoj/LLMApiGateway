@@ -97,7 +97,7 @@
       "title": "3. Python SDK"
     },
     "usage": {
-      "cost": "The final charge in USD is in usage.cost for JSON, X-Cost-USD for files and text, and the usage event for streams. The total includes accounted components and billable attempts before fallback. For background PDF and video jobs, the amount appears after confirmation.",
+      "cost": "The final charge in USD is in usage.cost for JSON, X-Cost-USD for files and text, and the usage event for streams. The total includes accounted components and billable attempts before fallback. The gateway returns original amounts in other currencies in billing. For background PDF and video jobs, the amount appears after confirmation.",
       "linkText": "Analytics",
       "text001": "Usage by key and model is available on the",
       "text002": "page.",
@@ -223,7 +223,7 @@
       "text018": "or an accounting response error. The gateway switches before recording spend; a",
       "text019": "does not trigger replacement. Spend is recorded only for a successful response.",
       "text020": "If upstream returns a valid",
-      "text021": ", it has priority in USD. Otherwise the gateway calculates cost from",
+      "text021": ", the gateway accounts for it at the configured exchange rate. Otherwise the gateway calculates cost from",
       "text022": "and actual input/output tokens. The response stores",
       "text023": "in rubles, not USD.",
       "text024": "For score, values and levels use index 0. The client chooses the confidence threshold; noul, probabilities and confidence help interpret the answer together with that threshold.",
@@ -253,7 +253,8 @@
       "text017": "OpenAI-compatible image response with",
       "text018": ". Streaming is not supported.",
       "videoPromptExpansion": "For WAN via POST /v1/videos, the option below disables automatic provider-side prompt expansion. It is optional; omitting it preserves provider behavior. Send false as a JSON boolean, not a string.",
-      "videoMischief": "accepts a prompt, a duration of 3 or 5 seconds, and one image in frame_images with type first_frame."
+      "videoMischief": "accepts a prompt, a duration of 3 or 5 seconds, and one image in frame_images with type first_frame.",
+      "videoRouterAiCost": "For RouterAI video, billing contains the original RUB amount and usage.cost contains the converted USD amount. Responses omit X-Cost-USD."
     },
     "keys": {
       "heading": "Virtual key access",

@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -55,8 +56,8 @@ INSERT INTO tokens_usage (
     provider, request_id, is_estimated, cost_unavailable, cost_saved, api_key_id,
     accounting_event_id, accounting_kind, parent_accounting_event_id,
     usage_source, upstream_key_fingerprint, x_title,
-    client_ip, client_user_agent, fallback_depth
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    client_ip, client_user_agent, fallback_depth, native_costs
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _INSERT_ACCOUNTING_OUTBOX_SQL = """
@@ -87,7 +88,7 @@ SELECT id, timestamp, duration_ms, ttft_ms, prompt_tokens, completion_tokens,
        total_tokens, reasoning_tokens, cached_tokens, cost, gateway_model,
        operation, model, provider, request_id, is_estimated, cost_unavailable,
        cost_saved, api_key_id, accounting_event_id, accounting_kind,
-       parent_accounting_event_id
+       parent_accounting_event_id, native_costs
 FROM tokens_usage
 WHERE accounting_event_id = ?
 """
@@ -143,6 +144,7 @@ usage_summary AS (
            MIN(usage.accounting_kind) AS usage_kind,
            MIN(usage.api_key_id) AS usage_api_key_id,
            MIN(usage.cost) AS usage_cost,
+           MIN(usage.native_costs) AS usage_native_costs,
            MIN(usage.total_tokens) AS usage_total_tokens,
            MIN(usage.reasoning_tokens) AS usage_reasoning_tokens,
            MIN(usage.cached_tokens) AS usage_cached_tokens,
@@ -211,6 +213,7 @@ SELECT page.event_id,
        usage.usage_kind,
        usage.usage_api_key_id,
        usage.usage_cost,
+       usage.usage_native_costs,
        usage.usage_total_tokens,
        usage.usage_reasoning_tokens,
        usage.usage_cached_tokens,
@@ -440,6 +443,7 @@ def _insert_accounting_usage(
             event.client_ip,
             event.client_user_agent,
             event.fallback_depth,
+            json.dumps(usage.native_costs) if usage.native_costs else None,
         ),
     )
     usage_row_id = cursor.lastrowid
@@ -1000,6 +1004,7 @@ def _source_audit_row_from_db(
                     "reasoning_tokens": row["usage_reasoning_tokens"],
                     "cached_tokens": row["usage_cached_tokens"],
                     "cost": row["usage_cost"],
+                    "native_costs": row["usage_native_costs"],
                     "gateway_model": row["usage_gateway_model"],
                     "operation": row["usage_operation"],
                     "model": row["usage_model"],
@@ -1176,6 +1181,7 @@ def _accounting_event_from_rows(
                 reasoning_tokens=usage_row["reasoning_tokens"],
                 cached_tokens=usage_row["cached_tokens"],
                 cost=usage_row["cost"],
+                native_costs=tuple(json.loads(usage_row["native_costs"])) if usage_row["native_costs"] else (),
                 cost_saved=usage_row["cost_saved"],
                 duration_ms=usage_row["duration_ms"],
                 ttft_ms=usage_row["ttft_ms"],
@@ -2066,12 +2072,15 @@ class TokensUsageDB:
                 cost_unavailable INTEGER NOT NULL DEFAULT 0,
                 client_ip TEXT,
                 client_user_agent TEXT,
-                fallback_depth INTEGER
+                fallback_depth INTEGER,
+                native_costs TEXT
             )
             ''')
 
             cursor.execute("PRAGMA table_info(tokens_usage)")
             existing_columns = {row[1] for row in cursor.fetchall()}
+            if "native_costs" not in existing_columns:
+                cursor.execute("ALTER TABLE tokens_usage ADD COLUMN native_costs TEXT")
             if "request_id" not in existing_columns:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN request_id TEXT")
             if "gateway_model" not in existing_columns:
@@ -2372,7 +2381,7 @@ class TokensUsageDB:
                     total_tokens, reasoning_tokens, cached_tokens, cost,
                     gateway_model, operation, model, provider, request_id,
                     is_estimated, usage_source, cost_saved, api_key_id,
-                    upstream_key_fingerprint, x_title
+                    upstream_key_fingerprint, x_title, native_costs
                 FROM tokens_usage
                 {where}
                 ORDER BY timestamp DESC
@@ -2381,6 +2390,10 @@ class TokensUsageDB:
                 cursor = await db.execute(query, params)
                 rows = await cursor.fetchall()
                 results = [dict(row) for row in rows]
+                for record in results:
+                    native_costs = record.pop("native_costs")
+                    if native_costs is not None:
+                        record["native_costs"] = dict(json.loads(native_costs))
                 logger.debug("Retrieved %d latest token usage records (limit=%d, offset=%d).", len(results), limit, offset)
                 return results
         except Exception as e:

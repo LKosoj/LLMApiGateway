@@ -47,7 +47,7 @@ from llm_gateway_core.services.fusion_keepalive import FusionKeepaliveJsonRespon
 from llm_gateway_core.services.stream_observation import SSEFramer
 from llm_gateway_core.services.request_handler import _OwnedStreamingResponse, _StreamResourceOwner
 from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
-from llm_gateway_core.utils.usage_tracking import ModelCostRates, estimate_prompt_tokens
+from llm_gateway_core.utils.usage_tracking import ModelCostRates, build_model_cost_rate_registry, estimate_prompt_tokens
 from tests._async_compat import run_async
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
@@ -815,7 +815,7 @@ def _openai_json_response() -> dict:
     }
 
 
-def _openai_stream_response() -> StreamingResponse:
+def _openai_stream_response(*, cost: float = 0) -> StreamingResponse:
     async def body() -> AsyncIterator[bytes]:
         yield (
             b'data: {"id":"chatcmpl-integration","object":"chat.completion.chunk",'
@@ -826,35 +826,95 @@ def _openai_stream_response() -> StreamingResponse:
             b'data: {"id":"chatcmpl-integration","object":"chat.completion.chunk",'
             b'"created":1,"model":"model-a","choices":[{"index":0,"delta":{},'
             b'"finish_reason":"stop"}],"usage":{"prompt_tokens":2,'
-            b'"completion_tokens":3,"total_tokens":5,"cost":0}}\n\n'
+            b'"completion_tokens":3,"total_tokens":5,"cost":' + str(cost).encode() + b'}}\n\n'
         )
         yield b"data: [DONE]\n\n"
 
     return StreamingResponse(body(), media_type="text/event-stream")
 
 
-def test_paid_empty_completion_and_accepted_fallback_are_billed_and_returned_together() -> None:
+@pytest.mark.parametrize("stream", [False, True])
+def test_provider_currency_is_converted_in_chat_and_original_is_reported(stream: bool) -> None:
+    async def scenario() -> None:
+        app, service, _events = _app()
+        _install_chat_routes(app)
+        snapshot = app.state.snapshot
+        provider = _provider_config()
+        provider.usage_cost_currency = "RUB"
+        provider.usage_cost_units_per_usd = 80
+        snapshot.config_loader.providers_config = {"provider-a": provider}
+        snapshot.config_loader.fallback_rules = {
+            "gateway-model": {
+                "rotate_models": False, "fallback_models": [{"provider": "provider-a", "model": "model-a"}],
+            },
+        }
+        app.state.snapshot = replace(
+            snapshot, cost_rate_registry=build_model_cost_rate_registry(snapshot.config_loader.providers_config)
+        )
+        upstream = _openai_json_response()
+        upstream["usage"]["cost"] = 2.67
+        response = _openai_stream_response(cost=2.67) if stream else upstream
+
+        async def commit(_reservation, event):
+            return replace(_receipt(event), response_cost_usd=event.usage.cost, native_costs=event.usage.native_costs)
+
+        service.commit.side_effect = commit
+        with (
+            patch.object(chat_api, "resolve_provider_auth_material", new=AsyncMock(
+                return_value=SimpleNamespace(headers={"Authorization": "Bearer test"}, upstream_key_fingerprint=None)
+            )),
+            patch.object(chat_api, "make_llm_request", new=AsyncMock(return_value=(response, None))),
+        ):
+            sent = await _run_app(app, request_payload={
+                "model": "gateway-model", "messages": [{"role": "user", "content": "hi"}], "stream": stream,
+            })
+        assert sent[0]["status"] == 200
+        body = b"".join(message.get("body", b"") for message in sent)
+        if stream:
+            batch = SSEFramer().feed(body)
+            observed = [json.loads(event.data) for event in batch.events if not event.done]
+            assert all(item.get("usage", {}).get("cost") != 2.67 for item in observed)
+            billing, = [item for item in observed if item.get("billing")]
+        else:
+            billing = json.loads(body)
+        assert billing["usage"]["cost"] == 0.033375
+        assert billing["billing"] == {"currency": "RUB", "net_amount": 2.67, "status": "settled"}
+        event = service.commit.await_args.args[1]
+        assert event.usage.cost == 0.033375
+        assert event.usage.native_costs == (("RUB", 2.67),)
+
+    run_async(scenario())
+
+
+@pytest.mark.parametrize("rejected_in_rubles", [False, True])
+def test_paid_empty_completion_and_accepted_fallback_are_billed_and_returned_together(rejected_in_rubles) -> None:
     async def scenario() -> None:
         app, service, _events = _app()
         _install_chat_routes(app)
         loader = app.state.snapshot.config_loader
-        loader.providers_config = {"provider-a": _provider_config()}
+        loader.providers_config = {"provider-a": _provider_config(), "provider-b": _provider_config()}
+        if rejected_in_rubles:
+            loader.providers_config["provider-b"].usage_cost_currency = "RUB"
+            loader.providers_config["provider-b"].usage_cost_units_per_usd = 80
+            app.state.snapshot = replace(
+                app.state.snapshot, cost_rate_registry=build_model_cost_rate_registry(loader.providers_config),
+            )
         loader.fallback_rules = {
             "gateway-model": {"rotate_models": False, "fallback_models": [
-                {"provider": "provider-a", "model": "discarded"},
+                {"provider": "provider-b", "model": "discarded"},
                 {"provider": "provider-a", "model": "model-a"},
             ]},
         }
         loader.model_rules = {}
         first = {
             "choices": [{"message": {"content": ""}, "finish_reason": "stop"}],
-            "usage": {"cost": 0.01},
+            "usage": {"cost": 0.8 if rejected_in_rubles else 0.01},
         }
         second = _openai_json_response()
         second["usage"]["cost"] = 0.03
 
         async def commit(_reservation, event):
-            return replace(_receipt(event), response_cost_usd=event.usage.cost)
+            return replace(_receipt(event), response_cost_usd=event.usage.cost, native_costs=event.usage.native_costs)
 
         service.commit.side_effect = commit
         with (
@@ -866,7 +926,10 @@ def test_paid_empty_completion_and_accepted_fallback_are_billed_and_returned_tog
             sent = await _run_app(app)
         assert sent[0]["status"] == 200
         assert dict(sent[0]["headers"])[b"x-cost-usd"] == b"0.04"
-        assert json.loads(b"".join(message.get("body", b"") for message in sent))["usage"]["cost"] == 0.04
+        public = json.loads(b"".join(message.get("body", b"") for message in sent))
+        assert public["usage"]["cost"] == 0.04
+        if rejected_in_rubles:
+            assert public["billing"] == {"currency": "RUB", "net_amount": 0.8, "status": "settled"}
         service.commit.assert_awaited_once()
         event = service.commit.await_args.args[1]
         assert [(component.model, component.usage.cost) for component in event.components] == [

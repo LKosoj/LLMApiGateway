@@ -350,6 +350,16 @@
       "baseUrl": "https://foundation-models.api.cloud.ru/v1",
       "apikey": "${APIKEY_CLOUDRU}",
       "proxy": "${PROXY_CLOUDRU}",
+      "models": {
+        "Qwen/Qwen3-Embedding-0.6B": {
+          "input_rate": 0.010675,
+          "output_rate": 0
+        },
+        "Qwen/Qwen3-Reranker-0.6B": {
+          "input_rate": 0.010675,
+          "output_rate": 0
+        }
+      },
       "routing": {
         "strategy": "round-robin",
         "session_affinity": false,
@@ -590,6 +600,8 @@
     "routerai": {
       "baseUrl": "https://routerai.ru/api/v1",
       "apikey": "${APIKEY_ROUTERAI}",
+      "usage_cost_currency": "RUB",
+      "usage_cost_units_per_usd": 80,
       "models": {
         "~typesafe/jev-latest": {
           "input_rate": 0.042,

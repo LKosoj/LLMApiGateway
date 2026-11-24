@@ -143,6 +143,8 @@ class UpstreamKeyPoolConfig(BaseModel):
 class ProviderDetails(BaseModel):
     baseUrl: str
     apikey: str | None = None
+    usage_cost_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    usage_cost_units_per_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False, strict=True)
     # API dialect this provider speaks. ``openai`` — OpenAI-compatible
     # /chat/completions with Bearer auth. ``anthropic`` — native Anthropic
     # /v1/messages with ``x-api-key`` and ``anthropic-version`` headers.
@@ -241,6 +243,12 @@ class ProviderDetails(BaseModel):
                         raise ValueError(f"Model '{model}' api_type must be chat_completions or responses.")
                     if self.type != "openai":
                         raise ValueError(f"Model '{model}' api_type requires an openai provider.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_cost_currency(self) -> "ProviderDetails":
+        if self.usage_cost_currency != "USD" and self.usage_cost_units_per_usd is None:
+            raise ValueError("usage_cost_units_per_usd is required for non-USD usage costs.")
         return self
 
     @model_validator(mode="after")

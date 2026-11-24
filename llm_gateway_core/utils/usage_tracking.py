@@ -49,6 +49,19 @@ class ModelCostRates:
     output_rate: float
 
 
+@dataclass(frozen=True)
+class ProviderCostCurrency:
+    currency: str
+    units_per_usd: float
+
+
+def get_provider_cost_currency(
+    registry: Mapping, provider: str | None,
+) -> ProviderCostCurrency | None:
+    value = registry.get((provider, None))
+    return value if isinstance(value, ProviderCostCurrency) else None
+
+
 def initialize_tokens_usage() -> dict[str, Any]:
     return dict(DEFAULT_TOKENS_USAGE)
 
@@ -192,22 +205,29 @@ def _coerce_model_cost_rates(raw_rates: Any) -> ModelCostRates | None:
 
 def build_model_cost_rate_registry(
     providers_config: Mapping[str, Any] | None,
-) -> dict[tuple[str, str], ModelCostRates]:
+) -> dict[tuple[str, str | None], ModelCostRates | ProviderCostCurrency]:
     """Build a provider/model -> per-million-token rate registry.
 
     ``providers.json`` may define rates under each provider's optional
     ``models`` block, either as a mapping keyed by model name or as a list of
     model objects containing ``model``/``name``/``id``.
     """
-    registry: dict[tuple[str, str], ModelCostRates] = {}
+    registry: dict[tuple[str, str | None], ModelCostRates | ProviderCostCurrency] = {}
     if not isinstance(providers_config, Mapping):
         return registry
 
     for provider_name, provider_config in providers_config.items():
         if isinstance(provider_config, Mapping):
             models = provider_config.get("models")
+            currency = provider_config.get("usage_cost_currency", "USD")
+            units_per_usd = provider_config.get("usage_cost_units_per_usd")
         else:
             models = getattr(provider_config, "models", None)
+            currency = getattr(provider_config, "usage_cost_currency", "USD")
+            units_per_usd = getattr(provider_config, "usage_cost_units_per_usd", None)
+        if currency != "USD" and units_per_usd is not None:
+            # None is a provider-wide entry. Model-specific registry keys always use strings.
+            registry[(str(provider_name), None)] = ProviderCostCurrency(currency, units_per_usd)
         if isinstance(models, Mapping):
             for model_name, model_rates in models.items():
                 rates = _coerce_model_cost_rates(model_rates)

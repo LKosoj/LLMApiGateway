@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import json
+import re
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 
@@ -25,6 +26,7 @@ from ..services.stream_observation import (
     StreamObservationLease,
     parse_sse_json,
 )
+from ..utils.usage_tracking import get_provider_cost_currency
 from .response_observation_contracts import (
     FinalizationResult,
     MaybeAwaitable as _MaybeAwaitable,
@@ -42,6 +44,42 @@ from .response_observation_contracts import (
 _SESSION_STATE_KEY = "_llmgateway_response_observation_session"
 _UPSTREAM_PROTOCOL_DETAIL = "Upstream response failed protocol validation."
 _ACCOUNTING_UNAVAILABLE_DETAIL = "Response accounting is temporarily unavailable."
+
+
+def _client_billing(native_costs: tuple[tuple[str, float], ...]) -> dict | list[dict]:
+    items = [
+        {"currency": currency, "net_amount": amount, "status": "settled"}
+        for currency, amount in native_costs
+    ]
+    return items[0] if len(items) == 1 else items
+
+
+def _strip_unsettled_sse_cost(body: bytes) -> bytes:
+    # Keep the framing and control fields of every event. Only replace JSON data
+    # with a cost field, after the accounting observer has read its original value.
+    frames = re.split(rb"(\r?\n\r?\n)", body)
+    for index in range(0, len(frames), 2):
+        frame = frames[index]
+        lines = frame.splitlines()
+        data_lines = [line[5:].lstrip(b" ") for line in lines if line.startswith(b"data:")]
+        try:
+            payload = json.loads(b"\n".join(data_lines))
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        changed = False
+        for envelope in (payload, payload.get("response"), payload.get("message")):
+            usage = envelope.get("usage") if isinstance(envelope, dict) else None
+            if isinstance(usage, dict) and "cost" in usage:
+                del usage["cost"]
+                changed = True
+        if changed:
+            control_lines = [line for line in lines if not line.startswith(b"data:")]
+            data = b"data: " + json.dumps(payload, separators=(",", ":")).encode()
+            frames[index] = b"\n".join([*control_lines, data])
+    return b"".join(frames)
+
 
 class ResponseObservationStateError(RuntimeError):
     """Invalid response-observation ownership or request-capture state."""
@@ -218,6 +256,9 @@ class _ResponseObserver:
         "_observation",
         "_pending_start",
         "_response_cost_usd",
+        "_native_costs",
+        "_publish_cost_header",
+        "_strip_sse_cost",
         "_send",
         "_services",
         "_settled",
@@ -233,12 +274,16 @@ class _ResponseObserver:
         send: Send,
         services: AppServices,
         observation: ResponseObservation,
+        strip_sse_cost: bool = False,
     ) -> None:
         self._send = send
         self._services = services
         self._observation = observation
         self._pending_start: Message | None = None
         self._response_cost_usd: float | None = None
+        self._native_costs: tuple[tuple[str, float], ...] = ()
+        self._publish_cost_header = True
+        self._strip_sse_cost = strip_sse_cost
         self._start: ResponseStart | None = None
         self._body_messages: list[Message] = []
         self._json_keepalive = False
@@ -424,8 +469,10 @@ class _ResponseObserver:
             if not isinstance(usage, dict):
                 usage = document["usage"] = {}
             existing_cost = usage.get("cost")
-            if isinstance(existing_cost, bool) or existing_cost != cost:
+            if isinstance(existing_cost, bool) or existing_cost != cost or self._native_costs:
                 usage["cost"] = cost
+                if self._native_costs:
+                    document["billing"] = _client_billing(self._native_costs)
                 payload = json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode(
                     self._start.charset
                 )
@@ -505,14 +552,23 @@ class _ResponseObserver:
 
         if not self._actual_started:
             await self._flush_start()
+        if self._response_cost_usd is not None or self._strip_sse_cost:
+            payload = b"".join(_message_body(item) for item in self._body_messages)
+            terminal_offset = len(payload) - terminal_bytes
+            prefix, terminal = payload[:terminal_offset], payload[terminal_offset:]
+            if self._strip_sse_cost:
+                prefix = _strip_unsettled_sse_cost(prefix)
+                terminal = _strip_unsettled_sse_cost(terminal)
         if self._response_cost_usd is not None:
             cost_payload = self._sse_cost_payload
             usage = cost_payload.setdefault("usage", {})
             usage["cost"] = self._response_cost_usd
+            if self._native_costs:
+                cost_payload["billing"] = _client_billing(self._native_costs)
             cost_event = b"event: usage\ndata: " + json.dumps(cost_payload, separators=(",", ":")).encode() + b"\n\n"
-            payload = b"".join(_message_body(item) for item in self._body_messages)
-            prefix, terminal = payload[:-terminal_bytes], payload[-terminal_bytes:]
-            self._body_messages = [{**message, "body": prefix + cost_event + terminal}]
+            prefix += cost_event
+        if self._response_cost_usd is not None or self._strip_sse_cost:
+            self._body_messages = [{**message, "body": prefix + terminal}]
         for body_message in self._body_messages:
             await self._send_body(body_message)
         self._body_messages.clear()
@@ -593,6 +649,8 @@ class _ResponseObserver:
         )
         if reason is TerminalReason.COMPLETE and isinstance(result.value, AccountingReceipt):
             self._response_cost_usd = result.value.response_cost_usd
+            self._native_costs = result.value.native_costs
+            self._publish_cost_header = result.value.publish_cost_header
         self._settled = True
 
     def _retain_body_message(
@@ -624,7 +682,7 @@ class _ResponseObserver:
                 (name, value) for name, value in self._pending_start["headers"]
                 if name.lower() != b"content-length"
             ]
-        if self._response_cost_usd is not None:
+        if self._response_cost_usd is not None and self._publish_cost_header:
             headers = self._pending_start["headers"]
             self._pending_start["headers"] = [
                 (name, value) for name, value in headers if name.lower() != b"x-cost-usd"
@@ -685,10 +743,15 @@ class ResponseObservationMiddleware:
                         return
                     if passthrough_started:
                         raise _ObservationFailure(_FailureKind.PROTOCOL)
+                    state = scope.get("state", {})
+                    snapshot = state.get("runtime_snapshot")
                     observer = _ResponseObserver(
                         send=send,
                         services=_app_services(scope),
                         observation=observation,
+                        strip_sse_cost=get_provider_cost_currency(
+                            getattr(snapshot, "cost_rate_registry", {}), state.get("llmgateway_provider"),
+                        ) is not None,
                     )
                 await observer.send(message)
 

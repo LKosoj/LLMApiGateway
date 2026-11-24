@@ -119,6 +119,8 @@ class StructuredProviderItem(BaseModel):
     name: str
     baseUrl: str
     apikey: str | None = None
+    usage_cost_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    usage_cost_units_per_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False, strict=True)
     type: Literal["openai", "anthropic"] = "openai"
     proxy: str | None = None
     models: Any | None = None
@@ -332,6 +334,10 @@ def _serialize_structured_providers(providers: list[StructuredProviderItem]) -> 
         }
         if provider.apikey is not None:
             provider_payload["apikey"] = provider.apikey
+        if provider.usage_cost_currency != "USD":
+            provider_payload["usage_cost_currency"] = provider.usage_cost_currency
+            if provider.usage_cost_units_per_usd is not None:
+                provider_payload["usage_cost_units_per_usd"] = provider.usage_cost_units_per_usd
         if provider.type != "openai":
             provider_payload["type"] = provider.type
         if provider.proxy is not None:

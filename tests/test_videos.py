@@ -1,6 +1,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,9 +16,10 @@ from llm_gateway_core.api.v1.rules_editor import (
     _build_structured_operation_rules_response,
     _serialize_structured_operation_rules,
 )
-from llm_gateway_core.api.v1.video_adapters import VideoRequest, build_video_payload, video_cost_usd
+from llm_gateway_core.api.v1.video_adapters import VideoRequest, build_video_payload, video_cost
 from llm_gateway_core.config.loader import ConfigLoader, ProviderDetails
 from llm_gateway_core.config.schemas import ModelsOperationConfig
+from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.video_jobs_db import VideoJobsDB
 from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.middleware.accounting_admission import (
@@ -30,6 +32,7 @@ from llm_gateway_core.services.accounting import (
     classify_billing_policy,
 )
 from llm_gateway_core.services.request_handler import OperationDispatcher
+from llm_gateway_core.utils.usage_tracking import build_model_cost_rate_registry
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
 
@@ -57,9 +60,16 @@ async def video_client(tmp_path, handler, *, key_id=7, rules=RULES):
         name: ProviderDetails(baseUrl=f'https://{name}.example/v1', apikey='test-key')
         for name in ('bettertoken', 'routerai')
     }
+    providers["routerai"] = ProviderDetails(
+        baseUrl="https://routerai.example/v1", apikey="test-key",
+        usage_cost_currency="RUB", usage_cost_units_per_usd=80,
+    )
     loader = SimpleNamespace(providers_config=providers, operation_rules=rules)
     dispatcher = OperationDispatcher(providers, rules, upstream)
-    snapshot = make_runtime_snapshot(config_loader=loader, operation_dispatcher=dispatcher)
+    snapshot = make_runtime_snapshot(
+        config_loader=loader, operation_dispatcher=dispatcher,
+        cost_rate_registry=build_model_cost_rate_registry(providers),
+    )
     store = VideoJobsDB(tmp_path / 'videos.db')
     services = make_app_services(http_client=upstream, video_jobs_db=store)
     events = []
@@ -69,6 +79,9 @@ async def video_client(tmp_path, handler, *, key_id=7, rules=RULES):
         return AccountingReceipt(
             source_status=SourceStatus.ACCEPTED, projection_status=ProjectionStatus.APPLIED,
             event_id=event.event_id, billing_fingerprint=event.billing_fingerprint, usage_row_id=1,
+            response_cost_usd=event.usage.cost,
+            native_costs=event.usage.native_costs,
+            publish_cost_header=not event.usage.native_costs,
         )
     services.accounting_service.commit.side_effect = commit
     app = FastAPI()
@@ -321,6 +334,67 @@ def test_creation_errors_record_provider_diagnostics(tmp_path, shape):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize('completed_on_create', [False, True])
+def test_routerai_video_returns_ruble_billing_with_converted_usd_cost(tmp_path, completed_on_create, monkeypatch):
+    monkeypatch.setenv('GATEWAY_DB_DIR', str(tmp_path))
+    keys = ApiKeysDB()
+    key = keys.create(name='Currency test', budget_usd=1)
+    completed = {
+        'id': 'routerai-job', 'status': 'completed', 'usage': {'cost': 2.67, 'duration': 5},
+    }
+
+    async def scenario():
+        def handler(request):
+            if request.url.host == 'bettertoken.example':
+                return httpx.Response(422, json={'error': 'refused'})
+            if request.url.path.endswith('/content'):
+                return httpx.Response(200, content=b'video', headers={
+                    'content-type': 'video/mp4', 'x-cost-usd': '2.67',
+                })
+            if request.method == 'POST' and not completed_on_create:
+                return httpx.Response(202, json={'id': 'routerai-job', 'status': 'pending', 'usage': {'cost': 0}})
+            return httpx.Response(200, json=completed)
+
+        async with video_client(tmp_path, handler, key_id=key.id) as (client, services, events):
+            created = await client.post('/v1/videos', json=BODY)
+            task = created.json()
+            assert 'x-cost-usd' not in created.headers
+            if completed_on_create:
+                responses = [created]
+            else:
+                assert created.status_code == 202
+                assert 'billing' not in task
+                assert task['usage']['cost'] is None
+                # Jobs observed before the fix can have an incorrectly frozen USD amount.
+                await services.video_jobs_db.freeze_billing(task['id'], {'usage': {'cost': 9.99}})
+                responses = []
+
+            responses.append(await client.get(task['polling_url']))
+            for response in responses:
+                assert response.status_code == 200
+                assert response.json()['billing'] == {'currency': 'RUB', 'net_amount': 2.67, 'status': 'settled'}
+                assert response.json()['usage'] == {'duration': 5, 'cost': 0.033375}
+                assert 'x-cost-usd' not in response.headers
+            content = await client.get(task['content_url'])
+            assert content.content == b'video'
+            assert 'x-cost-usd' not in content.headers
+            if completed_on_create:
+                assert [event.usage.cost for event in events] == [0.033375, 0.033375]
+                assert events[0].billing_fingerprint == events[1].billing_fingerprint
+                usage_db = TokensUsageDB('native-video-usage.db')
+                accepted = usage_db.accept_accounting_event(events[0])
+                assert accepted.stored_event.event.usage.native_costs == (('RUB', 2.67),)
+                assert keys.apply_spend_event(accepted.stored_event, datetime.now(timezone.utc)) is ProjectionStatus.APPLIED
+                assert keys.get_by_id(key.id).spent_usd == 0.033375
+                assert usage_db.accept_accounting_event(events[1]).status == SourceStatus.DUPLICATE
+                assert (await usage_db.get_latest_usage_records())[0]['native_costs'] == {'RUB': 2.67}
+            else:
+                assert events == []
+                assert services.accounting_service.release.await_count == 2
+
+    asyncio.run(scenario())
+
+
 def test_bettertoken_job_billing_and_idempotent_creation(tmp_path, monkeypatch):
     monkeypatch.setenv('GATEWAY_DB_DIR', str(tmp_path))
     usage_db = TokensUsageDB('video-usage.db')
@@ -345,6 +419,7 @@ def test_bettertoken_job_billing_and_idempotent_creation(tmp_path, monkeypatch):
             completed = await client.get(poll)
             assert completed.status_code == 200
             assert completed.json()['usage']['cost'] == 0.47
+            assert completed.headers['x-cost-usd'] == '0.47'
             assert (await client.get(poll)).status_code == 200
             assert len(events) == 2
             assert events[0].event_id == events[1].event_id
@@ -382,10 +457,10 @@ def test_missing_usd_settlement_has_no_invented_charge(tmp_path, usage):
 
 
 def test_cost_resolver_zero_priority_and_invalid_values():
-    assert video_cost_usd({'usage': {'cost': 0}, 'billing': {'currency': 'USD', 'net_amount': '10'}}) == 0
+    assert video_cost({'usage': {'cost': 0}, 'billing': {'currency': 'USD', 'net_amount': '10'}}, currency='USD') == 0
     for value in (-1, float('nan'), True, 'broken'):
         with pytest.raises((ValueError, TypeError)):
-            video_cost_usd({'usage': {'cost': value}})
+            video_cost({'usage': {'cost': value}}, currency='USD')
 
 
 def test_video_config_roundtrip_and_model_metadata():

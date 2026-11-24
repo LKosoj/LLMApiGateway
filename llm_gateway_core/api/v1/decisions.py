@@ -10,7 +10,11 @@ from fastapi import APIRouter, HTTPException, Request
 from ..accounting_http import AccountingHttpUse, accounting_error_response
 from ...services.access_control import enforce_virtual_key_access
 from ...services.accounting import AccountingCostError, AccountingError, AccountingErrorCode, BillingComponent
-from ...services.operation_accounting import parse_upstream_operation_observation, rejected_token_component
+from ...services.operation_accounting import (
+    parse_upstream_operation_observation,
+    rejected_token_component,
+    reported_usage_cost,
+)
 from ...services.provider_auth import resolve_provider_auth_headers
 from ...services.request_handler import normalize_retry_settings
 from .operation_accounting import (
@@ -92,10 +96,9 @@ async def call_decision_routes(request: Request, requested_model: str, payload: 
                 raise HTTPException(502, "Decisions response must contain an 'answers' object.")
             usage = downstream_json.get("usage")
             if (
-                isinstance(usage, Mapping) and usage.get("cost") is None
+                isinstance(usage, Mapping) and reported_usage_cost(usage, route.provider, cost_rate_registry) is None
                 and (route.provider, route.model) not in cost_rate_registry
             ):
-                # RUB is preserved in the response; it cannot be recorded as USD.
                 raise AccountingCostError(AccountingErrorCode.COST_UNAVAILABLE)
             observation = observe(downstream_json, route)
         except (HTTPException, AccountingError) as exc:
@@ -104,7 +107,7 @@ async def call_decision_routes(request: Request, requested_model: str, payload: 
             if isinstance(downstream_json, dict):
                 usage = downstream_json.get("usage")
                 if (route.provider, route.model) in cost_rate_registry or (
-                    isinstance(usage, Mapping) and usage.get("cost") is not None
+                    reported_usage_cost(usage, route.provider, cost_rate_registry) is not None
                 ):
                     component = rejected_token_component(
                         downstream_json, provider=route.provider, model=route.model,

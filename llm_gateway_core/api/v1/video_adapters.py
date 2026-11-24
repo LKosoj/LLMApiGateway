@@ -117,13 +117,15 @@ def build_video_payload(body: VideoRequest, model: str, request_format: str | No
     return payload
 
 
-def video_cost_usd(payload: dict) -> float | None:
-    """Accept actual USD settlement only; never guess a per-video tariff."""
+def video_cost(payload: dict, *, currency: str) -> float | None:
+    """Read video cost in the provider's currency without conversion."""
     usage = payload.get("usage")
     value = usage.get("cost") if isinstance(usage, dict) else None
+    if value is None and currency == "RUB" and isinstance(usage, dict):
+        value = usage.get("cost_rub")
     if value is None:
         billing = payload.get("billing")
-        if not isinstance(billing, dict) or billing.get("currency") != "USD":
+        if not isinstance(billing, dict) or billing.get("currency") != currency:
             return None
         value = billing.get("net_amount")
     if value is None:

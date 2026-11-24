@@ -731,6 +731,8 @@ export function registerProviders(ctx) {
         const baseUrlInput = providerCard.querySelector('.provider-base-url-input');
         const apiKeyInput = providerCard.querySelector('.provider-api-key-input');
         const typeSelect = providerCard.querySelector('.provider-type-select');
+        const currencyInput = providerCard.querySelector('.provider-usage-cost-currency-input');
+        const exchangeInput = providerCard.querySelector('.provider-usage-cost-exchange-input');
         const proxyInput = providerCard.querySelector('.provider-proxy-input');
         const modelsInput = providerCard.querySelector('.provider-models-input');
         const routingInput = providerCard.querySelector('.provider-routing-input');
@@ -740,6 +742,7 @@ export function registerProviders(ctx) {
         const baseUrl = baseUrlInput.value.trim();
         const apikey = apiKeyInput.value.trim();
         const type = typeSelect.value.trim();
+        const usageCostCurrency = currencyInput.value.trim().toUpperCase();
         const proxy = proxyInput.value.trim();
 
         if (!name) {
@@ -768,6 +771,17 @@ export function registerProviders(ctx) {
             baseUrl,
             type,
         };
+        if (usageCostCurrency && !/^[A-Z]{3}$/.test(usageCostCurrency)) {
+            throw new Error(`Provider '${name}' must use a three-letter currency code.`);
+        }
+        if (usageCostCurrency && usageCostCurrency !== 'USD') {
+            const unitsPerUsd = Number(exchangeInput.value);
+            if (!Number.isFinite(unitsPerUsd) || unitsPerUsd <= 0) {
+                throw new Error(`Provider '${name}' must specify a positive exchange rate.`);
+            }
+            providerPayload.usage_cost_currency = usageCostCurrency;
+            providerPayload.usage_cost_units_per_usd = unitsPerUsd;
+        }
         if (apikey) {
             providerPayload.apikey = apikey;
         }
@@ -903,6 +917,14 @@ export function registerProviders(ctx) {
         apiKeyControl.appendChild(apiKeyRevealButton);
         const typeSelect = ctx.createSelect('provider-type-select');
         ctx.setSelectOptions(typeSelect, ['openai', 'anthropic'], 'Choose API type', initialData.type || 'openai');
+        const currencyInput = ctx.createTextInput('provider-usage-cost-currency-input', 'USD');
+        currencyInput.value = initialData.usage_cost_currency || 'USD';
+        const currencyField = ctx.createFieldGroup('Usage Cost Currency', currencyInput, 'provider-usage-cost-currency-field');
+        ctx.attachFieldTooltip(currencyField, 'editor:tooltips.usageCostCurrency');
+        const exchangeInput = ctx.createTextInput('provider-usage-cost-exchange-input', '80');
+        exchangeInput.value = initialData.usage_cost_units_per_usd ?? '';
+        const exchangeField = ctx.createFieldGroup('Currency Units per USD', exchangeInput, 'provider-usage-cost-exchange-field');
+        ctx.attachFieldTooltip(exchangeField, 'editor:tooltips.usageCostExchange');
         const proxyInput = ctx.createTextInput('provider-proxy-input', '${PROXY_PROVIDER} or https://proxy:8080');
         proxyInput.value = initialData.proxy || '';
 
@@ -930,6 +952,8 @@ export function registerProviders(ctx) {
         fieldsGrid.appendChild(baseUrlField);
         fieldsGrid.appendChild(apiKeyField);
         fieldsGrid.appendChild(typeField);
+        fieldsGrid.appendChild(currencyField);
+        fieldsGrid.appendChild(exchangeField);
         fieldsGrid.appendChild(proxyField);
         fieldsGrid.appendChild(ideographToggle);
 

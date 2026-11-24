@@ -89,7 +89,7 @@ print(response.choices[0].message.content)</code></pre>
                 <article class="quickstart-card">
                     <h3><span data-i18n="docs:quickstart.usage.title">4. Посмотрите расход</span></h3>
                     <p><span data-i18n="docs:quickstart.usage.text001">Расход по ключам и моделям доступен на странице</span> <a href="/v1/ui/usage-stats"><span data-i18n="docs:quickstart.usage.linkText">Аналитика</span></a><span data-i18n="docs:quickstart.usage.text002">.</span></p>
-                    <p data-i18n="docs:quickstart.usage.cost">Итог платного вызова в USD приходит в usage.cost для JSON, в X-Cost-USD для файлов и текста и в событии usage для потока. Сумма включает учтённые части запроса и платные попытки перед переключением на запасной вариант. Для фоновых PDF и видео цена появляется после подтверждения.</p>
+                    <p data-i18n="docs:quickstart.usage.cost">Итог платного вызова в USD приходит в usage.cost для JSON, в X-Cost-USD для файлов и текста и в событии usage для потока. Исходную сумму в другой валюте шлюз возвращает в billing. Для фоновых PDF и видео цена появляется после подтверждения.</p>
                 </article>
             </div>
         </section>
@@ -304,7 +304,7 @@ print(response.choices[0].message.content)</code></pre>
                     </table>
                     <p><span data-i18n="docs:sections.decisions.text015">Streaming для Decisions не поддерживается.</span></p>
                     <p><span data-i18n="docs:sections.decisions.text016">В маршруте Jev используется следующий маршрут</span> <code>pplx-decider-v1-27b</code><span data-i18n="docs:sections.decisions.text017">, если Jev временно отвечает</span> <code>502</code>/<code>503</code> <span data-i18n="docs:sections.decisions.text018">или возвращает ошибку учёта расходов. Переход выполняется до фиксации расходов; ответ с</span> <code>400</code> <span data-i18n="docs:sections.decisions.text019">не запускает замену. Расходы записываются только за успешный ответ.</span></p>
-                    <p><span data-i18n="docs:sections.decisions.text020">Если провайдер возвращает валидный</span> <code>usage.cost</code><span data-i18n="docs:sections.decisions.text021">, он имеет приоритет в USD. Иначе gateway считает стоимость по</span> <code>providers.json</code> <span data-i18n="docs:sections.decisions.text022">и фактическому числу входных и выходных токенов. В ответе сохраняется</span> <code>cost_rub</code> <span data-i18n="docs:sections.decisions.text023">в рублях, а не USD.</span></p>
+                    <p><span data-i18n="docs:sections.decisions.text020">Если провайдер возвращает валидный</span> <code>usage.cost</code><span data-i18n="docs:sections.decisions.text021">, шлюз учитывает его по заданному курсу. Иначе gateway считает стоимость по</span> <code>providers.json</code> <span data-i18n="docs:sections.decisions.text022">и фактическому числу входных и выходных токенов. В ответе сохраняется</span> <code>cost_rub</code> <span data-i18n="docs:sections.decisions.text023">в рублях, а не USD.</span></p>
                 </article>
             </div>
             <h3 data-i18n="docs:sections.decisions.exampleNoul">Пример: noul</h3>
@@ -370,6 +370,7 @@ print(response.choices[0].message.content)</code></pre>
                 </article>
                 <article class="service-card">
                     <h3>POST /v1/videos</h3>
+                    <p data-i18n="docs:sections.images.videoRouterAiCost">Для видео RouterAI исходная сумма в RUB приходит в billing, а пересчёт в USD — в usage.cost. Заголовок X-Cost-USD отсутствует.</p>
                     <p data-i18n="docs:sections.images.videoPromptExpansion">For WAN, disable automatic provider-side prompt expansion with the optional JSON boolean below.</p>
                     <code>{"provider_options":{"alibaba":{"prompt_extend":false}}}</code>
                     <p><code>llmgateway/mischief-1</code> <span data-i18n="docs:sections.images.videoMischief">принимает промпт, длительность 3 или 5 секунд и одно изображение в frame_images с типом first_frame.</span></p>

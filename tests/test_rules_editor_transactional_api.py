@@ -1547,11 +1547,13 @@ def test_unsupported_provider_auth_is_preserved_for_explicit_rejection(
         loader.parse_and_validate_providers_payload(payload_text)
 
 
-def test_structured_provider_schema_preserves_quota_and_rejects_unknown_fields() -> None:
+def test_structured_provider_schema_preserves_currency_and_quota_and_rejects_unknown_fields() -> None:
     item = rules_editor.StructuredProviderItem.model_validate(
         {
             "name": "provider-a",
             "baseUrl": "https://provider-a.example/v1",
+            "usage_cost_currency": "RUB",
+            "usage_cost_units_per_usd": 80,
             "subscription_quota": {
                 "kind": "github_copilot",
                 "token_env": "COPILOT_TOKEN",
@@ -1560,6 +1562,8 @@ def test_structured_provider_schema_preserves_quota_and_rejects_unknown_fields()
     )
 
     serialized = json.loads(rules_editor._serialize_structured_providers([item]))
+    assert serialized[0]["provider-a"]["usage_cost_currency"] == "RUB"
+    assert serialized[0]["provider-a"]["usage_cost_units_per_usd"] == 80
     assert serialized[0]["provider-a"]["subscription_quota"] == {
         "kind": "github_copilot",
         "token_env": "COPILOT_TOKEN",

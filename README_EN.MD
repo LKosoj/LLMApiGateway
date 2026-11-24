@@ -103,7 +103,9 @@ The gateway returns the cost of a completed billable request in USD in `usage.co
 
 The amount matches gateway accounting. A valid provider `usage.cost` takes precedence, including zero. Composite requests include all accounted components. When a fallback succeeds, the total includes rejected attempts for which the gateway received a cost or enough data to calculate it. Speaker transcription includes the cost of transcription and diarization. Each part uses the provider charge or the configured rate for that model.
 
-For background PDF and video jobs, `usage.cost` is `null` until the final cost is confirmed. Repeated polls of a completed job return the same cost. Downloading a generated file is free of additional charges and returns `X-Cost-USD: 0`.
+For background jobs, `usage.cost` is `null` until the final cost is confirmed. Downloading a generated file returns `X-Cost-USD: 0`. RouterAI video omits `X-Cost-USD`, including on downloads.
+
+If a provider reports costs in another currency, the gateway converts them to USD for `usage.cost`, usage statistics, and key budgets. It stores the original amount and returns it in `billing` in JSON and the final streaming `usage` event. RouterAI uses 80 rubles per US dollar, so 2.67 rubles gives `usage.cost: 0.033375`.
 
 ## Configuration
 
@@ -672,6 +674,8 @@ APIKEY_KLUSTERAI=<your_klusterai_api_key>
 | `APIKEY_PROVIDERNAME` | API key for a specific provider (e.g., `APIKEY_OPENROUTER`). In `providers.json`, reference it explicitly as `${APIKEY_PROVIDERNAME}`. You can provide multiple keys separated by commas; on each downstream provider call the gateway selects the next non-empty key by round-robin. OpenRouter Free scoring and manual Fallback Eval use the same rule and select a key separately for each provider request. | *required for providers in providers.json* |
 
 ## Providers Example (`providers.json`)
+
+`usage_cost_currency` declares the currency the provider reports in `usage.cost`. The default is `USD`. For another currency, set `usage_cost_units_per_usd` to the number of currency units per US dollar. RouterAI is configured with `"usage_cost_currency": "RUB"` and `"usage_cost_units_per_usd": 80`. The provider editor supports both fields. Configured `input_rate` and `output_rate` remain in USD and follow the existing rules when the provider omits a cost.
 Here, you must define your providers. By default each provider is treated as OpenAI-compatible, but the optional `type` field lets you declare the native wire format: `"openai"` (default) or `"anthropic"`. Anthropic providers are called at `{baseUrl}/v1/messages` with `x-api-key` and `anthropic-version` headers, and their model catalog is fetched from `{baseUrl}/v1/models`. The gateway converts requests and responses in both directions automatically: an OpenAI client that falls back to an Anthropic provider still receives an OpenAI-shaped response (including streaming SSE chunks and `tool_calls`), and an Anthropic client that falls back to an OpenAI provider still receives a native Anthropic response. For Anthropic providers the gateway injects `max_tokens=32768` when the client request does not set it explicitly. For OpenAI providers the `type` field can be omitted — existing `providers.json` files keep working unchanged.
 The `apikey` and `proxy` fields are treated as literals by default. To read a value from an environment variable, use the explicit `${VAR_NAME}` syntax, for example `"apikey": "${APIKEY_OPENROUTER}"`. The value `"APIKEY_OPENROUTER"` without `${...}` is not resolved from the environment; if such an environment variable exists, the gateway logs a warning and still uses the string as a literal. Known template values such as `your-secure-api-key` and `your-openrouter-api-key` are rejected for `GATEWAY_API_KEY` and provider `apikey`: the app fails startup or rejects the config instead of running with a demo secret.
 Provider names must be unique in `providers.json`. Duplicate provider entries are rejected during startup, and the web editor returns `400` instead of silently overwriting the previous entry.
@@ -1548,4 +1552,6 @@ When video task creation fails, the HTTP status, error code and message from Bet
 
 The selected provider, upstream ID and API endpoint are stored in `llmgateway_video_jobs.db` in the database directory (`GATEWAY_DB_DIR`). Polling after a restart continues with that provider even if route order changes. Provider credentials come from the current configuration.
 
-Cost is accounted once when a completed task is observed: valid `usage.cost` takes precedence; otherwise `billing.net_amount` is accepted only in `USD`. When actual cost is missing or uses another currency, no charge record is created yet; a subsequent poll may obtain settlement. No assumed tariff or currency conversion is applied. Repeated polling and downloads do not create duplicate charges.
+For routes billed in USD, the gateway accounts for cost once after the task completes. A valid `usage.cost` takes precedence, followed by `billing.net_amount` in USD. If the final USD amount is unavailable, the gateway waits for a later poll. Repeated polling and downloads do not create duplicate charges.
+
+For RouterAI video, the original amount appears in `"billing": {"currency": "RUB", "net_amount": 2.67, "status": "settled"}`. The converted USD amount appears in `usage.cost` and counts toward the key budget. This also applies when Wan 3.0 switches to RouterAI.

@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -13,6 +14,7 @@ from fastapi.responses import StreamingResponse
 
 from llm_gateway_core.api.v1 import embeddings
 from llm_gateway_core.config.loader import OperationRoute
+from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.api.v1.operation_proxy import DownstreamHTTPException
 from llm_gateway_core.middleware.accounting_admission import (
     ACCOUNTING_REQUEST_CONTEXT_STATE_KEY,
@@ -31,7 +33,7 @@ from llm_gateway_core.services.accounting import (
     classify_billing_policy,
 )
 from llm_gateway_core.services.request_handler import OperationDispatcher
-from llm_gateway_core.utils.usage_tracking import ModelCostRates
+from llm_gateway_core.utils.usage_tracking import ModelCostRates, build_model_cost_rate_registry
 from tests._async_compat import run_async
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
@@ -265,6 +267,61 @@ def test_buffered_embeddings_commits_upstream_or_registry_cost(
         assert event.cost_source is expected_source
         assert event.x_title == "tgBot"
         _assert_no_legacy_writes(services)
+
+    run_async(scenario())
+
+
+@pytest.mark.parametrize("upstream_cost", [None, 0])
+@pytest.mark.parametrize(
+    ("path", "model", "endpoint", "request_body", "response_data"),
+    [
+        (
+            "/v1/embeddings",
+            "Qwen/Qwen3-Embedding-0.6B",
+            embeddings.create_embeddings,
+            {"model": "llmgateway/embedding", "input": "example"},
+            [{"embedding": [0.1], "index": 0}],
+        ),
+        (
+            "/v1/rerank",
+            "Qwen/Qwen3-Reranker-0.6B",
+            embeddings.create_rerank,
+            {"model": "llmgateway/rerank", "query": "example", "documents": ["example"]},
+            [{"index": 0, "score": 0.98}],
+        ),
+    ],
+)
+def test_cloudru_records_configured_token_price(
+    tmp_path, monkeypatch, upstream_cost, path, model, endpoint, request_body, response_data,
+):
+    monkeypatch.setenv("GATEWAY_DB_DIR", str(tmp_path))
+    usage_db = TokensUsageDB("cloudru-usage.db")
+    config = Path(__file__).resolve().parents[1] / "providers.json"
+    cloudru = next(item["cloudru"] for item in json.loads(config.read_text()) if "cloudru" in item)
+    registry = build_model_cost_rate_registry({"cloudru": cloudru})
+    route = _route("cloudru", model)
+    assert registry[(route.provider, route.model)] == ModelCostRates(0.010675, 0)
+    usage = {"prompt_tokens": 20600, "total_tokens": 20600}
+    if upstream_cost is not None:
+        usage["cost"] = upstream_cost
+
+    async def scenario():
+        request, services = _request(path, cost_rate_registry=registry)
+        _install_successful_commit(services.accounting_service, before_return=usage_db.accept_accounting_event)
+        with _endpoint_dependencies(
+            request_body,
+            [route],
+            ({"data": response_data, "usage": usage}, 200),
+        ):
+            response = await endpoint(request)
+        assert response.status_code == 200
+        await _run_response(request, response)
+        event = services.accounting_service.commit.await_args.args[1]
+        expected_cost = 0.000219905 if upstream_cost is None else upstream_cost
+        assert event.cost_source is (CostSource.TOKEN_REGISTRY if upstream_cost is None else CostSource.UPSTREAM)
+        record, = await usage_db.get_latest_usage_records()
+        assert record["prompt_tokens"] == 20600
+        assert record["cost"] == pytest.approx(expected_cost)
 
     run_async(scenario())
 

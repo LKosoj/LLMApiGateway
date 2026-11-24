@@ -2130,6 +2130,10 @@ class AccountingService:
             child_event_ids=stored.event.child_event_ids,
             child_fingerprints=stored.event.child_fingerprints,
             response_cost_usd=stored.event.usage.cost,
+            native_costs=stored.event.usage.native_costs,
+            publish_cost_header=not (
+                stored.event.operation == "video_generation" and stored.event.usage.native_costs
+            ),
         )
 
     async def _project_stored(

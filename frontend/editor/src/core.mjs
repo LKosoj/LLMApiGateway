@@ -1151,6 +1151,8 @@ export function registerCore(ctx) {
         ['Base URL', 'editor:fields.baseUrl'],
         ['API Key', 'editor:fields.apiKey'],
         ['API Type', 'editor:fields.apiType'],
+        ['Usage Cost Currency', 'editor:fields.usageCostCurrency'],
+        ['Currency Units per USD', 'editor:fields.usageCostExchange'],
         ['Proxy (optional)', 'editor:fields.proxyOptional'],
         ['Models Metadata (JSON)', 'editor:fields.modelsMetadata'],
         ['Available Models (optional)', 'editor:fields.availableModels'],

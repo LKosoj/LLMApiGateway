@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from ..middleware.accounting_admission import AccountingRequestContext
-from ..utils.usage_tracking import ModelCostRates, calculate_model_cost_usd
+from ..utils.usage_tracking import ModelCostRates, calculate_model_cost_usd, get_provider_cost_currency
 from .accounting import (
     ACCOUNTING_EVENT_VERSION,
     DEFAULT_OPERATION_COST_USD,
@@ -375,6 +375,28 @@ def _strict_upstream_cost(value: object) -> float:
     return 0.0 if normalized == 0.0 else normalized
 
 
+def resolve_provider_usage_cost(
+    value: object, provider: str | None, registry: Mapping,
+) -> tuple[float, tuple[tuple[str, float], ...]]:
+    amount = _strict_upstream_cost(value)
+    policy = get_provider_cost_currency(registry, provider)
+    if policy is None:
+        return amount, ()
+    cost_usd = _strict_upstream_cost(amount / policy.units_per_usd)
+    return cost_usd, ((policy.currency, amount),)
+
+
+def reported_usage_cost(usage: object, provider: str | None, registry: Mapping) -> object:
+    if not isinstance(usage, Mapping):
+        return None
+    cost = usage.get("cost")
+    if cost is None and usage.get("cost_rub") is not None:
+        policy = get_provider_cost_currency(registry, provider)
+        if policy is not None and policy.currency == "RUB":
+            return usage["cost_rub"]
+    return cost
+
+
 def _strict_diagnostics(
     usage: Mapping[str, object] | None,
     *,
@@ -468,23 +490,21 @@ def _build_token_model_component(
     if not isinstance(payload, Mapping) or not isinstance(cost_rate_registry, Mapping):
         raise AccountingValidationError
     candidate_usage = _usage_mapping(payload)
+    reported_cost = reported_usage_cost(candidate_usage, provider, cost_rate_registry) if accept_upstream_cost else None
     if candidate_usage is None or not (_TOKEN_USAGE_KEYS & candidate_usage.keys()):
-        if not (
-            accept_upstream_cost
-            and candidate_usage is not None
-            and candidate_usage.get("cost") is not None
-        ):
+        if reported_cost is None:
             raise AccountingCostError(AccountingErrorCode.COST_UNAVAILABLE)
     usage_payload, prompt, completion, total, reasoning, cached = _strict_token_usage(
         payload,
         input_only=input_only,
     )
     if total == 0:
-        if accept_upstream_cost and usage_payload.get("cost") is not None:
+        if reported_cost is not None:
             raise AccountingValidationError
         raise AccountingCostError(AccountingErrorCode.COST_UNAVAILABLE)
-    if accept_upstream_cost and usage_payload.get("cost") is not None:
-        cost = _strict_upstream_cost(usage_payload["cost"])
+    native_costs = ()
+    if reported_cost is not None:
+        cost, native_costs = resolve_provider_usage_cost(reported_cost, provider, cost_rate_registry)
         cost_source = CostSource.UPSTREAM
     else:
         cost, cost_source = _resolve_token_cost(
@@ -508,6 +528,7 @@ def _build_token_model_component(
             reasoning_tokens=reasoning,
             cached_tokens=cached,
             cost=cost,
+            native_costs=native_costs,
             cost_saved=cost_saved,
             duration_ms=normalized_duration_ms,
             is_estimated=is_estimated,
@@ -558,14 +579,15 @@ def rejected_token_component(
         )
     except AccountingError:
         usage = payload.get("usage")
-        if isinstance(usage, Mapping) and usage.get("cost") is not None:
+        reported_cost = reported_usage_cost(usage, provider, cost_rate_registry)
+        if reported_cost is not None:
             try:
-                cost = _strict_upstream_cost(usage["cost"])
+                cost, native_costs = resolve_provider_usage_cost(reported_cost, provider, cost_rate_registry)
             except AccountingCostError:
                 return None
             return BillingComponent(
                 provider=provider, model=model,
-                usage=AccountingUsage(cost=cost), cost_source=CostSource.UPSTREAM,
+                usage=AccountingUsage(cost=cost, native_costs=native_costs), cost_source=CostSource.UPSTREAM,
             )
         return None
 
@@ -616,12 +638,11 @@ def _parse_operation_observation(
         )
 
     usage = _usage_mapping(payload)
-    upstream_cost_present = bool(
-        accept_upstream_cost
-        and usage is not None
-        and usage.get("cost") is not None
-    )
-    upstream_cost = usage["cost"] if upstream_cost_present and usage is not None else None
+    upstream_cost = reported_usage_cost(usage, provider, cost_rate_registry) if accept_upstream_cost else None
+    upstream_cost_present = upstream_cost is not None
+    native_costs = ()
+    if upstream_cost_present:
+        upstream_cost, native_costs = resolve_provider_usage_cost(upstream_cost, provider, cost_rate_registry)
     resolved = resolve_operation_cost(
         upstream_cost_present=upstream_cost_present,
         upstream_cost=upstream_cost,
@@ -640,6 +661,7 @@ def _parse_operation_observation(
         model=model,
         usage=AccountingUsage(
             cost=resolved.cost_usd,
+            native_costs=native_costs,
             cost_saved=cost_saved,
             duration_ms=normalized_duration_ms,
             is_estimated=is_estimated,

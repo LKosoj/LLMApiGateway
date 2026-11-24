@@ -23,7 +23,18 @@ class ProviderDetailsValidationTests(unittest.TestCase):
 
         self.assertEqual(details.baseUrl, "https://provider.example")
         self.assertEqual(details.apikey, "DIRECT-KEY")
+        self.assertEqual(details.usage_cost_currency, "USD")
         self.assertIsNone(details.switch_on_leading_ideograph)
+
+    def test_provider_usage_cost_currency_requires_three_uppercase_letters(self):
+        provider = {"baseUrl": "https://provider.example", "apikey": "DIRECT-KEY"}
+        self.assertEqual(
+            ProviderDetails(**provider, usage_cost_currency="RUB", usage_cost_units_per_usd=80).usage_cost_currency, "RUB"
+        )
+        with self.assertRaises(ValidationError):
+            ProviderDetails(**provider, usage_cost_currency="RUB")
+        with self.assertRaises(ValidationError):
+            ProviderDetails(**provider, usage_cost_currency="rubles")
 
     def test_switch_on_leading_ideograph_accepts_only_real_booleans(self):
         enabled = ProviderDetails(
