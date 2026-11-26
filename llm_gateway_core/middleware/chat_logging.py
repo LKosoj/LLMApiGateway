@@ -459,7 +459,7 @@ class ChunkProcessor:
         self.operation = operation
         self.api_key_id = api_key_id
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=STREAM_CHUNK_QUEUE_MAXSIZE)
-        self.llm_response_accum = ""
+        self._response_accum_parts: list[str] = []
         self._response_accum_bytes = 0
         self.tokens_usage = {
             "prompt_tokens": 0,
@@ -496,6 +496,63 @@ class ChunkProcessor:
         self._retained_observation_bytes = 0
         self._queued_observation_items = 0
         self._queue_progress_event = asyncio.Event()
+
+    @property
+    def llm_response_accum(self) -> str:
+        if not self._response_accum_parts:
+            return ""
+        if len(self._response_accum_parts) > 1:
+            joined = "".join(self._response_accum_parts)
+            self._response_accum_parts = [joined]
+            return joined
+        return self._response_accum_parts[0]
+
+    @llm_response_accum.setter
+    def llm_response_accum(self, value: str) -> None:
+        self._response_accum_parts = [value] if value else []
+        self._response_accum_bytes = len(value.encode("utf-8")) if value else 0
+        if "[Reasoning]:" in value:
+            self._reasoning_header_written = True
+
+    def _accum_endswith(self, suffix: str) -> bool:
+        if not suffix:
+            return True
+        needed = len(suffix)
+        collected: list[str] = []
+        total = 0
+        for part in reversed(self._response_accum_parts):
+            collected.append(part)
+            total += len(part)
+            if total >= needed:
+                break
+        if total < needed:
+            return False
+        if len(collected) == 1:
+            return collected[0].endswith(suffix)
+        return "".join(reversed(collected)).endswith(suffix)
+
+    def _needs_thread_for_write_log(self) -> bool:
+        if settings.log_chat_messages:
+            return True
+        has_estimated_prompt = (
+            self.estimated_prompt_tokens is not None
+            and self.estimated_prompt_tokens > 0
+        )
+        if (
+            not self.tokens_usage.get("prompt_tokens")
+            and not has_estimated_prompt
+            and bool(self.req_body_str)
+        ):
+            return True
+        if self._response_accum_parts:
+            if not self.tokens_usage.get("completion_tokens"):
+                return True
+            if (
+                not self.tokens_usage.get("reasoning_tokens")
+                and self._reasoning_header_written
+            ):
+                return True
+        return False
 
     def _write_log_once(self):
         if self._log_written:
@@ -928,7 +985,7 @@ class ChunkProcessor:
 
         encoded = text.encode("utf-8")
         if len(encoded) <= remaining:
-            self.llm_response_accum += text
+            self._response_accum_parts.append(text)
             self._response_accum_bytes += len(encoded)
             return
 
@@ -936,10 +993,11 @@ class ChunkProcessor:
         safe_remaining = max(remaining - len(marker), 0)
         if safe_remaining > 0:
             prefix = encoded[:safe_remaining].decode("utf-8", errors="ignore")
-            self.llm_response_accum += prefix
-            self._response_accum_bytes += len(prefix.encode("utf-8"))
+            if prefix:
+                self._response_accum_parts.append(prefix)
+                self._response_accum_bytes += len(prefix.encode("utf-8"))
         if len(marker) <= STREAM_LOG_CAPTURE_MAX_CHARS - self._response_accum_bytes:
-            self.llm_response_accum += STREAM_LOG_TRUNCATION_MARKER
+            self._response_accum_parts.append(STREAM_LOG_TRUNCATION_MARKER)
             self._response_accum_bytes += len(marker)
         self._response_accum_truncated = True
 
@@ -961,7 +1019,7 @@ class ChunkProcessor:
             return
 
         if after_reasoning or self._reasoning_header_written:
-            if not self.llm_response_accum.endswith("\n\n[Response]:\n"):
+            if not self._accum_endswith("\n\n[Response]:\n"):
                 self._append_log_text("\n\n[Response]:\n")
         self._append_log_text(content_piece)
 
@@ -1365,10 +1423,13 @@ class ChunkProcessor:
 
             if not cancelled:
                 try:
-                    await anyio.to_thread.run_sync(
-                        self._write_log_once,
-                        abandon_on_cancel=False,
-                    )
+                    if self._needs_thread_for_write_log():
+                        await anyio.to_thread.run_sync(
+                            self._write_log_once,
+                            abandon_on_cancel=False,
+                        )
+                    else:
+                        self._write_log_once()
                 except Exception as exc:
                     self._record_stream_failure(
                         "observability_write_failed",
@@ -1588,18 +1649,22 @@ class _ChatResponseLifecycle:
         self._transport_finished = True
         try:
             processor = self._chunk_processor
+            task = self._prompt_estimate_task
+            if task is not None and not task.done():
+                if (
+                    _has_known_prompt_tokens(processor)
+                    or processor is None
+                    or settings.log_chat_messages
+                ):
+                    task.cancel()
+                else:
+                    with contextlib.suppress(TimeoutError, asyncio.CancelledError, Exception):
+                        await asyncio.wait_for(
+                            asyncio.shield(task),
+                            timeout=CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS,
+                        )
             if processor is None:
                 return
-            if (
-                not settings.log_chat_messages
-                and self._prompt_estimate_task is not None
-                and not self._prompt_estimate_task.done()
-            ):
-                with contextlib.suppress(TimeoutError, asyncio.CancelledError, Exception):
-                    await asyncio.wait_for(
-                        asyncio.shield(self._prompt_estimate_task),
-                        timeout=CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS,
-                    )
             processor.tokens_usage["duration_ms"] = int(
                 (time.monotonic() - self._request_started_at) * 1000
             )
@@ -1620,14 +1685,30 @@ class _ChatResponseLifecycle:
                     CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS,
                 )
         finally:
+            if (
+                self._prompt_estimate_task is not None
+                and not self._prompt_estimate_task.done()
+            ):
+                self._prompt_estimate_task.cancel()
             self._active_registry.finish(self._request_id)
+
+
+def _has_known_prompt_tokens(processor: ChunkProcessor | None) -> bool:
+    if processor is None:
+        return False
+    prompt_tokens = processor.tokens_usage.get("prompt_tokens")
+    return (
+        isinstance(prompt_tokens, (int, float))
+        and not isinstance(prompt_tokens, bool)
+        and prompt_tokens > 0
+    )
 
 
 async def prepare_chat_response_observation(request: Request) -> None:
     """Publish the exact chat terminal owner before endpoint execution."""
     effective_route = resolve_effective_http_route(
         request.scope,
-        request.app.routes,
+        request.app.router.routes,
     )
     if effective_route is None:
         return

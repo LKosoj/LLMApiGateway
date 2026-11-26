@@ -1302,9 +1302,13 @@ export function registerFallback(ctx) {
         }
         if (payload.manualRefreshRunning) {
             ctx.state.openRouterFreePollingEnabled = true;
-            ctx.state.openRouterFreePollTimer = window.setTimeout(() => {
-                void loadOpenRouterFreeModels(false, ctx.state.activeRulesTabContext);
-            }, 3000);
+            if (!document.hidden) {
+                ctx.state.openRouterFreePollTimer = window.setTimeout(() => {
+                    ctx.state.openRouterFreePollTimer = null;
+                    if (document.hidden) return;
+                    void loadOpenRouterFreeModels(false, ctx.state.activeRulesTabContext);
+                }, 3000);
+            }
         }
     }
 
@@ -1320,7 +1324,10 @@ export function registerFallback(ctx) {
             ctx.elements.openRouterFreeEmptyState.hidden = true;
         }
         try {
-            const response = await ctx.apiFetch('/v1/openrouter/free-models');
+            const response = await ctx.apiFetch(
+                '/v1/openrouter/free-models',
+                context?.signal ? { signal: context.signal } : undefined,
+            );
             const payload = await response.json();
             if (!isRulesTabContextCurrent('openrouter-free', context)) {
                 return false;
@@ -1342,7 +1349,7 @@ export function registerFallback(ctx) {
             }
             return true;
         } catch (error) {
-            if (!isRulesTabContextCurrent('openrouter-free', context)) {
+            if (error?.name === 'AbortError' || !isRulesTabContextCurrent('openrouter-free', context)) {
                 return false;
             }
             ctx.state.evalTabLoadStates.set('openrouter-free', 'error');
@@ -1517,9 +1524,13 @@ export function registerFallback(ctx) {
         ctx.elements.runFallbackEvalButton.disabled = Boolean(payload.running);
         if (payload.running) {
             ctx.state.fallbackEvalPollingEnabled = true;
-            ctx.state.fallbackEvalPollTimer = window.setTimeout(() => {
-                void loadFallbackModelEvals(false, ctx.state.activeRulesTabContext);
-            }, 3000);
+            if (!document.hidden) {
+                ctx.state.fallbackEvalPollTimer = window.setTimeout(() => {
+                    ctx.state.fallbackEvalPollTimer = null;
+                    if (document.hidden) return;
+                    void loadFallbackModelEvals(false, ctx.state.activeRulesTabContext);
+                }, 3000);
+            }
         }
     }
 
@@ -1532,7 +1543,10 @@ export function registerFallback(ctx) {
             ctx.showLocalizedMessage('info', 'Loading fallback model eval status...');
         }
         try {
-            const response = await ctx.apiFetch('/v1/fallback-model-evals');
+            const response = await ctx.apiFetch(
+                '/v1/fallback-model-evals',
+                context?.signal ? { signal: context.signal } : undefined,
+            );
             const payload = await response.json();
             if (!isRulesTabContextCurrent('fallback-eval', context)) {
                 return false;
@@ -1548,7 +1562,7 @@ export function registerFallback(ctx) {
             }
             return true;
         } catch (error) {
-            if (!isRulesTabContextCurrent('fallback-eval', context)) {
+            if (error?.name === 'AbortError' || !isRulesTabContextCurrent('fallback-eval', context)) {
                 return false;
             }
             ctx.state.evalTabLoadStates.set('fallback-eval', 'error');
@@ -1559,6 +1573,46 @@ export function registerFallback(ctx) {
             ctx.elements.runFallbackEvalButton.disabled = false;
             return false;
         }
+    }
+
+    function handleEvalVisibilityChange() {
+        if (document.hidden) {
+            if (ctx.state.openRouterFreePollTimer) {
+                clearTimeout(ctx.state.openRouterFreePollTimer);
+                ctx.state.openRouterFreePollTimer = null;
+            }
+            if (ctx.state.fallbackEvalPollTimer) {
+                clearTimeout(ctx.state.fallbackEvalPollTimer);
+                ctx.state.fallbackEvalPollTimer = null;
+            }
+            return;
+        }
+        if (
+            ctx.state.activeEditor === 'openrouter-free'
+            && ctx.state.openRouterFreePollingEnabled
+            && !ctx.state.openRouterFreePollTimer
+        ) {
+            void loadOpenRouterFreeModels(false, ctx.state.activeRulesTabContext);
+        } else if (
+            ctx.state.activeEditor === 'fallback-eval'
+            && ctx.state.fallbackEvalPollingEnabled
+            && !ctx.state.fallbackEvalPollTimer
+        ) {
+            void loadFallbackModelEvals(false, ctx.state.activeRulesTabContext);
+        }
+    }
+
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', handleEvalVisibilityChange);
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('pagehide', () => {
+            stopOpenRouterFreePolling();
+            stopFallbackEvalPolling();
+            if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+                document.removeEventListener('visibilitychange', handleEvalVisibilityChange);
+            }
+        }, { once: true });
     }
 
     async function runFallbackModelEval() {

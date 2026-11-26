@@ -54,7 +54,7 @@ class RegistryCatalogBackend {
     try {
       response = await this.fetch(
         `${this.baseUrl}/${encodeURIComponent(locale)}/${encodeURIComponent(namespace)}.json`,
-        { cache: "no-store", credentials: "same-origin" },
+        { cache: "default", credentials: "same-origin" },
       );
     } catch (error) {
       throw new GatewayI18nError(

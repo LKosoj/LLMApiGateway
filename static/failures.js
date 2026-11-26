@@ -97,6 +97,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let requestGeneration = 0;
     let chainsOffset = 0;
     let chainsGeneration = 0;
+    let loadAbortController = null;
+    let chainsAbortController = null;
+    let detailAbortController = null;
     let chainsDebounceTimer = null;
     let unsubscribeLocale = null;
     let stopped = false;
@@ -633,13 +636,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const generation = ++requestGeneration;
         const cGen = ++chainsGeneration;
         const range = els.range.value;
+        loadAbortController?.abort();
+        const controller = new AbortController();
+        loadAbortController = controller;
         void loadDetail();
         try {
+            const options = { signal: controller.signal };
             const [status, pauses, dashboard, chains] = await Promise.all([
-                fetchJson(STATUS_ENDPOINT),
-                fetchJson(PAUSES_ENDPOINT),
-                fetchJson(`/v1/api/analytics-dashboard?range=${encodeURIComponent(range)}&compare=previous`),
-                fetchJson(chainsUrl()),
+                fetchJson(STATUS_ENDPOINT, options),
+                fetchJson(PAUSES_ENDPOINT, options),
+                fetchJson(`/v1/api/analytics-dashboard?range=${encodeURIComponent(range)}&compare=previous`, options),
+                fetchJson(chainsUrl(), options),
             ]);
             if (stopped || generation !== requestGeneration) return;
             const useLoadedChains = cGen === chainsGeneration || !lastData;
@@ -658,15 +665,20 @@ document.addEventListener('DOMContentLoaded', () => {
             clearError();
             render();
         } catch (error) {
-            if (stopped || generation !== requestGeneration) return;
+            if (stopped || error?.name === 'AbortError' || generation !== requestGeneration) return;
             reportFailure(error);
+        } finally {
+            if (loadAbortController === controller) loadAbortController = null;
         }
     }
 
     async function loadChains() {
         const generation = ++chainsGeneration;
+        chainsAbortController?.abort();
+        const controller = new AbortController();
+        chainsAbortController = controller;
         try {
-            const chains = await fetchJson(chainsUrl());
+            const chains = await fetchJson(chainsUrl(), { signal: controller.signal });
             if (stopped || generation !== chainsGeneration) return;
             if (!lastData) return;
             lastData.chains = chains.records || [];
@@ -674,8 +686,10 @@ document.addEventListener('DOMContentLoaded', () => {
             clearError();
             renderChains(lastData);
         } catch (error) {
-            if (stopped || generation !== chainsGeneration) return;
+            if (stopped || error?.name === 'AbortError' || generation !== chainsGeneration) return;
             reportFailure(error);
+        } finally {
+            if (chainsAbortController === controller) chainsAbortController = null;
         }
     }
 
@@ -771,6 +785,9 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadDetail() {
         if (!detailTarget) return;
         const generation = ++detailGeneration;
+        detailAbortController?.abort();
+        const controller = new AbortController();
+        detailAbortController = controller;
         const range = els.range.value;
         const params = new URLSearchParams({
             range,
@@ -780,13 +797,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         if (detailTarget.operation) params.set('operation', detailTarget.operation);
         try {
-            const dashboard = await fetchJson(`/v1/api/analytics-dashboard?${params}`);
+            const dashboard = await fetchJson(`/v1/api/analytics-dashboard?${params}`, { signal: controller.signal });
             if (stopped || generation !== detailGeneration) return;
             detailData = { range, dashboard };
             renderDetail();
         } catch (error) {
-            if (stopped || generation !== detailGeneration) return;
+            if (stopped || error?.name === 'AbortError' || generation !== detailGeneration) return;
             reportFailure(error);
+        } finally {
+            if (detailAbortController === controller) detailAbortController = null;
         }
     }
 
@@ -811,6 +830,8 @@ document.addEventListener('DOMContentLoaded', () => {
         detailTarget = null;
         detailData = null;
         detailGeneration += 1;
+        detailAbortController?.abort();
+        detailAbortController = null;
         els.modelDetail.hidden = true;
     }
 
@@ -866,6 +887,10 @@ document.addEventListener('DOMContentLoaded', () => {
         stopped = true;
         requestGeneration += 1;
         chainsGeneration += 1;
+        detailGeneration += 1;
+        loadAbortController?.abort();
+        chainsAbortController?.abort();
+        detailAbortController?.abort();
         clearTimeout(chainsDebounceTimer);
         unsubscribeLocale?.();
     });

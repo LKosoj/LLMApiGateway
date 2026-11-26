@@ -48,4 +48,4 @@ def test_editor_entry_keeps_same_path_and_single_initialization_listener() -> No
 
     assert '<script src="/static/editor.js"></script>' in html
     assert bundle.count("DOMContentLoaded") == 1
-    assert "src/index.mjs" in bundle
+    assert "editorConflictState" in bundle

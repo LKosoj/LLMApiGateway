@@ -13,7 +13,7 @@ from ...services.stream_observation import SSEFramer, parse_sse_json
 
 
 def chat_request_to_responses(payload: dict) -> dict:
-    result = copy.deepcopy(payload)
+    result = dict(payload)
     items = []
     for message in result.pop("messages", []):
         role = message["role"]

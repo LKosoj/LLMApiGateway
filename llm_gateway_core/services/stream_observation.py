@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 STREAM_OBSERVATION_BUFFER_MAX_ITEMS = 32
@@ -14,6 +14,7 @@ STREAM_OBSERVATION_BUFFER_MAX_BYTES = 33_554_432
 STREAM_EVENT_MAX_BYTES = 1_048_576
 
 _SAFE_REASON_RE = re.compile(r"[a-z0-9_.-]{1,64}\Z")
+_UNSET = object()
 
 
 class StreamObservationError(RuntimeError):
@@ -402,13 +403,29 @@ class SSEEvent:
     data: str
     event: str | None = None
     done: bool = False
+    _parsed_json: object = field(
+        default=_UNSET,
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
 
 
 def parse_sse_json(event: SSEEvent) -> object:
-    """Parse one SSE data field as strict JSON."""
+    """Parse one SSE data field as strict JSON.
+
+    The parsed value is cached on ``event`` for reuse across observers and
+    must be treated as read-only by callers (do not mutate it in place).
+    """
     if not isinstance(event, SSEEvent):
         raise TypeError("event must be an SSEEvent")
-    return json.loads(event.data, parse_constant=_reject_json_constant)
+    cached = event._parsed_json
+    if cached is not _UNSET:
+        return cached
+    parsed = json.loads(event.data, parse_constant=_reject_json_constant)
+    object.__setattr__(event, "_parsed_json", parsed)
+    return parsed
 
 
 def _reject_json_constant(_value: str) -> object:

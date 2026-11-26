@@ -3,7 +3,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from uuid import uuid4
 
 from fastapi import Request
@@ -471,6 +471,18 @@ def _new_stream_think_state() -> dict:
     }
 
 
+def _append_normalized_sse_chunk(buffer: str, text_chunk: str) -> str:
+    """Append *text_chunk* to *buffer*, normalizing CRLF only in the new chunk
+    and handling a ``\\r`` + ``\\n`` split across chunk boundaries."""
+    if not text_chunk:
+        return buffer
+    if buffer.endswith("\r") and text_chunk.startswith("\n"):
+        buffer = buffer[:-1]
+    if "\r\n" in text_chunk:
+        text_chunk = text_chunk.replace("\r\n", "\n")
+    return buffer + text_chunk
+
+
 def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_model: str) -> StreamingResponse:
     source_iterator = response.body_iterator
 
@@ -492,7 +504,7 @@ def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_mo
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer = (buffer + text_chunk).replace("\r\n", "\n")
+            buffer = _append_normalized_sse_chunk(buffer, text_chunk)
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -607,8 +619,9 @@ TOOL_CALL_RESCUE_HOLD_MAX_CHARS = 256
 def _new_tool_call_rescue_state() -> dict:
     return {
         "mode": "holding",  # "holding" -> "dialect" | "transparent"
-        "raw_buffer": "",
-        "detect_buffer": "",
+        "raw_buffer": [],
+        "detect_buffer": [],
+        "detect_len": 0,
         "detect_think_state": _new_stream_think_state(),
         "role_emitted": False,
     }
@@ -623,8 +636,10 @@ def _tool_call_rescue_wrap_chunk(template_chunk: dict, choice_index: int, delta:
 
 
 def _tool_call_rescue_flush_transparent(state: dict, template_chunk: dict, choice_index: int) -> list[dict]:
-    raw = state["raw_buffer"]
-    state["raw_buffer"] = ""
+    raw = "".join(state["raw_buffer"])
+    state["raw_buffer"].clear()
+    state["detect_buffer"].clear()
+    state["detect_len"] = 0
     state["mode"] = "transparent"
     if not raw:
         return []
@@ -669,7 +684,9 @@ def _tool_call_rescue_synthesize_success(
     tool_calls_delta["tool_calls"] = tool_call_deltas
     chunks.append(_tool_call_rescue_wrap_chunk(template_chunk, choice_index, tool_calls_delta))
     state["mode"] = "transparent"
-    state["raw_buffer"] = ""
+    state["raw_buffer"].clear()
+    state["detect_buffer"].clear()
+    state["detect_len"] = 0
     return chunks
 
 
@@ -718,7 +735,7 @@ def _sanitize_openai_stream_tool_call_rescue(
 
         def finalize_choice(choice_index: int, state: dict, template: dict) -> tuple[list[bytes], bool]:
             if state["mode"] == "dialect":
-                rescue_result = rescue_inline_tool_calls(state["raw_buffer"], tool_schema_map)
+                rescue_result = rescue_inline_tool_calls("".join(state["raw_buffer"]), tool_schema_map)
                 if rescue_result.tool_calls and not rescue_result.failed:
                     repaired_calls = [
                         RescuedToolCall(
@@ -747,7 +764,7 @@ def _sanitize_openai_stream_tool_call_rescue(
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer = (buffer + text_chunk).replace("\r\n", "\n")
+            buffer = _append_normalized_sse_chunk(buffer, text_chunk)
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -807,11 +824,15 @@ def _sanitize_openai_stream_tool_call_rescue(
                             and state["mode"] != "transparent"
                         ):
                             content = delta["content"]
-                            state["raw_buffer"] += content
+                            if content:
+                                state["raw_buffer"].append(content)
                             if state["mode"] == "holding":
                                 detect_delta = _strip_stream_think_blocks(content, state["detect_think_state"])
-                                state["detect_buffer"] += detect_delta
-                                if any(marker in state["detect_buffer"] for marker in DIALECT_TAG_MARKERS):
+                                if detect_delta:
+                                    state["detect_buffer"].append(detect_delta)
+                                    state["detect_len"] += len(detect_delta)
+                                detect_text = "".join(state["detect_buffer"])
+                                if any(marker in detect_text for marker in DIALECT_TAG_MARKERS):
                                     state["mode"] = "dialect"
                             delta.pop("content", None)
                         finalize_events, synthesized = finalize_choice(choice_index, state, chunk_json)
@@ -841,7 +862,8 @@ def _sanitize_openai_stream_tool_call_rescue(
                         sanitized_choices.append(choice)
                         continue
 
-                    state["raw_buffer"] += content
+                    if content:
+                        state["raw_buffer"].append(content)
 
                     if state["mode"] == "dialect":
                         # Already committed to full accumulation; nothing to
@@ -850,13 +872,16 @@ def _sanitize_openai_stream_tool_call_rescue(
 
                     # mode == "holding": evaluate whether we now know more.
                     detect_delta = _strip_stream_think_blocks(content, state["detect_think_state"])
-                    state["detect_buffer"] += detect_delta
-                    if any(marker in state["detect_buffer"] for marker in DIALECT_TAG_MARKERS):
+                    if detect_delta:
+                        state["detect_buffer"].append(detect_delta)
+                        state["detect_len"] += len(detect_delta)
+                    detect_text = "".join(state["detect_buffer"])
+                    if any(marker in detect_text for marker in DIALECT_TAG_MARKERS):
                         state["mode"] = "dialect"
                         continue
                     if (
-                        len(state["detect_buffer"]) >= TOOL_CALL_RESCUE_HOLD_MAX_CHARS
-                        or not could_become_dialect_marker(state["detect_buffer"])
+                        state["detect_len"] >= TOOL_CALL_RESCUE_HOLD_MAX_CHARS
+                        or not could_become_dialect_marker(detect_text)
                     ):
                         finalize_events = _tool_call_rescue_flush_transparent(state, chunk_json, choice_index)
                         extra_events.extend(serialize_event(c) for c in finalize_events)
@@ -934,6 +959,7 @@ class _DirectChatStreamObservationBuilder:
         "_estimated_prompt_tokens",
         "_model",
         "_openai_usage_payload",
+        "_prompt_tokens_estimator",
         "_provider",
         "_ttft_ms",
     )
@@ -946,6 +972,7 @@ class _DirectChatStreamObservationBuilder:
         model: str,
         cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
         estimated_prompt_tokens: int = 0,
+        prompt_tokens_estimator: Callable[[], int] | None = None,
         ttft_ms: int | None = None,
     ) -> None:
         self._dialect = dialect
@@ -955,8 +982,16 @@ class _DirectChatStreamObservationBuilder:
         self._openai_usage_payload: Mapping[str, object] | None = None
         self._anthropic_usage: dict[str, object] = {}
         self._estimated_prompt_tokens = estimated_prompt_tokens
+        self._prompt_tokens_estimator = prompt_tokens_estimator
         self._completion_text_parts: list[str] = []
         self._ttft_ms = ttft_ms
+
+    def _resolve_estimated_prompt_tokens(self) -> int:
+        if self._prompt_tokens_estimator is not None:
+            estimator = self._prompt_tokens_estimator
+            self._prompt_tokens_estimator = None
+            self._estimated_prompt_tokens = estimator()
+        return self._estimated_prompt_tokens
 
     def _build(self, payload: Mapping[str, object]) -> ChatTerminalObservation:
         return build_direct_chat_terminal_observation(
@@ -1031,7 +1066,7 @@ class _DirectChatStreamObservationBuilder:
             "".join(self._completion_text_parts),
             self._model,
         )
-        prompt_tokens = self._estimated_prompt_tokens
+        prompt_tokens = self._resolve_estimated_prompt_tokens()
         return self._build(
             {
                 "usage": {
@@ -1055,15 +1090,17 @@ class _DirectChatStreamObservationBuilder:
         if self._dialect is ChatStreamDialect.OPENAI:
             if self._openai_usage_payload is not None:
                 return self._build(self._openai_usage_payload)
-            if self._completion_text_parts or self._estimated_prompt_tokens:
+            if self._completion_text_parts or self._resolve_estimated_prompt_tokens():
                 return self._build_estimated()
             return None
         if self._dialect is ChatStreamDialect.ANTHROPIC:
             if not self._anthropic_usage and not self._completion_text_parts:
                 return None
             partial_usage = dict(self._anthropic_usage)
-            if not partial_usage.get("input_tokens") and self._estimated_prompt_tokens:
-                partial_usage["input_tokens"] = self._estimated_prompt_tokens
+            if not partial_usage.get("input_tokens"):
+                estimated_prompt = self._resolve_estimated_prompt_tokens()
+                if estimated_prompt:
+                    partial_usage["input_tokens"] = estimated_prompt
             output_tokens = partial_usage.get("output_tokens")
             if not output_tokens and self._completion_text_parts:
                 partial_usage["output_tokens"] = estimate_token_count(
@@ -1075,7 +1112,7 @@ class _DirectChatStreamObservationBuilder:
             partial_usage["is_estimated"] = True
             return self._build({"usage": partial_usage})
         if self._dialect is ChatStreamDialect.RESPONSES:
-            if self._completion_text_parts or self._estimated_prompt_tokens:
+            if self._completion_text_parts or self._resolve_estimated_prompt_tokens():
                 return self._build_estimated()
             return None
         return None
@@ -1124,7 +1161,7 @@ class _DirectChatStreamObservationBuilder:
                 or bool(usage.get("completion_tokens"))
                 or (usage.get("cost") is not None)
             )
-            if not has_nonzero_usage and (self._completion_text_parts or self._estimated_prompt_tokens):
+            if not has_nonzero_usage and (self._completion_text_parts or self._resolve_estimated_prompt_tokens()):
                 return self._build_estimated()
             return self._build(response_payload)
 
@@ -1178,7 +1215,7 @@ def _sanitize_anthropic_stream_think_tags(response: StreamingResponse, requested
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer = (buffer + text_chunk).replace("\r\n", "\n")
+            buffer = _append_normalized_sse_chunk(buffer, text_chunk)
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -1416,7 +1453,7 @@ def _sanitize_openai_json_object_stream(response: StreamingResponse, requested_m
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer = (buffer + text_chunk).replace("\r\n", "\n")
+            buffer = _append_normalized_sse_chunk(buffer, text_chunk)
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -1624,7 +1661,7 @@ def _anthropic_stream_to_openai(
             else:
                 text = str(chunk)
 
-            buffer = (buffer + text).replace("\r\n", "\n")
+            buffer = _append_normalized_sse_chunk(buffer, text)
             # SSE events are separated by a blank line (\n\n). Extract complete events.
             while "\n\n" in buffer:
                 raw_event, buffer = buffer.split("\n\n", 1)
@@ -1954,7 +1991,7 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
             else:
                 text = str(chunk)
 
-            buffer = (buffer + text).replace("\r\n", "\n")
+            buffer = _append_normalized_sse_chunk(buffer, text)
             lines = buffer.split("\n")
             buffer = lines.pop()
 
@@ -2248,7 +2285,7 @@ def _openai_stream_to_responses(
 
         async for chunk in source_iterator:
             text = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer = (buffer + text).replace("\r\n", "\n")
+            buffer = _append_normalized_sse_chunk(buffer, text)
             lines = buffer.split("\n")
             buffer = lines.pop()
 

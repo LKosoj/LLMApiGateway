@@ -601,16 +601,54 @@ def _resolve_encoding(model_name: str | None) -> TokensEstimator | None:
     return None
 
 
+def _strip_base64_for_estimation(obj: Any) -> Any:
+    """Copy-on-write strip of inline base64 blobs before token estimation."""
+    if isinstance(obj, str):
+        if obj.startswith("data:"):
+            comma_idx = obj.find(",", 5, 256)
+            if comma_idx != -1 and ";base64" in obj[5:comma_idx]:
+                return ""
+        return obj
+    if isinstance(obj, Mapping):
+        is_anthropic_base64 = obj.get("type") == "base64" and isinstance(obj.get("data"), str)
+        new_dict: dict[Any, Any] | None = None
+        for key, value in obj.items():
+            if is_anthropic_base64 and key == "data":
+                new_value: Any = ""
+            else:
+                new_value = _strip_base64_for_estimation(value)
+            if new_value is not value:
+                if new_dict is None:
+                    new_dict = dict(obj)
+                new_dict[key] = new_value
+        return new_dict if new_dict is not None else obj
+    if isinstance(obj, list):
+        new_list: list[Any] | None = None
+        for idx, item in enumerate(obj):
+            new_item = _strip_base64_for_estimation(item)
+            if new_item is not item:
+                if new_list is None:
+                    new_list = list(obj)
+                new_list[idx] = new_item
+        return new_list if new_list is not None else obj
+    return obj
+
+
 def _estimate_prompt_tokens_with_estimator(
-    request_body_str: str,
+    request_body_str: str | Mapping[str, Any],
     estimator: TokensEstimator | None,
 ) -> int:
-    """Estimate prompt token count from the raw request body JSON string."""
+    """Estimate prompt token count from a raw JSON string or parsed request mapping."""
     if estimator is None or not request_body_str:
         return 0
-    try:
-        payload = json.loads(request_body_str)
-    except (json.JSONDecodeError, TypeError):
+    if isinstance(request_body_str, Mapping):
+        payload: Any = request_body_str
+    else:
+        try:
+            payload = json.loads(request_body_str)
+        except (json.JSONDecodeError, TypeError):
+            return 0
+    if not isinstance(payload, Mapping):
         return 0
 
     # Build a compact representation that includes only the token-bearing fields.
@@ -621,14 +659,18 @@ def _estimate_prompt_tokens_with_estimator(
         if field in payload:
             token_fields[field] = payload[field]
     if not token_fields:
-        token_fields = payload
+        token_fields = payload if isinstance(payload, dict) else dict(payload)
 
-    serialized = json.dumps(token_fields, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    cleaned_fields = _strip_base64_for_estimation(token_fields)
+    serialized = json.dumps(cleaned_fields, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return len(estimator.encode(serialized))
 
 
-def estimate_prompt_tokens(request_body_str: str, model_name: str | None = None) -> int:
-    """Estimate prompt token count from the raw request body JSON string."""
+def estimate_prompt_tokens(
+    request_body_str: str | Mapping[str, Any],
+    model_name: str | None = None,
+) -> int:
+    """Estimate prompt token count from a raw JSON string or parsed request mapping."""
     return _estimate_prompt_tokens_with_estimator(request_body_str, _resolve_encoding(model_name))
 
 

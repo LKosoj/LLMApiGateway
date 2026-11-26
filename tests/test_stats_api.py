@@ -28,6 +28,7 @@ class _FakeTokensUsageDB:
         self.count_calls: list[object] = []
         self.aggregated_calls: list[tuple[str, object, object, object]] = []
         self.dashboard_calls: list[dict] = []
+        self.dashboard_summary_calls: list[dict] = []
         self.lifetime_calls = 0
         self.records = [
             {"id": 1, "model": "m1", "operation": "chat"},
@@ -124,6 +125,30 @@ class _FakeTokensUsageDB:
             ],
         }
 
+    async def get_dashboard_usage_summary(self, start_date, end_date, **kwargs):
+        self.dashboard_summary_calls.append(
+            {"start_date": start_date, "end_date": end_date, **kwargs}
+        )
+        return {
+            "requests": 2,
+            "prompt_tokens": 10,
+            "completion_tokens": 20,
+            "total_tokens": 30,
+            "reasoning_tokens": 3,
+            "cached_tokens": 4,
+            "cost": 0.06,
+            "cost_saved": 0.01,
+            "estimated_count": 1,
+            "avg_duration_ms": 150,
+            "max_duration_ms": 250,
+            "duration_p50_ms": 140,
+            "duration_p95_ms": 240,
+            "ttft_avg_ms": 80,
+            "ttft_max_ms": 120,
+            "ttft_p50_ms": 75,
+            "ttft_p95_ms": 115,
+        }
+
     async def get_dashboard_filter_options(self, start_date, end_date, **kwargs):
         return {
             "operations": ["chat"],
@@ -155,6 +180,7 @@ class _FakeFallbackEventsDB:
     def __init__(self):
         self.upstream_calls: list[tuple[str, object, object, object]] = []
         self.dashboard_calls: list[dict] = []
+        self.dashboard_summary_calls: list[dict] = []
         self.upstream_rows = [
             {
                 "time_period": "2026-05-20",
@@ -196,6 +222,31 @@ class _FakeFallbackEventsDB:
             "providers": [{"label": "openrouter", "attempts": 3, "successes": 2, "errors": 1, "success_rate": 66.67}],
             "targets": [{"label": "openrouter / qwen", "attempts": 3, "successes": 2, "errors": 1, "success_rate": 66.67}],
         }
+
+    async def get_dashboard_fallback_summary(
+        self, start_date, end_date, *, include_requests: bool = True, **kwargs
+    ):
+        self.dashboard_summary_calls.append(
+            {
+                "start_date": start_date,
+                "end_date": end_date,
+                "include_requests": include_requests,
+                **kwargs,
+            }
+        )
+        result = {
+            "summary": {
+                "attempts": 3,
+                "successes": 2,
+                "errors": 1,
+                "success_rate": 66.67,
+                "avg_duration_ms": 120,
+                "max_duration_ms": 300,
+            },
+        }
+        if include_requests:
+            result["requests"] = {"total": 2, "rescued": 1, "failed": 0}
+        return result
 
     def cleanup_old_records(self, retention_days: int = 180):
         return None
@@ -823,7 +874,10 @@ class StatsApiPaginationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        current_usage, previous_usage = fake_tokens_usage_db.dashboard_calls
+        self.assertEqual(len(fake_tokens_usage_db.dashboard_calls), 1)
+        self.assertEqual(len(fake_tokens_usage_db.dashboard_summary_calls), 1)
+        current_usage = fake_tokens_usage_db.dashboard_calls[0]
+        previous_usage = fake_tokens_usage_db.dashboard_summary_calls[0]
         self.assertEqual(previous_usage["end_date"], current_usage["start_date"])
         self.assertEqual(
             current_usage["start_date"] - previous_usage["start_date"],
@@ -831,10 +885,14 @@ class StatsApiPaginationTests(unittest.TestCase):
         )
         self.assertEqual(previous_usage["provider"], "openrouter")
         self.assertEqual(previous_usage["model"], "qwen")
-        current_fallback, previous_fallback = fake_fallback_events_db.dashboard_calls
+        self.assertEqual(len(fake_fallback_events_db.dashboard_calls), 1)
+        self.assertEqual(len(fake_fallback_events_db.dashboard_summary_calls), 1)
+        current_fallback = fake_fallback_events_db.dashboard_calls[0]
+        previous_fallback = fake_fallback_events_db.dashboard_summary_calls[0]
         self.assertEqual(previous_fallback["start_date"], previous_usage["start_date"])
         self.assertEqual(previous_fallback["end_date"], current_fallback["start_date"])
         self.assertEqual(previous_fallback["model"], "qwen")
+        self.assertTrue(previous_fallback["include_requests"])
         previous = response.json()["previous"]
         self.assertEqual(
             previous["totals"],
@@ -869,8 +927,13 @@ class StatsApiPaginationTests(unittest.TestCase):
 
     def test_virtual_key_previous_window_hides_master_only_fallback_requests(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
+        fake_fallback_events_db = _FakeFallbackEventsDB()
 
-        with self._client(fake_tokens_usage_db, _FakeApiKeysDB(valid_key_id=11)) as client:
+        with self._client(
+            fake_tokens_usage_db,
+            _FakeApiKeysDB(valid_key_id=11),
+            fake_fallback_events_db=fake_fallback_events_db,
+        ) as client:
             client.cookies.set(
                 SESSION_COOKIE_NAME,
                 create_authenticated_session(role=ROLE_USER, key_id=11),
@@ -878,7 +941,8 @@ class StatsApiPaginationTests(unittest.TestCase):
             response = client.get("/v1/api/analytics-dashboard?range=7d&compare=previous")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(fake_tokens_usage_db.dashboard_calls[1]["api_key_id"], 11)
+        self.assertEqual(fake_tokens_usage_db.dashboard_summary_calls[0]["api_key_id"], 11)
+        self.assertFalse(fake_fallback_events_db.dashboard_summary_calls[0]["include_requests"])
         self.assertEqual(set(response.json()["previous"]["fallback"]), {"summary"})
 
     def test_usage_dashboard_rejects_invalid_scope_and_filters(self):

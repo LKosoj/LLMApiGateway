@@ -4,9 +4,11 @@ import asyncio
 import contextlib
 import ipaddress
 import socket
+import ssl
 import urllib.parse
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -80,9 +82,14 @@ class _PinnedHostNetworkBackend(httpcore.AsyncNetworkBackend):
         await self._backend.sleep(seconds)
 
 
+@lru_cache(maxsize=1)
+def _get_pinned_ssl_context() -> ssl.SSLContext:
+    return httpx.create_ssl_context(verify=True, trust_env=False)
+
+
 class _PinnedHostAsyncHTTPTransport(httpx.AsyncHTTPTransport):
     def __init__(self, *, pinned_host: str, pinned_port: int, connect_ip: str):
-        super().__init__(trust_env=False, http2=False)
+        super().__init__(verify=_get_pinned_ssl_context(), trust_env=False, http2=False)
         self._pool._network_backend = _PinnedHostNetworkBackend(
             pinned_host=pinned_host,
             pinned_port=pinned_port,
@@ -302,6 +309,18 @@ def _parse_fetch_url(raw_url: str) -> tuple[str, str, int]:
     return url, hostname, port
 
 
+def _validated_fetch_url_sync(raw_url: str) -> _ValidatedFetchUrl:
+    url, hostname, port = _parse_fetch_url(raw_url)
+    addresses = _validate_public_fetch_host_sync(hostname, port)
+    return _ValidatedFetchUrl(
+        url=url,
+        host=hostname,
+        port=port,
+        addresses=addresses,
+        connect_ip=addresses[0],
+    )
+
+
 async def _validated_fetch_url(raw_url: str) -> _ValidatedFetchUrl:
     url, hostname, port = _parse_fetch_url(raw_url)
     addresses = await _validate_public_fetch_host(hostname, port)
@@ -332,15 +351,30 @@ def _is_blocked_fetch_ip(address: str) -> bool:
     )
 
 
+def _extract_resolved_addresses(addrinfo: Iterable[Any]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            item[4][0]
+            for item in addrinfo
+            if item and item[4]
+        )
+    )
+
+
+def _resolve_fetch_host_sync(hostname: str, port: int) -> tuple[str, ...]:
+    try:
+        return _extract_resolved_addresses(
+            socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        )
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"'url' host could not be resolved: {hostname}") from exc
+
+
 async def _resolve_fetch_host(hostname: str, port: int) -> tuple[str, ...]:
     try:
         loop = asyncio.get_running_loop()
-        return tuple(
-            dict.fromkeys(
-                item[4][0]
-                for item in await loop.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
-                if item and item[4]
-            )
+        return _extract_resolved_addresses(
+            await loop.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
         )
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"'url' host could not be resolved: {hostname}") from exc
@@ -358,6 +392,20 @@ def _validate_fetch_hostname(hostname: str) -> str:
     if _is_blocked_fetch_ip(normalized_hostname):
         raise HTTPException(status_code=400, detail=WEB_FETCH_BLOCKED_HOST_DETAIL)
     return normalized_hostname
+
+
+def _validate_public_fetch_host_sync(hostname: str, port: int) -> tuple[str, ...]:
+    normalized_hostname = _validate_fetch_hostname(hostname)
+    try:
+        ipaddress.ip_address(normalized_hostname)
+    except ValueError:
+        addresses = _resolve_fetch_host_sync(normalized_hostname, port)
+    else:
+        addresses = (normalized_hostname,)
+
+    if not addresses or any(_is_blocked_fetch_ip(address) for address in addresses):
+        raise HTTPException(status_code=400, detail=WEB_FETCH_BLOCKED_HOST_DETAIL)
+    return addresses
 
 
 async def _validate_public_fetch_host(hostname: str, port: int) -> tuple[str, ...]:

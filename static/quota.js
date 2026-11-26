@@ -20,11 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const quotaStatus = window.gatewayUi.createStatus(statusEl, {
         renderMessage: (message) => i18n.t(message.key, message.values || {}),
     });
-    const countdownTimers = {};
+    const countdownEntries = new Map();
+    let countdownInterval = null;
     let quotaSnapshot = null;
     let quotaUpdatedAt = null;
     let quotaState = 'loading';
     let pollTimer = null;
+    let quotaAbortController = null;
+    let upstreamAbortController = null;
     let inFlight = false;
     let stopped = false;
     let upstreamSnapshots = null;
@@ -86,31 +89,53 @@ document.addEventListener('DOMContentLoaded', () => {
         return `${minutes}:${rest}`;
     }
 
+    function stopCountdownInterval() {
+        if (countdownInterval !== null) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+    }
+
     function clearCountdownTimers() {
-        Object.keys(countdownTimers).forEach((cardId) => {
-            clearInterval(countdownTimers[cardId]);
-            delete countdownTimers[cardId];
-        });
+        stopCountdownInterval();
+        countdownEntries.clear();
+    }
+
+    function updateCountdowns() {
+        const elapsed = elapsedSnapshotSeconds();
+        for (const [cardId, entry] of countdownEntries.entries()) {
+            if (!entry.element.isConnected) {
+                countdownEntries.delete(cardId);
+                continue;
+            }
+            const remaining = Math.max(0, Math.round(entry.initialSeconds - elapsed));
+            entry.element.textContent = formatCountdown(remaining);
+            if (remaining === 0) {
+                countdownEntries.delete(cardId);
+            }
+        }
+        if (countdownEntries.size === 0) {
+            stopCountdownInterval();
+        }
+    }
+
+    function ensureCountdownInterval() {
+        if (countdownInterval !== null || stopped || document.hidden || countdownEntries.size === 0) return;
+        countdownInterval = window.setInterval(updateCountdowns, 1000);
     }
 
     function startCountdownTimer(element, initialSeconds) {
-        const cardId = element.dataset.countdownId;
+        const cardId = element?.dataset?.countdownId;
         if (!cardId) return;
-        if (countdownTimers[cardId]) clearInterval(countdownTimers[cardId]);
-
-        let remaining = Math.max(0, Math.round(initialSeconds));
+        const baseSeconds = Math.max(0, Number(initialSeconds) || 0);
+        const remaining = Math.max(0, Math.round(baseSeconds - elapsedSnapshotSeconds()));
         element.textContent = formatCountdown(remaining);
-        if (remaining === 0) return;
-
-        const timer = setInterval(() => {
-            remaining = Math.max(0, remaining - 1);
-            element.textContent = formatCountdown(remaining);
-            if (remaining === 0) {
-                clearInterval(timer);
-                delete countdownTimers[cardId];
-            }
-        }, 1000);
-        countdownTimers[cardId] = timer;
+        if (remaining === 0) {
+            countdownEntries.delete(cardId);
+            return;
+        }
+        countdownEntries.set(cardId, { element, initialSeconds: baseSeconds });
+        ensureCountdownInterval();
     }
 
     function colorClass(current, limit) {
@@ -205,8 +230,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const tpm = keyData.tpm;
         const budget = keyData.budget;
         const elapsed = elapsedSnapshotSeconds();
-        const rpmReset = Math.max(0, (rpm.reset_in_seconds ?? 60) - elapsed);
-        const tpmReset = Math.max(0, (tpm.reset_in_seconds ?? rpm.reset_in_seconds ?? 60) - elapsed);
+        const rpmBaseReset = rpm.reset_in_seconds ?? 60;
+        const tpmBaseReset = tpm.reset_in_seconds ?? rpm.reset_in_seconds ?? 60;
+        const rpmReset = Math.max(0, rpmBaseReset - elapsed);
+        const tpmReset = Math.max(0, tpmBaseReset - elapsed);
         const rpmPct = rpm.limit != null && rpm.limit > 0
             ? Math.min(100, Math.round(rpm.current / rpm.limit * 100)) : 0;
         const tpmPct = tpm.limit != null && tpm.limit > 0
@@ -262,8 +289,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         card.replaceChildren(...content);
         updateKeyCardLocale(card, keyData);
-        startCountdownTimer(card.querySelector(`[data-countdown-id="${countdownId}-rpm"]`), rpmReset);
-        startCountdownTimer(card.querySelector(`[data-countdown-id="${countdownId}-tpm"]`), tpmReset);
+        startCountdownTimer(card.querySelector(`[data-countdown-id="${countdownId}-rpm"]`), rpmBaseReset);
+        startCountdownTimer(card.querySelector(`[data-countdown-id="${countdownId}-tpm"]`), tpmBaseReset);
     }
 
     function renderEmptyState() {
@@ -365,9 +392,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function schedulePoll() {
         clearPollTimer();
-        if (stopped) return;
+        if (stopped || document.hidden) return;
         pollTimer = window.setTimeout(() => {
             pollTimer = null;
+            if (document.hidden || stopped) return;
             void fetchQuotaData();
         }, POLL_INTERVAL_MS);
     }
@@ -376,9 +404,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (inFlight || stopped) return;
         clearPollTimer();
         inFlight = true;
+        quotaAbortController?.abort();
+        const controller = new AbortController();
+        quotaAbortController = controller;
         let shouldPoll = false;
         try {
-            const response = await apiFetch('/v1/api/quota/keys');
+            const response = await apiFetch('/v1/api/quota/keys', { signal: controller.signal });
             if (stopped) return;
             if (!response.ok) throw new Error(`Quota request failed with status ${response.status}`);
             const data = await response.json();
@@ -390,15 +421,16 @@ document.addEventListener('DOMContentLoaded', () => {
             shouldPoll = true;
             renderQuotaState();
         } catch (error) {
-            if (stopped) return;
+            if (stopped || error?.name === 'AbortError') return;
             if (error.message === 'Authentication required') return;
             quotaState = quotaSnapshot === null ? 'initial-error' : 'stale';
             shouldPoll = quotaSnapshot !== null;
             renderQuotaState({preserveCards: quotaSnapshot !== null});
             console.warn('Quota data request failed');
         } finally {
+            if (quotaAbortController === controller) quotaAbortController = null;
             inFlight = false;
-            if (shouldPoll) schedulePoll();
+            if (shouldPoll && !document.hidden) schedulePoll();
         }
     }
 
@@ -550,8 +582,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadUpstreamQuotas() {
         if (stopped) return;
+        upstreamAbortController?.abort();
+        const controller = new AbortController();
+        upstreamAbortController = controller;
         try {
-            const response = await apiFetch('/v1/admin/upstream-quotas');
+            const response = await apiFetch('/v1/admin/upstream-quotas', { signal: controller.signal });
             if (stopped) return;
             if (response.status === 403 || response.status === 401) {
                 upstreamSection.style.display = 'none';
@@ -566,11 +601,13 @@ document.addEventListener('DOMContentLoaded', () => {
             upstreamSnapshots = data.snapshots || [];
             renderUpstreamSnapshots();
         } catch (error) {
-            if (stopped) return;
+            if (stopped || error?.name === 'AbortError') return;
             if (error.message !== 'Authentication required') {
                 console.error('Upstream quota fetch error:', error);
             }
             upstreamSection.style.display = 'none';
+        } finally {
+            if (upstreamAbortController === controller) upstreamAbortController = null;
         }
     }
 
@@ -623,15 +660,33 @@ document.addEventListener('DOMContentLoaded', () => {
         void fetchQuotaData();
     });
 
+    function handleVisibilityChange() {
+        if (stopped) return;
+        if (document.hidden) {
+            clearPollTimer();
+            stopCountdownInterval();
+            return;
+        }
+        updateCountdowns();
+        ensureCountdownInterval();
+        if (!inFlight) {
+            void fetchQuotaData();
+        }
+    }
+
     window.addEventListener('beforeunload', () => {
         stopped = true;
+        quotaAbortController?.abort();
+        upstreamAbortController?.abort();
         clearPollTimer();
         clearCountdownTimers();
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
         unsubscribeLocale?.();
     });
 
     Promise.all([bootstrapRoleUI(), i18n.ready]).then(([identity]) => {
         if (stopped) return;
+        document.addEventListener('visibilitychange', handleVisibilityChange);
         unsubscribeLocale = i18n.subscribe(rerenderLocale);
         renderQuotaState();
         void fetchQuotaData();

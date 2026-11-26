@@ -118,7 +118,12 @@ def best_srcset_url(value: Any) -> str | None:
     return best_url
 
 
-def extract_jsonld_images(raw_html: Any, base_url: str) -> list[dict[str, str]]:
+def extract_jsonld_images(
+    raw_html: Any,
+    base_url: str,
+    *,
+    soup: Any | None = None,
+) -> list[dict[str, str]]:
     images: list[dict[str, str]] = []
     seen: set[str] = set()
 
@@ -137,13 +142,14 @@ def extract_jsonld_images(raw_html: Any, base_url: str) -> list[dict[str, str]]:
                 add_candidate(item, description)
 
     try:
-        from bs4 import BeautifulSoup
+        if soup is None:
+            from bs4 import BeautifulSoup
 
-        html_text = raw_html.decode("utf-8", errors="ignore") if isinstance(raw_html, bytes) else str(raw_html or "")
-        if not html_text.strip():
-            return images
+            html_text = raw_html.decode("utf-8", errors="ignore") if isinstance(raw_html, bytes) else str(raw_html or "")
+            if not html_text.strip():
+                return images
 
-        soup = BeautifulSoup(html_text, "lxml")
+            soup = BeautifulSoup(html_text, "lxml")
         for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
             payload = (script.string or script.text or "").strip()
             if not payload:
@@ -197,6 +203,7 @@ def extract_article_images_from_html(raw_html: Any, base_url: str) -> list[dict[
             description,
         )
 
+    soup: Any | None = None
     try:
         from bs4 import BeautifulSoup
 
@@ -223,7 +230,7 @@ def extract_article_images_from_html(raw_html: Any, base_url: str) -> list[dict[
     except Exception as exc:
         logger.debug("Failed to extract article images from HTML: %s", exc)
 
-    for item in extract_jsonld_images(raw_html, base_url):
+    for item in extract_jsonld_images(raw_html, base_url, soup=soup):
         add_image_item(images, seen, item.get("url"), base_url=base_url, description=item.get("description"))
     return images
 

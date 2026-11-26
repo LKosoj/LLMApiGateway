@@ -6,9 +6,10 @@ from datetime import datetime, timedelta, timezone
 import aiosqlite
 
 from ..config.paths import resolve_db_dir
-from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher
+from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher, apply_runtime_pragmas
 
 MAX_FALLBACK_RECORDS_LIMIT = 100
+_CLEANUP_BATCH_SIZE = 2000
 logger = logging.getLogger(__name__)
 
 INSERT_EVENT_SQL = """
@@ -122,8 +123,7 @@ class FallbackEventsDB:
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -157,10 +157,7 @@ class FallbackEventsDB:
             if "x_title" not in existing_columns:
                 cursor.execute("ALTER TABLE fallback_events ADD COLUMN x_title TEXT")
 
-            cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_fallback_events_timestamp
-            ON fallback_events (timestamp)
-            ''')
+            cursor.execute("DROP INDEX IF EXISTS idx_fallback_events_timestamp")
 
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_fallback_events_request_id
@@ -249,8 +246,7 @@ class FallbackEventsDB:
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             conn.execute(INSERT_EVENT_SQL, params)
             conn.commit()
         except Exception as e:
@@ -774,6 +770,107 @@ class FallbackEventsDB:
                 "targets": [],
             }
 
+    async def get_dashboard_fallback_summary(
+        self,
+        start_date: datetime,
+        end_date: datetime,
+        *,
+        api_key_id: int | None = None,
+        api_key_unattributed: bool = False,
+        operation: str | None = None,
+        gateway_model: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        upstream_key_fingerprint: str | None = None,
+        include_requests: bool = True,
+    ) -> dict:
+        where_clause, params = _build_fallback_where(
+            start_date=start_date,
+            end_date=end_date,
+            api_key_id=api_key_id,
+            api_key_unattributed=api_key_unattributed,
+            operation=operation,
+            gateway_model=gateway_model,
+            provider=provider,
+            model=model,
+            upstream_key_fingerprint=upstream_key_fingerprint,
+        )
+        empty_summary = {
+            "attempts": 0,
+            "successes": 0,
+            "errors": 0,
+            "success_rate": 0.0,
+            "avg_duration_ms": None,
+            "max_duration_ms": None,
+        }
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                for pragma in RUNTIME_PRAGMAS:
+                    await db.execute(pragma)
+                db.row_factory = aiosqlite.Row
+
+                cursor = await db.execute(
+                    f"""
+                    SELECT
+                        COUNT(*) as attempts,
+                        COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as successes,
+                        COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) as errors,
+                        CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms,
+                        MAX(duration_ms) as max_duration_ms
+                    FROM fallback_events
+                    {where_clause}
+                    """,
+                    params,
+                )
+                row = await cursor.fetchone()
+                attempts = int(row["attempts"] or 0) if row else 0
+                successes = int(row["successes"] or 0) if row else 0
+                errors = int(row["errors"] or 0) if row else 0
+                summary = {
+                    "attempts": attempts,
+                    "successes": successes,
+                    "errors": errors,
+                    "success_rate": round(100.0 * successes / attempts, 2) if attempts else 0.0,
+                    "avg_duration_ms": row["avg_duration_ms"] if row else None,
+                    "max_duration_ms": row["max_duration_ms"] if row else None,
+                }
+                result: dict = {"summary": summary}
+
+                if include_requests:
+                    cursor = await db.execute(
+                        f"""
+                        SELECT
+                            COUNT(*) as total,
+                            COALESCE(SUM(CASE WHEN has_error = 1 AND has_success = 1 THEN 1 ELSE 0 END), 0) as rescued,
+                            COALESCE(SUM(CASE WHEN has_success = 0 THEN 1 ELSE 0 END), 0) as failed
+                        FROM (
+                            SELECT
+                                request_id,
+                                COALESCE(operation, 'chat') as operation,
+                                MAX(CASE WHEN success = 0 THEN 1 ELSE 0 END) as has_error,
+                                MAX(CASE WHEN success = 1 THEN 1 ELSE 0 END) as has_success
+                            FROM fallback_events
+                            {where_clause}
+                            GROUP BY request_id, COALESCE(operation, 'chat')
+                        )
+                        """,
+                        params,
+                    )
+                    row = await cursor.fetchone()
+                    result["requests"] = {
+                        "total": int(row["total"] or 0) if row else 0,
+                        "rescued": int(row["rescued"] or 0) if row else 0,
+                        "failed": int(row["failed"] or 0) if row else 0,
+                    }
+
+                return result
+        except Exception as e:
+            logger.error("Error retrieving analytics fallback summary data: %s", e)
+            fallback_empty: dict = {"summary": empty_summary}
+            if include_requests:
+                fallback_empty["requests"] = {"total": 0, "rescued": 0, "failed": 0}
+            return fallback_empty
+
     async def get_events_count_last_24h(self, api_key_id: int | None = None) -> dict[int, int]:
         """Return a ``{api_key_id: count}`` map for fallback events in the last 24 h.
 
@@ -816,13 +913,29 @@ class FallbackEventsDB:
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             cursor = conn.cursor()
-            cutoff_date = (datetime.now() - timedelta(days=retention_days)).isoformat()
-            cursor.execute("DELETE FROM fallback_events WHERE timestamp < ?", (cutoff_date,))
-            deleted_count = cursor.rowcount
-            conn.commit()
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+            deleted_count = 0
+            while True:
+                cursor.execute(
+                    """
+                    DELETE FROM fallback_events
+                    WHERE id IN (
+                        SELECT id FROM fallback_events
+                        WHERE timestamp < ?
+                        LIMIT ?
+                    )
+                    """,
+                    (cutoff_date, _CLEANUP_BATCH_SIZE),
+                )
+                batch_deleted = cursor.rowcount
+                conn.commit()
+                if batch_deleted <= 0:
+                    break
+                deleted_count += batch_deleted
+                if batch_deleted < _CLEANUP_BATCH_SIZE:
+                    break
             if deleted_count > 0:
                 logger.info("Cleaned up %d old fallback event records (older than %d days)", deleted_count, retention_days)
             else:

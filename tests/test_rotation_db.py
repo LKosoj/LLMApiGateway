@@ -11,6 +11,7 @@ class RotationDBAsyncTests(unittest.TestCase):
         self.db = ModelRotationDB(db_filename=f"test_rotation_async_{uuid.uuid4().hex}.db")
 
     def tearDown(self):
+        run_async(self.db.close())
         if self.db.db_path.exists():
             self.db.db_path.unlink()
         self.db.db_path.with_suffix(self.db.db_path.suffix + "-wal").unlink(missing_ok=True)

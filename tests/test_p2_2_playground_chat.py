@@ -190,15 +190,71 @@ def test_cancel_during_stream_keeps_partial_text_and_marks_cancelled(
     try:
         page = context.new_page()
         _open_chat_tab(page, chat_server)
-        _route_streaming_completion(page, STREAM_WORDS)
+        # Emulate a real progressive SSE stream via ReadableStream so the test
+        # does not depend on any artificial client-side chunk delay.
+        page.evaluate(
+            """
+            (words) => {
+                const origFetch = window.fetch.bind(window);
+                window.fetch = (input, init) => {
+                    const url = typeof input === "string" ? input : input?.url || "";
+                    if (!url.includes("/v1/chat/completions")) {
+                        return origFetch(input, init);
+                    }
+                    const encoder = new TextEncoder();
+                    const signal = init?.signal;
+                    let timer = null;
+                    const stream = new ReadableStream({
+                        start(controller) {
+                            const firstChunk = `data: ${JSON.stringify({choices: [{delta: {content: words[0]}}]})}\\n\\n`;
+                            controller.enqueue(encoder.encode(firstChunk));
+                            const onAbort = () => {
+                                if (timer !== null) clearTimeout(timer);
+                                try {
+                                    controller.error(new DOMException("The user aborted a request.", "AbortError"));
+                                } catch (_err) {
+                                    // Stream already closed.
+                                }
+                            };
+                            if (signal) {
+                                if (signal.aborted) {
+                                    onAbort();
+                                    return;
+                                }
+                                signal.addEventListener("abort", onAbort, {once: true});
+                            }
+                            timer = setTimeout(() => {
+                                const rest = words.slice(1).map(
+                                    (word) => `data: ${JSON.stringify({choices: [{delta: {content: word}}]})}\\n\\n`
+                                ).join("") + "data: [DONE]\\n\\n";
+                                try {
+                                    controller.enqueue(encoder.encode(rest));
+                                    controller.close();
+                                } catch (_err) {
+                                    // Stream already aborted.
+                                }
+                            }, 5000);
+                        },
+                        cancel() {
+                            if (timer !== null) clearTimeout(timer);
+                        },
+                    });
+                    return Promise.resolve(new Response(stream, {
+                        status: 200,
+                        headers: {"content-type": "text/event-stream"},
+                    }));
+                };
+            }
+            """,
+            STREAM_WORDS,
+        )
 
         page.locator("#simpleChatInput").fill("Say hello")
         page.locator("#simpleChatForm .run-button").click()
 
         assistant_content = page.locator(".chat-message.assistant .chat-content")
-        # Wait for the first delta to render, then cancel mid-stream: the
-        # remaining ~11 deltas (each paced ~40ms apart) give a wide enough
-        # window for the cancel click to land before the stream completes.
+        # Wait for the first delta to render, then cancel mid-stream while the
+        # ReadableStream is still open waiting for subsequent chunks.
         expect(assistant_content).to_contain_text("Hello", timeout=5000)
         page.locator("#cancelChatButton").click()
 

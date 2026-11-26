@@ -12,8 +12,11 @@ class ModelRotationDBTests(unittest.TestCase):
     def setUp(self):
         self.db = ModelRotationDB(db_filename=f"test_rotation_{uuid.uuid4().hex}.db")
         self.db_paths = [self.db.db_path]
+        self._dbs_to_close = [self.db]
 
     def tearDown(self):
+        for db in self._dbs_to_close:
+            run_async(db.close())
         for db_path in self.db_paths:
             if db_path.exists():
                 db_path.unlink()
@@ -141,6 +144,7 @@ class ModelRotationDBTests(unittest.TestCase):
             conn.commit()
 
         migrated_db = ModelRotationDB(db_filename=db_filename)
+        self._dbs_to_close.append(migrated_db)
 
         self.assertCountEqual(
             self._rotation_rows(migrated_db),
@@ -309,6 +313,20 @@ class ModelRotationDBTests(unittest.TestCase):
             journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
 
         self.assertEqual(str(journal_mode).lower(), "wal")
+
+    def test_persistent_connection_is_reused_within_same_loop_and_closed(self):
+        async def scenario():
+            first = await self.db.get_next_model_index("user:1", "gw-model", 3)
+            conn1 = self.db._conn
+            self.assertIsNotNone(conn1)
+            second = await self.db.get_next_model_index("user:1", "gw-model", 3)
+            conn2 = self.db._conn
+            self.assertIs(conn1, conn2)
+            self.assertEqual((first, second), (0, 1))
+            await self.db.close()
+            self.assertIsNone(self.db._conn)
+
+        run_async(scenario())
 
 
 if __name__ == "__main__":

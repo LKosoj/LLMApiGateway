@@ -44,6 +44,7 @@ from .response_observation_contracts import (
 _SESSION_STATE_KEY = "_llmgateway_response_observation_session"
 _UPSTREAM_PROTOCOL_DETAIL = "Upstream response failed protocol validation."
 _ACCOUNTING_UNAVAILABLE_DETAIL = "Response accounting is temporarily unavailable."
+_SSE_FRAME_SEPARATOR_RE = re.compile(rb"(\r?\n\r?\n)")
 
 
 def _client_billing(native_costs: tuple[tuple[str, float], ...]) -> dict | list[dict]:
@@ -57,7 +58,7 @@ def _client_billing(native_costs: tuple[tuple[str, float], ...]) -> dict | list[
 def _strip_unsettled_sse_cost(body: bytes) -> bytes:
     # Keep the framing and control fields of every event. Only replace JSON data
     # with a cost field, after the accounting observer has read its original value.
-    frames = re.split(rb"(\r?\n\r?\n)", body)
+    frames = _SSE_FRAME_SEPARATOR_RE.split(body)
     for index in range(0, len(frames), 2):
         frame = frames[index]
         lines = frame.splitlines()
@@ -626,7 +627,7 @@ class _ResponseObserver:
             self._sse_cost_payload["choices"] = []
             usage = payload.get("usage")
             if isinstance(usage, dict):
-                self._sse_cost_payload["usage"] = usage
+                self._sse_cost_payload["usage"] = dict(usage)
         elif payload.get("type") == "response.completed":
             self._sse_cost_payload["type"] = "response.usage"
             sequence = payload.get("sequence_number")

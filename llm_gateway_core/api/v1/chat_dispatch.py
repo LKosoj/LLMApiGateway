@@ -1,5 +1,3 @@
-import copy
-import json
 import logging
 import math
 import random
@@ -734,8 +732,8 @@ async def attempt_model_fallback_rule(
                 provider=provider_name,
                 model=provider_model,
                 cost_rate_registry=cost_rate_registry,
-                estimated_prompt_tokens=estimate_prompt_tokens(
-                    json.dumps(request_body_json),
+                prompt_tokens_estimator=lambda: estimate_prompt_tokens(
+                    request_body_json,
                     provider_model,
                 ),
                 ttft_ms=ttft_ms,
@@ -795,7 +793,7 @@ async def attempt_model_fallback_rule(
             # Anthropic client → Anthropic provider: preserve every native field
             # (system, cache_control, thinking, ...) that would be lost if we
             # round-tripped through the OpenAI shape.
-            provider_payload_template = copy.deepcopy(original_anthropic_payload)
+            provider_payload_template = dict(original_anthropic_payload)
             if "max_tokens" not in provider_payload_template:
                 provider_payload_template["max_tokens"] = ANTHROPIC_DEFAULT_MAX_TOKENS
         else:
@@ -824,7 +822,7 @@ async def attempt_model_fallback_rule(
         }
         target_path = "responses" if is_responses_provider else "chat/completions"
         target_url = f"{provider_base_url.rstrip('/')}/{target_path}"
-        provider_payload_template = copy.deepcopy(request_body_json)
+        provider_payload_template = dict(request_body_json)
         provider_payload_template["model"] = provider_model
         if provider_name == "openrouter" and "usage" not in provider_payload_template:
             provider_payload_template["usage"] = {"include": True}
@@ -1468,7 +1466,7 @@ async def attempt_model_fallback_rule(
             else:
                 logging.info("Attempting model '%s' in provider '%s'", provider_model, provider_name)
 
-            attempt_payload = copy.deepcopy(provider_payload_template)
+            attempt_payload = dict(provider_payload_template)
             if subproviders_ordering and not is_anthropic_provider:
                 attempt_payload["provider"] = {"order": subproviders_ordering}
                 attempt_payload["allow_fallbacks"] = False
@@ -1514,7 +1512,7 @@ async def attempt_model_fallback_rule(
                         sub_provider,
                         provider_name,
                     )
-                    attempt_payload = copy.deepcopy(provider_payload_template)
+                    attempt_payload = dict(provider_payload_template)
                     attempt_payload["provider"] = {"order": [sub_provider]}
                     attempt_payload["allow_fallbacks"] = False
                     action, result_val = await _execute_single_attempt(
@@ -1763,12 +1761,13 @@ async def dispatch_chat_request(
                 model_resolution.matched_rule,
             )
 
-    payload_to_log = redact_payload_for_log(request_body_json)
-    logging.debug(
-        "/v1/chat/completions: Request for model '%s'. Payload: %s",
-        payload_to_log.get("model", requested_model),
-        payload_to_log,
-    )
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+        payload_to_log = redact_payload_for_log(request_body_json)
+        logging.debug(
+            "/v1/chat/completions: Request for model '%s'. Payload: %s",
+            payload_to_log.get("model", requested_model),
+            payload_to_log,
+        )
 
     # Only set if not already set by a specific controller (like Anthropic)
     if not getattr(request.state, "llmgateway_gateway_model", None):

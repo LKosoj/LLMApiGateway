@@ -5,6 +5,7 @@ from llm_gateway_core.services.single_process_bootstrap import (
 )
 
 import asyncio
+import inspect
 import logging
 import os
 import uvicorn
@@ -819,6 +820,16 @@ async def lifespan(app: FastAPI):
         model_rotation_db = ModelRotationDB(
             legacy_scope_resolver=resolve_legacy_rotation_scope
         )
+
+        async def _close_model_rotation_db() -> None:
+            close_fn = getattr(model_rotation_db, "close", None)
+            if close_fn is None:
+                return
+            result = close_fn()
+            if inspect.isawaitable(result):
+                await result
+
+        _push_safe_cleanup(resources, "model-rotation-db", _close_model_rotation_db)
         upstream_subscription_quota_service = UpstreamSubscriptionQuotaService(
             http_client=http_client
         )
@@ -1262,8 +1273,20 @@ app.include_router(api_v1_editor_router, prefix="/v1", tags=["Config Editor"])
 # Include the v1 stats API router, also under /v1 prefix
 app.include_router(api_v1_stats_router, prefix="/v1", tags=["Usage Stats"])
 
+class CachedStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 206, 304):
+            normalized = path.lstrip("/")
+            if normalized.startswith("vendor/fonts/"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=300"
+        return response
+
+
 # --- Static Files ---
-app.mount("/static", StaticFiles(directory=str(STATIC_FILES_DIR)), name="static")
+app.mount("/static", CachedStaticFiles(directory=str(STATIC_FILES_DIR)), name="static")
 logger.info(f"Static files mounted from {STATIC_FILES_DIR}")
 
 # Deep research generated illustrations. StaticFiles resolves paths via

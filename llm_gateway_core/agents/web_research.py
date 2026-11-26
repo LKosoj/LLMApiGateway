@@ -21,6 +21,9 @@ from ..utils.zai_mcp import detect_zai_search_location, zai_mcp_tool_call
 
 logger = logging.getLogger(__name__)
 
+WEB_RESEARCH_DOWNLOAD_CONCURRENCY = 4
+WEB_RESEARCH_LLM_CONCURRENCY = 4
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -835,10 +838,13 @@ class WebResearchClient:
             if not valid_articles:
                 return "Не удалось скачать содержимое статей для анализа."
 
-            tasks = [
-                self._extract_relevant_from_article_with_llm(user_query, article)
-                for article in valid_articles
-            ]
+            semaphore = asyncio.Semaphore(WEB_RESEARCH_LLM_CONCURRENCY)
+
+            async def _extract_with_limit(article: dict[str, str]) -> str:
+                async with semaphore:
+                    return await self._extract_relevant_from_article_with_llm(user_query, article)
+
+            tasks = [_extract_with_limit(article) for article in valid_articles]
             chunks = await asyncio.gather(*tasks, return_exceptions=True)
 
             collected: list[str] = []
@@ -919,7 +925,13 @@ class WebResearchClient:
 
             logger.info("Скачиваем содержимое %s статей...", len(all_links))
 
-            content_tasks = [self._download_content(link) for link in all_links]
+            download_semaphore = asyncio.Semaphore(WEB_RESEARCH_DOWNLOAD_CONCURRENCY)
+
+            async def _download_with_limit(link: str) -> dict[str, str]:
+                async with download_semaphore:
+                    return await self._download_content(link)
+
+            content_tasks = [_download_with_limit(link) for link in all_links]
             articles_data = await asyncio.gather(*content_tasks, return_exceptions=True)
 
             valid_articles = []

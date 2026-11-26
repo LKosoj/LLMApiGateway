@@ -36,6 +36,14 @@ function initializeUsagePage() {
         fallbackChains: null,
         upstream: null,
     };
+    const requestControllers = {
+        stats: null,
+        records: null,
+        fallbackStats: null,
+        fallbackChains: null,
+        upstream: null,
+        pauses: null,
+    };
     const expandedFallbackChains = new Set();
     let currentRequestId = null;
     let unsubscribeLocale = null;
@@ -124,6 +132,44 @@ function initializeUsagePage() {
         !isActivationContext(value)
         || (!value.signal.aborted && value.isCurrent())
     );
+    const isAbortError = (error) => Boolean(error && error.name === 'AbortError');
+    const cleanupRequestController = (name, controller = null) => {
+        const entry = requestControllers[name];
+        if (!entry) return;
+        if (controller && entry.controller !== controller) return;
+        entry.cleanup?.();
+        requestControllers[name] = null;
+    };
+    const createRequestController = (name, activationContext = null) => {
+        const previous = requestControllers[name];
+        if (previous) {
+            previous.cleanup?.();
+            previous.controller.abort();
+            requestControllers[name] = null;
+        }
+        const controller = new AbortController();
+        let cleanup = null;
+        if (isActivationContext(activationContext)) {
+            if (activationContext.signal.aborted) {
+                controller.abort();
+            } else {
+                const onExternalAbort = () => controller.abort();
+                activationContext.signal.addEventListener('abort', onExternalAbort, {once: true});
+                cleanup = () => activationContext.signal.removeEventListener('abort', onExternalAbort);
+            }
+        }
+        requestControllers[name] = {controller, cleanup};
+        return controller;
+    };
+    const abortAllRequests = () => {
+        Object.keys(requestControllers).forEach((name) => {
+            const entry = requestControllers[name];
+            if (!entry) return;
+            entry.cleanup?.();
+            entry.controller.abort();
+            requestControllers[name] = null;
+        });
+    };
     const reportTabActivation = (promise) => {
         promise.catch((error) => {
             queueMicrotask(() => { throw error; });
@@ -301,6 +347,7 @@ function initializeUsagePage() {
     const fetchAndRenderStats = async () => {
         const activationContext = statsActivationContext;
         const requestGeneration = startRequest('stats');
+        const controller = createRequestController('stats', activationContext);
         startLoading('stats', requestGeneration);
         const selectedPeriod = periodSelector.value;
         statsArea.textContent = gatewayI18n.t('usage:status.statisticsLoading');
@@ -310,7 +357,7 @@ function initializeUsagePage() {
         refreshButton.classList.add('loading');
 
         try {
-            const response = await apiFetch(`/v1/api/usage-stats/${selectedPeriod}`);
+            const response = await apiFetch(`/v1/api/usage-stats/${selectedPeriod}`, {signal: controller.signal});
             if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
             const data = await response.json().catch(() => ({}));
             if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
@@ -329,11 +376,12 @@ function initializeUsagePage() {
             }
 
         } catch (error) {
-            if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
+            if (isAbortError(error) || !isCurrentRequest('stats', requestGeneration, activationContext)) return;
             console.error('Failed to fetch usage statistics:', error);
             showApiError(null, null, error);
             statsArea.textContent = '';
         } finally {
+            cleanupRequestController('stats', controller);
             finishLoading('stats', requestGeneration);
             if (!isCurrentRequest('stats', requestGeneration, activationContext)) return;
             refreshButton.disabled = false;
@@ -374,7 +422,7 @@ function initializeUsagePage() {
             await fetchAndRenderRecords(context);
         } else if (tab === 'analytics') {
             if (context.signal.aborted || !context.isCurrent()) return;
-            await window.usageAnalyticsDashboard.activate();
+            await window.usageAnalyticsDashboard.activate(context);
         } else if (tab === 'fallback') {
             if (fallbackSubTabsController) {
                 await fallbackSubTabsController.activate(fallbackSubTabsController.activeKey);
@@ -516,6 +564,7 @@ function initializeUsagePage() {
 
     const fetchAndRenderRecords = async (activationContext = null) => {
         const requestGeneration = startRequest('records');
+        const controller = createRequestController('records', activationContext);
         startLoading('records', requestGeneration);
         const requestedPage = currentPage;
         recordsArea.textContent = gatewayI18n.t('usage:status.recordsLoading');
@@ -526,7 +575,7 @@ function initializeUsagePage() {
         recordRefreshButton.classList.add('loading');
 
         try {
-            const response = await apiFetch(`/v1/api/usage-records?limit=${recordsPerPage}&offset=${offset}`);
+            const response = await apiFetch(`/v1/api/usage-records?limit=${recordsPerPage}&offset=${offset}`, {signal: controller.signal});
             if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
             const responseData = await response.json().catch(() => ({}));
             if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
@@ -551,12 +600,13 @@ function initializeUsagePage() {
             }
 
         } catch (error) {
-            if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
+            if (isAbortError(error) || !isCurrentRequest('records', requestGeneration, activationContext)) return;
             console.error('Failed to fetch usage records:', error);
             showApiError(null, null, error);
             recordsArea.textContent = '';
             updatePaginationControls(0);
         } finally {
+            cleanupRequestController('records', controller);
             finishLoading('records', requestGeneration);
             if (!isCurrentRequest('records', requestGeneration, activationContext)) return;
             recordRefreshButton.disabled = false;
@@ -653,18 +703,23 @@ function initializeUsagePage() {
         setPauseBusy(pauseBusy);
     };
 
-    const fetchPauses = async () => {
+    const fetchPauses = async (activationContext = null) => {
         if (pauseBusy) return;
+        const controller = createRequestController('pauses', activationContext);
         setPauseBusy(true);
         try {
-            const response = await apiFetch('/v1/admin/upstream-pauses');
+            const response = await apiFetch('/v1/admin/upstream-pauses', {signal: controller.signal});
+            if (!isActivationCurrent(activationContext)) return;
             const data = await response.json();
+            if (!isActivationCurrent(activationContext)) return;
             if (!response.ok) { showApiError(data, response); return; }
             pauseSnapshot = data;
             renderPauses();
         } catch (error) {
+            if (isAbortError(error) || !isActivationCurrent(activationContext)) return;
             showApiError(null, null, error);
         } finally {
+            cleanupRequestController('pauses', controller);
             setPauseBusy(false);
         }
     };
@@ -733,7 +788,7 @@ function initializeUsagePage() {
             fallbackChainsActivationContext = context;
             await fetchAndRenderFallbackChains(context);
         } else if (subtab === 'upstream') {
-            await Promise.all([fetchAndRenderUpstreamStats(context), fetchPauses()]);
+            await Promise.all([fetchAndRenderUpstreamStats(context), fetchPauses(context)]);
         } else {
             await fetchAndRenderFallbackStats(context);
         }
@@ -911,6 +966,7 @@ function initializeUsagePage() {
 
     const fetchAndRenderFallbackStats = async (activationContext = null) => {
         const requestGeneration = startRequest('fallbackStats');
+        const controller = createRequestController('fallbackStats', activationContext);
         startLoading('fallbackStats', requestGeneration);
         const selectedPeriod = fallbackPeriodSelector.value;
         fallbackStatsArea.textContent = gatewayI18n.t('usage:status.fallbackLoading');
@@ -919,7 +975,7 @@ function initializeUsagePage() {
         fallbackRefreshButton.classList.add('loading');
 
         try {
-            const response = await apiFetch(`/v1/api/fallback-stats/${selectedPeriod}`);
+            const response = await apiFetch(`/v1/api/fallback-stats/${selectedPeriod}`, {signal: controller.signal});
             if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             const data = await response.json().catch(() => ({}));
             if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
@@ -934,11 +990,12 @@ function initializeUsagePage() {
             renderFallbackStatsSnapshot();
             showMessage(message(data.length === 0 ? 'usage:empty.fallback' : 'usage:status.fallbackLoaded'));
         } catch (error) {
-            if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
+            if (isAbortError(error) || !isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             console.error('Failed to fetch fallback stats:', error);
             showApiError(null, null, error);
             fallbackStatsArea.textContent = '';
         } finally {
+            cleanupRequestController('fallbackStats', controller);
             finishLoading('fallbackStats', requestGeneration);
             if (!isCurrentRequest('fallbackStats', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             fallbackRefreshButton.disabled = false;
@@ -1145,6 +1202,7 @@ function initializeUsagePage() {
 
     const fetchAndRenderFallbackChains = async (activationContext = null) => {
         const requestGeneration = startRequest('fallbackChains');
+        const controller = createRequestController('fallbackChains', activationContext);
         startLoading('fallbackChains', requestGeneration);
         const requestedPage = fallbackCurrentPage;
         fallbackChainsArea.textContent = gatewayI18n.t('usage:status.chainsLoading');
@@ -1155,7 +1213,7 @@ function initializeUsagePage() {
         const offset = (requestedPage - 1) * fallbackRecordsPerPage;
 
         try {
-            const response = await apiFetch(`/v1/api/fallback-records?limit=${fallbackRecordsPerPage}&offset=${offset}`);
+            const response = await apiFetch(`/v1/api/fallback-records?limit=${fallbackRecordsPerPage}&offset=${offset}`, {signal: controller.signal});
             if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             const responseData = await response.json().catch(() => ({}));
             if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
@@ -1176,12 +1234,13 @@ function initializeUsagePage() {
             renderFallbackChainsSnapshot();
             showMessage(message(responseData.records.length === 0 ? 'usage:empty.chains' : 'usage:status.chainsLoaded'));
         } catch (error) {
-            if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
+            if (isAbortError(error) || !isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             console.error('Failed to fetch fallback chains:', error);
             showApiError(null, null, error);
             fallbackChainsArea.textContent = '';
             updateFallbackPagination(0);
         } finally {
+            cleanupRequestController('fallbackChains', controller);
             finishLoading('fallbackChains', requestGeneration);
             if (!isCurrentRequest('fallbackChains', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             fallbackChainsRefreshButton.disabled = false;
@@ -1283,6 +1342,7 @@ function initializeUsagePage() {
 
     const fetchAndRenderUpstreamStats = async (activationContext = null) => {
         const requestGeneration = startRequest('upstream');
+        const controller = createRequestController('upstream', activationContext);
         startLoading('upstream', requestGeneration);
         const selectedPeriod = upstreamPeriodSelector.value;
         upstreamStatsArea.textContent = gatewayI18n.t('usage:status.upstreamLoading');
@@ -1291,7 +1351,7 @@ function initializeUsagePage() {
         upstreamRefreshButton.classList.add('loading');
 
         try {
-            const response = await apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`);
+            const response = await apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`, {signal: controller.signal});
             if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             const data = await response.json().catch(() => ({}));
             if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
@@ -1306,11 +1366,12 @@ function initializeUsagePage() {
             renderUpstreamSnapshot();
             showMessage(message(data.length === 0 ? 'usage:empty.upstream' : 'usage:status.upstreamLoaded'));
         } catch (error) {
-            if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
+            if (isAbortError(error) || !isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             console.error('Failed to fetch upstream analytics:', error);
             showApiError(null, null, error);
             upstreamStatsArea.textContent = '';
         } finally {
+            cleanupRequestController('upstream', controller);
             finishLoading('upstream', requestGeneration);
             if (!isCurrentRequest('upstream', requestGeneration, activationContext) || !isFallbackLoadCurrent(activationContext)) return;
             upstreamRefreshButton.disabled = false;
@@ -1697,15 +1758,21 @@ function initializeUsagePage() {
         const [auto, setAuto] = useState(topologyAutoRefreshInput ? topologyAutoRefreshInput.checked : true);
         const [localeRevision, setLocaleRevision] = useState(0);
         const fetchGeneration = useRef(0);
+        const inFlightRef = useRef(false);
+        const abortControllerRef = useRef(null);
         const [size, setSize] = useState({
             w: topologyContainer.clientWidth || 1000,
             h: topologyContainer.clientHeight || 520,
         });
 
         const fetchGraph = useCallback(async () => {
+            if (inFlightRef.current) return;
+            inFlightRef.current = true;
             const requestGeneration = ++fetchGeneration.current;
+            const controller = new AbortController();
+            abortControllerRef.current = controller;
             try {
-                const resp = await apiFetch('/v1/topology');
+                const resp = await apiFetch('/v1/topology', {signal: controller.signal});
                 if (requestGeneration !== fetchGeneration.current) return;
                 if (!resp.ok) {
                     const errBody = await resp.json().catch(() => ({}));
@@ -1721,33 +1788,78 @@ function initializeUsagePage() {
                 setGraph(nextGraph);
                 setError(null);
             } catch (e) {
-                if (requestGeneration !== fetchGeneration.current) return;
+                if (isAbortError(e) || requestGeneration !== fetchGeneration.current) return;
                 console.error('Failed to fetch topology:', e);
                 const descriptor = gatewayUi.describeApiError(null);
                 setError({...descriptor, rawDetail: e.message});
+            } finally {
+                inFlightRef.current = false;
+                if (abortControllerRef.current === controller) {
+                    abortControllerRef.current = null;
+                }
             }
         }, []);
 
-        useEffect(() => { fetchGraph(); }, [fetchGraph]);
+        useEffect(() => {
+            fetchGraph();
+            return () => {
+                abortControllerRef.current?.abort();
+                abortControllerRef.current = null;
+            };
+        }, [fetchGraph]);
 
         useEffect(() => {
             if (!auto) return undefined;
-            const id = setInterval(() => {
-                // Skip polling while the tab is hidden (display:none → offsetParent null).
-                if (topologyContainer.offsetParent === null) return;
-                fetchGraph();
-            }, TOPOLOGY_REFRESH_MS);
-            return () => clearInterval(id);
+            let id = null;
+            const startPolling = () => {
+                if (id !== null || document.hidden) return;
+                id = setInterval(() => {
+                    // Skip polling while the tab or document is hidden.
+                    if (document.hidden || topologyContainer.offsetParent === null) return;
+                    fetchGraph();
+                }, TOPOLOGY_REFRESH_MS);
+            };
+            const stopPolling = () => {
+                if (id !== null) {
+                    clearInterval(id);
+                    id = null;
+                }
+            };
+            const handleVisibilityChange = () => {
+                if (document.hidden) {
+                    stopPolling();
+                } else {
+                    if (topologyContainer.offsetParent !== null) fetchGraph();
+                    startPolling();
+                }
+            };
+            startPolling();
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+            return () => {
+                stopPolling();
+                document.removeEventListener('visibilitychange', handleVisibilityChange);
+            };
         }, [auto, fetchGraph]);
 
         useEffect(() => {
+            let resizeTimer = null;
             const measure = () => setSize({
                 w: topologyContainer.clientWidth || 1000,
                 h: topologyContainer.clientHeight || 520,
             });
+            const handleResize = () => {
+                if (resizeTimer !== null) clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    resizeTimer = null;
+                    measure();
+                }, 150);
+            };
             measure();
-            window.addEventListener('resize', measure);
-            return () => window.removeEventListener('resize', measure);
+            window.addEventListener('resize', handleResize);
+            return () => {
+                if (resizeTimer !== null) clearTimeout(resizeTimer);
+                window.removeEventListener('resize', handleResize);
+            };
         }, []);
 
         // Expose refresh / auto-toggle to the external toolbar controls.
@@ -1962,6 +2074,9 @@ function initializeUsagePage() {
     updatePaginationControls(0);
     updateFallbackPagination(0);
     unsubscribeLocale = gatewayI18n.subscribe(rerenderLocale);
-    window.addEventListener('pagehide', () => unsubscribeLocale?.(), {once: true});
+    window.addEventListener('pagehide', () => {
+        abortAllRequests();
+        unsubscribeLocale?.();
+    }, {once: true});
 
 }

@@ -39,8 +39,13 @@ _DEFINITION_KEYS = ("definitions", "$defs")
 _MAX_SCHEMA_DEPTH = 64
 
 
+_IMMUTABLE_SCALAR_TYPES = (str, int, float, bool, type(None))
+
+
 def _copy_schema_tree(value: Any) -> Any:
     """Copy a JSON-like tree without consuming the Python call stack."""
+    if type(value) in _IMMUTABLE_SCALAR_TYPES:
+        return value
     if not isinstance(value, (dict, list)):
         return copy.deepcopy(value)
 
@@ -53,7 +58,9 @@ def _copy_schema_tree(value: Any) -> Any:
         source, target = pending.pop()
         items = source.items() if isinstance(source, dict) else enumerate(source)
         for key, item in items:
-            if isinstance(item, (dict, list)):
+            if type(item) in _IMMUTABLE_SCALAR_TYPES:
+                copied = item
+            elif isinstance(item, (dict, list)):
                 copied = memo.get(id(item))
                 if copied is None:
                     copied = {} if isinstance(item, dict) else []
@@ -62,7 +69,8 @@ def _copy_schema_tree(value: Any) -> Any:
             else:
                 copied = copy.deepcopy(item)
             if isinstance(target, dict):
-                target[copy.deepcopy(key)] = copied
+                copied_key = key if type(key) in _IMMUTABLE_SCALAR_TYPES else copy.deepcopy(key)
+                target[copied_key] = copied
             else:
                 target.append(copied)
     return root

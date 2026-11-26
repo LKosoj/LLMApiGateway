@@ -12,6 +12,8 @@ from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from os import PathLike
 
+from .write_batcher import TUNING_PRAGMAS
+
 
 ACCOUNTING_MIGRATION_BUSY_TIMEOUT_MS = 2_000
 ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS = 10_000
@@ -1122,6 +1124,8 @@ def open_accounting_runtime_connection(
         conn.execute(f"PRAGMA busy_timeout={ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS}")
         if enable_foreign_keys:
             conn.execute("PRAGMA foreign_keys=ON")
+        for pragma in TUNING_PRAGMAS:
+            conn.execute(pragma)
 
         if conn.execute("PRAGMA synchronous").fetchone()[0] != 2:
             raise AccountingSchemaError("accounting runtime requires FULL sync")

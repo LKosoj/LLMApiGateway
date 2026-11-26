@@ -57,6 +57,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastHealth = null;
     let lastHealthFailed = false;
     let requestGeneration = 0;
+    let dashboardAbortController = null;
+    let healthAbortController = null;
     let unsubscribeLocale = null;
     let stopped = false;
 
@@ -658,24 +660,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadHealth() {
+        healthAbortController?.abort();
+        const controller = new AbortController();
+        healthAbortController = controller;
         try {
-            const response = await apiFetch('/health');
+            const response = await apiFetch('/health', { signal: controller.signal });
+            if (stopped) return;
             const body = await response.json().catch(() => null);
+            if (stopped) return;
             lastHealth = body;
             lastHealthFailed = false;
             renderHealth(lastHealth, lastHealthFailed);
         } catch (error) {
+            if (stopped || error?.name === 'AbortError') return;
             if (error.message === 'Authentication required') return;
             lastHealth = null;
             lastHealthFailed = true;
             renderHealth(lastHealth, lastHealthFailed);
+        } finally {
+            if (healthAbortController === controller) healthAbortController = null;
         }
     }
 
     async function loadDashboard() {
         const generation = ++requestGeneration;
+        dashboardAbortController?.abort();
+        const controller = new AbortController();
+        dashboardAbortController = controller;
         try {
-            const response = await apiFetch(buildDashboardUrl());
+            const response = await apiFetch(buildDashboardUrl(), { signal: controller.signal });
             if (stopped || generation !== requestGeneration) return;
 
             if (!response.ok) {
@@ -695,13 +708,15 @@ document.addEventListener('DOMContentLoaded', () => {
             clearError();
             renderDashboard(data);
         } catch (error) {
-            if (stopped || generation !== requestGeneration) return;
+            if (stopped || error?.name === 'AbortError' || generation !== requestGeneration) return;
             if (error.message === 'Authentication required') return;
             const descriptor = window.gatewayUi.describeApiError(null);
             lastPayload = null;
             els.content.hidden = true;
             els.empty.hidden = true;
             showError({ key: descriptor.summaryKey, values: descriptor.summaryValues }, error.message);
+        } finally {
+            if (dashboardAbortController === controller) dashboardAbortController = null;
         }
     }
 
@@ -742,6 +757,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('beforeunload', () => {
         stopped = true;
         requestGeneration += 1;
+        dashboardAbortController?.abort();
+        healthAbortController?.abort();
         unsubscribeLocale?.();
     });
 

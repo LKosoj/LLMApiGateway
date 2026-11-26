@@ -434,12 +434,17 @@ def _openai_tool_content_to_anthropic(content: object) -> object:
     return json.dumps(content, ensure_ascii=False)
 
 
-def _openai_tool_name_to_anthropic(name: str, tool_name_map: dict[str, str]) -> str:
+def _openai_tool_name_to_anthropic(
+    name: str,
+    tool_name_map: dict[str, str],
+    used_names: set[str] | None = None,
+) -> str:
     mapped_name = tool_name_map.get(name)
     if mapped_name is not None:
         return mapped_name
 
-    used_names = set(tool_name_map.values())
+    if used_names is None:
+        used_names = set(tool_name_map.values())
     candidate = name
     if not ANTHROPIC_TOOL_NAME_RE.fullmatch(candidate):
         candidate = re.sub(r"[^A-Za-z0-9_-]", "_", candidate)
@@ -453,6 +458,7 @@ def _openai_tool_name_to_anthropic(name: str, tool_name_map: dict[str, str]) -> 
         suffix += 1
 
     tool_name_map[name] = candidate
+    used_names.add(candidate)
     return candidate
 
 
@@ -467,6 +473,7 @@ def _openai_tools_to_anthropic(tools: object, tool_name_map: dict[str, str] | No
         raise HTTPException(status_code=400, detail="'tools' must be a list")
     if tool_name_map is None:
         tool_name_map = {}
+    used_names = set(tool_name_map.values())
     translated: list[dict] = []
     for tool in tools:
         if not isinstance(tool, dict):
@@ -478,7 +485,7 @@ def _openai_tools_to_anthropic(tools: object, tool_name_map: dict[str, str] | No
         if not isinstance(name, str) or not name:
             raise HTTPException(status_code=400, detail="Each tool requires a 'name'")
         entry: dict = {
-            "name": _openai_tool_name_to_anthropic(name, tool_name_map),
+            "name": _openai_tool_name_to_anthropic(name, tool_name_map, used_names),
             "input_schema": function_payload.get("parameters") or {"type": "object", "properties": {}},
         }
         description = function_payload.get("description")

@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import json
 import logging
 import math
+import sqlite3
 import threading
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from operator import itemgetter
 from pathlib import Path
 from typing import Any
 
@@ -22,21 +26,36 @@ DEFAULT_WRITE_BATCHER_QUEUE_MAXSIZE = 4096
 WRITE_BATCHER_DEAD_LETTER_MAX_FILE_BYTES = 8 * 1024 * 1024
 WRITE_BATCHER_DEAD_LETTER_MAX_RECORD_BYTES = 16 * 1024
 _DEAD_LETTER_PARAM_LIMIT = 32
+_DEAD_LETTER_MAX_PENDING = 256
 
 # One control slot is reserved for this sentinel. Work admission still uses the
 # configured capacity exactly.
 _STOP = object()
 
+TUNING_PRAGMAS = (
+    "PRAGMA temp_store=MEMORY",
+    "PRAGMA cache_size=-32000",
+    "PRAGMA mmap_size=268435456",
+)
+
 PRAGMAS = (
     "PRAGMA journal_mode=WAL",
     "PRAGMA synchronous=NORMAL",
     "PRAGMA busy_timeout=30000",
+    *TUNING_PRAGMAS,
 )
 
 RUNTIME_PRAGMAS = (
     "PRAGMA synchronous=NORMAL",
     "PRAGMA busy_timeout=30000",
+    *TUNING_PRAGMAS,
 )
+
+
+def apply_runtime_pragmas(conn: sqlite3.Connection) -> None:
+    """Apply per-connection runtime PRAGMAs to a synchronous SQLite connection."""
+    for pragma in RUNTIME_PRAGMAS:
+        conn.execute(pragma)
 
 _WriteItem = tuple[str, tuple]
 
@@ -96,6 +115,7 @@ class WriteBatcher:
         *,
         batch_size: int = 100,
         flush_interval: float = 0.5,
+        batch_window: float = 0.05,
         dead_letter_path: Path | None = None,
         queue_maxsize: int = DEFAULT_WRITE_BATCHER_QUEUE_MAXSIZE,
     ) -> None:
@@ -114,11 +134,15 @@ class WriteBatcher:
         )
         self._batch_size = batch_size
         self._flush_interval = flush_interval
+        self._batch_window = batch_window
         self._capacity = queue_maxsize
         self._queue: asyncio.Queue[object] = asyncio.Queue(maxsize=queue_maxsize + 1)
 
         self._state_lock = threading.Lock()
         self._dead_letter_lock = threading.Lock()
+        self._dead_letter_executor: ThreadPoolExecutor | None = None
+        self._dead_letter_pending = 0
+        self._dead_letter_closed = False
         self._state = WriteBatcherState.NEW
         self._accepting = True
         self._consumer_failed = False
@@ -239,8 +263,8 @@ class WriteBatcher:
                     handoff_waiter = self._take_handoff_waiter_locked()
 
         if overloaded:
-            self._write_dead_letter(
-                item,
+            self._schedule_dead_letter(
+                (item,),
                 reason="overloaded",
                 error_type="WriteBatcherOverloaded",
             )
@@ -249,12 +273,11 @@ class WriteBatcher:
 
         if stranded:
             self._resolve_handoff_waiter(handoff_waiter)
-            for stranded_item in stranded:
-                self._write_dead_letter(
-                    stranded_item,
-                    reason="handoff_unavailable",
-                    error_type="RuntimeError",
-                )
+            self._schedule_dead_letter(
+                stranded,
+                reason="handoff_unavailable",
+                error_type="RuntimeError",
+            )
             logger.error("WriteBatcher cross-thread handoff is unavailable.")
             raise WriteBatcherUnavailable("WriteBatcher cross-thread handoff is unavailable.")
 
@@ -323,6 +346,12 @@ class WriteBatcher:
                 await consumer_task
         finally:
             await self._close_connection()
+            with self._state_lock:
+                executor = self._dead_letter_executor
+                self._dead_letter_executor = None
+                self._dead_letter_closed = True
+            if executor is not None:
+                await asyncio.to_thread(executor.shutdown, wait=True)
 
         with self._state_lock:
             if self._state is not WriteBatcherState.FAILED:
@@ -331,35 +360,50 @@ class WriteBatcher:
 
     async def _run(self) -> None:
         current_batch: list[_WriteItem] = []
+        batch_in_flight = False
         try:
+            loop = asyncio.get_running_loop()
+            window = max(0.0, min(self._batch_window, self._flush_interval))
             while True:
-                try:
-                    item = await asyncio.wait_for(
-                        self._queue.get(),
-                        timeout=self._flush_interval,
-                    )
-                except asyncio.TimeoutError:
-                    continue
-
+                item = await self._queue.get()
                 if item is _STOP:
                     break
 
                 current_batch = [item]
-                self._move_queued_to_in_flight(1)
                 stop_after_batch = False
+                deadline = loop.time() + window
                 while len(current_batch) < self._batch_size:
+                    while len(current_batch) < self._batch_size:
+                        try:
+                            next_item = self._queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        if next_item is _STOP:
+                            stop_after_batch = True
+                            break
+                        current_batch.append(next_item)
+                    if stop_after_batch or len(current_batch) >= self._batch_size:
+                        break
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
                     try:
-                        next_item = self._queue.get_nowait()
-                    except asyncio.QueueEmpty:
+                        next_item = await asyncio.wait_for(
+                            self._queue.get(),
+                            timeout=remaining,
+                        )
+                    except asyncio.TimeoutError:
                         break
                     if next_item is _STOP:
                         stop_after_batch = True
                         break
                     current_batch.append(next_item)
-                    self._move_queued_to_in_flight(1)
 
+                self._move_queued_to_in_flight(len(current_batch))
+                batch_in_flight = True
                 await self._flush(current_batch)
                 current_batch = []
+                batch_in_flight = False
                 if stop_after_batch:
                     break
 
@@ -367,12 +411,16 @@ class WriteBatcher:
                 if self._state is not WriteBatcherState.FAILED:
                     self._state = WriteBatcherState.STOPPED
         except asyncio.CancelledError:
+            if current_batch and not batch_in_flight:
+                self._move_queued_to_in_flight(len(current_batch))
             await self._terminalize_writer_failure(
                 current_batch,
                 reason="consumer_cancelled",
                 error_type="CancelledError",
             )
         except BaseException as exc:
+            if current_batch and not batch_in_flight:
+                self._move_queued_to_in_flight(len(current_batch))
             await self._terminalize_writer_failure(
                 current_batch,
                 reason="consumer_failed",
@@ -398,8 +446,8 @@ class WriteBatcher:
 
         self._resolve_handoff_waiter(handoff_waiter)
         if diagnostic_item is not None:
-            self._write_dead_letter(
-                diagnostic_item,
+            self._schedule_dead_letter(
+                (diagnostic_item,),
                 reason="consumer_failed",
                 error_type="RuntimeError",
             )
@@ -479,8 +527,12 @@ class WriteBatcher:
     async def _flush_once(self, batch: list[_WriteItem]) -> None:
         db = await self._ensure_connection()
         try:
-            for sql, params in batch:
-                await db.execute(sql, params)
+            for sql, group in itertools.groupby(batch, key=itemgetter(0)):
+                params_list = [params for _, params in group]
+                if len(params_list) == 1:
+                    await db.execute(sql, params_list[0])
+                else:
+                    await db.executemany(sql, params_list)
             await db.commit()
         except BaseException:
             with suppress(Exception):
@@ -565,6 +617,64 @@ class WriteBatcher:
             raise RuntimeError("WriteBatcher stopped with reserved writes.")
         if self._accepted != self._committed + self._diagnostic_terminal:
             raise RuntimeError("WriteBatcher stopped with unterminated writes.")
+
+    def _schedule_dead_letter(
+        self,
+        items: list[_WriteItem] | tuple[_WriteItem, ...],
+        *,
+        reason: str,
+        error_type: str,
+    ) -> None:
+        if not items:
+            return
+        sync_fallback = False
+        with self._state_lock:
+            if self._dead_letter_closed:
+                sync_fallback = True
+            elif self._dead_letter_pending >= _DEAD_LETTER_MAX_PENDING:
+                self._dead_letter_failures += len(items)
+                self._last_error_code = "dead_letter_write_failed"
+                logger.error(
+                    "WriteBatcher diagnostic queue saturated; dropping %d item(s).",
+                    len(items),
+                )
+                return
+            else:
+                if self._dead_letter_executor is None:
+                    self._dead_letter_executor = ThreadPoolExecutor(
+                        max_workers=1,
+                        thread_name_prefix="write-batcher-dl",
+                    )
+                executor = self._dead_letter_executor
+                self._dead_letter_pending += 1
+
+        if sync_fallback:
+            self._write_dead_letter_batch(
+                items,
+                reason=reason,
+                error_type=error_type,
+            )
+            return
+
+        def _run_dead_letter() -> None:
+            try:
+                self._write_dead_letter_batch(
+                    items,
+                    reason=reason,
+                    error_type=error_type,
+                )
+            finally:
+                with self._state_lock:
+                    self._dead_letter_pending -= 1
+
+        try:
+            executor.submit(_run_dead_letter)
+        except RuntimeError:
+            with self._state_lock:
+                self._dead_letter_pending -= 1
+                self._dead_letter_failures += len(items)
+                self._last_error_code = "dead_letter_write_failed"
+            logger.error("WriteBatcher diagnostic executor unavailable.")
 
     def _write_dead_letter_batch(
         self,

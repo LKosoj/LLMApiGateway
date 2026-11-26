@@ -6,6 +6,7 @@ import asyncio
 import logging
 import secrets
 import threading
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields, replace
 from datetime import datetime, timedelta, timezone
@@ -55,6 +56,170 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ACCOUNTING_STOP_DRAIN_TIMEOUT_SECONDS = 30.0
+
+
+class _AsyncRWLockShared:
+    __slots__ = ("_lock",)
+
+    def __init__(self, lock: _AsyncRWLock) -> None:
+        self._lock = lock
+
+    async def __aenter__(self) -> None:
+        await self._lock.acquire_shared()
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        self._lock.release_shared()
+
+
+class _AsyncRWLockExclusive:
+    __slots__ = ("_lock",)
+
+    def __init__(self, lock: _AsyncRWLock) -> None:
+        self._lock = lock
+
+    async def __aenter__(self) -> None:
+        await self._lock.acquire_exclusive()
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        self._lock.release_exclusive()
+
+
+class _AsyncRWLock:
+    """Writer-preferring, starvation-free async RW lock with synchronous, cancellation-safe release."""
+
+    __slots__ = ("_readers", "_writer", "_writer_waiters", "_reader_waiters")
+
+    def __init__(self) -> None:
+        self._readers = 0
+        self._writer = False
+        self._writer_waiters: deque[asyncio.Future[None]] = deque()
+        self._reader_waiters: deque[asyncio.Future[None]] = deque()
+
+    def _has_waiting_writer(self) -> bool:
+        while self._writer_waiters and self._writer_waiters[0].done():
+            self._writer_waiters.popleft()
+        return bool(self._writer_waiters)
+
+    def _wake_next(self) -> None:
+        if self._writer:
+            return
+        if self._has_waiting_writer():
+            if self._readers == 0:
+                fut = self._writer_waiters.popleft()
+                self._writer = True
+                fut.set_result(None)
+            return
+        while self._reader_waiters:
+            fut = self._reader_waiters.popleft()
+            if not fut.done():
+                self._readers += 1
+                fut.set_result(None)
+
+    async def acquire_shared(self) -> None:
+        if not self._writer and not self._has_waiting_writer():
+            self._readers += 1
+            return
+        fut: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._reader_waiters.append(fut)
+        try:
+            await fut
+        except BaseException:
+            if fut.done() and not fut.cancelled():
+                self.release_shared()
+            else:
+                try:
+                    self._reader_waiters.remove(fut)
+                except ValueError:
+                    pass
+            raise
+
+    def release_shared(self) -> None:
+        self._readers -= 1
+        if self._readers == 0:
+            self._wake_next()
+
+    async def acquire_exclusive(self) -> None:
+        if not self._writer and self._readers == 0 and not self._has_waiting_writer():
+            self._writer = True
+            return
+        fut: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._writer_waiters.append(fut)
+        try:
+            await fut
+        except BaseException:
+            if fut.done() and not fut.cancelled():
+                self.release_exclusive()
+            else:
+                try:
+                    self._writer_waiters.remove(fut)
+                except ValueError:
+                    pass
+                self._wake_next()
+            raise
+
+    def release_exclusive(self) -> None:
+        self._writer = False
+        self._wake_next()
+
+    def shared(self) -> _AsyncRWLockShared:
+        return _AsyncRWLockShared(self)
+
+    def exclusive(self) -> _AsyncRWLockExclusive:
+        return _AsyncRWLockExclusive(self)
+
+
+class _KeyLockEntry:
+    __slots__ = ("lock", "waiters")
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.waiters = 0
+
+
+class _PerKeyLockGuard:
+    __slots__ = ("_locks", "_key", "_entry")
+
+    def __init__(self, locks: _PerKeyLocks, key: int) -> None:
+        self._locks = locks
+        self._key = key
+        self._entry: _KeyLockEntry | None = None
+
+    async def __aenter__(self) -> None:
+        entry = self._locks._entries.get(self._key)
+        if entry is None:
+            entry = _KeyLockEntry()
+            self._locks._entries[self._key] = entry
+        entry.waiters += 1
+        try:
+            await entry.lock.acquire()
+        except BaseException:
+            entry.waiters -= 1
+            if entry.waiters == 0 and self._locks._entries.get(self._key) is entry:
+                del self._locks._entries[self._key]
+            raise
+        self._entry = entry
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        entry = self._entry
+        if entry is None:
+            return
+        self._entry = None
+        entry.lock.release()
+        entry.waiters -= 1
+        if entry.waiters == 0 and self._locks._entries.get(self._key) is entry:
+            del self._locks._entries[self._key]
+
+
+class _PerKeyLocks:
+    """Reference-counted per-key async mutex table."""
+
+    __slots__ = ("_entries",)
+
+    def __init__(self) -> None:
+        self._entries: dict[int, _KeyLockEntry] = {}
+
+    def acquire(self, key: int) -> _PerKeyLockGuard:
+        return _PerKeyLockGuard(self, key)
 
 
 class AccountingSourceRepository(Protocol):
@@ -319,7 +484,8 @@ class AccountingService:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lifecycle_lock: asyncio.Lock | None = None
-        self._drain_lock: asyncio.Lock | None = None
+        self._drain_rwlock: _AsyncRWLock | None = None
+        self._key_projection_locks: _PerKeyLocks | None = None
         self._wake: asyncio.Event | None = None
         self._stop_requested: asyncio.Event | None = None
         self._sessions_drained: asyncio.Event | None = None
@@ -343,7 +509,8 @@ class AccountingService:
         if self._loop is None:
             self._loop = loop
             self._lifecycle_lock = asyncio.Lock()
-            self._drain_lock = asyncio.Lock()
+            self._drain_rwlock = _AsyncRWLock()
+            self._key_projection_locks = _PerKeyLocks()
             self._wake = asyncio.Event()
             self._stop_requested = asyncio.Event()
             self._sessions_drained = asyncio.Event()
@@ -358,10 +525,10 @@ class AccountingService:
         return self._lifecycle_lock
 
     @property
-    def _drain(self) -> asyncio.Lock:
-        if self._drain_lock is None:
+    def _drain_rw(self) -> _AsyncRWLock:
+        if self._drain_rwlock is None:
             raise AccountingError(AccountingErrorCode.ACCOUNTING_FAILED)
-        return self._drain_lock
+        return self._drain_rwlock
 
     @property
     def _projector_wake(self) -> asyncio.Event:
@@ -682,7 +849,7 @@ class AccountingService:
                     if self._state in {AccountingHealthState.STOPPING, AccountingHealthState.STOPPED, AccountingHealthState.FAILED}:
                         return
                 cursor = event_ids[-1]
-                async with self._drain:
+                async with self._drain_rw.exclusive():
                     with self._state_guard:
                         if self._state in {AccountingHealthState.STOPPING, AccountingHealthState.STOPPED, AccountingHealthState.FAILED}:
                             return
@@ -776,7 +943,7 @@ class AccountingService:
                 if self._state is not AccountingHealthState.STARTING:
                     raise AccountingError(AccountingErrorCode.ACCOUNTING_FAILED)
             try:
-                async with self._drain:
+                async with self._drain_rw.exclusive():
                     clean, tolerated = await self._drain_pending_locked()
                     report = None
                     history_ids = ()
@@ -923,7 +1090,7 @@ class AccountingService:
 
     async def _reconcile_workflow(self) -> ReconciliationReport:
         try:
-            async with self._drain:
+            async with self._drain_rw.exclusive():
                 retained_clean = await self._retry_retained_locked()
                 pending_clean, _ = await self._drain_pending_locked()
                 with self._state_guard:
@@ -1756,7 +1923,7 @@ class AccountingService:
                 raise AccountingError(AccountingErrorCode.ACCOUNTING_IN_FLIGHT)
             self._key_fences[key_id] = AccountingErrorCode.ACCOUNTING_IN_FLIGHT
         try:
-            async with self._drain:
+            async with self._drain_rw.exclusive():
                 await self._drain_before_key_mutation_locked()
                 record = await asyncio.to_thread(
                     self._sink.update_accounting_key,
@@ -1873,7 +2040,7 @@ class AccountingService:
         key_ids: tuple[int, ...],
     ) -> None:
         try:
-            async with self._drain:
+            async with self._drain_rw.exclusive():
                 await self._drain_before_key_mutation_locked()
                 records = await asyncio.to_thread(
                     self._sink.reset_due_accounting_budgets,
@@ -1931,7 +2098,7 @@ class AccountingService:
             previous_pending = self._reset_pending_at.get(key_id)
             self._key_fences[key_id] = AccountingErrorCode.ADMISSION_CLOSED
         try:
-            async with self._drain:
+            async with self._drain_rw.exclusive():
                 deleted = await asyncio.to_thread(
                     self._sink.delete_to_accounting_tombstone,
                     key_id,
@@ -2166,7 +2333,14 @@ class AccountingService:
         self,
         stored: StoredAccountingEvent,
     ) -> ProjectionStatus:
-        async with self._drain:
+        event = stored.event
+        if event.kind is AccountingEventKind.CHARGE and event.api_key_id is not None:
+            if self._key_projection_locks is None:
+                raise AccountingError(AccountingErrorCode.ACCOUNTING_FAILED)
+            async with self._key_projection_locks.acquire(event.api_key_id):
+                async with self._drain_rw.shared():
+                    return await self._project_stored_locked(stored)
+        async with self._drain_rw.shared():
             return await self._project_stored_locked(stored)
 
     async def _project_stored_locked(
@@ -2508,7 +2682,7 @@ class AccountingService:
             if self._projector_stop.is_set() or self._has_fatal_error():
                 break
             try:
-                async with self._drain:
+                async with self._drain_rw.exclusive():
                     retained_clean = await self._retry_retained_locked()
                     pending_clean, _ = await self._drain_pending_locked()
                     if not retained_clean:
@@ -2800,7 +2974,7 @@ class AccountingService:
             pending_clean = False
             report: ReconciliationReport | None = None
             try:
-                async with self._drain:
+                async with self._drain_rw.exclusive():
                     retained_clean = await self._retry_retained_locked()
                     pending_clean, _ = await self._drain_pending_locked()
                     if not retained_clean:

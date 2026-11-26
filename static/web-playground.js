@@ -81,15 +81,12 @@
         modelsLoadFailed: "status.modelsLoadFailed",
         tooManyFiles: "status.tooManyFiles",
     });
-    // Pace UI updates between parsed SSE chunks so a Cancel click made while a
-    // burst of deltas is being processed has a real chance to interrupt before
-    // the next delta renders (also avoids repainting on every single token).
-    const CHAT_STREAM_CHUNK_DELAY_MS = 40;
     const PDF_POLL_INTERVAL_MS = 1000;
     const PDF_MAX_CONSECUTIVE_NETWORK_ERRORS = 10;
     const PDF_BACKOFF_MAX_MS = 15000;
     let simpleChatMessages = [];
     let activeChatAbortController = null;
+    let pendingChatRenderFrame = null;
     let activePdfAbortController = null;
     let fusionModelNames = new Set();
     let pendingLocaleUiState = null;
@@ -577,39 +574,67 @@
             `<span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span></span>`;
     }
 
+    function cancelPendingChatRenderFrame() {
+        if (pendingChatRenderFrame !== null) {
+            cancelAnimationFrame(pendingChatRenderFrame);
+            pendingChatRenderFrame = null;
+        }
+    }
+
+    function renderAssistantBubbleContent(message) {
+        const isPendingAndEmpty = message.pending && !message.content;
+        const content = isPendingAndEmpty
+            ? renderTypingIndicator()
+            : renderMarkdown(message.content || "");
+        const cancelledMarker = message.cancelled
+            ? `<span class="chat-cancelled-marker"> ${translatedSpan("results.cancelled")}</span>`
+            : "";
+        // Any partial text streamed before the failure stays visible above
+        // this — the error never silently replaces or hides real output.
+        const errorNote = message.error
+            ? `<p class="chat-error-text">${translatedSpan("results.streamError")}${
+                message.errorDetail ? `: ${escapeHtml(message.errorDetail)}` : ""
+            }</p>`
+            : "";
+        return `${content}${cancelledMarker}${errorNote}`;
+    }
+
+    function renderSimpleChatMessageHtml(message) {
+        const role = message.role === "assistant" ? "assistant" : "user";
+        const bodyHtml = role === "assistant"
+            ? renderAssistantBubbleContent(message)
+            : `<p>${escapeHtml(message.content || "")}</p>`;
+        const fusionBlock = role === "assistant" && message.fusion
+            ? renderFusionBlock(message.fusion)
+            : "";
+        return `
+            <article class="chat-message ${role}">
+                <div class="chat-role">${translatedSpan(role === "assistant" ? "results.assistant" : "results.user")}</div>
+                <div class="chat-content">${bodyHtml}</div>
+                ${fusionBlock}
+            </article>
+        `;
+    }
+
+    function updateLastAssistantBubbleDom(message) {
+        const transcript = document.getElementById("simpleChatTranscript");
+        if (!transcript) return;
+        const assistantBubbles = transcript.querySelectorAll(".chat-message.assistant");
+        const lastBubble = assistantBubbles[assistantBubbles.length - 1];
+        const contentEl = lastBubble ? lastBubble.querySelector(".chat-content") : null;
+        if (!contentEl) {
+            renderSimpleChatTranscript();
+            return;
+        }
+        contentEl.innerHTML = renderAssistantBubbleContent(message);
+        transcript.scrollTop = transcript.scrollHeight;
+    }
+
     function renderSimpleChatTranscript() {
         const transcript = document.getElementById("simpleChatTranscript");
         if (!transcript) return;
         transcript.hidden = simpleChatMessages.length === 0;
-        transcript.innerHTML = simpleChatMessages.map((message) => {
-            const role = message.role === "assistant" ? "assistant" : "user";
-            const isPendingAndEmpty = role === "assistant" && message.pending && !message.content;
-            const content = isPendingAndEmpty
-                ? renderTypingIndicator()
-                : (role === "assistant"
-                    ? renderMarkdown(message.content || "")
-                    : `<p>${escapeHtml(message.content || "")}</p>`);
-            const cancelledMarker = role === "assistant" && message.cancelled
-                ? `<span class="chat-cancelled-marker"> ${translatedSpan("results.cancelled")}</span>`
-                : "";
-            // Any partial text streamed before the failure stays visible above
-            // this — the error never silently replaces or hides real output.
-            const errorNote = role === "assistant" && message.error
-                ? `<p class="chat-error-text">${translatedSpan("results.streamError")}${
-                    message.errorDetail ? `: ${escapeHtml(message.errorDetail)}` : ""
-                }</p>`
-                : "";
-            const fusionBlock = role === "assistant" && message.fusion
-                ? renderFusionBlock(message.fusion)
-                : "";
-            return `
-                <article class="chat-message ${role}">
-                    <div class="chat-role">${translatedSpan(role === "assistant" ? "results.assistant" : "results.user")}</div>
-                    <div class="chat-content">${content}${cancelledMarker}${errorNote}</div>
-                    ${fusionBlock}
-                </article>
-            `;
-        }).join("");
+        transcript.innerHTML = simpleChatMessages.map(renderSimpleChatMessageHtml).join("");
         transcript.scrollTop = transcript.scrollHeight;
     }
 
@@ -751,7 +776,6 @@
                         if (!chunkText) continue;
                         accumulated += chunkText;
                         onPartial(accumulated);
-                        await new Promise((resolve) => setTimeout(resolve, CHAT_STREAM_CHUNK_DELAY_MS));
                         if (controller.signal.aborted) {
                             throw new DOMException("The user aborted a request.", "AbortError");
                         }
@@ -1298,7 +1322,14 @@
             if (!last || last.role !== "assistant") return;
             last.content = text;
             last.pending = false;
-            renderSimpleChatTranscript();
+            if (pendingChatRenderFrame === null) {
+                pendingChatRenderFrame = requestAnimationFrame(() => {
+                    pendingChatRenderFrame = null;
+                    const currentLast = simpleChatMessages[simpleChatMessages.length - 1];
+                    if (!currentLast || currentLast.role !== "assistant") return;
+                    updateLastAssistantBubbleDom(currentLast);
+                });
+            }
         };
 
         const requestHeaders = {"Content-Type": "application/json"};
@@ -1342,6 +1373,7 @@
                 last.pending = false;
             }
 
+            cancelPendingChatRenderFrame();
             simpleChatMessages = trimSimpleChatMessages(simpleChatMessages);
             renderSimpleChatTranscript();
             const durationMs = Math.round(performance.now() - startedAt);
@@ -1351,6 +1383,7 @@
                 limit: CHAT_CONTEXT_LIMIT,
             });
         } catch (err) {
+            cancelPendingChatRenderFrame();
             const isCancelled = err && err.name === "AbortError";
             const last = simpleChatMessages[simpleChatMessages.length - 1];
             if (last && last.role === "assistant") {
@@ -1372,6 +1405,7 @@
                 setStatus("chat", KEYS.requestFailed, true, {}, err.message || err);
             }
         } finally {
+            cancelPendingChatRenderFrame();
             button.disabled = false;
             if (streamControls) streamControls.hidden = true;
             activeChatAbortController = null;
@@ -1760,6 +1794,7 @@
         }
         if (cancelButton) {
             cancelButton.addEventListener("click", () => {
+                cancelPendingChatRenderFrame();
                 activeChatAbortController?.abort();
             });
         }
@@ -1767,6 +1802,7 @@
             resetButton.addEventListener("click", () => {
                 // Abort any in-flight stream first so a late chunk cannot
                 // resurrect a message into the transcript we are about to clear.
+                cancelPendingChatRenderFrame();
                 activeChatAbortController?.abort();
                 simpleChatMessages = [];
                 if (input) input.value = "";
@@ -1907,6 +1943,7 @@
     }
 
     window.addEventListener("beforeunload", () => {
+        cancelPendingChatRenderFrame();
         activeChatAbortController?.abort();
         activePdfAbortController?.abort();
         unsubscribeLocale?.();

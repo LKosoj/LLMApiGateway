@@ -19,6 +19,7 @@ from .web_safe_fetch import (
 
 # Провайдеры округляют размер по-своему (1093x1920 вместо 1088x1920): допускаем отклонение каждой стороны.
 SIZE_TOLERANCE = 0.10
+IMAGE_DIMENSIONS_CHECK_CONCURRENCY = 4
 
 
 def requested_image_dimensions(payload: dict[str, object]) -> tuple[int, int] | None:
@@ -34,6 +35,27 @@ def requested_image_dimensions(payload: dict[str, object]) -> tuple[int, int] | 
 def _inspect_image_dimensions(content: bytes) -> tuple[str | None, tuple[int, int]]:
     with Image.open(io.BytesIO(content)) as image:
         return image.format, image.size
+
+
+def _decode_and_inspect_b64_image(raw_b64: str) -> tuple[str | None, tuple[int, int]]:
+    content = base64.b64decode(raw_b64, validate=True)
+    return _inspect_image_dimensions(content)
+
+
+async def _drain_tasks(
+    *tasks: asyncio.Future[object],
+    propagate_cancellation: bool,
+) -> None:
+    cancelled = False
+    pending = {task for task in tasks if not task.done()}
+    while pending:
+        try:
+            await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
+        except asyncio.CancelledError:
+            cancelled = True
+        pending = {task for task in pending if not task.done()}
+    if cancelled and propagate_cancellation:
+        raise asyncio.CancelledError
 
 
 async def _fetch_image_via_proxy_client(
@@ -81,13 +103,16 @@ async def image_dimensions_match(
     items = payload.get("data")
     if not isinstance(items, list) or not items:
         raise HTTPException(status_code=502, detail="Cannot check image size: response contains no images.")
-    matches = True
-    for item in items:
+
+    async def _check_item(item: object) -> bool:
         try:
             if not isinstance(item, dict):
                 raise ValueError("Invalid image item")
             if item.get("b64_json"):
-                content = base64.b64decode(item["b64_json"], validate=True)
+                image_format, image_size = await asyncio.to_thread(
+                    _decode_and_inspect_b64_image,
+                    item["b64_json"],
+                )
             elif item.get("url"):
                 url = item["url"]
                 if not isinstance(url, str):
@@ -99,17 +124,17 @@ async def image_dimensions_match(
                 response.raise_for_status()
                 content = response.content
                 del response
+                image_format, image_size = await asyncio.to_thread(_inspect_image_dimensions, content)
+                del content
             else:
                 raise ValueError("Missing image content")
-            image_format, image_size = await asyncio.to_thread(_inspect_image_dimensions, content)
-            del content
             if gif_requested and image_format == "GIF":
                 # Анимацию провайдер режет из одного листа кадров: размер кадра меньше заказанного
-                continue
-            matches = all(
+                return True
+            return all(
                 abs(actual - wanted) <= wanted * SIZE_TOLERANCE
                 for actual, wanted in zip(image_size, expected)
-            ) and matches
+            )
         except HTTPException as exc:
             if exc.status_code in {400, 413, 504}:
                 raise HTTPException(
@@ -119,4 +144,33 @@ async def image_dimensions_match(
             raise
         except (ValueError, TypeError, OSError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=502, detail="Cannot read returned image to check its size.") from exc
-    return matches
+
+    if len(items) == 1:
+        return await _check_item(items[0])
+
+    semaphore = asyncio.Semaphore(IMAGE_DIMENSIONS_CHECK_CONCURRENCY)
+
+    async def _bounded_check(item: object) -> bool:
+        async with semaphore:
+            return await _check_item(item)
+
+    tasks = [asyncio.create_task(_bounded_check(item)) for item in items]
+    try:
+        pending: set[asyncio.Task[bool]] = set(tasks)
+        while pending:
+            done, pending = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_EXCEPTION,
+            )
+            for finished in done:
+                finished.result()
+    except BaseException as exc:
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await _drain_tasks(
+            *tasks,
+            propagate_cancellation=not isinstance(exc, asyncio.CancelledError),
+        )
+        raise
+    return all(task.result() for task in tasks)

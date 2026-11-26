@@ -1,14 +1,16 @@
+import asyncio
 import sqlite3
 import os
 import logging
 import re
 from collections.abc import Callable
+from contextlib import suppress
 
 import aiosqlite
 
 from ..config.paths import resolve_db_dir
 from ..services.upstream_routing_state import fingerprint_api_key
-from .write_batcher import RUNTIME_PRAGMAS
+from .write_batcher import RUNTIME_PRAGMAS, apply_runtime_pragmas
 
 _VALID_USER_SCOPE_RE = re.compile(r"^user:\d+$")
 _VALID_MASTER_SCOPE_RE = re.compile(r"^master:(?:[0-9a-f]{16}|keyless)$")
@@ -53,6 +55,10 @@ class ModelRotationDB:
 
         self.db_path = db_path
         self._legacy_scope_resolver = legacy_scope_resolver
+        self._conn: aiosqlite.Connection | None = None
+        self._conn_loop: asyncio.AbstractEventLoop | None = None
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -64,8 +70,7 @@ class ModelRotationDB:
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -173,31 +178,80 @@ class ModelRotationDB:
     # Atomic read+write — async via aiosqlite (no batcher)
     # ------------------------------------------------------------------
 
+    def _get_lock(self, loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
+
+    async def _ensure_connection(self, loop: asyncio.AbstractEventLoop) -> aiosqlite.Connection:
+        if self._conn is not None and self._conn_loop is not loop:
+            old_conn = self._conn
+            self._conn = None
+            self._conn_loop = None
+            with suppress(Exception):
+                await old_conn.close()
+        if self._conn is None:
+            conn = await aiosqlite.connect(self.db_path)
+            try:
+                for pragma in RUNTIME_PRAGMAS:
+                    await conn.execute(pragma)
+            except BaseException:
+                with suppress(Exception):
+                    await conn.close()
+                raise
+            self._conn = conn
+            self._conn_loop = loop
+        return self._conn
+
+    async def _close_unlocked(self) -> None:
+        conn = self._conn
+        self._conn = None
+        self._conn_loop = None
+        if conn is not None:
+            with suppress(Exception):
+                await conn.close()
+
+    async def close(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._lock is not None and self._lock_loop is loop:
+            async with self._lock:
+                await self._close_unlocked()
+            return
+        await self._close_unlocked()
+
     async def get_next_model_index(self, api_key: str, gateway_model: str, total_models: int) -> int:
         if total_models <= 0:
             logging.warning("Cannot get next model index with zero or negative total models.")
             return 0
 
         rotation_scope = normalize_rotation_scope(api_key)
+        loop = asyncio.get_running_loop()
+        lock = self._get_lock(loop)
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                for pragma in RUNTIME_PRAGMAS:
-                    await db.execute(pragma)
-                cursor = await db.execute(
-                    """
-                    INSERT INTO model_rotation (api_key, gateway_model, last_model_index)
-                    VALUES (?, ?, 0)
-                    ON CONFLICT(api_key, gateway_model)
-                    DO UPDATE SET last_model_index = (model_rotation.last_model_index + 1) % ?
-                    RETURNING last_model_index
-                    """,
-                    (rotation_scope, gateway_model, total_models),
-                )
-                result = await cursor.fetchone()
-                if result is None:
-                    raise RuntimeError("Atomic model rotation upsert did not return a row.")
-                await db.commit()
-                return int(result[0])
+            async with lock:
+                db = await self._ensure_connection(loop)
+                try:
+                    cursor = await db.execute(
+                        """
+                        INSERT INTO model_rotation (api_key, gateway_model, last_model_index)
+                        VALUES (?, ?, 0)
+                        ON CONFLICT(api_key, gateway_model)
+                        DO UPDATE SET last_model_index = (model_rotation.last_model_index + 1) % ?
+                        RETURNING last_model_index
+                        """,
+                        (rotation_scope, gateway_model, total_models),
+                    )
+                    result = await cursor.fetchone()
+                    if result is None:
+                        raise RuntimeError("Atomic model rotation upsert did not return a row.")
+                    await db.commit()
+                    return int(result[0])
+                except BaseException:
+                    with suppress(Exception):
+                        await db.rollback()
+                    await self._close_unlocked()
+                    raise
         except Exception as e:
             masked_api_key = str(rotation_scope)[:12] if rotation_scope is not None else ""
             logging.error(

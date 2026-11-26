@@ -64,12 +64,10 @@ class RateLimiter:
                 state.request_events.pop(event.request_id, None)
         if state.in_flight_since:
             in_flight_cutoff = now - self._in_flight_ttl
-            expired_in_flight = [
-                request_id
-                for request_id, started_at in state.in_flight_since.items()
-                if started_at < in_flight_cutoff
-            ]
-            for request_id in expired_in_flight:
+            while state.in_flight_since:
+                request_id, started_at = next(iter(state.in_flight_since.items()))
+                if started_at >= in_flight_cutoff:
+                    break
                 state.in_flight_since.pop(request_id, None)
                 if state.request_events.get(request_id) is None:
                     state.request_events.pop(request_id, None)

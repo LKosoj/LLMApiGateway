@@ -68,6 +68,7 @@ class IpBlockGuard:
         self._by_ip: dict[str, _IpState] = {}
         self._writes_since_prune = 0
         self._lock = threading.Lock()
+        self._permanent_db_lock = threading.Lock()
         self._db = rejections_db
         self._permanent = {
             item["client_ip"]: item
@@ -186,12 +187,15 @@ class IpBlockGuard:
     def scan_permanent_blocks(self) -> None:
         if self._db is None:
             return
-        with self._lock:
+        with self._permanent_db_lock:
             items = self._db.promote_repeat_ip_blocks()
-            for item in items:
-                if item["client_ip"] not in self._permanent:
-                    logger.warning("IP %s permanently blocked: %s", item["client_ip"], item["reason"])
-            self._permanent = {item["client_ip"]: item for item in items}
+            with self._lock:
+                newly_blocked = [
+                    item for item in items if item["client_ip"] not in self._permanent
+                ]
+                self._permanent = {item["client_ip"]: item for item in items}
+        for item in newly_blocked:
+            logger.warning("IP %s permanently blocked: %s", item["client_ip"], item["reason"])
 
     def list_permanent_blocks(self) -> list[dict]:
         with self._lock:
@@ -200,10 +204,11 @@ class IpBlockGuard:
     def unblock_permanent_ip(self, ip: str) -> bool:
         if self._db is None:
             return False
-        with self._lock:
+        with self._permanent_db_lock:
             if not self._db.release_permanent_ip_block(ip):
                 return False
-            self._permanent.pop(ip, None)
-            self._by_ip.pop(ip, None)
-            logger.info("Permanent IP block released by administrator: %s", ip)
-            return True
+            with self._lock:
+                self._permanent.pop(ip, None)
+                self._by_ip.pop(ip, None)
+        logger.info("Permanent IP block released by administrator: %s", ip)
+        return True

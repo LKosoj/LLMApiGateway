@@ -62,6 +62,10 @@ class HttpClientFactoryTests(unittest.TestCase):
                 kwargs["limits"].max_keepalive_connections,
                 http_client_factory.HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS,
             )
+            self.assertEqual(
+                kwargs["limits"].keepalive_expiry,
+                http_client_factory.HTTP_CLIENT_KEEPALIVE_EXPIRY_SECONDS,
+            )
         self.assertNotIn("proxy", shared_kwargs)
         self.assertEqual(proxy_kwargs["proxy"].url.host, "proxy.example")
 

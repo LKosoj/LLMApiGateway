@@ -13,6 +13,7 @@ request/DB/FastAPI state.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import unicodedata
@@ -248,15 +249,29 @@ def text_contains_ideograph(text: str) -> bool:
     return any(_is_cjk_ideograph(char) for char in text)
 
 
-def _alphabet_script(char: str) -> str | None:
-    if not unicodedata.category(char).startswith("L"):
-        return None
+@functools.lru_cache(maxsize=1024)
+def _classify_non_ascii_char(char: str) -> tuple[bool, str | None]:
+    category = unicodedata.category(char)
+    if category.startswith("M") or category == "Cf":
+        return True, None
+    if not category.startswith("L"):
+        return False, None
     code = ord(char)
     for name, ranges in _ALPHABET_RANGES:
         for start, end in ranges:
             if start <= code <= end:
-                return name
-    return None
+                return False, name
+    return False, None
+
+
+def _alphabet_script(char: str) -> str | None:
+    code = ord(char)
+    if code < 128:
+        if (65 <= code <= 90) or (97 <= code <= 122):
+            return "latin"
+        return None
+    _, script = _classify_non_ascii_char(char)
+    return script
 
 
 class MixedScriptWordScanner:
@@ -271,10 +286,18 @@ class MixedScriptWordScanner:
 
     def feed(self, text: str) -> bool:
         for char in text:
-            category = unicodedata.category(char)
-            if category.startswith("M") or category == "Cf":
+            code = ord(char)
+            if code < 128:
+                if (65 <= code <= 90) or (97 <= code <= 122):
+                    self._scripts.add("latin")
+                    if len(self._scripts) > 1:
+                        return True
+                else:
+                    self._scripts.clear()
                 continue
-            script = _alphabet_script(char)
+            is_transparent, script = _classify_non_ascii_char(char)
+            if is_transparent:
+                continue
             if script is None:
                 self._scripts.clear()
                 continue

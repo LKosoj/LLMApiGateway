@@ -50,6 +50,7 @@ from .operation_accounting import (
 from .operation_runtime import (
     ValidatedUpload,
     admit_upload_processing,
+    run_owned_blocking,
     validate_upload_limited,
     validate_upload_total,
 )
@@ -442,7 +443,8 @@ async def _proxy_image_with_fallback(
 
         async with admission_context:
             try:
-                prepared_request = build_downstream_image_request(
+                prepared_request = await run_owned_blocking(
+                    build_downstream_image_request,
                     request_payload,
                     route,
                     operation_section,

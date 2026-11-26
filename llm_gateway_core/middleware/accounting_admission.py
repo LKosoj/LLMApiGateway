@@ -21,6 +21,7 @@ from ..services.accounting import (
 
 
 ACCOUNTING_REQUEST_CONTEXT_STATE_KEY = "llmgateway_accounting_context"
+EFFECTIVE_HTTP_ROUTE_CACHE_STATE_KEY = "_llmgateway_effective_http_route_cache"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +96,23 @@ def resolve_effective_http_route(
     if not isinstance(method, str) or not method or method != method.upper():
         raise AccountingValidationError
 
+    path = scope.get("path")
+    root_path = scope.get("root_path")
+    raw_state = scope.get("state")
+    cache_state = raw_state if isinstance(raw_state, MutableMapping) else None
+    if cache_state is not None:
+        cached = cache_state.get(EFFECTIVE_HTTP_ROUTE_CACHE_STATE_KEY)
+        if (
+            isinstance(cached, tuple)
+            and len(cached) == 5
+            and cached[0] is routes
+            and cached[1] == method
+            and cached[2] == path
+            and cached[3] == root_path
+        ):
+            return cached[4]
+
+    result: EffectiveHttpRoute | None = None
     try:
         candidates = _iter_effective_candidates(routes)
         for candidate in candidates:
@@ -132,12 +150,21 @@ def resolve_effective_http_route(
                 route_template = getattr(candidate, "path", None)
             if not isinstance(route_template, str) or not route_template.startswith("/"):
                 raise AccountingValidationError
-            return EffectiveHttpRoute(method=method, route_template=route_template)
+            result = EffectiveHttpRoute(method=method, route_template=route_template)
+            break
     except AccountingError:
         raise
     except Exception:
         raise AccountingError(AccountingErrorCode.ACCOUNTING_FAILED) from None
-    return None
+    if cache_state is not None:
+        cache_state[EFFECTIVE_HTTP_ROUTE_CACHE_STATE_KEY] = (
+            routes,
+            method,
+            path,
+            root_path,
+            result,
+        )
+    return result
 
 
 def _request_state(scope: Scope) -> MutableMapping[str, Any] | None:

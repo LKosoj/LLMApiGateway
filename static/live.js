@@ -64,6 +64,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let openRunningRow = null;
     let paused = false;
     let timer = null;
+    let loadInFlight = false;
+    let loadAbortController = null;
+    let detailAbortController = null;
     let requestGeneration = 0;
     let unsubscribeLocale = null;
     let stopped = false;
@@ -453,19 +456,24 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadDetail() {
         if (!detailTarget) return;
         const generation = ++detailGeneration;
+        detailAbortController?.abort();
+        const controller = new AbortController();
+        detailAbortController = controller;
         try {
-            const dashboard = await fetchJson(detailQuery(detailTarget));
+            const dashboard = await fetchJson(detailQuery(detailTarget), { signal: controller.signal });
             if (stopped || generation !== detailGeneration) return;
             detailData = dashboard;
             renderDetail();
         } catch (error) {
-            if (stopped || generation !== detailGeneration) return;
+            if (stopped || error?.name === 'AbortError' || generation !== detailGeneration) return;
             if (error.message === 'Authentication required') return;
             const descriptor = error.descriptor || window.gatewayUi.describeApiError(null);
             showError(
                 { key: descriptor.summaryKey, values: descriptor.summaryValues },
                 descriptor.rawDetail || error.message,
             );
+        } finally {
+            if (detailAbortController === controller) detailAbortController = null;
         }
     }
 
@@ -487,6 +495,8 @@ document.addEventListener('DOMContentLoaded', () => {
         detailTarget = null;
         detailData = null;
         detailGeneration += 1;
+        detailAbortController?.abort();
+        detailAbortController = null;
         els.modelDetail.hidden = true;
     }
 
@@ -525,8 +535,8 @@ document.addEventListener('DOMContentLoaded', () => {
         els.messageDetail.hidden = true;
     }
 
-    async function fetchJson(url) {
-        const response = await apiFetch(url);
+    async function fetchJson(url, options) {
+        const response = await apiFetch(url, options);
         const body = await response.json().catch(() => null);
         if (!response.ok) {
             const descriptor = window.gatewayUi.describeApiError(body, { status: response.status });
@@ -538,13 +548,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function load() {
+        if (loadInFlight || stopped) return;
+        loadInFlight = true;
         const generation = ++requestGeneration;
+        loadAbortController?.abort();
+        const controller = new AbortController();
+        loadAbortController = controller;
         void loadDetail();
         try {
+            const options = { signal: controller.signal };
             const [dashboard, records, status] = await Promise.all([
-                fetchJson(DASHBOARD_ENDPOINT + COMPARE_QUERY),
-                fetchJson(RECORDS_ENDPOINT),
-                fetchJson(STATUS_ENDPOINT),
+                fetchJson(DASHBOARD_ENDPOINT + COMPARE_QUERY, options),
+                fetchJson(RECORDS_ENDPOINT, options),
+                fetchJson(STATUS_ENDPOINT, options),
             ]);
             if (stopped || generation !== requestGeneration) return;
             lastData = {
@@ -556,23 +572,39 @@ document.addEventListener('DOMContentLoaded', () => {
             clearError();
             render();
         } catch (error) {
-            if (stopped || generation !== requestGeneration) return;
+            if (stopped || error?.name === 'AbortError' || generation !== requestGeneration) return;
             if (error.message === 'Authentication required') return;
             const descriptor = error.descriptor || window.gatewayUi.describeApiError(null);
             showError(
                 { key: descriptor.summaryKey, values: descriptor.summaryValues },
                 descriptor.rawDetail || error.message,
             );
+        } finally {
+            if (loadAbortController === controller) loadAbortController = null;
+            loadInFlight = false;
         }
     }
 
     function schedule() {
         clearInterval(timer);
         timer = null;
-        if (paused || stopped) return;
+        if (paused || stopped || document.hidden) return;
         timer = setInterval(() => {
-            if (!document.hidden) void load();
+            if (!document.hidden && !loadInFlight) void load();
         }, REFRESH_INTERVAL_MS);
+    }
+
+    function handleVisibilityChange() {
+        if (stopped) return;
+        if (document.hidden) {
+            clearInterval(timer);
+            timer = null;
+            return;
+        }
+        if (!paused) {
+            void load();
+            schedule();
+        }
     }
 
     els.refresh.addEventListener('click', () => void load());
@@ -607,12 +639,17 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('beforeunload', () => {
         stopped = true;
         requestGeneration += 1;
+        detailGeneration += 1;
+        loadAbortController?.abort();
+        detailAbortController?.abort();
         clearInterval(timer);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
         unsubscribeLocale?.();
     });
 
     Promise.all([bootstrapRoleUI(), i18n.ready, window.gatewayNav?.ready].filter(Boolean)).then(() => {
         if (stopped) return;
+        document.addEventListener('visibilitychange', handleVisibilityChange);
         requestDrawer = window.RequestDrawer.create({
             mount: els.requestDrawerMount,
             titleId: 'liveRequestDrawerTitle',

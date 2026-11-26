@@ -89,6 +89,7 @@ from .web_research_orchestration import (
     _capture_deep_research_callback_context,
     _deep_research_report_language,
     _deep_research_reported_cost,
+    _drain_owned_tasks,
     _format_generated_images,
     _plan_evidence_matrix,
     _prepare_relevant_articles,
@@ -879,19 +880,6 @@ async def web_research(request: Request):
     request.state.llmgateway_operation = WEB_RESEARCH_OPERATION
     update_active_request_from_state(request)
     usage_accumulator = _UsageAccumulator()
-    evidence_plan = await _run_with_client_disconnect_cancellation(
-        request,
-        WEB_RESEARCH_OPERATION,
-        lambda: _plan_evidence_matrix(
-            request,
-            config_loader,
-            http_client,
-            analysis_model=analysis_model,
-            query=query,
-            usage_accumulator=usage_accumulator,
-        ),
-    )
-    evidence_matrix: dict[str, Any] | None = None
 
     async def _search_languages() -> list[Any]:
         language_search_tasks = [
@@ -908,11 +896,39 @@ async def web_research(request: Request):
         ]
         return await asyncio.gather(*language_search_tasks, return_exceptions=True)
 
-    language_search_results = await _run_with_client_disconnect_cancellation(
+    async def _plan_and_search() -> tuple[dict[str, Any], list[Any]]:
+        plan_task = asyncio.create_task(
+            _plan_evidence_matrix(
+                request,
+                config_loader,
+                http_client,
+                analysis_model=analysis_model,
+                query=query,
+                usage_accumulator=usage_accumulator,
+            )
+        )
+        search_task = asyncio.create_task(_search_languages())
+        try:
+            evidence_plan_result = await plan_task
+            language_search_result = await search_task
+            return evidence_plan_result, language_search_result
+        except BaseException as exc:
+            for task in (plan_task, search_task):
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            await _drain_owned_tasks(
+                plan_task,
+                search_task,
+                propagate_cancellation=not isinstance(exc, asyncio.CancelledError),
+            )
+            raise
+
+    evidence_plan, language_search_results = await _run_with_client_disconnect_cancellation(
         request,
         WEB_RESEARCH_OPERATION,
-        _search_languages,
+        _plan_and_search,
     )
+    evidence_matrix: dict[str, Any] | None = None
     search_candidates: list[dict[str, Any]] = []
     first_search_error: Exception | None = None
     for (language, _num_queries), result in zip(language_query_counts, language_search_results):

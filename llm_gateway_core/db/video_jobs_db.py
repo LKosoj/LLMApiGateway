@@ -10,6 +10,14 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config.paths import resolve_db_dir
+from .write_batcher import apply_runtime_pragmas
+
+
+def _row_to_job(row: sqlite3.Row) -> dict:
+    job = dict(row)
+    job["route"] = json.loads(job["route"])
+    job["billing_payload"] = json.loads(job["billing_payload"]) if job["billing_payload"] else None
+    return job
 
 
 class VideoJobsDB:
@@ -35,8 +43,7 @@ class VideoJobsDB:
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30.0)
-        connection.execute("PRAGMA synchronous=NORMAL")
-        connection.execute("PRAGMA busy_timeout=30000")
+        apply_runtime_pragmas(connection)
         return connection
 
     async def create(self, owner: str, gateway_model: str, route: dict, upstream_id: str) -> dict:
@@ -52,19 +59,19 @@ class VideoJobsDB:
 
         def insert():
             with closing(self._connect()) as connection:
+                connection.row_factory = sqlite3.Row
                 connection.execute(
                     "INSERT OR IGNORE INTO video_jobs VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
                     (job["id"], owner, gateway_model, route["provider"], json.dumps(route), upstream_id, job["created_at"]),
                 )
                 connection.commit()
                 row = connection.execute(
-                    "SELECT id FROM video_jobs WHERE owner = ? AND provider = ? AND upstream_id = ?",
+                    "SELECT * FROM video_jobs WHERE owner = ? AND provider = ? AND upstream_id = ?",
                     (owner, route["provider"], upstream_id),
                 ).fetchone()
-                return row[0]
+                return _row_to_job(row)
 
-        job_id = await asyncio.to_thread(insert)
-        return await self.get(job_id, owner)
+        return await asyncio.to_thread(insert)
 
     async def get(self, job_id: str, owner: str) -> dict | None:
         def read():
@@ -75,10 +82,7 @@ class VideoJobsDB:
                 ).fetchone()
                 if row is None:
                     return None
-                job = dict(row)
-                job["route"] = json.loads(job["route"])
-                job["billing_payload"] = json.loads(job["billing_payload"]) if job["billing_payload"] else None
-                return job
+                return _row_to_job(row)
 
         return await asyncio.to_thread(read)
 

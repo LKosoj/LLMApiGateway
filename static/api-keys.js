@@ -47,6 +47,7 @@
     let currentRecordEtag = null;
     let currentRecordEtagPromise = null;
     let searchQuery = "";
+    let searchDebounceTimer = null;
     let sortField = "name";
     let sortDirection = "asc";
     let modalFocusOrigin = {kind: "create", keyId: null};
@@ -381,17 +382,6 @@
         table.append(head, body);
         tableWrap.appendChild(table);
         keysArea.replaceChildren(tableWrap);
-        keysArea.querySelectorAll("button[data-action]").forEach((btn) => {
-            btn.addEventListener("click", (event) => {
-                const tr = event.currentTarget.closest("tr");
-                const keyId = Number(tr.getAttribute("data-key-id"));
-                const action = event.currentTarget.getAttribute("data-action");
-                const record = currentKeys.find((k) => k.id === keyId);
-                if (!record) return;
-                if (action === "edit") openEditModal(record);
-                if (action === "delete") deleteKey(record);
-            });
-        });
     }
 
     let currentKeys = [];
@@ -873,9 +863,26 @@
         });
     }
 
+    keysArea.addEventListener("click", (event) => {
+        const btn = event.target.closest("button[data-action]");
+        if (!btn || !keysArea.contains(btn)) return;
+        const tr = btn.closest("tr[data-key-id]");
+        if (!tr) return;
+        const keyId = Number(tr.getAttribute("data-key-id"));
+        const action = btn.getAttribute("data-action");
+        const record = currentKeys.find((k) => k.id === keyId);
+        if (!record) return;
+        if (action === "edit") openEditModal(record);
+        if (action === "delete") deleteKey(record);
+    });
+
     keysSearchInput.addEventListener("input", () => {
-        searchQuery = keysSearchInput.value;
-        applyFiltersAndRender();
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            searchDebounceTimer = null;
+            searchQuery = keysSearchInput.value;
+            applyFiltersAndRender();
+        }, 150);
     });
     for (const button of sortButtons) {
         button.addEventListener("click", () => {
@@ -892,6 +899,8 @@
 
     window.addEventListener("beforeunload", () => {
         destroyed = true;
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = null;
         unsubscribeLocale?.();
     });
 

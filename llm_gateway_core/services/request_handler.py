@@ -1,6 +1,5 @@
 import asyncio
 import codecs
-import copy
 import hashlib
 import json
 import httpx
@@ -961,7 +960,7 @@ class OperationDispatcher:
 
     def merge_custom_params(self, base_payload: dict, route: OperationRoute, operation: str) -> dict:
         """Merge only allowed custom body params into the payload without overriding model."""
-        merged_payload = copy.deepcopy(base_payload)
+        merged_payload = dict(base_payload)
         allowed_params = OPERATION_BODY_PARAM_ALLOWLIST.get(operation, frozenset())
 
         for param_name, param_value in route.custom_body_params.items():
@@ -978,7 +977,7 @@ class OperationDispatcher:
 
     def merge_all_non_reserved_custom_params(self, base_payload: dict, route: OperationRoute) -> dict:
         """Merge route custom body params while only blocking reserved keys."""
-        merged_payload = copy.deepcopy(base_payload)
+        merged_payload = dict(base_payload)
 
         for param_name, param_value in route.custom_body_params.items():
             normalized_param_name = param_name.lower()
@@ -994,7 +993,7 @@ class OperationDispatcher:
 
     def build_payload(self, request_body: dict, route: OperationRoute, operation: str) -> dict:
         """Build downstream payload by replacing model and merging only allowed custom params."""
-        payload = copy.deepcopy(request_body)
+        payload = dict(request_body)
         for key in list(payload.keys()):
             if key.lower() in FORBIDDEN_CUSTOM_BODY_PARAM_KEYS:
                 payload.pop(key)
@@ -1004,7 +1003,7 @@ class OperationDispatcher:
 
     def build_payload_with_route_overrides(self, request_body: dict, route: OperationRoute) -> dict:
         """Build downstream payload by replacing model and merging all non-reserved custom params."""
-        payload = copy.deepcopy(request_body)
+        payload = dict(request_body)
         for key in list(payload.keys()):
             if key.lower() in FORBIDDEN_CUSTOM_BODY_PARAM_KEYS:
                 payload.pop(key)
@@ -1040,7 +1039,7 @@ def _parse_sse_event_json(event: SSEEvent):
     if not data:
         return None
     try:
-        parsed = sanitize_payload(parse_sse_json(event))
+        parsed = parse_sse_json(event)
     except (TypeError, ValueError, RecursionError) as exc:
         raise StreamPayloadError("invalid_json") from exc
     # Some OpenAI-compatible proxies insert `data: null` keepalives between

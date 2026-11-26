@@ -29,9 +29,11 @@ from ..services.accounting import (
 )
 from ..utils.usage_tracking import FALLBACK_USAGE_SOURCE
 from . import accounting_schema
-from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher
+from .write_batcher import RUNTIME_PRAGMAS, WriteBatcher, apply_runtime_pragmas
 
 MAX_USAGE_RECORDS_LIMIT = 100
+_SQLITE_IN_CHUNK_SIZE = 500
+_CLEANUP_BATCH_SIZE = 2000
 logger = logging.getLogger(__name__)
 
 INSERT_USAGE_SQL = """
@@ -559,19 +561,29 @@ def _validate_rollup_children(
     conn: sqlite3.Connection,
     event: AccountingEvent,
 ) -> None:
+    child_ids = event.child_event_ids
+    if not child_ids:
+        return
+    rows_by_id: dict[str, sqlite3.Row] = {}
+    for start in range(0, len(child_ids), _SQLITE_IN_CHUNK_SIZE):
+        chunk = child_ids[start : start + _SQLITE_IN_CHUNK_SIZE]
+        placeholders = ", ".join("?" for _ in chunk)
+        for row in conn.execute(
+            f"""
+            SELECT event_id, billing_fingerprint, api_key_id, parent_event_id
+            FROM accounting_outbox
+            WHERE event_id IN ({placeholders})
+            """,
+            chunk,
+        ):
+            rows_by_id[row["event_id"]] = row
+
     for child_event_id, child_fingerprint in zip(
         event.child_event_ids,
         event.child_fingerprints,
         strict=True,
     ):
-        row = conn.execute(
-            """
-            SELECT billing_fingerprint, api_key_id, parent_event_id
-            FROM accounting_outbox
-            WHERE event_id = ?
-            """,
-            (child_event_id,),
-        ).fetchone()
+        row = rows_by_id.get(child_event_id)
         if (
             row is None
             or row["billing_fingerprint"] != child_fingerprint
@@ -585,37 +597,42 @@ def _insert_accounting_manifests(
     conn: sqlite3.Connection,
     event: AccountingEvent,
 ) -> None:
-    for ordinal, component in enumerate(event.components):
-        usage = component.usage
-        conn.execute(
+    if event.components:
+        conn.executemany(
             _INSERT_ACCOUNTING_COMPONENT_SQL,
-            (
-                event.event_id,
-                ordinal,
-                component.component_kind.value,
-                component.provider,
-                component.model,
-                component.operation,
-                component.gateway_model,
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                usage.total_tokens,
-                usage.reasoning_tokens,
-                usage.cached_tokens,
-                usage.cost,
-                component.cost_source.value,
-                component.billing_fingerprint,
-            ),
+            [
+                (
+                    event.event_id,
+                    ordinal,
+                    component.component_kind.value,
+                    component.provider,
+                    component.model,
+                    component.operation,
+                    component.gateway_model,
+                    component.usage.prompt_tokens,
+                    component.usage.completion_tokens,
+                    component.usage.total_tokens,
+                    component.usage.reasoning_tokens,
+                    component.usage.cached_tokens,
+                    component.usage.cost,
+                    component.cost_source.value,
+                    component.billing_fingerprint,
+                )
+                for ordinal, component in enumerate(event.components)
+            ],
         )
     if event.kind is not AccountingEventKind.ROLLUP:
         return
     _validate_rollup_children(conn, event)
-    for ordinal, (child_event_id, child_fingerprint) in enumerate(
-        zip(event.child_event_ids, event.child_fingerprints, strict=True)
-    ):
-        conn.execute(
+    if event.child_event_ids:
+        conn.executemany(
             _INSERT_ACCOUNTING_LINK_SQL,
-            (event.event_id, ordinal, child_event_id, child_fingerprint),
+            [
+                (event.event_id, ordinal, child_event_id, child_fingerprint)
+                for ordinal, (child_event_id, child_fingerprint) in enumerate(
+                    zip(event.child_event_ids, event.child_fingerprints, strict=True)
+                )
+            ],
         )
 
 
@@ -1843,9 +1860,12 @@ class TokensUsageDB:
             conn = _open_accounting_source_connection(self.db_path)
             conn.execute("BEGIN")
             if after_created_at is None:
-                rows = conn.execute(
+                outbox_rows = conn.execute(
                     """
-                    SELECT event_id
+                    SELECT event_id, schema_version, event_kind, billing_fingerprint, api_key_id,
+                           usage_cost_usd, total_tokens, cost_source, request_id, parent_event_id,
+                           http_method, route_template, occurred_at, created_at, projected_at,
+                           projection_attempts, last_attempt_at, last_error_code
                     FROM accounting_outbox
                     WHERE projected_at IS NULL
                     ORDER BY created_at, event_id
@@ -1854,9 +1874,12 @@ class TokensUsageDB:
                     (limit,),
                 ).fetchall()
             else:
-                rows = conn.execute(
+                outbox_rows = conn.execute(
                     """
-                    SELECT event_id
+                    SELECT event_id, schema_version, event_kind, billing_fingerprint, api_key_id,
+                           usage_cost_usd, total_tokens, cost_source, request_id, parent_event_id,
+                           http_method, route_template, occurred_at, created_at, projected_at,
+                           projection_attempts, last_attempt_at, last_error_code
                     FROM accounting_outbox
                     WHERE projected_at IS NULL
                       AND (created_at, event_id) > (?, ?)
@@ -1865,10 +1888,108 @@ class TokensUsageDB:
                     """,
                     (after_created_at, after_event_id, limit),
                 ).fetchall()
+            if not outbox_rows:
+                conn.rollback()
+                return ()
+
+            event_ids = [row["event_id"] for row in outbox_rows]
+            usage_by_event_id: dict[str, list[sqlite3.Row]] = {eid: [] for eid in event_ids}
+            components_by_event_id: dict[str, list[sqlite3.Row]] = {eid: [] for eid in event_ids}
+            links_by_event_id: dict[str, list[sqlite3.Row]] = {eid: [] for eid in event_ids}
+
+            for start in range(0, len(event_ids), _SQLITE_IN_CHUNK_SIZE):
+                chunk = event_ids[start : start + _SQLITE_IN_CHUNK_SIZE]
+                placeholders = ", ".join("?" for _ in chunk)
+
+                for urow in conn.execute(
+                    f"""
+                    SELECT id, timestamp, duration_ms, ttft_ms, prompt_tokens, completion_tokens,
+                           total_tokens, reasoning_tokens, cached_tokens, cost, gateway_model,
+                           operation, model, provider, request_id, is_estimated, cost_unavailable,
+                           cost_saved, api_key_id, accounting_event_id, accounting_kind,
+                           parent_accounting_event_id, native_costs
+                    FROM tokens_usage
+                    WHERE accounting_event_id IN ({placeholders})
+                    """,
+                    chunk,
+                ):
+                    eid = urow["accounting_event_id"]
+                    if eid in usage_by_event_id:
+                        usage_by_event_id[eid].append(urow)
+
+                for crow in conn.execute(
+                    f"""
+                    SELECT event_id, ordinal, component_kind, provider, model, operation,
+                           gateway_model, prompt_tokens, completion_tokens, total_tokens,
+                           reasoning_tokens, cached_tokens, cost_usd, cost_source,
+                           component_fingerprint
+                    FROM accounting_event_components
+                    WHERE event_id IN ({placeholders})
+                    ORDER BY event_id COLLATE BINARY, ordinal
+                    """,
+                    chunk,
+                ):
+                    eid = crow["event_id"]
+                    if eid in components_by_event_id:
+                        components_by_event_id[eid].append(crow)
+
+                for lrow in conn.execute(
+                    f"""
+                    SELECT links.parent_event_id AS event_id, links.ordinal,
+                           links.child_event_id, links.child_billing_fingerprint,
+                           child.billing_fingerprint AS stored_child_fingerprint,
+                           child.api_key_id AS child_api_key_id,
+                           child.parent_event_id AS child_parent_event_id
+                    FROM accounting_event_links AS links
+                    LEFT JOIN accounting_outbox AS child
+                      ON child.event_id = links.child_event_id
+                    WHERE links.parent_event_id IN ({placeholders})
+                    ORDER BY links.parent_event_id COLLATE BINARY, links.ordinal
+                    """,
+                    chunk,
+                ):
+                    eid = lrow["event_id"]
+                    if eid in links_by_event_id:
+                        links_by_event_id[eid].append(lrow)
+
             pending: list[StoredAccountingEvent] = []
-            for row in rows:
-                stored_event = _read_stored_accounting_event(conn, row["event_id"])
-                if stored_event is None or stored_event.projected_at is not None:
+            for outbox in outbox_rows:
+                eid = outbox["event_id"]
+                usage_rows = usage_by_event_id[eid]
+                if len(usage_rows) != 1:
+                    _raise_accounting_conflict()
+                usage_row = usage_rows[0]
+                components = _accounting_components_from_rows(components_by_event_id[eid])
+                child_event_ids, child_fingerprints = _accounting_links_from_rows(
+                    links_by_event_id[eid],
+                    event_id=eid,
+                    api_key_id=outbox["api_key_id"],
+                )
+                event = _accounting_event_from_rows(
+                    outbox,
+                    usage_row,
+                    components=components,
+                    child_event_ids=child_event_ids,
+                    child_fingerprints=child_fingerprints,
+                )
+                try:
+                    created_at, projected_at, attempts, last_attempt_at, last_error_code = (
+                        _read_projection_metadata(outbox)
+                    )
+                    if projected_at is not None:
+                        _raise_accounting_conflict()
+                    stored_event = StoredAccountingEvent(
+                        event=event,
+                        usage_row_id=usage_row["id"],
+                        created_at=created_at,
+                        projected_at=projected_at,
+                        projection_attempts=attempts,
+                        last_attempt_at=last_attempt_at,
+                        last_error_code=last_error_code,
+                    )
+                except AccountingError:
+                    _raise_accounting_conflict()
+                except (TypeError, ValueError):
                     _raise_accounting_conflict()
                 pending.append(stored_event)
             conn.rollback()
@@ -2104,8 +2225,7 @@ class TokensUsageDB:
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -2178,10 +2298,7 @@ class TokensUsageDB:
             if "fallback_depth" not in existing_columns:
                 cursor.execute("ALTER TABLE tokens_usage ADD COLUMN fallback_depth INTEGER")
 
-            cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_tokens_usage_timestamp
-            ON tokens_usage (timestamp)
-            ''')
+            cursor.execute("DROP INDEX IF EXISTS idx_tokens_usage_timestamp")
 
             # Composite index — ``get_aggregated_usage`` groups by time bucket
             # *and* gateway_model; a composite index lets SQLite satisfy both
@@ -2381,8 +2498,7 @@ class TokensUsageDB:
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(INSERT_USAGE_IDEMPOTENCY_SQL, (idempotency_key, timestamp))
             if cursor.rowcount == 0:
@@ -2406,8 +2522,7 @@ class TokensUsageDB:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             # journal_mode=WAL was set persistently in _init_db; only apply the
             # per-connection pragmas here.
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             conn.execute(INSERT_USAGE_SQL, params)
             conn.commit()
         except Exception as e:
@@ -2619,7 +2734,19 @@ class TokensUsageDB:
                 cursor = await db.execute(
                     f"""
                     WITH filtered AS (
-                        SELECT * FROM tokens_usage
+                        SELECT
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                            reasoning_tokens,
+                            cached_tokens,
+                            cost,
+                            cost_saved,
+                            is_estimated,
+                            duration_ms,
+                            ttft_ms,
+                            fallback_depth
+                        FROM tokens_usage
                         {where_clause}
                     ),
                     duration_ranked AS (
@@ -2658,11 +2785,8 @@ class TokensUsageDB:
                             SELECT duration_ms FROM duration_ranked
                             WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)
                         ) as duration_p95_ms,
-                        (
-                            SELECT CAST(AVG(ttft_ms) AS INTEGER) FROM filtered
-                            WHERE ttft_ms IS NOT NULL
-                        ) as ttft_avg_ms,
-                        (SELECT MAX(ttft_ms) FROM filtered) as ttft_max_ms,
+                        CAST(AVG(ttft_ms) AS INTEGER) as ttft_avg_ms,
+                        MAX(ttft_ms) as ttft_max_ms,
                         (
                             SELECT ttft_ms FROM ttft_ranked
                             WHERE rn = CAST((cnt * 50 + 99) / 100 AS INTEGER)
@@ -2778,19 +2902,29 @@ class TokensUsageDB:
 
                 # Per-provider latency: TTFT average plus nearest-rank p95 of
                 # the full duration, merged into the providers breakdown rows.
+                ttft_where = (
+                    f"{where_clause} AND ttft_ms IS NOT NULL"
+                    if where_clause
+                    else "WHERE ttft_ms IS NOT NULL"
+                )
                 cursor = await db.execute(
                     f"""
                     SELECT
                         COALESCE(provider, 'unknown') as label,
                         CAST(AVG(ttft_ms) AS INTEGER) as ttft_avg_ms
-                    FROM (SELECT * FROM tokens_usage {where_clause})
-                    WHERE ttft_ms IS NOT NULL
+                    FROM tokens_usage
+                    {ttft_where}
                     GROUP BY label
                     """,
                     params,
                 )
                 provider_ttft = {row["label"]: row["ttft_avg_ms"] for row in await cursor.fetchall()}
 
+                duration_where = (
+                    f"{where_clause} AND duration_ms IS NOT NULL"
+                    if where_clause
+                    else "WHERE duration_ms IS NOT NULL"
+                )
                 cursor = await db.execute(
                     f"""
                     WITH provider_ranked AS (
@@ -2804,8 +2938,8 @@ class TokensUsageDB:
                             COUNT(*) OVER (
                                 PARTITION BY COALESCE(provider, 'unknown')
                             ) as cnt
-                        FROM (SELECT * FROM tokens_usage {where_clause})
-                        WHERE duration_ms IS NOT NULL
+                        FROM tokens_usage
+                        {duration_where}
                     )
                     SELECT label, duration_ms as duration_p95_ms
                     FROM provider_ranked
@@ -2861,6 +2995,119 @@ class TokensUsageDB:
                 },
                 "recent_records": [],
             }
+
+    async def get_dashboard_usage_summary(
+        self,
+        start_date: datetime,
+        end_date: datetime,
+        *,
+        api_key_id: int | None = None,
+        api_key_unattributed: bool = False,
+        operation: str | None = None,
+        gateway_model: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        upstream_key_fingerprint: str | None = None,
+        usage_source: str | None = None,
+        is_estimated: bool | None = None,
+        x_title: str | None = None,
+    ) -> dict:
+        """Return only the usage summary row for a time window (1 SQL query)."""
+        where_clause, params = _build_usage_where(
+            start_date=start_date,
+            end_date=end_date,
+            api_key_id=api_key_id,
+            api_key_unattributed=api_key_unattributed,
+            operation=operation,
+            gateway_model=gateway_model,
+            provider=provider,
+            model=model,
+            upstream_key_fingerprint=upstream_key_fingerprint,
+            usage_source=usage_source,
+            is_estimated=is_estimated,
+            x_title=x_title,
+        )
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                for pragma in RUNTIME_PRAGMAS:
+                    await db.execute(pragma)
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    f"""
+                    WITH filtered AS (
+                        SELECT
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                            reasoning_tokens,
+                            cached_tokens,
+                            cost,
+                            cost_saved,
+                            is_estimated,
+                            duration_ms,
+                            ttft_ms,
+                            fallback_depth
+                        FROM tokens_usage
+                        {where_clause}
+                    ),
+                    duration_ranked AS (
+                        SELECT
+                            duration_ms,
+                            ROW_NUMBER() OVER (ORDER BY duration_ms) AS rn,
+                            COUNT(*) OVER () AS cnt
+                        FROM filtered
+                        WHERE duration_ms IS NOT NULL
+                    ),
+                    ttft_ranked AS (
+                        SELECT
+                            ttft_ms,
+                            ROW_NUMBER() OVER (ORDER BY ttft_ms) AS rn,
+                            COUNT(*) OVER () AS cnt
+                        FROM filtered
+                        WHERE ttft_ms IS NOT NULL
+                    )
+                    SELECT
+                        COUNT(*) as requests,
+                        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+                        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
+                        COALESCE(SUM(cached_tokens), 0) as cached_tokens,
+                        COALESCE(SUM(cost), 0.0) as cost,
+                        COALESCE(SUM(cost_saved), 0.0) as cost_saved,
+                        COALESCE(SUM(is_estimated), 0) as estimated_count,
+                        CAST(AVG(duration_ms) AS INTEGER) as avg_duration_ms,
+                        MAX(duration_ms) as max_duration_ms,
+                        (
+                            SELECT duration_ms FROM duration_ranked
+                            WHERE rn = CAST((cnt * 50 + 99) / 100 AS INTEGER)
+                        ) as duration_p50_ms,
+                        (
+                            SELECT duration_ms FROM duration_ranked
+                            WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)
+                        ) as duration_p95_ms,
+                        CAST(AVG(ttft_ms) AS INTEGER) as ttft_avg_ms,
+                        MAX(ttft_ms) as ttft_max_ms,
+                        (
+                            SELECT ttft_ms FROM ttft_ranked
+                            WHERE rn = CAST((cnt * 50 + 99) / 100 AS INTEGER)
+                        ) as ttft_p50_ms,
+                        (
+                            SELECT ttft_ms FROM ttft_ranked
+                            WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)
+                        ) as ttft_p95_ms,
+                        {_TOKENS_PER_SECOND_SQL} as tokens_per_second,
+                        COALESCE(SUM(CASE WHEN fallback_depth = 0 THEN 1 ELSE 0 END), 0)
+                            as first_attempt_requests,
+                        COUNT(fallback_depth) as fallback_tracked_requests
+                    FROM filtered
+                    """,
+                    params,
+                )
+                return _coerce_usage_summary(await cursor.fetchone())
+        except Exception as e:
+            logger.error("Error retrieving analytics usage summary data: %s", e)
+            return _coerce_usage_summary(None)
 
     async def get_lifetime_totals(self) -> dict | None:
         """Return the all-time counters that survive raw-row retention pruning."""
@@ -2948,28 +3195,38 @@ class TokensUsageDB:
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout = 30000")
+            apply_runtime_pragmas(conn)
             cursor = conn.cursor()
             cutoff_date = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-            cursor.execute(
-                """
-                DELETE FROM tokens_usage
-                WHERE timestamp < ?
-                  AND (
-                    accounting_event_id IS NULL
-                    OR EXISTS (
-                        SELECT 1
-                        FROM accounting_outbox
-                        WHERE event_id = tokens_usage.accounting_event_id
-                          AND projected_at IS NOT NULL
+            deleted_count = 0
+            while True:
+                cursor.execute(
+                    """
+                    DELETE FROM tokens_usage
+                    WHERE id IN (
+                        SELECT id FROM tokens_usage
+                        WHERE timestamp < ?
+                          AND (
+                            accounting_event_id IS NULL
+                            OR EXISTS (
+                                SELECT 1
+                                FROM accounting_outbox
+                                WHERE event_id = tokens_usage.accounting_event_id
+                                  AND projected_at IS NOT NULL
+                            )
+                          )
+                        LIMIT ?
                     )
-                  )
-                """,
-                (cutoff_date,),
-            )
-            deleted_count = cursor.rowcount
-            conn.commit()
+                    """,
+                    (cutoff_date, _CLEANUP_BATCH_SIZE),
+                )
+                batch_deleted = cursor.rowcount
+                conn.commit()
+                if batch_deleted <= 0:
+                    break
+                deleted_count += batch_deleted
+                if batch_deleted < _CLEANUP_BATCH_SIZE:
+                    break
             if deleted_count > 0:
                 logger.info("Cleaned up %d old token usage records (older than %d days)", deleted_count, retention_days)
             else:

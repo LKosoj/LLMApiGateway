@@ -46,7 +46,7 @@ from ..services.accounting import (
 )
 from . import accounting_schema
 from .accounting_schema import migrate_accounting_sink
-from .write_batcher import WriteBatcher
+from .write_batcher import WriteBatcher, apply_runtime_pragmas
 
 logger = logging.getLogger(__name__)
 _SQLITE_INT64_MAX = (1 << 63) - 1
@@ -636,8 +636,7 @@ class ApiKeysDB:
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout=30000")
+            apply_runtime_pragmas(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS api_keys (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -656,7 +655,7 @@ class ApiKeysDB:
                     budget_reset_at DATETIME
                 )
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys (api_key)")
+            conn.execute("DROP INDEX IF EXISTS idx_api_keys_key")
             self._ensure_budget_period_columns(conn)
             conn.commit()
             try:
@@ -732,25 +731,27 @@ class ApiKeysDB:
             reset_at_value,
         )
         with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
-            conn.execute("PRAGMA busy_timeout=30000")
+            apply_runtime_pragmas(conn)
+            conn.row_factory = sqlite3.Row
             try:
-                cursor = conn.execute(
+                row = conn.execute(
                     """
                     INSERT INTO api_keys
                     (name, api_key, budget_usd, spent_usd, rpm, tpm, allowed_models,
                      disabled, metadata, created_at, budget_period, budget_reset_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING *
                     """,
                     params,
-                )
+                ).fetchone()
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f"API key collision: {exc}") from exc
             conn.commit()
-            new_id = cursor.lastrowid
-        return self.get_by_id(new_id)  # type: ignore[return-value]
+        return _row_to_record(row)
 
     def get_by_id(self, key_id: int) -> ApiKeyRecord | None:
         with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            apply_runtime_pragmas(conn)
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM api_keys WHERE id = ?", (key_id,)).fetchone()
         return _row_to_record(row) if row else None
@@ -759,6 +760,7 @@ class ApiKeysDB:
         if not api_key:
             return None
         with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            apply_runtime_pragmas(conn)
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM api_keys WHERE api_key = ?", (api_key,)
@@ -767,6 +769,7 @@ class ApiKeysDB:
 
     def list_all(self) -> list[ApiKeyRecord]:
         with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            apply_runtime_pragmas(conn)
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM api_keys ORDER BY id ASC"
@@ -836,7 +839,7 @@ class ApiKeysDB:
 
         params.append(key_id)
         with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
-            conn.execute("PRAGMA busy_timeout=30000")
+            apply_runtime_pragmas(conn)
             conn.execute(
                 f"UPDATE api_keys SET {', '.join(fields)} WHERE id = ?",
                 params,
@@ -846,7 +849,7 @@ class ApiKeysDB:
 
     def delete(self, key_id: int) -> bool:
         with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
-            conn.execute("PRAGMA busy_timeout=30000")
+            apply_runtime_pragmas(conn)
             cursor = conn.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
             conn.commit()
             return cursor.rowcount > 0
@@ -1783,7 +1786,7 @@ class ApiKeysDB:
         else:
             try:
                 with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
-                    conn.execute("PRAGMA busy_timeout=30000")
+                    apply_runtime_pragmas(conn)
                     conn.execute(sql, params)
                     conn.commit()
             except Exception:
@@ -1803,7 +1806,7 @@ class ApiKeysDB:
         reset_records: list[ApiKeyRecord] = []
         with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA busy_timeout=30000")
+            apply_runtime_pragmas(conn)
             # Serialize the read-modify-write against concurrent record_spent()
             # writers (which run on separate connections): an IMMEDIATE
             # transaction takes the write lock up front, so a spend committed

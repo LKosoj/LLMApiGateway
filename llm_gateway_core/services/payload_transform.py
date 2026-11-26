@@ -72,16 +72,19 @@ def apply_payload_transforms(payload: dict[str, Any], transforms: object | None)
         "payload_transforms.value_maps",
     )
 
-    transformed_payload = copy.deepcopy(payload)
+    transformed_payload = dict(payload)
     for key, value_map in value_maps.items():
         source_value = transformed_payload.get(key)
         if isinstance(source_value, str) and source_value in value_map:
-            transformed_payload[key] = copy.deepcopy(value_map[source_value])
+            mapped_value = value_map[source_value]
+            transformed_payload[key] = (
+                copy.deepcopy(mapped_value) if isinstance(mapped_value, (dict, list)) else mapped_value
+            )
     for key, value in defaults.items():
         if key not in transformed_payload:
-            transformed_payload[key] = copy.deepcopy(value)
+            transformed_payload[key] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
     for key, value in overrides.items():
-        transformed_payload[key] = copy.deepcopy(value)
+        transformed_payload[key] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
     for key in filters:
         transformed_payload.pop(key, None)
     return transformed_payload

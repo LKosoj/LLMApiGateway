@@ -82,7 +82,7 @@ class ContentSizeLimitMiddleware:
             return
 
         block_size = max(1, min(max_body_size, 64 * 1024))
-        body_blocks: deque[bytearray] = deque()
+        body_blocks: deque[bytes | bytearray] = deque()
         bytes_seen = 0
         terminal_request = False
         buffered_disconnect: Message | None = None
@@ -142,7 +142,8 @@ class ContentSizeLimitMiddleware:
         async def replay_receive() -> Message:
             nonlocal empty_terminal_pending, buffered_disconnect
             if body_blocks:
-                body = bytes(body_blocks.popleft())
+                chunk = body_blocks.popleft()
+                body = chunk if isinstance(chunk, bytes) else bytes(chunk)
                 return {
                     "type": "http.request",
                     "body": body,
@@ -165,18 +166,23 @@ class ContentSizeLimitMiddleware:
 
     @staticmethod
     def _append_body_blocks(
-        blocks: deque[bytearray],
+        blocks: deque[bytes | bytearray],
         body: bytes,
         block_size: int,
     ) -> None:
-        offset = 0
-        while offset < len(body):
-            if not blocks or len(blocks[-1]) == block_size:
-                blocks.append(bytearray())
-            available = block_size - len(blocks[-1])
-            next_offset = min(offset + available, len(body))
-            blocks[-1].extend(body[offset:next_offset])
-            offset = next_offset
+        if not body:
+            return
+        chunk = body if isinstance(body, bytes) else bytes(body)
+        if blocks and len(blocks[-1]) + len(chunk) <= block_size:
+            tail = blocks[-1]
+            if isinstance(tail, bytearray):
+                tail.extend(chunk)
+            else:
+                merged = bytearray(tail)
+                merged.extend(chunk)
+                blocks[-1] = merged
+            return
+        blocks.append(chunk)
 
 
 class ContentLengthLimitMiddleware:

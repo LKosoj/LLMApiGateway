@@ -6,16 +6,19 @@ import tempfile
 import threading
 import time
 import wave
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
 from ...config.loader import AUDIO_TRANSCRIPTIONS_DEFAULT_TARGET_PATH
 from ...config.settings import settings
-from .operation_runtime import MultipartFilePayload
+from .operation_runtime import (
+    MultipartFilePayload,
+    run_owned_blocking as _run_owned_blocking,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,6 @@ NVIDIA_RIVA_ALLOWED_PAYLOAD_KEYS = frozenset(
 NVIDIA_RIVA_RETRYABLE_STATUS_CODES = frozenset({"deadline_exceeded", "internal", "resource_exhausted", "unavailable"})
 NVIDIA_RIVA_GRPC_CLIENT_CACHE_TTL_SECONDS = 600.0
 NVIDIA_RIVA_GRPC_CLIENT_CACHE_MAX_ENTRIES = 64
-_T = TypeVar("_T")
 
 
 class AudioMaterializationTooLarge(HTTPException):
@@ -615,32 +617,6 @@ def _normalize_audio_bytes_for_nvidia(audio_bytes: bytes, *, max_bytes: int) -> 
     return converted_audio_bytes
 
 
-async def _run_owned_blocking(
-    func: Callable[..., _T],
-    /,
-    *args: object,
-    **kwargs: object,
-) -> _T:
-    """Keep a blocking worker owned until it really stops, even on cancellation."""
-    worker = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
-    try:
-        return await asyncio.shield(worker)
-    except asyncio.CancelledError:
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                continue
-        try:
-            worker.result()
-        except BaseException:
-            logger.warning(
-                "Blocking NVIDIA audio worker failed while request cancellation was pending. error_type=%s",
-                type(worker.exception()).__name__ if not worker.cancelled() else "CancelledError",
-            )
-        raise
-
-
 async def _normalize_audio_bytes_for_nvidia_async(
     audio_bytes: bytes,
     *,
@@ -1067,8 +1043,9 @@ async def transcribe_with_nvidia_riva_grpc(
         else decoded_audio_max_bytes
     )
     _ensure_audio_materialization_limit(0, materialization_limit)
+    raw_audio_bytes = await _run_owned_blocking(_extract_audio_bytes, files_payload)
     audio_bytes = await _normalize_audio_bytes_for_nvidia_async(
-        _extract_audio_bytes(files_payload),
+        raw_audio_bytes,
         max_bytes=materialization_limit,
     )
     metadata = _build_nvidia_riva_metadata(provider_api_key, route_custom_headers)

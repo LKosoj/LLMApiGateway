@@ -640,23 +640,21 @@ async def get_analytics_dashboard(
                 "upstream_key_fingerprint": upstream_key_filter,
             }
             gather_tasks.append(
-                tokens_usage_db.get_dashboard_usage(
-                    resolved_bucket,
+                tokens_usage_db.get_dashboard_usage_summary(
                     previous_start,
                     start_date,
                     **usage_filters,
                     usage_source=usage_source_filter,
                     x_title=x_title_filter,
                     is_estimated=estimated_filter,
-                    recent_limit=0,
                 )
             )
             gather_tasks.append(
-                fallback_events_db.get_dashboard_fallback(
-                    resolved_bucket,
+                fallback_events_db.get_dashboard_fallback_summary(
                     previous_start,
                     start_date,
                     **usage_filters,
+                    include_requests=is_master,
                 )
             )
         results = await asyncio.gather(*gather_tasks)
@@ -670,8 +668,7 @@ async def get_analytics_dashboard(
         lifetime_data = results[next_index] if is_master else None
         previous_payload = None
         if compare_filter:
-            previous_usage, previous_fallback = results[-2:]
-            previous_summary = previous_usage["summary"]
+            previous_summary, previous_fallback = results[-2:]
             previous_totals = {
                 "requests": previous_summary.get("requests", 0),
                 "total_tokens": previous_summary.get("total_tokens", 0),

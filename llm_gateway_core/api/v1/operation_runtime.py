@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, BinaryIO, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, BinaryIO, Literal, TypeAlias, TypeVar, cast
 
 from fastapi import HTTPException, Request, UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -17,11 +19,40 @@ from ...services.upload_admission import (
 if TYPE_CHECKING:
     from ...services.runtime_config import AppServices
 
+logger = logging.getLogger(__name__)
+
 UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 UPLOAD_HEADER_MAX_BYTES = 16
 UploadKind = Literal["audio", "image", "pdf"]
 MultipartFileContent: TypeAlias = bytes | BinaryIO
 MultipartFilePayload: TypeAlias = tuple[str, MultipartFileContent, str | None]
+_T = TypeVar("_T")
+
+
+async def run_owned_blocking(
+    func: Callable[..., _T],
+    /,
+    *args: object,
+    **kwargs: object,
+) -> _T:
+    """Keep a blocking worker thread owned until it stops, even on cancellation."""
+    worker = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        try:
+            worker.result()
+        except BaseException:
+            logger.warning(
+                "Blocking operation worker failed while request cancellation was pending. error_type=%s",
+                type(worker.exception()).__name__ if not worker.cancelled() else "CancelledError",
+            )
+        raise
 
 
 @dataclass(frozen=True, slots=True)

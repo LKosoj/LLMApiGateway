@@ -351,7 +351,8 @@ def _drop_empty_text_content_blocks(provider_payload: dict) -> None:
     if not isinstance(messages, list):
         return
 
-    for message in messages:
+    new_messages: list | None = None
+    for idx, message in enumerate(messages):
         if not isinstance(message, dict):
             continue
 
@@ -372,9 +373,20 @@ def _drop_empty_text_content_blocks(provider_payload: dict) -> None:
             continue
 
         if kept_blocks:
-            message["content"] = kept_blocks
+            updated_message = dict(message)
+            updated_message["content"] = kept_blocks
         elif message.get("tool_calls"):
-            message.pop("content", None)
+            updated_message = dict(message)
+            updated_message.pop("content", None)
+        else:
+            continue
+
+        if new_messages is None:
+            new_messages = list(messages)
+        new_messages[idx] = updated_message
+
+    if new_messages is not None:
+        provider_payload["messages"] = new_messages
 
 
 def _normalize_provider_attempt_payload(provider_payload: dict, provider_model: str | None = None) -> None:

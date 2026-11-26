@@ -66,15 +66,15 @@ async def _build_quota_snapshot(
 ) -> list[dict]:
     """Build the per-key quota snapshot used by the dashboard endpoint."""
 
-    # Fetch all keys (sync → thread)
-    all_keys = await asyncio.to_thread(api_keys_db.list_all)
+    async def _fetch_keys() -> list:
+        if key_id_filter is not None:
+            record = await asyncio.to_thread(api_keys_db.get_by_id, key_id_filter)
+            return [record] if record is not None else []
+        return await asyncio.to_thread(api_keys_db.list_all)
 
-    if key_id_filter is not None:
-        all_keys = [k for k in all_keys if k.id == key_id_filter]
-
-    # Fetch 24h fallback counts for all relevant keys
-    fallback_counts = await fallback_events_db.get_events_count_last_24h(
-        api_key_id=key_id_filter
+    all_keys, fallback_counts = await asyncio.gather(
+        _fetch_keys(),
+        fallback_events_db.get_events_count_last_24h(api_key_id=key_id_filter),
     )
 
     result: list[dict] = []

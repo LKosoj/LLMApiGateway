@@ -15,6 +15,8 @@ from ..config.loader import (
 logger = logging.getLogger(__name__)
 
 PROVIDER_MODELS_CACHE_TTL_SECONDS = 15 * 60
+PROVIDER_MODELS_NEGATIVE_CACHE_TTL_SECONDS = 20.0
+PROVIDER_MODELS_REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass
@@ -22,6 +24,12 @@ class ProviderModelsCacheEntry:
     models: list[str]
     entries: dict[str, dict]
     fetched_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class _NegativeModelsCacheEntry:
+    fetched_at: float
+    error_message: str | None = None
 
 
 def provider_explicit_models(provider_config: ProviderDetails) -> list[str] | None:
@@ -55,14 +63,21 @@ class ProviderModelsService:
         self,
         ttl_seconds: int = PROVIDER_MODELS_CACHE_TTL_SECONDS,
         time_func=time.monotonic,
+        *,
+        negative_ttl_seconds: float = PROVIDER_MODELS_NEGATIVE_CACHE_TTL_SECONDS,
+        request_timeout_seconds: float = PROVIDER_MODELS_REQUEST_TIMEOUT_SECONDS,
     ) -> None:
         self.ttl_seconds = ttl_seconds
+        self.negative_ttl_seconds = negative_ttl_seconds
+        self.request_timeout_seconds = request_timeout_seconds
         self._time_func = time_func
         self._cache: dict[str, ProviderModelsCacheEntry] = {}
+        self._negative_cache: dict[str, _NegativeModelsCacheEntry] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     def clear(self) -> None:
         self._cache.clear()
+        self._negative_cache.clear()
 
     def snapshot_cache_entry(
         self, provider_name: str, *, allow_stale: bool = False
@@ -95,6 +110,7 @@ class ProviderModelsService:
         The caller is responsible for ensuring the entry is compatible with
         this service's TTL and describes the same provider config.
         """
+        self._negative_cache.pop(provider_name, None)
         self._cache[provider_name] = entry
 
     async def get_models(
@@ -136,6 +152,20 @@ class ProviderModelsService:
         entry = await self._get_cached_entry(provider_name, provider_config, http_client, auth_headers)
         return dict(entry.entries)
 
+    def _resolve_negative_cache(
+        self,
+        provider_name: str,
+        now: float,
+    ) -> ProviderModelsCacheEntry | None:
+        neg_entry = self._negative_cache.get(provider_name)
+        if neg_entry is None:
+            return None
+        if now - neg_entry.fetched_at >= self.negative_ttl_seconds:
+            return None
+        if neg_entry.error_message is not None:
+            raise ValueError(neg_entry.error_message)
+        return ProviderModelsCacheEntry(models=[], entries={}, fetched_at=neg_entry.fetched_at)
+
     async def _get_cached_entry(
         self,
         provider_name: str,
@@ -147,6 +177,9 @@ class ProviderModelsService:
         cached_entry = self._cache.get(provider_name)
         if cached_entry and now - cached_entry.fetched_at < self.ttl_seconds:
             return cached_entry
+        negative_entry = self._resolve_negative_cache(provider_name, now)
+        if negative_entry is not None:
+            return negative_entry
 
         provider_lock = self._locks.setdefault(provider_name, asyncio.Lock())
         async with provider_lock:
@@ -154,16 +187,41 @@ class ProviderModelsService:
             cached_entry = self._cache.get(provider_name)
             if cached_entry and now - cached_entry.fetched_at < self.ttl_seconds:
                 return cached_entry
+            negative_entry = self._resolve_negative_cache(provider_name, now)
+            if negative_entry is not None:
+                return negative_entry
 
-            entries = await self._fetch_model_entries(provider_name, provider_config, http_client, auth_headers)
-            fresh_entry = ProviderModelsCacheEntry(models=list(entries.keys()), entries=entries, fetched_at=now)
+            try:
+                entries = await self._fetch_model_entries(
+                    provider_name, provider_config, http_client, auth_headers
+                )
+            except ValueError as exc:
+                fetched_at = self._time_func()
+                self._negative_cache[provider_name] = _NegativeModelsCacheEntry(
+                    fetched_at=fetched_at,
+                    error_message=str(exc),
+                )
+                raise
+
+            fetched_at = self._time_func()
+            fresh_entry = ProviderModelsCacheEntry(
+                models=list(entries.keys()),
+                entries=entries,
+                fetched_at=fetched_at,
+            )
             if entries:
+                self._negative_cache.pop(provider_name, None)
                 self._cache[provider_name] = fresh_entry
             else:
                 self._cache.pop(provider_name, None)
+                self._negative_cache[provider_name] = _NegativeModelsCacheEntry(
+                    fetched_at=fetched_at,
+                    error_message=None,
+                )
                 logger.warning(
-                    "Provider '%s' returned an empty /models list; not caching empty result.",
+                    "Provider '%s' returned an empty /models list; caching empty result for %.1fs.",
                     provider_name,
+                    self.negative_ttl_seconds,
                 )
             return fresh_entry
 
@@ -191,7 +249,11 @@ class ProviderModelsService:
             target_url = f"{provider_base_url}/models"
 
         try:
-            response = await http_client.get(target_url, headers=headers)
+            response = await http_client.get(
+                target_url,
+                headers=headers,
+                timeout=self.request_timeout_seconds,
+            )
         except httpx.RequestError as exc:
             raise ValueError(
                 f"Could not load models for provider '{provider_name}': {exc}"

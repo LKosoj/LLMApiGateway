@@ -203,7 +203,7 @@
 
     // ---------- Render table ----------
     function renderTable() {
-        tableBody.replaceChildren();
+        const fragment = document.createDocumentFragment();
         const hasRows = state.length > 0;
         emptyState.classList.toggle('visible', !hasRows);
 
@@ -259,7 +259,7 @@
                 actionTd.appendChild(manualBtn);
                 tr.appendChild(actionTd);
 
-                tableBody.appendChild(tr);
+                fragment.appendChild(tr);
                 return;
             }
 
@@ -332,8 +332,9 @@
 
             tr.appendChild(tdDel);
 
-            tableBody.appendChild(tr);
+            fragment.appendChild(tr);
         });
+        tableBody.replaceChildren(fragment);
         syncEditorDisabled();
     }
 

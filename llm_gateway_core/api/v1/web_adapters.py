@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import urllib.parse
 from collections.abc import Mapping
@@ -56,6 +57,7 @@ WEB_SEARCH_OPERATION = "web_search"
 WEB_READ_OPERATION = "web_read"
 WEB_RESEARCH_OPERATION = "web_research"
 WEB_DEEP_RESEARCH_OPERATION = "web_deep_research"
+WEB_SEARCH_QUERY_CONCURRENCY = 4
 
 _BUILTIN_SEARCH_ADAPTERS: tuple[str, ...] = ("proxy", "tavily", "jina", "zai")
 _BUILTIN_READ_ADAPTERS: tuple[str, ...] = ("proxy", "tavily", "jina", "zai")
@@ -828,51 +830,63 @@ async def _search_with_model(
     per_query_limit = max(1, min(max_results, max_results // max(len(queries), 1) + 1))
     include_domains = include_domains or []
     exclude_domains = exclude_domains or []
-    for search_query in queries:
-        query_results: list[dict[str, Any]] = []
-        for adapter_name in enabled_adapters:
-            adapter = _SEARCH_ADAPTERS[adapter_name]
-            try:
-                query_results = await adapter(http_client, search_query, per_query_limit, include_images=include_images)
-            except Exception as exc:
+    semaphore = asyncio.Semaphore(WEB_SEARCH_QUERY_CONCURRENCY)
+
+    async def _run_search_query(search_query: str) -> list[dict[str, Any]]:
+        async with semaphore:
+            query_results: list[dict[str, Any]] = []
+            for adapter_name in enabled_adapters:
+                adapter = _SEARCH_ADAPTERS[adapter_name]
+                try:
+                    query_results = await adapter(
+                        http_client,
+                        search_query,
+                        per_query_limit,
+                        include_images=include_images,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Web search adapter '%s' failed for query '%s': %s",
+                        adapter_name,
+                        search_query,
+                        exc,
+                    )
+                    continue
+                if query_results:
+                    filtered_query_results = _filter_search_results(
+                        query_results,
+                        include_domains=include_domains,
+                        exclude_domains=exclude_domains,
+                        max_results=per_query_limit,
+                    )
+                    if include_domains or exclude_domains:
+                        if not filtered_query_results:
+                            logger.warning(
+                                "Web search adapter '%s' returned %d results for '%s', "
+                                "but none matched domain filters; trying next.",
+                                adapter_name,
+                                len(query_results),
+                                search_query,
+                            )
+                            query_results = []
+                            continue
+                        query_results = filtered_query_results
+                    logger.info(
+                        "Web search adapter '%s' returned %d results for '%s'.",
+                        adapter_name,
+                        len(query_results),
+                        search_query,
+                    )
+                    break
                 logger.warning(
-                    "Web search adapter '%s' failed for query '%s': %s",
+                    "Web search adapter '%s' returned no results for '%s'; trying next.",
                     adapter_name,
                     search_query,
-                    exc,
                 )
-                continue
-            if query_results:
-                filtered_query_results = _filter_search_results(
-                    query_results,
-                    include_domains=include_domains,
-                    exclude_domains=exclude_domains,
-                    max_results=per_query_limit,
-                )
-                if include_domains or exclude_domains:
-                    if not filtered_query_results:
-                        logger.warning(
-                            "Web search adapter '%s' returned %d results for '%s', "
-                            "but none matched domain filters; trying next.",
-                            adapter_name,
-                            len(query_results),
-                            search_query,
-                        )
-                        query_results = []
-                        continue
-                    query_results = filtered_query_results
-                logger.info(
-                    "Web search adapter '%s' returned %d results for '%s'.",
-                    adapter_name,
-                    len(query_results),
-                    search_query,
-                )
-                break
-            logger.warning(
-                "Web search adapter '%s' returned no results for '%s'; trying next.",
-                adapter_name,
-                search_query,
-            )
+            return query_results
+
+    per_query_results = await asyncio.gather(*(_run_search_query(search_query) for search_query in queries))
+    for query_results in per_query_results:
         for result in query_results:
             url_key = _search_result_url_key(result["url"])
             if not url_key or url_key in seen:

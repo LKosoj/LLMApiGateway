@@ -23,7 +23,10 @@ def is_valid_request_id(value: object) -> bool:
 
 
 def _new_request_id() -> str | None:
-    candidate = str(uuid.uuid4())
+    raw = uuid.uuid4()
+    if isinstance(raw, uuid.UUID):
+        return str(raw)
+    candidate = str(raw)
     return candidate if is_valid_request_id(candidate) else None
 
 class RequestLoggingASGIMiddleware:
@@ -42,7 +45,7 @@ class RequestLoggingASGIMiddleware:
             await self.app(scope, receive, send)
             return
 
-        start_time = time.time()
+        start_time = time.monotonic()
         request_id = _new_request_id()
         state = scope.setdefault("state", {})
         state["llmgateway_request_id"] = request_id
@@ -70,14 +73,12 @@ class RequestLoggingASGIMiddleware:
             response_start = dict(message)
             response_start["headers"] = list(message.get("headers", []))
             response_request_id = state.get("llmgateway_request_id")
-            if response_request_id == request_id and is_valid_request_id(
-                response_request_id
-            ):
+            if request_id is not None and response_request_id == request_id:
                 MutableHeaders(scope=response_start)["X-Request-ID"] = (
                     response_request_id
                 )
             await send(response_start)
-            duration = round((time.time() - start_time) * 1000, 2)
+            duration = round((time.monotonic() - start_time) * 1000, 2)
             logger.info(
                 "Request completed | ID: %s | Status: %s | Duration: %sms",
                 request_id,
@@ -88,7 +89,7 @@ class RequestLoggingASGIMiddleware:
         try:
             await self.app(scope, receive, send_with_request_id)
         except Exception as exc:
-            duration = round((time.time() - start_time) * 1000, 2)
+            duration = round((time.monotonic() - start_time) * 1000, 2)
             logger.error(
                 "Request failed | ID: %s | Error: %s: %s | Duration: %sms",
                 request_id,

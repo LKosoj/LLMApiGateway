@@ -24,6 +24,7 @@ from .web_safe_fetch import (
     _PinnedForwardProxy,
     _get_with_public_redirects,
     _validated_fetch_url,
+    _validated_fetch_url_sync,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,11 +66,7 @@ async def _direct_http_fetch(url: str) -> dict[str, Any] | None:
     from ...agents.web_research import (
         _HTMLTextExtractor,
         _extract_youtube_video_id,
-        _HTML_TITLE_RE,
-        _HTML_H1_RE,
-        _HTML_TAG_RE,
     )
-    from html import unescape
 
     cleaned = _clean_read_url(url)
     if not cleaned.startswith(("http://", "https://")):
@@ -137,11 +134,11 @@ async def _direct_http_fetch(url: str) -> dict[str, Any] | None:
                 return None
 
             html_text = response.text
-            html_images = _extract_article_images_from_html(html_text, image_base_url)
-            title = ""
-            title_match = _HTML_TITLE_RE.search(html_text) or _HTML_H1_RE.search(html_text)
-            if title_match:
-                title = unescape(_HTML_TAG_RE.sub("", title_match.group(1))).strip()
+            html_images, title = await asyncio.to_thread(
+                _extract_html_images_and_title,
+                html_text,
+                image_base_url,
+            )
 
             extracted = await asyncio.to_thread(_trafilatura_markdown, html_text, image_base_url)
             if extracted:
@@ -219,6 +216,10 @@ def _title_from_html(html_text: str) -> str:
     return unescape(_HTML_TAG_RE.sub("", match.group(1))).strip()
 
 
+def _extract_html_images_and_title(html_text: str, base_url: str) -> tuple[list[dict[str, str]], str]:
+    return _extract_article_images_from_html(html_text, base_url), _title_from_html(html_text)
+
+
 def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: str) -> dict[str, Any] | None:
     # Full trafilatura keeps image links inline in the markdown body; fall back to plain
     # selectolax text (without inline images) only when trafilatura is unavailable or the
@@ -240,7 +241,7 @@ def _extract_cloakbrowser_markdown(html_text: str, final_url: str, page_title: s
 def _abort_blocked_cloakbrowser_request(route: Any) -> None:
     request_url = getattr(getattr(route, "request", None), "url", "")
     try:
-        asyncio.run(_validated_fetch_url(str(request_url)))
+        _validated_fetch_url_sync(str(request_url))
     except HTTPException:
         route.abort()
         return

@@ -2114,14 +2114,24 @@ export function registerCore(ctx) {
         }
         if (context.key === 'openrouter-free' && ctx.state.openRouterFreePollingEnabled) {
             clearTimeout(ctx.state.openRouterFreePollTimer);
-            ctx.state.openRouterFreePollTimer = window.setTimeout(() => {
-                void ctx.loadOpenRouterFreeModels(false, ctx.state.activeRulesTabContext);
-            }, 3000);
+            ctx.state.openRouterFreePollTimer = null;
+            if (!document.hidden) {
+                ctx.state.openRouterFreePollTimer = window.setTimeout(() => {
+                    ctx.state.openRouterFreePollTimer = null;
+                    if (document.hidden) return;
+                    void ctx.loadOpenRouterFreeModels(false, ctx.state.activeRulesTabContext);
+                }, 3000);
+            }
         } else if (context.key === 'fallback-eval' && ctx.state.fallbackEvalPollingEnabled) {
             clearTimeout(ctx.state.fallbackEvalPollTimer);
-            ctx.state.fallbackEvalPollTimer = window.setTimeout(() => {
-                void ctx.loadFallbackModelEvals(false, ctx.state.activeRulesTabContext);
-            }, 3000);
+            ctx.state.fallbackEvalPollTimer = null;
+            if (!document.hidden) {
+                ctx.state.fallbackEvalPollTimer = window.setTimeout(() => {
+                    ctx.state.fallbackEvalPollTimer = null;
+                    if (document.hidden) return;
+                    void ctx.loadFallbackModelEvals(false, ctx.state.activeRulesTabContext);
+                }, 3000);
+            }
         }
         if (!shouldReloadSelectedRulesTab(context.key)) {
             return false;

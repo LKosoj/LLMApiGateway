@@ -38,6 +38,7 @@ def main() -> int:
                 "--bundle",
                 "--format=iife",
                 "--target=es2020",
+                "--minify",
                 "--legal-comments=none",
                 "--charset=utf8",
                 f"--banner:js={BANNER}",

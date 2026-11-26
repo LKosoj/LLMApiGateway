@@ -18,8 +18,9 @@ test('package pins the deterministic one-file esbuild contract', async () => {
 
   assert.equal(manifest.devDependencies.esbuild, '0.28.1');
   assert.match(manifest.scripts.build, /--format=iife/);
+  assert.match(manifest.scripts.build, /--minify/);
   assert.match(manifest.scripts.build, /--outfile=\.\.\/\.\.\/static\/editor\.js/);
-  assert.doesNotMatch(manifest.scripts.build, /--splitting|--minify/);
+  assert.doesNotMatch(manifest.scripts.build, /--splitting/);
 });
 
 test('source package has one entry and the approved module boundaries', async () => {

@@ -65,9 +65,8 @@ def _effective_scope(request: Request) -> tuple[str, int | None]:
     raise HTTPException(status_code=401, detail="Authentication required.")
 
 
-def _provider_health(provider: str, status_rows: list[dict[str, Any]]) -> str:
-    """Return worst health status for a provider across all its models/keys."""
-    provider_rows = [r for r in status_rows if r.get("provider") == provider]
+def _provider_health_from_rows(provider_rows: list[dict[str, Any]]) -> str:
+    """Return worst health status for a provider's pre-grouped status rows."""
     if not provider_rows:
         return "ok"
     statuses = {r.get("health_status", "ok") for r in provider_rows}
@@ -78,24 +77,42 @@ def _provider_health(provider: str, status_rows: list[dict[str, Any]]) -> str:
     return "ok"
 
 
-def _provider_penalty(provider: str, status_rows: list[dict[str, Any]]) -> float:
-    """Return max penalty score for a provider."""
-    provider_rows = [r for r in status_rows if r.get("provider") == provider]
+def _provider_health(provider: str, status_rows: list[dict[str, Any]]) -> str:
+    """Return worst health status for a provider across all its models/keys."""
+    return _provider_health_from_rows(
+        [r for r in status_rows if r.get("provider") == provider]
+    )
+
+
+def _provider_penalty_from_rows(provider_rows: list[dict[str, Any]]) -> float:
+    """Return max penalty score for a provider's pre-grouped status rows."""
     if not provider_rows:
         return 0.0
     return max(float(r.get("penalty_score", 0.0)) for r in provider_rows)
 
 
-def _provider_models(provider: str, status_rows: list[dict[str, Any]]) -> list[str]:
+def _provider_penalty(provider: str, status_rows: list[dict[str, Any]]) -> float:
+    """Return max penalty score for a provider."""
+    return _provider_penalty_from_rows(
+        [r for r in status_rows if r.get("provider") == provider]
+    )
+
+
+def _provider_models_from_rows(provider_rows: list[dict[str, Any]]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
-    for r in status_rows:
-        if r.get("provider") == provider:
-            model = r.get("model", "")
-            if model and model not in seen:
-                seen.add(model)
-                result.append(model)
+    for r in provider_rows:
+        model = r.get("model", "")
+        if model and model not in seen:
+            seen.add(model)
+            result.append(model)
     return sorted(result)
+
+
+def _provider_models(provider: str, status_rows: list[dict[str, Any]]) -> list[str]:
+    return _provider_models_from_rows(
+        [r for r in status_rows if r.get("provider") == provider]
+    )
 
 
 def _referenced_providers(fallback_rules: dict[str, Any]) -> set[str]:
@@ -132,6 +149,11 @@ async def get_topology(request: Request) -> JSONResponse:
         active_records = registry.list_records(api_key_id=None if is_master else key_id)
 
         status_rows: list[dict[str, Any]] = upstream_state.get_status_rows()
+        rows_by_provider: dict[str, list[dict[str, Any]]] = {}
+        for row in status_rows:
+            prov = row.get("provider")
+            if prov:
+                rows_by_provider.setdefault(prov, []).append(row)
 
         # Active request tallies. Each record carries both ``gateway_model`` and
         # ``provider`` once routing is resolved, so we can attribute live traffic
@@ -171,7 +193,8 @@ async def get_topology(request: Request) -> JSONResponse:
         # Provider tier (right column in the frontend layout).
         for i, pname in enumerate(all_providers):
             is_configured = pname in providers_config
-            health = _provider_health(pname, status_rows) if is_configured else "invalid"
+            provider_rows = rows_by_provider.get(pname, [])
+            health = _provider_health_from_rows(provider_rows) if is_configured else "invalid"
             health_by_provider[pname] = health
             nodes.append(
                 {
@@ -182,8 +205,8 @@ async def get_topology(request: Request) -> JSONResponse:
                         "health": health,
                         "configured": is_configured,
                         "active_requests": active_by_provider.get(pname, 0),
-                        "penalty": _provider_penalty(pname, status_rows),
-                        "models": _provider_models(pname, status_rows),
+                        "penalty": _provider_penalty_from_rows(provider_rows),
+                        "models": _provider_models_from_rows(provider_rows),
                     },
                     "position": {"x": 600, "y": i * 100},
                 }
@@ -276,7 +299,7 @@ async def get_topology(request: Request) -> JSONResponse:
                         "data": {
                             "kind": "fallback",
                             "priority": agg["priority"],
-                            "steps": sorted(agg["steps"]),
+                            "steps": agg["steps"],
                             "models": agg["models"],
                             "active": route_active,
                         },

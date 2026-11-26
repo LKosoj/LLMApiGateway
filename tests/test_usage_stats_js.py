@@ -82,7 +82,7 @@ def test_usage_stats_js_fetches_upstream_stats_for_selected_period():
     assert "fetchAndRenderUpstreamStats" in content
     assert "createUpstreamStatsTable" in content
     assert "upstreamStatsArea.replaceChildren(createUpstreamStatsTable(snapshots.upstream.data));" in content
-    assert "apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`)" in content
+    assert "apiFetch(`/v1/api/upstream-stats/${selectedPeriod}`, {signal: controller.signal})" in content
 
 
 def test_usage_stats_topology_uses_local_vendor_bundle():
@@ -155,7 +155,7 @@ def test_usage_stats_js_bridges_analytics_tab_without_touching_existing_tabs():
     js = Path("static/usage-stats.js").read_text(encoding="utf-8")
 
     assert "} else if (tab === 'analytics') {" in js
-    assert "window.usageAnalyticsDashboard.activate();" in js
+    assert "window.usageAnalyticsDashboard.activate(context);" in js
     assert "} else if (tab === 'fallback') {" in js
     assert "reportTabActivation(usageTabsController.activate(usageTabsController.activeKey));" in js
 

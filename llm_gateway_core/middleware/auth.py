@@ -170,6 +170,11 @@ def _is_master_only_path(path: str) -> bool:
 
 
 def _matches_registered_route(request: Request) -> bool:
+    try:
+        if resolve_effective_http_route(request.scope, request.app.router.routes) is not None:
+            return True
+    except AccountingError:
+        pass
     for route in request.app.router.routes:
         match, _ = route.matches(request.scope)
         if match is not Match.NONE:

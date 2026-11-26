@@ -48,6 +48,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let snapshot = null;
     let snapshotStale = false;
     let requestGeneration = 0;
+    let loadAbortController = null;
+    let exportAbortController = null;
     let unsubscribeLocale = null;
     let stopped = false;
     let exporting = false;
@@ -631,6 +633,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const mode = currentMode();
         if (exporting || mode === 'server_error') return;
         exporting = true;
+        exportAbortController?.abort();
+        const controller = new AbortController();
+        exportAbortController = controller;
         updateExportButtonsState();
         clearError();
         try {
@@ -644,7 +649,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const query = mode === 'rejected'
                     ? buildRejectionsQuery(pageLimit, currentOffset)
                     : buildUsageQuery(pageLimit, currentOffset);
-                const response = await apiFetch(`${endpoint}?${query}`);
+                const response = await apiFetch(`${endpoint}?${query}`, { signal: controller.signal });
                 if (stopped) return;
                 if (!response.ok) {
                     const body = await response.json().catch(() => ({}));
@@ -693,13 +698,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 triggerDownload(jsonText, `activity-${mode}-${stamp}.json`, 'application/json;charset=utf-8');
             }
         } catch (error) {
-            if (stopped || error.message === 'Authentication required') return;
+            if (stopped || error?.name === 'AbortError' || error.message === 'Authentication required') return;
             const descriptor = window.gatewayUi.describeApiError(null);
             showError(
                 { key: descriptor.summaryKey, values: descriptor.summaryValues },
                 error.message,
             );
         } finally {
+            if (exportAbortController === controller) exportAbortController = null;
             exporting = false;
             updateExportButtonsState();
         }
@@ -717,6 +723,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadActivity() {
         const mode = currentMode();
+        loadAbortController?.abort();
         if (mode === 'server_error') {
             renderServerErrorMode();
             return;
@@ -726,10 +733,12 @@ document.addEventListener('DOMContentLoaded', () => {
         updateExportButtonsState();
 
         const generation = ++requestGeneration;
+        const controller = new AbortController();
+        loadAbortController = controller;
         try {
             const endpoint = mode === 'rejected' ? REJECTIONS_ENDPOINT : USAGE_RECORDS_ENDPOINT;
             const query = mode === 'rejected' ? buildRejectionsQuery() : buildUsageQuery();
-            const response = await apiFetch(`${endpoint}?${query}`);
+            const response = await apiFetch(`${endpoint}?${query}`, { signal: controller.signal });
             if (stopped || generation !== requestGeneration) return;
 
             if (!response.ok) {
@@ -768,7 +777,7 @@ document.addEventListener('DOMContentLoaded', () => {
             clearError();
             renderSnapshot();
         } catch (error) {
-            if (stopped || generation !== requestGeneration) return;
+            if (stopped || error?.name === 'AbortError' || generation !== requestGeneration) return;
             if (error.message === 'Authentication required') return;
             const descriptor = window.gatewayUi.describeApiError(null);
             if (snapshot !== null && snapshot.mode === mode) {
@@ -779,6 +788,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 { key: descriptor.summaryKey, values: descriptor.summaryValues },
                 error.message,
             );
+        } finally {
+            if (loadAbortController === controller) loadAbortController = null;
         }
     }
 
@@ -831,6 +842,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('beforeunload', () => {
         stopped = true;
         requestGeneration += 1;
+        loadAbortController?.abort();
+        exportAbortController?.abort();
         unsubscribeLocale?.();
     });
 

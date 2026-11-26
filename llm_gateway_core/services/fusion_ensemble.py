@@ -820,19 +820,23 @@ class FusionEnsembleService:
                 "content": message.get("content") or "",
                 "tool_calls": tool_calls,
             })
-            for tool_call in tool_calls:
-                if tool_calls_made >= max_tool_calls:
-                    result_text = (
-                        "Web tool budget exhausted. Answer with the information "
-                        "already gathered."
+            remaining_budget = max(0, max_tool_calls - tool_calls_made)
+            to_execute = tool_calls[:remaining_budget]
+            overflow = tool_calls[remaining_budget:]
+
+            if to_execute:
+                results = await asyncio.gather(
+                    *(
+                        self._execute_web_tool(
+                            request,
+                            tool_call,
+                            web_tools,
+                            observe=observe,
+                        )
+                        for tool_call in to_execute
                     )
-                else:
-                    tool_result = await self._execute_web_tool(
-                        request,
-                        tool_call,
-                        web_tools,
-                        observe=observe,
-                    )
+                )
+                for tool_call, tool_result in zip(to_execute, results, strict=True):
                     if observe:
                         result_text, tool_usage, tool_components = tool_result
                         components.extend(tool_components)
@@ -840,10 +844,20 @@ class FusionEnsembleService:
                         result_text, tool_usage = tool_result
                     _add_usage(usage_total, tool_usage)
                     tool_calls_made += 1
+                    convo.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id"),
+                        "content": result_text,
+                    })
+
+            for tool_call in overflow:
                 convo.append({
                     "role": "tool",
                     "tool_call_id": tool_call.get("id"),
-                    "content": result_text,
+                    "content": (
+                        "Web tool budget exhausted. Answer with the information "
+                        "already gathered."
+                    ),
                 })
 
         # Iterations exhausted while still requesting tools — force a final answer.

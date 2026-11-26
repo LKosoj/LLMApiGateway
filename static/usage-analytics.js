@@ -17,6 +17,7 @@
         data: null,
         els: {},
         requestGeneration: 0,
+        abortController: null,
         requestId: null,
         hasError: false,
         statusController: null,
@@ -604,15 +605,29 @@
         }
     }
 
-    async function loadAnalytics() {
+    async function loadAnalytics(activationContext = null) {
         const requestGeneration = ++state.requestGeneration;
+        state.abortController?.abort();
+        const controller = new AbortController();
+        state.abortController = controller;
+        const externalSignal = activationContext && activationContext.signal ? activationContext.signal : null;
+        let onExternalAbort = null;
+        if (externalSignal) {
+            if (externalSignal.aborted) {
+                controller.abort();
+            } else {
+                onExternalAbort = () => controller.abort();
+                externalSignal.addEventListener("abort", onExternalAbort, {once: true});
+            }
+        }
         state.hasError = false;
         setLoading(true);
         try {
             await ensureIdentity();
-            const response = await global.gatewayAuth.apiFetch(buildDashboardUrl());
+            if (controller.signal.aborted || requestGeneration !== state.requestGeneration) return;
+            const response = await global.gatewayAuth.apiFetch(buildDashboardUrl(), {signal: controller.signal});
             const payload = await response.json().catch(() => ({}));
-            if (requestGeneration !== state.requestGeneration) return;
+            if (controller.signal.aborted || requestGeneration !== state.requestGeneration) return;
             if (!response.ok) {
                 state.hasError = true;
                 const descriptor = global.gatewayUi.describeApiError(payload, {
@@ -632,7 +647,7 @@
             updateFilterOptions(payload);
             renderDashboard(payload);
         } catch (error) {
-            if (requestGeneration !== state.requestGeneration) return;
+            if ((error && error.name === "AbortError") || requestGeneration !== state.requestGeneration) return;
             state.hasError = true;
             console.error("Failed to load analytics dashboard:", error);
             state.els.dashboard.hidden = true;
@@ -643,13 +658,17 @@
                 {...descriptor, rawDetail: error.message},
             );
         } finally {
+            if (externalSignal && onExternalAbort) {
+                externalSignal.removeEventListener("abort", onExternalAbort);
+            }
+            if (state.abortController === controller) state.abortController = null;
             if (requestGeneration === state.requestGeneration) setLoading(false);
         }
     }
 
     function bindEvents() {
-        state.els.refresh.addEventListener("click", loadAnalytics);
-        state.els.keyScope.addEventListener("change", loadAnalytics);
+        state.els.refresh.addEventListener("click", () => void loadAnalytics());
+        state.els.keyScope.addEventListener("change", () => void loadAnalytics());
         [
             state.els.range,
             state.els.bucket,
@@ -661,12 +680,15 @@
             state.els.xTitle,
             state.els.estimated,
         ].forEach(el => {
-            el.addEventListener("change", loadAnalytics);
+            el.addEventListener("change", () => void loadAnalytics());
         });
         state.els.filters.addEventListener("submit", event => {
             event.preventDefault();
-            loadAnalytics();
+            void loadAnalytics();
         });
+        window.addEventListener("pagehide", () => {
+            state.abortController?.abort();
+        }, {once: true});
     }
 
     function init() {
@@ -709,11 +731,11 @@
         state.initialized = true;
     }
 
-    async function activate() {
+    async function activate(context = null) {
         init();
         if (!state.initialized) return;
         if (!state.loaded || state.hasError) {
-            await loadAnalytics();
+            await loadAnalytics(context);
         } else {
             renderDashboard(state.data);
         }
