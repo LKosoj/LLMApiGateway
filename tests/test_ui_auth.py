@@ -35,6 +35,10 @@ def test_shared_auth_redirects_only_401_and_uses_one_runtime_identity_controller
     assert "if (response.status === 401)" in content
     assert "response.status === 403" not in content
     assert "global.location.assign(buildLoginUrl())" in content
+    assert "if (!response.ok)" in content
+    assert "console.error" in content
+    assert "return false;" in content
+    assert "return true;" in content
     assert "ui.applyRoleVisibility(document, state)" in content
     assert "ui.AUTH_STATES.pending" in content
     assert ".style.display" not in content
@@ -203,7 +207,9 @@ def test_login_uses_synchronous_submit_guard_and_shared_error_contract():
     assert "i18n.subscribe" in script
     assert "innerHTML" not in script
     assert "next: nextInput.value" in script
-    assert "global.location.assign(payload.redirect_to || '/v1/ui/overview')" in script
+    assert "function resolveSafeRedirectUrl(" in script
+    assert "parsed.origin === global.location.origin" in script
+    assert "global.location.assign(resolveSafeRedirectUrl(payload.redirect_to))" in script
 
 
 def test_five_tab_groups_expose_semantic_tab_roles():

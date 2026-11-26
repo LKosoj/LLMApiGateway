@@ -190,56 +190,79 @@ def responses_stream_to_chat(response: StreamingResponse, model: str) -> Streami
             if completed or event.done:
                 return []
             data = parse_sse_json(event)
+            if not isinstance(data, dict):
+                return []
             kind = data.get("type", event.event)
             if kind == "response.created":
-                info = data["response"]
-                metadata.update(
-                    id=info.get("id") or metadata["id"],
-                    created=info.get("created_at", metadata["created"]),
-                    model=info.get("model", model),
-                )
+                info = data.get("response")
+                if isinstance(info, dict):
+                    metadata.update(
+                        id=info.get("id") or metadata["id"],
+                        created=info.get("created_at", metadata["created"]),
+                        model=info.get("model", model),
+                    )
                 return [wrap({"role": "assistant", "content": ""})]
             if kind in {
                 "response.output_text.delta",
                 "response.refusal.delta",
                 "response.reasoning_summary_text.delta",
             }:
+                delta_value = data.get("delta")
+                if delta_value is None:
+                    return []
                 key = {
                     "response.output_text.delta": "content",
                     "response.refusal.delta": "refusal",
                     "response.reasoning_summary_text.delta": "reasoning_content",
                 }[kind]
-                return [wrap({key: data["delta"]})]
-            if kind == "response.output_item.added" and data["item"].get("type") == "function_call":
-                item = data["item"]
+                return [wrap({key: delta_value})]
+            item = data.get("item")
+            if kind == "response.output_item.added" and isinstance(item, dict) and item.get("type") == "function_call":
+                output_index = data.get("output_index")
+                if output_index is None:
+                    return []
                 index = len(tools)
-                tools[data["output_index"]] = index
+                tools[output_index] = index
                 return [
                     wrap(
                         {
                             "tool_calls": [
                                 {
                                     "index": index,
-                                    "id": item["call_id"],
+                                    "id": item.get("call_id", ""),
                                     "type": "function",
-                                    "function": {"name": item["name"], "arguments": item.get("arguments", "")},
+                                    "function": {"name": item.get("name", ""), "arguments": item.get("arguments", "")},
                                 }
                             ]
                         }
                     )
                 ]
             if kind == "response.function_call_arguments.delta":
+                output_index = data.get("output_index")
+                delta_value = data.get("delta")
+                if output_index not in tools or delta_value is None:
+                    return []
                 return [
                     wrap(
                         {
                             "tool_calls": [
-                                {"index": tools[data["output_index"]], "function": {"arguments": data["delta"]}}
+                                {"index": tools[output_index], "function": {"arguments": delta_value}}
                             ]
                         }
                     )
                 ]
             if kind in {"response.completed", "response.incomplete"}:
-                result = responses_response_to_chat(data["response"])
+                response_obj = data.get("response")
+                if not isinstance(response_obj, dict):
+                    completed = True
+                    return [
+                        (
+                            "data: "
+                            + json.dumps({"error": {"message": "Responses upstream completed without response payload."}})
+                            + "\n\n"
+                        ).encode()
+                    ]
+                result = responses_response_to_chat(response_obj)
                 if "error" in result:
                     completed = True
                     return [("data: " + json.dumps(result) + "\n\n").encode()]
@@ -250,9 +273,10 @@ def responses_stream_to_chat(response: StreamingResponse, model: str) -> Streami
                 ]
             if kind in {"error", "response.failed"}:
                 completed = True
+                response_obj = data.get("response")
                 error = (
                     data.get("error")
-                    or data.get("response", {}).get("error")
+                    or (response_obj.get("error") if isinstance(response_obj, dict) else None)
                     or {"message": data.get("message", "Responses upstream failed.")}
                 )
                 return [("data: " + json.dumps({"error": error}) + "\n\n").encode()]

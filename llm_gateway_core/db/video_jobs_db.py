@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
@@ -14,7 +15,9 @@ from ..config.paths import resolve_db_dir
 class VideoJobsDB:
     def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or resolve_db_dir() / "llmgateway_video_jobs.db"
-        with closing(sqlite3.connect(self.db_path)) as connection:
+        os.makedirs(self.db_path.parent, exist_ok=True)
+        with closing(self._connect()) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS video_jobs (
                     id TEXT PRIMARY KEY,
@@ -30,6 +33,12 @@ class VideoJobsDB:
             """)
             connection.commit()
 
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.db_path, timeout=30.0)
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("PRAGMA busy_timeout=30000")
+        return connection
+
     async def create(self, owner: str, gateway_model: str, route: dict, upstream_id: str) -> dict:
         job = {
             "id": f"video_{uuid4().hex}",
@@ -42,7 +51,7 @@ class VideoJobsDB:
         }
 
         def insert():
-            with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(self._connect()) as connection:
                 connection.execute(
                     "INSERT OR IGNORE INTO video_jobs VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
                     (job["id"], owner, gateway_model, route["provider"], json.dumps(route), upstream_id, job["created_at"]),
@@ -59,7 +68,7 @@ class VideoJobsDB:
 
     async def get(self, job_id: str, owner: str) -> dict | None:
         def read():
-            with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(self._connect()) as connection:
                 connection.row_factory = sqlite3.Row
                 row = connection.execute(
                     "SELECT * FROM video_jobs WHERE id = ? AND owner = ?", (job_id, owner),
@@ -76,7 +85,7 @@ class VideoJobsDB:
     async def freeze_billing(self, job_id: str, payload: dict) -> dict:
         """Keep one immutable billing observation for deduplicated polling charges."""
         def freeze():
-            with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(self._connect()) as connection:
                 connection.execute(
                     "UPDATE video_jobs SET billing_payload = ? WHERE id = ? AND billing_payload IS NULL",
                     (json.dumps(payload), job_id),
@@ -85,6 +94,8 @@ class VideoJobsDB:
                 row = connection.execute(
                     "SELECT billing_payload FROM video_jobs WHERE id = ?", (job_id,),
                 ).fetchone()
+                if row is None or row[0] is None:
+                    raise KeyError(f"Video job not found: {job_id}")
                 return json.loads(row[0])
 
         return await asyncio.to_thread(freeze)

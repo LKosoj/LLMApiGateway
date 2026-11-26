@@ -1,14 +1,16 @@
 import asyncio
 import base64
 import io
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 from fastapi import HTTPException
 from PIL import Image
 
+from llm_gateway_core.api.v1 import image_dimensions as image_dimensions_module
 from llm_gateway_core.api.v1.image_dimensions import image_dimensions_match
+from llm_gateway_core.api.v1.web_safe_fetch import _ValidatedFetchUrl
 from tests import test_images_endpoint as endpoint_support
 
 
@@ -81,12 +83,68 @@ def test_checks_actual_image_bytes_and_every_image(image_format):
 
 def test_reads_image_url_without_provider_auth():
     url = "https://example.com/image.png"
-    upstream = AsyncMock()
-    upstream.get.return_value = httpx.Response(
-        200, content=base64.b64decode(encoded_image(32, 64)), request=httpx.Request("GET", url),
+    response = httpx.Response(
+        200,
+        content=base64.b64decode(encoded_image(32, 64)),
+        request=httpx.Request("GET", url),
     )
-    assert asyncio.run(image_dimensions_match({"data": [{"url": url}]}, (32, 64), upstream))
-    upstream.get.assert_awaited_once_with(url, follow_redirects=True)
+    with patch.object(
+        image_dimensions_module,
+        "_get_with_public_redirects",
+        new=AsyncMock(return_value=(response, url)),
+    ) as safe_get:
+        assert asyncio.run(image_dimensions_match({"data": [{"url": url}]}, (32, 64), AsyncMock()))
+    safe_get.assert_awaited_once_with(url)
+
+
+def test_reads_image_url_via_proxy_client_with_stream_and_validation():
+    url = "https://example.com/image.png"
+    proxy_client = AsyncMock()
+    proxy_client.build_request = lambda method, target_url: httpx.Request(method, target_url)
+    proxy_client.send = AsyncMock(
+        return_value=httpx.Response(
+            200,
+            content=base64.b64decode(encoded_image(32, 64)),
+            request=httpx.Request("GET", url),
+        )
+    )
+    validated = _ValidatedFetchUrl(
+        url=url,
+        host="example.com",
+        port=443,
+        addresses=("93.184.216.34",),
+        connect_ip="93.184.216.34",
+    )
+    with patch.object(
+        image_dimensions_module,
+        "_validated_fetch_url",
+        new=AsyncMock(return_value=validated),
+    ) as validate_mock:
+        assert asyncio.run(
+            image_dimensions_match(
+                {"data": [{"url": url}]},
+                (32, 64),
+                proxy_client,
+                use_proxy_client=True,
+            )
+        )
+    validate_mock.assert_awaited_once_with(url)
+    proxy_client.send.assert_awaited_once()
+    assert proxy_client.send.await_args.kwargs == {"stream": True, "follow_redirects": False}
+
+
+@pytest.mark.parametrize("status_code", [400, 413, 504])
+def test_safe_fetch_http_errors_map_to_502(status_code):
+    url = "https://example.com/image.png"
+    with patch.object(
+        image_dimensions_module,
+        "_get_with_public_redirects",
+        new=AsyncMock(side_effect=HTTPException(status_code=status_code, detail="blocked")),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(image_dimensions_match({"data": [{"url": url}]}, (32, 64), AsyncMock()))
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "Cannot read returned image to check its size."
 
 
 @pytest.mark.parametrize(("width", "height", "fits"), [
@@ -109,18 +167,31 @@ def test_unreadable_image_is_an_explicit_error(payload):
 def test_image_url_is_downloaded_on_each_size_attempt(endpoint):
     url = "https://example.com/image.png"
     payload = {"data": [{"url": url}]}
-    with endpoint._client(endpoint_support._FakeDownstreamResponse(payload)) as (client, _, upstream):
-        upstream.get = AsyncMock(side_effect=[
-            httpx.Response(200, content=base64.b64decode(encoded_image(width, height)),
-                           request=httpx.Request("GET", url))
-            for width, height in [(64, 32), (32, 64)]
-        ])
+    responses = [
+        (
+            httpx.Response(
+                200,
+                content=base64.b64decode(encoded_image(width, height)),
+                request=httpx.Request("GET", url),
+            ),
+            url,
+        )
+        for width, height in [(64, 32), (32, 64)]
+    ]
+    with (
+        patch.object(
+            image_dimensions_module,
+            "_get_with_public_redirects",
+            new=AsyncMock(side_effect=responses),
+        ) as safe_get,
+        endpoint._client(endpoint_support._FakeDownstreamResponse(payload)) as (client, _, upstream),
+    ):
         response = client.post(
             "/v1/images/generations",
             json={"model": "gateway/image-gen", "prompt": "Draw a tree", "size": "32x64"},
             headers={"Authorization": "Bearer test-gateway-key"},
         )
-        assert upstream.get.await_count == 2
+        assert safe_get.await_count == 2
         assert upstream.post.await_count == 2
     assert response.status_code == 200
     assert response.json() == payload

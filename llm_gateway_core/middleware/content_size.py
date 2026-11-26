@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -17,6 +18,9 @@ LOGIN_MAX_REQUEST_BODY_BYTES = 64 * 1024
 # Silence while the body is still incomplete. A slow upload keeps resetting
 # this; a client that stops sending does not.
 REQUEST_BODY_IDLE_TIMEOUT_SECONDS = 30.0
+# Hard wall-clock deadline for receiving the entire request body so a slow-drip
+# client sending 1 byte every few seconds cannot hold a worker indefinitely.
+REQUEST_BODY_TOTAL_TIMEOUT_SECONDS = 300.0
 PRE_ROUTE_REJECTED_STATE_KEY = "llmgateway_pre_route_rejected"
 UNMATCHED_ROUTE_STATE_KEY = "llmgateway_unmatched_route"
 
@@ -40,15 +44,22 @@ class ContentSizeLimitMiddleware:
         *,
         max_body_size: int,
         idle_timeout_seconds: float | None = None,
+        total_timeout_seconds: float | None = None,
     ) -> None:
         self.app = app
         self.max_body_size = max_body_size
         self._idle_timeout_seconds = idle_timeout_seconds
+        self._total_timeout_seconds = total_timeout_seconds
 
     def _idle_timeout(self) -> float:
         if self._idle_timeout_seconds is None:
             return REQUEST_BODY_IDLE_TIMEOUT_SECONDS
         return self._idle_timeout_seconds
+
+    def _total_timeout(self) -> float:
+        if self._total_timeout_seconds is None:
+            return REQUEST_BODY_TOTAL_TIMEOUT_SECONDS
+        return self._total_timeout_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -75,15 +86,31 @@ class ContentSizeLimitMiddleware:
         bytes_seen = 0
         terminal_request = False
         buffered_disconnect: Message | None = None
+        deadline = time.monotonic() + self._total_timeout()
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                body_blocks.clear()
+                _mark_pre_route_rejected(scope)
+                logging.warning(
+                    "Request body exceeded total timeout of %.0fs on %s %s after %s bytes. Closing it.",
+                    self._total_timeout(),
+                    scope.get("method") or "",
+                    scope.get("path") or "",
+                    bytes_seen,
+                )
+                await _send_body_timeout(send)
+                return
             try:
-                message = await asyncio.wait_for(receive(), self._idle_timeout())
+                message = await asyncio.wait_for(
+                    receive(),
+                    min(self._idle_timeout(), remaining),
+                )
             except TimeoutError:
                 body_blocks.clear()
                 _mark_pre_route_rejected(scope)
                 logging.warning(
-                    "Request body stopped arriving for %.0fs on %s %s after %s bytes. Closing it.",
-                    self._idle_timeout(),
+                    "Request body timed out on %s %s after %s bytes. Closing it.",
                     scope.get("method") or "",
                     scope.get("path") or "",
                     bytes_seen,

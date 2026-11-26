@@ -145,7 +145,12 @@ class ResponseObservationSession:
             raise ResponseObservationStateError(
                 "The captured request body is not complete."
             )
-        return bytes(self._captured_body)
+        body = bytes(self._captured_body)
+        self._captured_body.clear()
+        return body
+
+    def clear_captured_body(self) -> None:
+        self._captured_body.clear()
 
     def observe_receive(self, message: Message) -> None:
         self._receive_started = True
@@ -839,6 +844,7 @@ class ResponseObservationMiddleware:
                 )
             raise
         finally:
+            session.clear_captured_body()
             if observer is not None:
                 observer.release_capacity()
                 try:

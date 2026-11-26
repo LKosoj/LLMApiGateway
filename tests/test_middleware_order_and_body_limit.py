@@ -128,8 +128,8 @@ class MiddlewareOrderAndBodyLimitTests(unittest.TestCase):
                 "RuntimeSnapshotMiddleware",
                 "GZipMiddleware",
                 "ResponseObservationMiddleware",
-                "add_routing_diagnostic_headers",
-                "add_anthropic_version_header",
+                "RoutingDiagnosticHeadersMiddleware",
+                "AnthropicVersionHeaderMiddleware",
             ],
         )
 
@@ -1506,6 +1506,44 @@ class MiddlewareOrderAndBodyLimitTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Internal server error")
         self.assertTrue(response.json()["request_id"])
         self.assertNotIn("SECRET_BACKEND_TOKEN", response.text)
+
+    def test_slow_drip_request_body_hits_total_timeout_deadline(self):
+        async def scenario() -> None:
+            sent = []
+            downstream_called = False
+
+            async def downstream(_scope, _receive, _send):
+                nonlocal downstream_called
+                downstream_called = True
+
+            async def receive():
+                await asyncio.sleep(0.03)
+                return {"type": "http.request", "body": b"x", "more_body": True}
+
+            async def send(message):
+                sent.append(message)
+
+            middleware = ContentSizeLimitMiddleware(
+                downstream,
+                max_body_size=1024,
+                idle_timeout_seconds=1.0,
+                total_timeout_seconds=0.08,
+            )
+            await middleware(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/v1/chat/completions",
+                    "headers": [],
+                },
+                receive,
+                send,
+            )
+
+            self.assertFalse(downstream_called)
+            self.assertEqual(sent[0]["status"], 408)
+
+        run_async(scenario())
 
 
 async def _run_limited_asgi_request(

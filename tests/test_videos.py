@@ -476,3 +476,20 @@ def test_video_config_roundtrip_and_model_metadata():
     _add_gateway_operation_models(models, RULES)
     assert models[MODEL]['type'] == 'video'
     assert models[MODEL]['architecture']['output_modalities'] == ['video']
+
+
+def test_video_jobs_db_creates_parent_dir_sets_pragmas_and_raises_on_missing_freeze(tmp_path):
+    from contextlib import closing
+
+    async def scenario():
+        nested_path = tmp_path / 'nested' / 'dir' / 'video_jobs.db'
+        db = VideoJobsDB(nested_path)
+        assert nested_path.exists()
+        with closing(db._connect()) as conn:
+            assert conn.execute('PRAGMA journal_mode').fetchone()[0] == 'wal'
+            assert conn.execute('PRAGMA synchronous').fetchone()[0] == 1
+            assert conn.execute('PRAGMA busy_timeout').fetchone()[0] == 30000
+        with pytest.raises(KeyError, match='missing-job'):
+            await db.freeze_billing('missing-job', {'cost': 0.1})
+
+    asyncio.run(scenario())

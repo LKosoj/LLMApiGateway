@@ -160,6 +160,10 @@ class Settings(BaseSettings):
         "DEEP_RESEARCH_ADMISSION_TIMEOUT_SECONDS",
         5.0,
     )
+    deep_research_job_timeout_seconds: float = _get_positive_float_env(
+        "DEEP_RESEARCH_JOB_TIMEOUT_SECONDS",
+        1800.0,
+    )
     audio_decoded_max_bytes: int = _get_positive_int_env(
         "AUDIO_DECODED_MAX_BYTES",
         96 * 1024 * 1024,

@@ -5,6 +5,7 @@ import hashlib
 import json
 import httpx
 import logging
+import math
 import time
 import zlib
 from collections.abc import Awaitable, Callable, MutableMapping
@@ -785,7 +786,7 @@ def parse_retry_after_header(value: object) -> float | None:
 
     try:
         seconds = float(value)
-        if seconds < 0:
+        if not math.isfinite(seconds) or seconds < 0:
             return None
         return seconds
     except ValueError:
@@ -1081,8 +1082,8 @@ def _extract_stream_error_detail(chunk_json: object) -> str | None:
         error = (chunk_json.get("response") or {}).get("error") or {}
         return error.get("message") or "Responses upstream failed."
 
-    if "error" in chunk_json:
-        error = chunk_json.get("error")
+    error = chunk_json.get("error")
+    if error is not None:
         if isinstance(error, dict):
             return error.get("message") or str(error)
         return str(error)
@@ -1093,8 +1094,9 @@ def _extract_stream_error_detail(chunk_json: object) -> str | None:
             return str(message)
         return str(chunk_json)
 
-    if "detail" in chunk_json:
-        return str(chunk_json.get("detail"))
+    detail = chunk_json.get("detail")
+    if detail is not None:
+        return str(detail)
 
     if "code" in chunk_json:
         code = chunk_json.get("code")
@@ -1832,9 +1834,10 @@ async def _make_json_request(
     if target_url.rstrip("/").endswith("/responses") and response_json.get("error") is None:
         response_json.pop("error", None)
 
-    if "error" in response_json or "detail" in response_json:
-        if "error" in response_json:
-            error = response_json.get("error")
+    error = response_json.get("error")
+    detail = response_json.get("detail")
+    if error is not None or detail is not None:
+        if error is not None:
             if isinstance(error, dict):
                 error_detail = error.get("message")
             elif isinstance(error, str):
@@ -1843,7 +1846,7 @@ async def _make_json_request(
                 error_detail = repr(error)
         else:
             error_detail = None
-        error_detail = error_detail or response_json.get("detail")
+        error_detail = error_detail or detail
         logging.warning(f"Error detected in non-stream response from {target_url}: {error_detail}")
         usage = response_json.get("usage")
         if error_detail and isinstance(usage, dict):

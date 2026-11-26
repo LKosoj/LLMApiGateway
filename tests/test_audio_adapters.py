@@ -513,5 +513,40 @@ class AudioAdaptersTests(unittest.TestCase):
             self.assertEqual(wav_file.getnchannels(), 1)
 
 
+    def test_convert_audio_bytes_to_wav_drains_large_stderr_with_cap_and_handles_missing_stderr(self):
+        import llm_gateway_core.api.v1.audio_adapters as audio_adapters_module
+
+        wav_bytes = self._build_wav_bytes()
+
+        class _FakeProcess:
+            def __init__(self, *, stderr_bytes: bytes | None):
+                self.stdout = io.BytesIO(wav_bytes)
+                self.stderr = io.BytesIO(stderr_bytes) if stderr_bytes is not None else None
+                self._returncode = 0
+
+            def wait(self):
+                return self._returncode
+
+            def poll(self):
+                return self._returncode
+
+            def kill(self):
+                self._returncode = -9
+
+        noisy_process = _FakeProcess(stderr_bytes=b"E" * 20_000)
+        with patch.object(audio_adapters_module.subprocess, "Popen", return_value=noisy_process) as popen_mock:
+            result = audio_adapters_module._convert_audio_bytes_to_wav(b"mp3-bytes", max_bytes=len(wav_bytes) + 100)
+        self.assertEqual(result, wav_bytes)
+        self.assertEqual(popen_mock.call_args.kwargs["stderr"], audio_adapters_module.subprocess.PIPE)
+        self.assertTrue(noisy_process.stderr.closed)
+
+        mock_no_stderr = _FakeProcess(stderr_bytes=None)
+        with patch.object(audio_adapters_module.subprocess, "Popen", return_value=mock_no_stderr):
+            result_no_stderr = audio_adapters_module._convert_audio_bytes_to_wav(
+                b"mp3-bytes", max_bytes=len(wav_bytes) + 100
+            )
+        self.assertEqual(result_no_stderr, wav_bytes)
+
+
 if __name__ == "__main__":
     unittest.main()

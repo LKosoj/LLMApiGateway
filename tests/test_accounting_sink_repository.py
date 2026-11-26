@@ -683,7 +683,11 @@ def test_concurrent_duplicate_applies_spend_exactly_once(sink_db: ApiKeysDB) -> 
     assert len(_receipt_rows(sink_db)) == 1
 
 
-def test_held_write_lock_obeys_bounded_accounting_timeout(sink_db: ApiKeysDB) -> None:
+def test_held_write_lock_obeys_bounded_accounting_timeout(
+    sink_db: ApiKeysDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(accounting_schema, "ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS", 500)
     key = sink_db.create(name="locked")
     stored = _stored_charge(
         event_id="usage:v1:http:locked",
@@ -704,7 +708,7 @@ def test_held_write_lock_obeys_bounded_accounting_timeout(sink_db: ApiKeysDB) ->
         blocker.close()
 
     assert error.value.code is AccountingErrorCode.PROJECTION_WRITE_FAILED
-    assert 1.5 <= time.monotonic() - started < 4.0
+    assert 0.3 <= time.monotonic() - started < 2.0
     assert _receipt_rows(sink_db) == []
 
 

@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+ACCOUNTING_STOP_DRAIN_TIMEOUT_SECONDS = 30.0
+
 
 class AccountingSourceRepository(Protocol):
     def accept_accounting_event(self, event: AccountingEvent) -> SourceAcceptance: ...
@@ -257,6 +259,7 @@ class AccountingService:
         max_deep_research_children: int = 1024,
         projector_batch_size: int = 64,
         projector_backoff_seconds: float = 0.25,
+        stop_drain_timeout_seconds: float = ACCOUNTING_STOP_DRAIN_TIMEOUT_SECONDS,
         clock: Callable[[], datetime] | None = None,
         budget_ledger: UsdBudgetLedger | None = None,
         rate_limiter: RateLimiter | None = None,
@@ -269,6 +272,7 @@ class AccountingService:
         self._max_deep_research_children = _positive_int(max_deep_research_children)
         self._projector_batch_size = _positive_int(projector_batch_size)
         self._projector_backoff_seconds = _positive_float(projector_backoff_seconds)
+        self._stop_drain_timeout_seconds = _positive_float(stop_drain_timeout_seconds)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._budget_ledger = budget_ledger or UsdBudgetLedger()
         self._rate_limiter = rate_limiter or RateLimiter()
@@ -291,6 +295,7 @@ class AccountingService:
         self._owner_tasks: set[asyncio.Task[AccountingReceipt]] = set()
         self._terminal_owner_error: BaseException | None = None
         self._pending_events: set[_RetainedKey] = set()
+        self._tolerated_pending_events: set[_RetainedKey] = set()
         self._projection_attempts = 0
         self._fingerprint_conflicts = 0
         self._source_orphans = 0
@@ -517,6 +522,8 @@ class AccountingService:
     def _mark_pending(self, stored: StoredAccountingEvent) -> None:
         with self._state_guard:
             key = self._pending_key(stored)
+            if key in self._tolerated_pending_events:
+                return
             unsettled_count = self._unsettled_count_locked()
             if (
                 key not in self._pending_events
@@ -527,9 +534,20 @@ class AccountingService:
                 raise AccountingError(AccountingErrorCode.ACCOUNTING_FAILED)
             self._pending_events.add(key)
 
+    def _mark_tolerated_pending(self, stored: StoredAccountingEvent) -> None:
+        with self._state_guard:
+            key = self._pending_key(stored)
+            self._pending_events.discard(key)
+            self._tolerated_pending_events.add(key)
+            cleared = self._clear_transient_block_locked()
+        if cleared:
+            self._log_admission_reopened()
+
     def _clear_pending(self, stored: StoredAccountingEvent) -> None:
         with self._state_guard:
-            self._pending_events.discard(self._pending_key(stored))
+            key = self._pending_key(stored)
+            self._pending_events.discard(key)
+            self._tolerated_pending_events.discard(key)
             cleared = self._clear_transient_block_locked()
         if cleared:
             self._log_admission_reopened()
@@ -547,9 +565,11 @@ class AccountingService:
             self._retained.pop(retained_key, None)
             pending_key = self._pending_key(stored)
             if stored.projected_at is None:
-                self._pending_events.add(pending_key)
+                if pending_key not in self._tolerated_pending_events:
+                    self._pending_events.add(pending_key)
             else:
                 self._pending_events.discard(pending_key)
+                self._tolerated_pending_events.discard(pending_key)
             cleared = self._clear_transient_block_locked()
         if cleared:
             self._log_admission_reopened()
@@ -585,7 +605,12 @@ class AccountingService:
                 active_sessions=len(self._sessions) + len(self._owner_tasks),
                 active_session_limit=self._max_active_sessions,
                 reset_pending_keys=len(self._reset_pending_at),
-                pending_source_events=self._unsettled_count_locked(),
+                pending_source_events=len(
+                    self._retained.keys()
+                    | self._source_inflight.keys()
+                    | self._pending_events
+                    | self._tolerated_pending_events
+                ),
                 projection_attempts=self._projection_attempts,
                 fingerprint_conflicts=self._fingerprint_conflicts,
                 source_orphans=self._source_orphans,
@@ -1869,7 +1894,7 @@ class AccountingService:
             raise
         except Exception:
             raise AccountingError(AccountingErrorCode.PROJECTION_WRITE_FAILED) from None
-        else:
+        finally:
             with self._state_guard:
                 for key_id in key_ids:
                     self._reset_pending_at.pop(key_id, None)
@@ -2091,6 +2116,7 @@ class AccountingService:
                 event.api_key_id,
                 exc.code.value,
             )
+            self._mark_tolerated_pending(stored)
             self._record_error(exc.code, permanent=False, block=False)
             self._projector_wake.set()
             return self._receipt(acceptance, ProjectionStatus.PENDING)
@@ -2350,6 +2376,7 @@ class AccountingService:
                         stored.event.api_key_id,
                         exc.code.value,
                     )
+                    self._mark_tolerated_pending(stored)
                     self._record_error(exc.code, permanent=False, block=False)
                     status = ProjectionStatus.PENDING
                     tolerated = True
@@ -2444,6 +2471,7 @@ class AccountingService:
                         stored.event.api_key_id,
                         exc.code.value,
                     )
+                    self._mark_tolerated_pending(stored)
                     self._record_error(exc.code, permanent=False, block=False)
                     tolerated_permanent_failure = True
                     continue
@@ -2532,8 +2560,13 @@ class AccountingService:
         if error is not None:
             self._publish_all_retry_errors(error)
 
-    async def stop(self) -> None:
+    async def stop(self, *, timeout: float | None = None) -> None:
         self._bind_loop()
+        drain_timeout = (
+            self._stop_drain_timeout_seconds
+            if timeout is None
+            else _positive_float(timeout)
+        )
         with self._state_guard:
             if self._state is AccountingHealthState.STOPPED:
                 return
@@ -2548,7 +2581,7 @@ class AccountingService:
         task = self._stop_task
         if task is None or task.done():
             previous_stop_task = task
-            workflow = self._stop_workflow()
+            workflow = self._stop_workflow(timeout=drain_timeout)
             try:
                 task = asyncio.create_task(
                     workflow,
@@ -2578,14 +2611,69 @@ class AccountingService:
             return
         task.exception()
 
-    async def _stop_workflow(self) -> None:
+    async def _stop_projector_for_timeout(self, timeout: float) -> None:
+        self._projector_stop.set()
+        self._projector_wake.set()
+        projector = self._projector_task
+        if projector is not None:
+            try:
+                await asyncio.wait_for(
+                    projector,
+                    timeout=max(0.1, min(1.0, timeout)),
+                )
+            except TimeoutError:
+                projector.cancel()
+                try:
+                    await projector
+                except BaseException:
+                    pass
+            except BaseException:
+                pass
+            finally:
+                self._projector_task = None
+
+    async def _stop_workflow(self, *, timeout: float | None = None) -> None:
+        drain_timeout = (
+            self._stop_drain_timeout_seconds
+            if timeout is None
+            else _positive_float(timeout)
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + drain_timeout
+
+        async def _wait_bounded(awaitable):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                if asyncio.iscoroutine(awaitable):
+                    awaitable.close()
+                raise TimeoutError
+            return await asyncio.wait_for(awaitable, timeout=remaining)
+
         terminal_error: BaseException | None = None
         start_task = self._start_task
         if start_task is not None:
-            start_results = await asyncio.gather(
-                start_task,
-                return_exceptions=True,
-            )
+            try:
+                start_results = await _wait_bounded(
+                    asyncio.gather(
+                        start_task,
+                        return_exceptions=True,
+                    )
+                )
+            except TimeoutError:
+                logger.error(
+                    "Accounting stop drain timed out after %.2fs while waiting for start task",
+                    drain_timeout,
+                )
+                await self._stop_projector_for_timeout(drain_timeout)
+                self._record_error(
+                    AccountingErrorCode.DRAIN_FAILED,
+                    permanent=False,
+                    block=False,
+                )
+                with self._state_guard:
+                    self._state = AccountingHealthState.FAILED
+                    self._accepting = False
+                raise AccountingError(AccountingErrorCode.DRAIN_FAILED) from None
             for result in start_results:
                 if terminal_error is None and isinstance(result, BaseException) and not isinstance(result, Exception):
                     terminal_error = result
@@ -2595,76 +2683,102 @@ class AccountingService:
                     return
                 self._state = AccountingHealthState.STOPPING
                 self._accepting = False
-            if self._history_audit_task is not None:
-                history_results = await asyncio.gather(self._history_audit_task, return_exceptions=True)
-                for result in history_results:
-                    if terminal_error is None and isinstance(result, BaseException) and not isinstance(result, Exception):
-                        terminal_error = result
-            await self._session_drain.wait()
-            with self._state_guard:
-                session_tasks = tuple(self._session_tasks)
-            if session_tasks:
-                session_results = await asyncio.gather(
-                    *session_tasks,
-                    return_exceptions=True,
-                )
-                for result in session_results:
-                    if (
-                        terminal_error is None
-                        and isinstance(result, BaseException)
-                        and not isinstance(result, Exception)
-                    ):
-                        terminal_error = result
-            key_mutation_tasks = tuple(self._key_mutation_tasks)
-            if key_mutation_tasks:
-                mutation_results = await asyncio.gather(
-                    *key_mutation_tasks,
-                    return_exceptions=True,
-                )
-                for result in mutation_results:
-                    if (
-                        terminal_error is None
-                        and isinstance(result, BaseException)
-                        and not isinstance(result, Exception)
-                    ):
-                        terminal_error = result
-            with self._state_guard:
-                owner_tasks = tuple(self._owner_tasks)
-                completed_owner_error = self._terminal_owner_error
-                self._terminal_owner_error = None
-            if terminal_error is None and completed_owner_error is not None:
-                terminal_error = completed_owner_error
-            if owner_tasks:
-                owner_results = await asyncio.gather(
-                    *owner_tasks,
-                    return_exceptions=True,
-                )
+            try:
+                if self._history_audit_task is not None:
+                    history_results = await _wait_bounded(
+                        asyncio.gather(self._history_audit_task, return_exceptions=True)
+                    )
+                    for result in history_results:
+                        if terminal_error is None and isinstance(result, BaseException) and not isinstance(result, Exception):
+                            terminal_error = result
+                await _wait_bounded(self._session_drain.wait())
                 with self._state_guard:
+                    session_tasks = tuple(self._session_tasks)
+                if session_tasks:
+                    session_results = await _wait_bounded(
+                        asyncio.gather(
+                            *session_tasks,
+                            return_exceptions=True,
+                        )
+                    )
+                    for result in session_results:
+                        if (
+                            terminal_error is None
+                            and isinstance(result, BaseException)
+                            and not isinstance(result, Exception)
+                        ):
+                            terminal_error = result
+                key_mutation_tasks = tuple(self._key_mutation_tasks)
+                if key_mutation_tasks:
+                    mutation_results = await _wait_bounded(
+                        asyncio.gather(
+                            *key_mutation_tasks,
+                            return_exceptions=True,
+                        )
+                    )
+                    for result in mutation_results:
+                        if (
+                            terminal_error is None
+                            and isinstance(result, BaseException)
+                            and not isinstance(result, Exception)
+                        ):
+                            terminal_error = result
+                with self._state_guard:
+                    owner_tasks = tuple(self._owner_tasks)
                     completed_owner_error = self._terminal_owner_error
                     self._terminal_owner_error = None
                 if terminal_error is None and completed_owner_error is not None:
                     terminal_error = completed_owner_error
-                for result in owner_results:
-                    if (
-                        terminal_error is None
-                        and isinstance(result, BaseException)
-                        and not isinstance(result, Exception)
-                    ):
-                        terminal_error = result
-            reconcile_task = self._reconcile_task
-            if reconcile_task is not None:
-                reconcile_results = await asyncio.gather(
-                    reconcile_task,
-                    return_exceptions=True,
-                )
-                for result in reconcile_results:
-                    if isinstance(result, BaseException) and not isinstance(result, Exception):
-                        if terminal_error is None:
-                            terminal_error = result
-                        self._record_error(
-                            AccountingErrorCode.ACCOUNTING_FAILED,
-                            permanent=True,
+                if owner_tasks:
+                    owner_results = await _wait_bounded(
+                        asyncio.gather(
+                            *owner_tasks,
+                            return_exceptions=True,
                         )
+                    )
+                    with self._state_guard:
+                        completed_owner_error = self._terminal_owner_error
+                        self._terminal_owner_error = None
+                    if terminal_error is None and completed_owner_error is not None:
+                        terminal_error = completed_owner_error
+                    for result in owner_results:
+                        if (
+                            terminal_error is None
+                            and isinstance(result, BaseException)
+                            and not isinstance(result, Exception)
+                        ):
+                            terminal_error = result
+                reconcile_task = self._reconcile_task
+                if reconcile_task is not None:
+                    reconcile_results = await _wait_bounded(
+                        asyncio.gather(
+                            reconcile_task,
+                            return_exceptions=True,
+                        )
+                    )
+                    for result in reconcile_results:
+                        if isinstance(result, BaseException) and not isinstance(result, Exception):
+                            if terminal_error is None:
+                                terminal_error = result
+                            self._record_error(
+                                AccountingErrorCode.ACCOUNTING_FAILED,
+                                permanent=True,
+                            )
+            except TimeoutError:
+                logger.error(
+                    "Accounting stop drain timed out after %.2fs",
+                    drain_timeout,
+                )
+                await self._stop_projector_for_timeout(drain_timeout)
+                self._record_error(
+                    AccountingErrorCode.DRAIN_FAILED,
+                    permanent=False,
+                    block=False,
+                )
+                with self._state_guard:
+                    self._state = AccountingHealthState.FAILED
+                    self._accepting = False
+                raise AccountingError(AccountingErrorCode.DRAIN_FAILED) from None
 
             self._projector_stop.set()
             self._projector_wake.set()
@@ -2726,6 +2840,7 @@ class AccountingService:
                     and report is not None
                     and report.clean
                     and self._unsettled_count_locked() == 0
+                    and not self._tolerated_pending_events
                     and not self._sessions
                     and not self._active_by_key
                     and not self._reset_pending_at

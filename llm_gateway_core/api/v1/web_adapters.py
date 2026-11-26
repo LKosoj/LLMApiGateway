@@ -954,8 +954,9 @@ async def _read_with_model(
         try:
             result = await adapter(http_client, url)
         except Exception as exc:
-            logger.warning("Web read adapter '%s' failed for %s: %s", adapter_name, url, exc)
-            last_error = f"{adapter_name}: {exc}"
+            redacted_error = redact_provider_error_text(exc)
+            logger.warning("Web read adapter '%s' failed for %s: %s", adapter_name, url, redacted_error)
+            last_error = f"{adapter_name}: {redacted_error}"
             continue
         if result is not None and (result.get("content") or "").strip():
             logger.info("Web read adapter '%s' succeeded for %s.", adapter_name, url)
@@ -966,7 +967,7 @@ async def _read_with_model(
         status_code=503,
         detail=(
             f"Web read '{read_model}' failed to retrieve content for '{url}'."
-            + (f" Last error: {last_error}" if last_error else " No adapters enabled.")
+            + (f" Last error: {redact_provider_error_text(last_error)}" if last_error else " No adapters enabled.")
         ),
     )
 

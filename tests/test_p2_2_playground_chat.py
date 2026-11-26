@@ -240,3 +240,175 @@ def test_enter_sends_and_shift_enter_inserts_newline(
         )
     finally:
         context.close()
+
+
+def test_fusion_per_model_insights_not_double_escaped(
+    browser: Browser,
+    chat_server: str,
+) -> None:
+    context = _login(browser, chat_server)
+    try:
+        page = context.new_page()
+        page.route(
+            "**/v1/ui/playground/models",
+            lambda route: route.fulfill(
+                status=200,
+                json={
+                    "chat": ["gateway/fusion-demo"],
+                    "fusion": ["gateway/fusion-demo"],
+                    "providers": [],
+                },
+            ),
+        )
+        page.route(
+            "**/v1/chat/completions",
+            lambda route: route.fulfill(
+                status=200,
+                json={
+                    "choices": [{"message": {"role": "assistant", "content": "Final answer"}}],
+                    "fusion": {
+                        "main": {"provider": "p1", "model": "m1"},
+                        "judge": {"provider": "p2", "model": "m2"},
+                        "analysis": {
+                            "agreements": [],
+                            "disputes": [],
+                            "per_model_insights": [
+                                {"model": "A & B", "insight": "x < y & z"},
+                            ],
+                            "blind_spots": [],
+                        },
+                        "panel": [],
+                    },
+                },
+            ),
+        )
+        _open_chat_tab(page, chat_server)
+
+        page.locator("#simpleChatInput").fill("Compare")
+        page.locator("#simpleChatForm .run-button").click()
+
+        fusion_details = page.locator(".fusion-block")
+        expect(fusion_details).to_be_visible()
+        fusion_details.locator("summary").click()
+        insight_item = page.locator(".fusion-analysis-section li").first
+        expect(insight_item).to_have_text("A & B: x < y & z")
+    finally:
+        context.close()
+
+
+def test_pdf_polling_stops_after_consecutive_network_errors(
+    browser: Browser,
+    chat_server: str,
+) -> None:
+    context = _login(browser, chat_server)
+    try:
+        page = context.new_page()
+        # Compress long polling/backoff timers so 10 retries finish quickly.
+        page.add_init_script(
+            """(() => {
+                const origSetTimeout = window.setTimeout.bind(window);
+                window.setTimeout = (fn, delay, ...args) => {
+                    const fastDelay = typeof delay === 'number' && delay >= 500 ? 5 : delay;
+                    return origSetTimeout(fn, fastDelay, ...args);
+                };
+            })();"""
+        )
+        page.route(
+            "**/v1/ui/playground/models",
+            lambda route: route.fulfill(
+                status=200,
+                json={
+                    "chat": ["gateway/chat-stream"],
+                    "pdf_conversions": ["pdf-model"],
+                    "providers": [],
+                },
+            ),
+        )
+        poll_attempts = {"count": 0}
+
+        def handle_pdf(route: Route) -> None:
+            if route.request.method == "POST":
+                route.fulfill(
+                    status=200,
+                    json={"id": "job-1", "status": "running", "percent": 10},
+                )
+                return
+            poll_attempts["count"] += 1
+            route.abort("failed")
+
+        page.route("**/v1/pdf/jobs**", handle_pdf)
+
+        page.goto(f"{chat_server}/v1/ui/playground")
+        page.locator('[data-playground-section-tab="pdf-conversion"]').click()
+        expect(page.locator("#pdfConversionForm")).to_be_visible()
+        page.locator("#pdfConversionForm input[type='file']").set_input_files(
+            {"name": "sample.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4\n"}
+        )
+        run_button = page.locator("#pdfConversionForm .run-button")
+        run_button.click()
+
+        status = page.locator('[data-status-for="pdf-conversion"]')
+        expect(status).to_have_class("playground-status error", timeout=5000)
+        expect(status).to_contain_text("Lost connection after 10 retries")
+        expect(run_button).to_be_enabled()
+        assert poll_attempts["count"] == 10
+    finally:
+        context.close()
+
+
+def test_login_safe_redirect_and_logout_failure_handling(
+    browser: Browser,
+    chat_server: str,
+) -> None:
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    try:
+        page = context.new_page()
+        page.route(
+            "**/auth/login",
+            lambda route: route.fulfill(
+                status=200,
+                json={"redirect_to": "https://evil.example/phish"},
+            )
+            if route.request.method == "POST"
+            else route.continue_(),
+        )
+        page.route(
+            "**/v1/ui/overview",
+            lambda route: route.fulfill(
+                status=200,
+                headers={"content-type": "text/html"},
+                body="<html><body>overview ok</body></html>",
+            ),
+        )
+        page.goto(f"{chat_server}/auth/login")
+        expect(page.locator("#submitButton")).to_be_enabled()
+        page.locator("#apiKeyInput").fill(MASTER_KEY)
+        page.locator("#submitButton").click()
+
+        # Unsafe external redirect_to must fall back to /v1/ui/overview.
+        expect(page).to_have_url(f"{chat_server}/v1/ui/overview")
+    finally:
+        context.close()
+
+    # Now verify shared-auth logout(): non-OK returns false without redirect;
+    # OK returns true and redirects to /auth/login.
+    auth_context = _login(browser, chat_server)
+    try:
+        page = auth_context.new_page()
+        page.route(
+            "**/auth/logout",
+            lambda route: route.fulfill(status=500, json={"detail": "boom"}),
+        )
+        page.goto(f"{chat_server}/v1/ui/playground")
+        result = page.evaluate("() => window.gatewayAuth.logout()")
+        assert result is False
+        assert "/v1/ui/playground" in page.url
+
+        page.unroute("**/auth/logout")
+        result_ok = page.evaluate("() => window.gatewayAuth.logout()")
+        assert result_ok is True
+        expect(page).to_have_url(
+            f"{chat_server}/auth/login?next=%2Fv1%2Fui%2Fplayground"
+        )
+    finally:
+        auth_context.close()

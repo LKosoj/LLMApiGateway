@@ -127,6 +127,7 @@ class WriteBatcher:
         self._stop_task: asyncio.Task[None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._handoff_waiter: asyncio.Future[None] | None = None
+        self._conn: aiosqlite.Connection | None = None
 
         self._pre_start_buffer: deque[_WriteItem] = deque()
         self._handoff_items: dict[int, _WriteItem] = {}
@@ -296,29 +297,32 @@ class WriteBatcher:
                 self._handoff_waiter = handoff_waiter
             consumer_task = self._task
 
-        if handoff_waiter is not None:
-            await handoff_waiter
+        try:
+            if handoff_waiter is not None:
+                await handoff_waiter
 
-        if direct_batch:
-            try:
-                await self._flush(direct_batch)
-            except asyncio.CancelledError:
-                self._terminalize_writer_failure(
-                    direct_batch,
-                    reason="stop_cancelled",
-                    error_type="CancelledError",
-                )
-            except BaseException as exc:
-                self._terminalize_writer_failure(
-                    direct_batch,
-                    reason="direct_flush_failed",
-                    error_type=_safe_error_type(exc),
-                )
-        elif consumer_task is not None and not consumer_task.done():
-            self._queue.put_nowait(_STOP)
-            await consumer_task
-        elif consumer_task is not None:
-            await consumer_task
+            if direct_batch:
+                try:
+                    await self._flush(direct_batch)
+                except asyncio.CancelledError:
+                    await self._terminalize_writer_failure(
+                        direct_batch,
+                        reason="stop_cancelled",
+                        error_type="CancelledError",
+                    )
+                except BaseException as exc:
+                    await self._terminalize_writer_failure(
+                        direct_batch,
+                        reason="direct_flush_failed",
+                        error_type=_safe_error_type(exc),
+                    )
+            elif consumer_task is not None and not consumer_task.done():
+                self._queue.put_nowait(_STOP)
+                await consumer_task
+            elif consumer_task is not None:
+                await consumer_task
+        finally:
+            await self._close_connection()
 
         with self._state_lock:
             if self._state is not WriteBatcherState.FAILED:
@@ -363,17 +367,19 @@ class WriteBatcher:
                 if self._state is not WriteBatcherState.FAILED:
                     self._state = WriteBatcherState.STOPPED
         except asyncio.CancelledError:
-            self._terminalize_writer_failure(
+            await self._terminalize_writer_failure(
                 current_batch,
                 reason="consumer_cancelled",
                 error_type="CancelledError",
             )
         except BaseException as exc:
-            self._terminalize_writer_failure(
+            await self._terminalize_writer_failure(
                 current_batch,
                 reason="consumer_failed",
                 error_type=_safe_error_type(exc),
             )
+        finally:
+            await self._close_connection()
 
     def _complete_handoff(self, handoff_id: int) -> None:
         diagnostic_item: _WriteItem | None = None
@@ -426,8 +432,9 @@ class WriteBatcher:
             if len(batch) == 1:
                 error_type = _safe_error_type(exc)
                 self._complete_diagnostic(1, reason="write_failed")
-                self._write_dead_letter(
-                    batch[0],
+                await asyncio.to_thread(
+                    self._write_dead_letter_batch,
+                    [batch[0]],
                     reason="write_failed",
                     error_type=error_type,
                 )
@@ -449,18 +456,37 @@ class WriteBatcher:
         self._complete_committed(len(batch))
         logger.debug("WriteBatcher flushed %d writes.", len(batch))
 
-    async def _flush_once(self, batch: list[_WriteItem]) -> None:
-        async with aiosqlite.connect(self._db_path) as db:
+    async def _ensure_connection(self) -> aiosqlite.Connection:
+        if self._conn is None:
+            conn = await aiosqlite.connect(self._db_path)
             try:
                 for pragma in RUNTIME_PRAGMAS:
-                    await db.execute(pragma)
-                for sql, params in batch:
-                    await db.execute(sql, params)
-                await db.commit()
-            except Exception:
+                    await conn.execute(pragma)
+            except BaseException:
                 with suppress(Exception):
-                    await db.rollback()
+                    await conn.close()
                 raise
+            self._conn = conn
+        return self._conn
+
+    async def _close_connection(self) -> None:
+        conn = self._conn
+        self._conn = None
+        if conn is not None:
+            with suppress(Exception):
+                await conn.close()
+
+    async def _flush_once(self, batch: list[_WriteItem]) -> None:
+        db = await self._ensure_connection()
+        try:
+            for sql, params in batch:
+                await db.execute(sql, params)
+            await db.commit()
+        except BaseException:
+            with suppress(Exception):
+                await db.rollback()
+            await self._close_connection()
+            raise
 
     def _complete_committed(self, count: int) -> None:
         with self._state_lock:
@@ -471,9 +497,9 @@ class WriteBatcher:
         with self._state_lock:
             self._in_flight -= count
             self._diagnostic_terminal += count
-            self._fail_locked(reason, consumer_failed=False)
+            self._last_error_code = reason
 
-    def _terminalize_writer_failure(
+    async def _terminalize_writer_failure(
         self,
         current_batch: list[_WriteItem],
         *,
@@ -511,8 +537,13 @@ class WriteBatcher:
             handoff_waiter = self._take_handoff_waiter_locked()
 
         self._resolve_handoff_waiter(handoff_waiter)
-        for item in diagnostic_items:
-            self._write_dead_letter(item, reason=reason, error_type=error_type)
+        if diagnostic_items:
+            await asyncio.to_thread(
+                self._write_dead_letter_batch,
+                diagnostic_items,
+                reason=reason,
+                error_type=error_type,
+            )
         logger.error("WriteBatcher writer terminated: %s.", error_type)
 
     def _reserved_locked(self) -> int:
@@ -534,6 +565,16 @@ class WriteBatcher:
             raise RuntimeError("WriteBatcher stopped with reserved writes.")
         if self._accepted != self._committed + self._diagnostic_terminal:
             raise RuntimeError("WriteBatcher stopped with unterminated writes.")
+
+    def _write_dead_letter_batch(
+        self,
+        items: list[_WriteItem] | tuple[_WriteItem, ...],
+        *,
+        reason: str,
+        error_type: str,
+    ) -> None:
+        for item in items:
+            self._write_dead_letter(item, reason=reason, error_type=error_type)
 
     def _write_dead_letter(
         self,

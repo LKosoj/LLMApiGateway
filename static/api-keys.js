@@ -638,6 +638,7 @@
         editingKeyId = null;
         modalTitleName = null;
         currentRecordEtag = null;
+        currentRecordEtagPromise = null;
         modalTitle.textContent = i18n.t("api_keys:modal.createTitle");
         editOnlyFields.style.display = "none";
         newKeyNotice.style.display = "none";
@@ -697,7 +698,8 @@
         try {
             const response = await apiFetch(`/v1/admin/api-keys/${keyId}`);
             if (!response.ok) {
-                await showResponseError(response);
+                if (editingKeyId !== keyId) return;
+                await showResponseError(response, modalErrorTarget);
                 return;
             }
             const fullRecord = await response.json();
@@ -705,8 +707,9 @@
             newKeyValue.textContent = fullRecord.api_key || "";
             currentRecordEtag = response.headers.get("ETag");
         } catch (error) {
+            if (editingKeyId !== keyId) return;
             console.error(error);
-            showNetworkError(error);
+            showNetworkError(error, modalErrorTarget);
         }
     }
 
@@ -715,18 +718,25 @@
     }
 
     function parseOptionalNumber(value, field) {
-        if (value === null || value === undefined || String(value).trim() === "") return null;
-        const n = Number(value);
-        if (Number.isNaN(n)) {
+        if (value === null || value === undefined) return null;
+        const trimmed = String(value).trim();
+        if (trimmed === "") return null;
+        const n = Number(trimmed);
+        if (!Number.isFinite(n)) {
             throw new ApiKeysValidationError("api_keys:validation.invalidNumber", field, String(value));
         }
         return n;
     }
 
     function parseOptionalInt(value, field) {
-        if (value === null || value === undefined || String(value).trim() === "") return null;
-        const n = parseInt(value, 10);
-        if (Number.isNaN(n)) {
+        if (value === null || value === undefined) return null;
+        const trimmed = String(value).trim();
+        if (trimmed === "") return null;
+        if (!/^-?\d+$/.test(trimmed)) {
+            throw new ApiKeysValidationError("api_keys:validation.invalidInteger", field, String(value));
+        }
+        const n = Number(trimmed);
+        if (!Number.isSafeInteger(n)) {
             throw new ApiKeysValidationError("api_keys:validation.invalidInteger", field, String(value));
         }
         return n;
@@ -806,6 +816,8 @@
                 newKeyNotice.style.display = "block";
                 newKeyValue.textContent = data.api_key;
                 editingKeyId = data.id;
+                currentRecordEtag = response.headers.get("ETag");
+                currentRecordEtagPromise = null;
                 modalTitleName = data.name;
                 modalTitle.textContent = i18n.t("api_keys:modal.editTitle", {name: modalTitleName});
                 editOnlyFields.style.display = "flex";

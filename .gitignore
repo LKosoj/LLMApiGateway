@@ -60,7 +60,6 @@ __pypackages__/
 
 # Environments
 .env
-.venv
 .venv/
 env/
 venv/
@@ -70,7 +69,6 @@ venv.bak/
 uv.lock
 pyvenv.cfg
 pg/
-__pycache__/
 llmgateway/
 logs/
 /db/
@@ -108,7 +106,6 @@ frontend/*/package-lock.json
 AGENTS.md
 MANAGER_PLAN.json
 .cli-proxy/
-/docs
 
 # pytype static type analyzer
 .pytype/
@@ -127,4 +124,10 @@ models_*_rules.secret.json
 model_rotation.sqlite
 *:Zone.Identifier
 /scripts/fix_config_perms.sh
+
+# Editor swap and backup files
+*.swp
+*.swo
+.*.swp
+*~
 .cli-proxy/runtime/

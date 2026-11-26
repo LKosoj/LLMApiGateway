@@ -156,3 +156,88 @@ def test_reopening_modal_clears_stale_field_error(page: Page, server: str) -> No
     expect(page.locator("#keyModal")).to_be_visible()
     expect(page.locator("#fieldNameError")).to_be_hidden()
     expect(page.locator("#fieldName")).not_to_have_attribute("aria-invalid", "true")
+
+
+def test_reveal_full_key_error_renders_inside_dialog_and_ignores_stale_key(
+    page: Page, server: str
+) -> None:
+    record = {
+        "id": 42,
+        "name": "team-reveal",
+        "api_key": "lgk_****1234",
+        "budget_usd": None,
+        "spent_usd": 0.0,
+        "budget_period": "none",
+        "rpm": None,
+        "tpm": None,
+        "allowed_models": [],
+        "disabled": False,
+        "metadata": None,
+        "created_at": "2026-07-15T10:00:00Z",
+        "last_used_at": None,
+    }
+
+    def api_keys_route(route) -> None:
+        if route.request.url.rstrip("/").endswith("/v1/admin/api-keys/42"):
+            route.fulfill(status=500, json={"detail": "reveal failed"})
+            return
+        route.fulfill(status=200, json={"keys": [record]})
+
+    page.add_init_script(
+        "if (localStorage.getItem('llmgateway:locale') === null) "
+        "localStorage.setItem('llmgateway:locale', 'en');"
+        "if (localStorage.getItem('llmgateway:theme') === null) "
+        "localStorage.setItem('llmgateway:theme', 'light');"
+    )
+    session = create_authenticated_session(server, "test-key")
+    page.context.add_cookies(
+        [{"name": "llmgateway_session", "value": session, "url": server}]
+    )
+    page.route(f"{server}/v1/admin/api-keys**", api_keys_route)
+    page.route(
+        f"{server}/v1/models",
+        lambda route: route.fulfill(status=200, json={"data": []}),
+    )
+    page.goto(f"{server}/v1/ui/api-keys")
+    expect(page.locator('tr[data-key-id="42"]')).to_be_visible()
+
+    page.locator('button[data-action="edit"]').click()
+    expect(page.locator("#keyModal")).to_be_visible()
+
+    expect(page.locator("#modalError")).to_contain_text("Request failed (HTTP 500).")
+    expect(page.locator("#modalErrorDetail")).to_have_text("reveal failed")
+    expect(page.locator("#messageArea")).to_have_text("")
+
+
+def test_number_and_integer_validation_rejects_non_finite_and_partial_integers(
+    page: Page, server: str
+) -> None:
+    _open_create_modal(page, server)
+    page.locator("#fieldName").fill("team-num")
+
+    # Switch native number inputs to text so we can exercise JS validation
+    # directly for values browsers otherwise strip (Infinity, 12abc, unsafe int).
+    page.evaluate(
+        """() => {
+            document.getElementById('fieldBudget').type = 'text';
+            document.getElementById('fieldRpm').type = 'text';
+            document.getElementById('fieldTpm').type = 'text';
+        }"""
+    )
+
+    page.locator("#fieldBudget").fill("Infinity")
+    page.locator("#saveKeyBtn").click()
+    expect(page.locator("#fieldBudget")).to_have_attribute("aria-invalid", "true")
+    expect(page.locator("#fieldBudgetError")).to_be_visible()
+
+    page.locator("#fieldBudget").fill("10.5")
+    page.locator("#fieldRpm").fill("12abc")
+    page.locator("#saveKeyBtn").click()
+    expect(page.locator("#fieldRpm")).to_have_attribute("aria-invalid", "true")
+    expect(page.locator("#fieldRpmError")).to_be_visible()
+
+    page.locator("#fieldRpm").fill("100")
+    page.locator("#fieldTpm").fill("99999999999999999999")
+    page.locator("#saveKeyBtn").click()
+    expect(page.locator("#fieldTpm")).to_have_attribute("aria-invalid", "true")
+    expect(page.locator("#fieldTpmError")).to_be_visible()

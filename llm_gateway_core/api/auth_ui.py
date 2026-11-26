@@ -65,13 +65,17 @@ def _invalid_login_response(
     return response
 
 
-def _disabled_login_response(request: Request) -> JSONResponse:
+def _disabled_login_response(
+    request: Request,
+    guard: "IpBlockGuard | None",
+) -> JSONResponse:
     record_rejection(
         request,
         status_code=status.HTTP_401_UNAUTHORIZED,
         reason=API_KEY_DISABLED_DETAIL,
         category="key_disabled",
     )
+    _note_auth_failure(request, guard)
     response = error_response(
         request,
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -207,7 +211,7 @@ async def login_submit(request: Request):
         if record is None:
             return _invalid_login_response(request, guard)
         if record.disabled:
-            return _disabled_login_response(request)
+            return _disabled_login_response(request, guard)
         role = ROLE_USER
         key_id = record.id
 

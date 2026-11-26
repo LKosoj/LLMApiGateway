@@ -32,8 +32,8 @@ _AUTH_SCHEME_TOKEN_PATTERN = re.compile(
     r"\S+"
 )
 _KEY_VALUE_PATTERN = re.compile(
-    r'\b(api[_-]?key|access[_-]?token|token|secret|authorization)\s*([:=])\s*"?'
-    r'((?:(?:Basic|Bearer|Token|ApiKey)\s+)?[^\s"]+)"?',
+    r'\b(api[_-]?key|access[_-]?token|token|secret|authorization)"?\s*([:=])\s*"?'
+    r'((?:(?:Basic|Bearer|Token|ApiKey)\s+)?[^\s",}\]]+)"?',
     re.IGNORECASE,
 )
 _PREFIXED_KEY_PATTERN = re.compile(

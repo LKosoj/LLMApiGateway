@@ -339,6 +339,9 @@ class RecordRejectionContainerTests(unittest.TestCase):
         legacy_db.insert_rejection.assert_not_called()
         self.assertTrue(any("record_rejection" in msg for msg in log_ctx.output))
 
+    def test_csrf_invalid_is_a_valid_rejection_category(self):
+        self.assertIn("csrf_invalid", rejections_db_module.VALID_CATEGORIES)
+
 
 if __name__ == "__main__":
     unittest.main()

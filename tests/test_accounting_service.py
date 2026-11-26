@@ -3694,3 +3694,105 @@ def test_old_unfinished_charge_is_recovered_before_admission() -> None:
         assert service.health_snapshot().accepting
         await service.stop()
     run_async(scenario())
+
+
+def test_tolerated_permanent_failure_does_not_block_recovery_or_key_mutations() -> None:
+    async def scenario() -> None:
+        source = FakeSource()
+        sink = _PersistentSinkFailureSink(
+            failing_key_id=7,
+            code=AccountingErrorCode.ORPHAN_SINK,
+        )
+        service = _service(source, sink, max_retained_events=1)
+        await service.start()
+
+        # First event fails permanently on key 7 and is tolerated.
+        receipt = await service.record(_charge("event-tolerated-1", api_key_id=7))
+        assert receipt.projection_status is ProjectionStatus.PENDING
+        snapshot = service.health_snapshot()
+        assert snapshot.state is AccountingHealthState.RUNNING
+        assert snapshot.accepting is True
+        assert snapshot.pending_source_events == 1
+
+        # Tolerated event must not consume unsettled capacity for subsequent records.
+        second = await service.record(_charge("event-ok-2", api_key_id=8))
+        assert second.projection_status is ProjectionStatus.APPLIED
+
+        # Key mutation on another key must not fail drain because of the tolerated event.
+        sink.records[8] = _key_record(8, budget_usd=10.0, spent_usd=0.0)
+        updated = await service.update_key(8, changes={"budget_usd": 20.0}, reset_spent=False)
+        assert updated is not None
+        assert updated.budget_usd == 20.0
+
+        # Money-safety: stop() still refuses clean drain while tolerated failure exists.
+        with pytest.raises(AccountingError) as drained:
+            await service.stop()
+        assert drained.value.code is AccountingErrorCode.DRAIN_FAILED
+        assert service.health_snapshot().state is AccountingHealthState.FAILED
+
+    run_async(scenario())
+
+
+def test_reset_due_budgets_error_clears_fence_and_pending_marker() -> None:
+    async def scenario() -> None:
+        source = FakeSource()
+        sink = FakeSink()
+        sink.records[7] = _key_record(7, budget_usd=5.0, spent_usd=1.0)
+        sink.due_key_ids = (7,)
+
+        def fail_due_reset(*, now: datetime, eligible_key_ids: tuple[int, ...]):
+            del now, eligible_key_ids
+            raise RuntimeError("transient db error")
+
+        sink.reset_due_accounting_budgets = fail_due_reset  # type: ignore[method-assign]
+        service = _service(source, sink)
+        await service.start()
+
+        with pytest.raises(AccountingError) as err:
+            await service.reset_due_budgets(now=NOW)
+        assert err.value.code is AccountingErrorCode.PROJECTION_WRITE_FAILED
+
+        # Key 7 must not remain wedged with BUDGET_RESET_IN_PROGRESS fence.
+        assert service.health_snapshot().reset_pending_keys == 0
+        reservation = await service.reserve(
+            request_id="req-after-failed-reset",
+            api_key_id=7,
+            budget_usd=5.0,
+            spent_usd=1.0,
+            rpm_limit=None,
+            tpm_limit=None,
+            estimate_usd=0.5,
+        )
+        assert await service.release(reservation) is True
+        await service.stop()
+
+    run_async(scenario())
+
+
+def test_stop_drain_timeout_stops_projector_and_raises_drain_failed() -> None:
+    async def scenario() -> None:
+        source = FakeSource()
+        sink = FakeSink()
+        service = _service(source, sink, stop_drain_timeout_seconds=0.05)
+        await service.start()
+
+        # Hold an active session so _session_drain.wait() never completes.
+        await service.reserve(
+            request_id="req-stuck-session",
+            api_key_id=7,
+            budget_usd=10.0,
+            spent_usd=0.0,
+            rpm_limit=None,
+            tpm_limit=None,
+            estimate_usd=0.1,
+        )
+
+        with pytest.raises(AccountingError) as err:
+            await service.stop(timeout=0.05)
+        assert err.value.code is AccountingErrorCode.DRAIN_FAILED
+        snapshot = service.health_snapshot()
+        assert snapshot.state is AccountingHealthState.FAILED
+        assert snapshot.accepting is False
+        assert service._projector_task is None
+
+    run_async(scenario())

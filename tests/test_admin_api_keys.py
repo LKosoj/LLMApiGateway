@@ -671,6 +671,38 @@ class AdminApiKeysHttpTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["rpm"])
 
+    def test_create_and_get_set_cache_control_no_store_and_etag(self):
+        created = self.client.post(
+            "/v1/admin/api-keys",
+            json={"name": "team-headers"},
+            headers=self._master_headers(),
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.headers.get("Cache-Control"), "no-store")
+        create_etag = created.headers.get("ETag")
+        self.assertIsNotNone(create_etag)
+
+        key_id = created.json()["id"]
+        fetched = self.client.get(
+            f"/v1/admin/api-keys/{key_id}",
+            headers=self._master_headers(),
+        )
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.headers.get("Cache-Control"), "no-store")
+        self.assertEqual(fetched.headers.get("ETag"), create_etag)
+
+    def test_key_mutation_locks_uses_weak_value_dictionary(self):
+        import gc
+        import weakref
+        from llm_gateway_core.api.v1 import admin_api_keys
+
+        self.assertIsInstance(admin_api_keys._KEY_MUTATION_LOCKS, weakref.WeakValueDictionary)
+        lock = admin_api_keys._key_mutation_lock(987654)
+        self.assertIn(987654, admin_api_keys._KEY_MUTATION_LOCKS)
+        del lock
+        gc.collect()
+        self.assertNotIn(987654, admin_api_keys._KEY_MUTATION_LOCKS)
+
 
 if __name__ == "__main__":
     unittest.main()

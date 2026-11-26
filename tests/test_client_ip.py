@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from llm_gateway_core.utils.client_ip import get_client_ip
+from starlette.datastructures import Headers
+
+from llm_gateway_core.utils.client_ip import (
+    _parse_trusted_proxy_networks,
+    get_client_ip,
+)
 
 
 def _request(peer: str, headers: dict[str, str] | None = None):
@@ -35,3 +40,26 @@ def test_missing_peer_returns_none():
     request = SimpleNamespace(client=None, headers={})
 
     assert get_client_ip(request) is None
+
+
+def test_multiple_x_forwarded_for_headers_are_combined_in_order():
+    headers = Headers(
+        raw=[
+            (b"x-forwarded-for", b"203.0.113.10"),
+            (b"x-forwarded-for", b"198.51.100.77, 10.0.0.2"),
+        ]
+    )
+    request = SimpleNamespace(client=SimpleNamespace(host="10.0.0.1"), headers=headers)
+    with patch("llm_gateway_core.utils.client_ip.settings.trusted_proxies", "10.0.0.0/8"):
+        assert get_client_ip(request) == "198.51.100.77"
+
+
+def test_parse_trusted_proxy_networks_is_cached():
+    _parse_trusted_proxy_networks.cache_clear()
+    first = _parse_trusted_proxy_networks("10.0.0.0/8, 192.168.1.1")
+    second = _parse_trusted_proxy_networks("10.0.0.0/8, 192.168.1.1")
+
+    assert first is second
+    info = _parse_trusted_proxy_networks.cache_info()
+    assert info.hits >= 1
+    assert info.misses == 1

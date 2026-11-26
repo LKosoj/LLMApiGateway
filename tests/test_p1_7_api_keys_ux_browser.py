@@ -287,3 +287,85 @@ def test_search_and_sort_the_keys_table(page: Page, server: str) -> None:
     page.locator("#sortByLastUsed").click()
     expect(page.locator("#sortByLastUsed")).to_have_attribute("data-sort-direction", "asc")
     assert row_order() == ["2", "1", "3"]
+
+
+def test_create_saves_etag_for_immediate_subsequent_patch(
+    page: Page, server: str
+) -> None:
+    captured: dict = {}
+
+    def api_keys_route(route) -> None:
+        request = route.request
+        if request.method == "POST":
+            body = request.post_data_json
+            route.fulfill(
+                status=201,
+                headers={"ETag": '"etag-after-post"'},
+                json={
+                    "id": 105,
+                    "name": body["name"],
+                    "api_key": "lgk_post_secret",
+                    "budget_usd": body.get("budget_usd"),
+                    "spent_usd": 0.0,
+                    "budget_period": body.get("budget_period"),
+                    "rpm": body.get("rpm"),
+                    "tpm": body.get("tpm"),
+                    "allowed_models": body.get("allowed_models") or [],
+                    "disabled": False,
+                    "metadata": body.get("metadata"),
+                    "created_at": "2026-07-20T00:00:00Z",
+                    "last_used_at": None,
+                },
+            )
+            return
+        if request.method == "PATCH":
+            captured["if_match"] = request.headers.get("if-match")
+            body = request.post_data_json
+            captured["patch_body"] = body
+            route.fulfill(
+                status=200,
+                headers={"ETag": '"etag-after-patch"'},
+                json={
+                    "id": 105,
+                    "name": body["name"],
+                    "api_key": "lgk_post_secret",
+                    "budget_usd": body.get("budget_usd"),
+                    "spent_usd": 0.0,
+                    "budget_period": body.get("budget_period"),
+                    "rpm": body.get("rpm"),
+                    "tpm": body.get("tpm"),
+                    "allowed_models": body.get("allowed_models") or [],
+                    "disabled": body.get("disabled", False),
+                    "metadata": body.get("metadata"),
+                    "created_at": "2026-07-20T00:00:00Z",
+                    "last_used_at": None,
+                },
+            )
+            return
+        route.fulfill(status=200, json={"keys": []})
+
+    _setup_session(page, server)
+    page.route(f"{server}/v1/admin/api-keys**", api_keys_route)
+    page.route(
+        f"{server}/v1/models",
+        lambda route: route.fulfill(status=200, json={"data": []}),
+    )
+    page.goto(f"{server}/v1/ui/api-keys")
+    expect(page.locator(".api-keys-empty")).to_be_visible()
+
+    page.locator("#createKeyBtn").click()
+    expect(page.locator("#keyModal")).to_be_visible()
+    page.locator("#fieldName").fill("team-fresh")
+    page.locator("#saveKeyBtn").click()
+
+    expect(page.locator("#newKeyNotice")).to_be_visible()
+    expect(page.locator("#newKeyValue")).to_have_text("lgk_post_secret")
+
+    # Immediately edit the newly created key in the same open modal without
+    # closing/reopening: PATCH must reuse the ETag returned by POST.
+    page.locator("#fieldName").fill("team-fresh-updated")
+    page.locator("#saveKeyBtn").click()
+
+    expect(page.locator("#keyModal")).to_be_hidden()
+    assert captured["if_match"] == '"etag-after-post"'
+    assert captured["patch_body"]["name"] == "team-fresh-updated"

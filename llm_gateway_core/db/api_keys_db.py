@@ -24,6 +24,7 @@ import os
 import secrets
 import sqlite3
 from collections.abc import Callable, Mapping
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
@@ -730,7 +731,7 @@ class ApiKeysDB:
             period_value,
             reset_at_value,
         )
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
             try:
                 cursor = conn.execute(
@@ -749,7 +750,7 @@ class ApiKeysDB:
         return self.get_by_id(new_id)  # type: ignore[return-value]
 
     def get_by_id(self, key_id: int) -> ApiKeyRecord | None:
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM api_keys WHERE id = ?", (key_id,)).fetchone()
         return _row_to_record(row) if row else None
@@ -757,7 +758,7 @@ class ApiKeysDB:
     def get_by_key(self, api_key: str) -> ApiKeyRecord | None:
         if not api_key:
             return None
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM api_keys WHERE api_key = ?", (api_key,)
@@ -765,7 +766,7 @@ class ApiKeysDB:
         return _row_to_record(row) if row else None
 
     def list_all(self) -> list[ApiKeyRecord]:
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM api_keys ORDER BY id ASC"
@@ -834,7 +835,7 @@ class ApiKeysDB:
             return self.get_by_id(key_id)
 
         params.append(key_id)
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
             conn.execute(
                 f"UPDATE api_keys SET {', '.join(fields)} WHERE id = ?",
@@ -844,7 +845,7 @@ class ApiKeysDB:
         return self.get_by_id(key_id)
 
     def delete(self, key_id: int) -> bool:
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
             cursor = conn.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
             conn.commit()
@@ -1781,7 +1782,7 @@ class ApiKeysDB:
             self._batcher.enqueue(sql, params)
         else:
             try:
-                with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
                     conn.execute("PRAGMA busy_timeout=30000")
                     conn.execute(sql, params)
                     conn.commit()
@@ -1800,7 +1801,7 @@ class ApiKeysDB:
         now_iso = moment.replace(microsecond=0).isoformat()
 
         reset_records: list[ApiKeyRecord] = []
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout=30000")
             # Serialize the read-modify-write against concurrent record_spent()

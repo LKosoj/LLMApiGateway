@@ -231,6 +231,31 @@ class EmbeddingsProxyTests(unittest.TestCase):
         self.fake_http_client.post.assert_awaited_once()
         sleep_mock.assert_not_awaited()
 
+    def test_proxy_to_downstream_does_not_mutate_operation_proxy_logger(self):
+        from llm_gateway_core.api.v1 import operation_proxy
+
+        original_logger = operation_proxy.logger
+        observed_logger_during_call = []
+
+        async def fake_post(*_args, **_kwargs):
+            observed_logger_during_call.append(operation_proxy.logger)
+            return _FakeDownstreamResponse({"data": []}, status_code=200)
+
+        self.fake_http_client.post = AsyncMock(side_effect=fake_post)
+        with patch("llm_gateway_core.api.v1.embeddings.logger") as embeddings_logger:
+            run_async(
+                proxy_to_downstream(
+                    "https://example.com/v1/embeddings",
+                    {"Content-Type": "application/json"},
+                    {"model": "text-embedding-3-small", "input": ["hello"]},
+                    self.fake_http_client,
+                )
+            )
+            embeddings_logger.info.assert_called()
+
+        self.assertEqual(observed_logger_during_call, [original_logger])
+        self.assertIs(operation_proxy.logger, original_logger)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,9 +69,16 @@ class _OwnerState(StrEnum):
 class ChatTerminalHandoff:
     """One-shot typed handoff from chat dispatch to the middleware owner."""
 
-    __slots__ = ("_observation", "_partial_builder", "_rejected_components", "_stream_observer")
+    __slots__ = (
+        "_failed_step_observation",
+        "_observation",
+        "_partial_builder",
+        "_rejected_components",
+        "_stream_observer",
+    )
 
     def __init__(self) -> None:
+        self._failed_step_observation: ChatTerminalObservation | None = None
         self._observation: object = _EMPTY_HANDOFF
         self._stream_observer: (
             Callable[[SSEEvent], ChatTerminalObservation | None] | None
@@ -161,6 +168,18 @@ class ChatTerminalHandoff:
             raise AccountingValidationError
         self._observation = _CONSUMED_HANDOFF
         return self._with_rejected_components(partial)
+
+    def publish_partial_failure(self, observation: ChatTerminalObservation) -> None:
+        if not isinstance(observation, ChatTerminalObservation):
+            raise AccountingValidationError
+        self._failed_step_observation = observation
+
+    def take_partial_failure(self) -> ChatTerminalObservation | None:
+        observation = self._failed_step_observation
+        if observation is None:
+            return None
+        self._failed_step_observation = None
+        return self._with_rejected_components(observation)
 
     def __repr__(self) -> str:
         return "<ChatTerminalHandoff>"
@@ -571,6 +590,22 @@ class ChatTerminalOwner:
             if observation is not None:
                 try:
                     return await self._commit(observation)
+                except BaseException:
+                    try:
+                        await self._release_if_open()
+                    except BaseException:
+                        pass
+                    raise
+        handoff = self._handoff
+        if handoff is not None:
+            partial_failure = handoff.take_partial_failure()
+            if partial_failure is not None:
+                try:
+                    if self._gateway_model is None:
+                        raw_model = getattr(self._request.state, "llmgateway_gateway_model", None)
+                        if isinstance(raw_model, str) and raw_model:
+                            self._gateway_model = _validate_gateway_model(raw_model)
+                    return await self._commit(partial_failure)
                 except BaseException:
                     try:
                         await self._release_if_open()

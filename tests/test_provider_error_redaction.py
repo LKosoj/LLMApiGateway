@@ -139,6 +139,16 @@ class ProviderErrorRedactionTests(unittest.TestCase):
 
         self.assertEqual(once, twice)
 
+    def test_json_formatted_credentials_are_redacted_preserving_surrounding_fields(self):
+        text = '{"api_key": "supersecretvalue", "secret":"anothersecret", "error": "invalid"}'
+        redacted = redact_provider_error_text(text)
+
+        self.assertNotIn("supersecretvalue", redacted)
+        self.assertNotIn("anothersecret", redacted)
+        self.assertIn("api_key:[redacted]", redacted)
+        self.assertIn("secret:[redacted]", redacted)
+        self.assertIn('"error": "invalid"', redacted)
+
 
 if __name__ == "__main__":
     unittest.main()

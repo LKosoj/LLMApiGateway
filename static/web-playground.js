@@ -85,8 +85,12 @@
     // burst of deltas is being processed has a real chance to interrupt before
     // the next delta renders (also avoids repainting on every single token).
     const CHAT_STREAM_CHUNK_DELAY_MS = 40;
+    const PDF_POLL_INTERVAL_MS = 1000;
+    const PDF_MAX_CONSECUTIVE_NETWORK_ERRORS = 10;
+    const PDF_BACKOFF_MAX_MS = 15000;
     let simpleChatMessages = [];
     let activeChatAbortController = null;
+    let activePdfAbortController = null;
     let fusionModelNames = new Set();
     let pendingLocaleUiState = null;
     let unsubscribeLocale = null;
@@ -633,7 +637,7 @@
         const insights = Array.isArray(analysis.per_model_insights)
             ? analysis.per_model_insights
                 .map((item) => (item && typeof item === "object"
-                    ? `${escapeHtml(String(item.model || "?"))}: ${escapeHtml(String(item.insight || ""))}`
+                    ? `${String(item.model || "?")}: ${String(item.insight || "")}`
                     : ""))
                 .filter(Boolean)
             : [];
@@ -1450,6 +1454,25 @@
         return payload;
     }
 
+    function abortableDelay(ms, signal) {
+        if (signal && signal.aborted) {
+            return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+        }
+        return new Promise((resolve, reject) => {
+            const onAbort = () => {
+                clearTimeout(timer);
+                reject(new DOMException("The operation was aborted.", "AbortError"));
+            };
+            const timer = setTimeout(() => {
+                if (signal) signal.removeEventListener("abort", onAbort);
+                resolve();
+            }, ms);
+            if (signal) {
+                signal.addEventListener("abort", onAbort, {once: true});
+            }
+        });
+    }
+
     async function submitPdfJobRequest(kind, form) {
         const button = form.querySelector(".run-button");
         let body;
@@ -1471,6 +1494,11 @@
             return;
         }
 
+        activePdfAbortController?.abort();
+        const controller = new AbortController();
+        activePdfAbortController = controller;
+        const {signal} = controller;
+
         button.disabled = true;
         setStatus(kind, KEYS.uploadingPdf, false);
         const startedAt = performance.now();
@@ -1478,17 +1506,29 @@
             let job = await fetchPdfJobJson("/v1/pdf/jobs", {
                 method: "POST",
                 body,
+                signal,
             });
             setResult(kind, renderPdfJob(job, model));
 
+            let consecutiveNetworkErrors = 0;
             while (job.status === "queued" || job.status === "running") {
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                const delayMs = consecutiveNetworkErrors > 0
+                    ? Math.min(PDF_BACKOFF_MAX_MS, PDF_POLL_INTERVAL_MS * (2 ** (consecutiveNetworkErrors - 1)))
+                    : PDF_POLL_INTERVAL_MS;
+                await abortableDelay(delayMs, signal);
                 try {
                     job = await fetchPdfJobJson(
-                        `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}?model=${encodeURIComponent(model)}`
+                        `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}?model=${encodeURIComponent(model)}`,
+                        {signal},
                     );
+                    consecutiveNetworkErrors = 0;
                 } catch (err) {
+                    if (signal.aborted || (err && err.name === "AbortError")) throw err;
                     if (!(err instanceof TypeError)) throw err;
+                    consecutiveNetworkErrors += 1;
+                    if (consecutiveNetworkErrors >= PDF_MAX_CONSECUTIVE_NETWORK_ERRORS) {
+                        throw new Error(`Lost connection after ${consecutiveNetworkErrors} retries: ${err.message || String(err)}`);
+                    }
                     setStatus(kind, KEYS.pdfReconnecting, false, {}, err.message || String(err));
                     continue;
                 }
@@ -1519,7 +1559,8 @@
             let result = null;
             if (job.result_available) {
                 result = await fetchPdfJobJson(
-                    `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}/result?model=${encodeURIComponent(model)}`
+                    `/v1/pdf/jobs/${encodeURIComponent(String(job.id))}/result?model=${encodeURIComponent(model)}`,
+                    {signal},
                 );
             }
             const downloadCount = Array.isArray(job.downloads) ? job.downloads.length : 0;
@@ -1529,9 +1570,13 @@
             });
             setResult(kind, renderPdfJob(job, model, result));
         } catch (err) {
+            if (err && err.name === "AbortError") return;
             setStatus(kind, KEYS.requestFailed, true, {}, err.message || err);
         } finally {
             button.disabled = false;
+            if (activePdfAbortController === controller) {
+                activePdfAbortController = null;
+            }
         }
     }
 
@@ -1862,6 +1907,8 @@
     }
 
     window.addEventListener("beforeunload", () => {
+        activeChatAbortController?.abort();
+        activePdfAbortController?.abort();
         unsubscribeLocale?.();
         document.removeEventListener("change", captureLocaleChange, {capture: true});
     });

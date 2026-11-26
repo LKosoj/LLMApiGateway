@@ -170,6 +170,19 @@ class WriteBatcherShutdownTests(unittest.TestCase):
             self.assertEqual(failed.state, WriteBatcherState.FAILED)
             self.assertEqual(failed.reserved, 0)
             self.assertEqual((failed.accepted, failed.diagnostic_terminal), (1, 1))
+            self.assertIsNone(batcher._conn)
+
+        run_async(scenario())
+
+    def test_stop_closes_long_lived_connection(self):
+        async def scenario():
+            batcher = WriteBatcher(self.db_path, flush_interval=0.05)
+            await batcher.start()
+            batcher.enqueue("INSERT INTO items (value) VALUES (?)", ("one",))
+            await asyncio.sleep(0.1)
+            self.assertIsNotNone(batcher._conn)
+            await batcher.stop()
+            self.assertIsNone(batcher._conn)
 
         run_async(scenario())
 

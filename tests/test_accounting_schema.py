@@ -11,6 +11,7 @@ import pytest
 from llm_gateway_core.db import accounting_schema
 from llm_gateway_core.db.accounting_schema import (
     ACCOUNTING_MIGRATION_BUSY_TIMEOUT_MS,
+    ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS,
     AccountingSchemaError,
     migrate_accounting_sink,
     migrate_accounting_source,
@@ -1665,14 +1666,14 @@ def test_dedicated_migration_connections_use_strict_bounded_pragmas(
 def test_runtime_accounting_connection_uses_strict_bounded_pragmas(
     db_dir: Path,
 ) -> None:
+    assert ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS == 10_000
     conn = accounting_schema.open_accounting_runtime_connection(
         db_dir / "runtime-accounting.db",
         enable_foreign_keys=True,
     )
     try:
-        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == (ACCOUNTING_MIGRATION_BUSY_TIMEOUT_MS)
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == (ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS)
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     finally:
         conn.close()

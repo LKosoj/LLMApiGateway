@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.auth_ui import auth_router
@@ -18,7 +18,7 @@ from llm_gateway_core.api.v1.admin_subscription_quotas import (
     router as upstream_quota_router,
 )
 from llm_gateway_core.config.loader import ConfigLoader
-from llm_gateway_core.middleware.auth import ApiKeyAuthMiddleware
+from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER, ApiKeyAuthMiddleware
 from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
 from llm_gateway_core.services.upstream_subscription_quota import (
     SubscriptionQuotaSnapshot,
@@ -199,7 +199,8 @@ class TestUpstreamQuotasRuntimeCapture(unittest.TestCase):
                     )
                 ),
                 state=SimpleNamespace(
-                    runtime_snapshot=make_runtime_snapshot(config_loader=loader_n)
+                    api_key_role=ROLE_MASTER,
+                    runtime_snapshot=make_runtime_snapshot(config_loader=loader_n),
                 ),
             )
 
@@ -218,6 +219,18 @@ class TestUpstreamQuotasRuntimeCapture(unittest.TestCase):
             self.assertEqual(service_n.calls, [providers_n])
 
         run_async(scenario())
+
+    def test_handler_directly_rejects_non_master_role(self):
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(services=make_app_services())),
+            state=SimpleNamespace(
+                api_key_role=ROLE_USER,
+                runtime_snapshot=make_runtime_snapshot(config_loader=_make_config_loader()),
+            ),
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            run_async(get_upstream_quotas(request))
+        self.assertEqual(ctx.exception.status_code, 403)
 
 
 if __name__ == "__main__":

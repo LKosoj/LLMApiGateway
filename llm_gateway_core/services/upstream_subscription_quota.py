@@ -18,6 +18,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_QUOTA_REQUEST_TIMEOUT_SECONDS = 10.0
+
 
 @dataclass(frozen=True)
 class SubscriptionQuotaCategory:
@@ -278,6 +280,7 @@ class UpstreamSubscriptionQuotaService:
                     "X-GitHub-Api-Version": "2022-11-28",
                     "User-Agent": "GitHubCopilotChat/0.26.7",
                 },
+                timeout=_QUOTA_REQUEST_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             logger.error(
@@ -351,6 +354,7 @@ class UpstreamSubscriptionQuotaService:
             resp = await target.http_client.get(
                 "https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState:ACTIVE",
                 headers={"Authorization": f"Bearer {target.token}"},
+                timeout=_QUOTA_REQUEST_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             logger.error(

@@ -492,7 +492,7 @@ def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_mo
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer += text_chunk
+            buffer = (buffer + text_chunk).replace("\r\n", "\n")
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -501,7 +501,13 @@ def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_mo
                 if not stripped_event:
                     continue
 
-                if stripped_event == "data: [DONE]":
+                data_payload = _extract_sse_data_payload(event)
+                if data_payload is None:
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                data = data_payload.strip()
+                if data == "[DONE]":
                     for choice_index, state in choice_states.items():
                         pending_content = _flush_stream_think_buffer(state)
                         if pending_content and last_template_chunk is not None:
@@ -517,11 +523,6 @@ def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_mo
                     yield b"data: [DONE]\n\n"
                     continue
 
-                if not stripped_event.startswith("data: "):
-                    yield f"{event}\n\n".encode("utf-8")
-                    continue
-
-                data = stripped_event[len("data: "):]
                 try:
                     chunk_json = sanitize_payload(json.loads(data))
                 except Exception:
@@ -546,16 +547,25 @@ def _sanitize_openai_stream_think_tags(response: StreamingResponse, requested_mo
 
                     state = get_choice_state(choice_index)
                     finish_reason = choice.get("finish_reason")
+                    delta = choice.get("delta")
                     if finish_reason is not None:
-                        pending_content = _flush_stream_think_buffer(state)
-                        if pending_content:
-                            yield serialize_event(
-                                _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, pending_content)
-                            )
+                        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                            sanitized_content = _strip_stream_think_blocks(delta["content"], state)
+                            pending_content = _flush_stream_think_buffer(state)
+                            combined = sanitized_content + pending_content
+                            if combined:
+                                delta["content"] = combined
+                            else:
+                                delta.pop("content", None)
+                        else:
+                            pending_content = _flush_stream_think_buffer(state)
+                            if pending_content:
+                                yield serialize_event(
+                                    _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, pending_content)
+                                )
                         sanitized_choices.append(choice)
                         continue
 
-                    delta = choice.get("delta")
                     if not isinstance(delta, dict):
                         sanitized_choices.append(choice)
                         continue
@@ -737,7 +747,7 @@ def _sanitize_openai_stream_tool_call_rescue(
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer += text_chunk
+            buffer = (buffer + text_chunk).replace("\r\n", "\n")
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -746,7 +756,13 @@ def _sanitize_openai_stream_tool_call_rescue(
                 if not stripped_event:
                     continue
 
-                if stripped_event == "data: [DONE]":
+                data_payload = _extract_sse_data_payload(event)
+                if data_payload is None:
+                    yield f"{event}\n\n".encode("utf-8")
+                    continue
+
+                data = data_payload.strip()
+                if data == "[DONE]":
                     for choice_index, state in choice_states.items():
                         if state["mode"] == "transparent" and not state["raw_buffer"]:
                             continue
@@ -758,11 +774,6 @@ def _sanitize_openai_stream_tool_call_rescue(
                     yield b"data: [DONE]\n\n"
                     continue
 
-                if not stripped_event.startswith("data: "):
-                    yield f"{event}\n\n".encode("utf-8")
-                    continue
-
-                data = stripped_event[len("data: "):]
                 try:
                     chunk_json = sanitize_payload(json.loads(data))
                 except Exception:
@@ -788,7 +799,21 @@ def _sanitize_openai_stream_tool_call_rescue(
 
                     state = get_state(choice_index)
                     finish_reason = choice.get("finish_reason")
+                    delta = choice.get("delta")
                     if finish_reason is not None:
+                        if (
+                            isinstance(delta, dict)
+                            and isinstance(delta.get("content"), str)
+                            and state["mode"] != "transparent"
+                        ):
+                            content = delta["content"]
+                            state["raw_buffer"] += content
+                            if state["mode"] == "holding":
+                                detect_delta = _strip_stream_think_blocks(content, state["detect_think_state"])
+                                state["detect_buffer"] += detect_delta
+                                if any(marker in state["detect_buffer"] for marker in DIALECT_TAG_MARKERS):
+                                    state["mode"] = "dialect"
+                            delta.pop("content", None)
                         finalize_events, synthesized = finalize_choice(choice_index, state, chunk_json)
                         extra_events.extend(finalize_events)
                         if synthesized:
@@ -797,7 +822,6 @@ def _sanitize_openai_stream_tool_call_rescue(
                         sanitized_choices.append(choice)
                         continue
 
-                    delta = choice.get("delta")
                     if not isinstance(delta, dict):
                         sanitized_choices.append(choice)
                         continue
@@ -978,6 +1002,24 @@ class _DirectChatStreamObservationBuilder:
         if isinstance(delta_text, str) and delta_text:
             self._completion_text_parts.append(delta_text)
 
+    def _collect_anthropic_delta_text(self, payload: Mapping[str, object]) -> None:
+        delta = payload.get("delta")
+        if not isinstance(delta, Mapping):
+            return
+        delta_type = delta.get("type")
+        if delta_type == "text_delta":
+            text = delta.get("text")
+            if isinstance(text, str) and text:
+                self._completion_text_parts.append(text)
+        elif delta_type == "thinking_delta":
+            thinking = delta.get("thinking")
+            if isinstance(thinking, str) and thinking:
+                self._completion_text_parts.append(thinking)
+        elif delta_type == "input_json_delta":
+            partial_json = delta.get("partial_json")
+            if isinstance(partial_json, str) and partial_json:
+                self._completion_text_parts.append(partial_json)
+
     def _build_estimated(self) -> ChatTerminalObservation:
         """Degrade a stream that ended without an upstream usage chunk.
 
@@ -1017,10 +1059,19 @@ class _DirectChatStreamObservationBuilder:
                 return self._build_estimated()
             return None
         if self._dialect is ChatStreamDialect.ANTHROPIC:
-            if not self._anthropic_usage:
+            if not self._anthropic_usage and not self._completion_text_parts:
                 return None
             partial_usage = dict(self._anthropic_usage)
-            partial_usage.setdefault("output_tokens", 0)
+            if not partial_usage.get("input_tokens") and self._estimated_prompt_tokens:
+                partial_usage["input_tokens"] = self._estimated_prompt_tokens
+            output_tokens = partial_usage.get("output_tokens")
+            if not output_tokens and self._completion_text_parts:
+                partial_usage["output_tokens"] = estimate_token_count(
+                    "".join(self._completion_text_parts),
+                    self._model,
+                )
+            else:
+                partial_usage.setdefault("output_tokens", 0)
             partial_usage["is_estimated"] = True
             return self._build({"usage": partial_usage})
         if self._dialect is ChatStreamDialect.RESPONSES:
@@ -1064,6 +1115,17 @@ class _DirectChatStreamObservationBuilder:
             response_payload = payload.get("response")
             if not isinstance(response_payload, Mapping):
                 raise AccountingValidationError
+            usage = response_payload.get("usage")
+            has_nonzero_usage = isinstance(usage, Mapping) and (
+                bool(usage.get("input_tokens"))
+                or bool(usage.get("output_tokens"))
+                or bool(usage.get("total_tokens"))
+                or bool(usage.get("prompt_tokens"))
+                or bool(usage.get("completion_tokens"))
+                or (usage.get("cost") is not None)
+            )
+            if not has_nonzero_usage and (self._completion_text_parts or self._estimated_prompt_tokens):
+                return self._build_estimated()
             return self._build(response_payload)
 
         if self._dialect is not ChatStreamDialect.ANTHROPIC or event.done:
@@ -1075,6 +1137,8 @@ class _DirectChatStreamObservationBuilder:
             raise AccountingValidationError
         if event_name is None:
             event_name = payload_type if isinstance(payload_type, str) else None
+        if event_name == "content_block_delta":
+            self._collect_anthropic_delta_text(payload)
         usage: object = payload.get("usage")
         if event_name == "message_start":
             message = payload.get("message")
@@ -1114,7 +1178,7 @@ def _sanitize_anthropic_stream_think_tags(response: StreamingResponse, requested
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer += text_chunk
+            buffer = (buffer + text_chunk).replace("\r\n", "\n")
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -1253,17 +1317,18 @@ def _sanitize_openai_json_object_stream(response: StreamingResponse, requested_m
             if not stripped_event:
                 return
 
-            if stripped_event == "data: [DONE]":
+            data_payload = _extract_sse_data_payload(event)
+            if data_payload is None:
+                yield f"{event}\n\n".encode("utf-8")
+                return
+
+            data = data_payload.strip()
+            if data == "[DONE]":
                 for output_chunk in flush_choice_buffers():
                     yield output_chunk
                 yield b"data: [DONE]\n\n"
                 return
 
-            if not stripped_event.startswith("data: "):
-                yield f"{event}\n\n".encode("utf-8")
-                return
-
-            data = stripped_event[len("data: "):]
             try:
                 chunk_json = sanitize_payload(json.loads(data))
             except Exception:
@@ -1288,23 +1353,42 @@ def _sanitize_openai_json_object_stream(response: StreamingResponse, requested_m
 
                 state = get_choice_state(choice_index)
                 finish_reason = choice.get("finish_reason")
+                delta = choice.get("delta")
                 if finish_reason is not None:
-                    pending_content = _flush_stream_think_buffer(state)
-                    if pending_content:
-                        sanitized_pending_content = _sanitize_json_object_stream_content_fragment(pending_content, state)
-                        if sanitized_pending_content:
+                    if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                        parts: list[str] = []
+                        sanitized_content = _sanitize_json_object_stream_delta(delta["content"], state)
+                        if sanitized_content:
+                            parts.append(sanitized_content)
+                        pending_content = _flush_stream_think_buffer(state)
+                        if pending_content:
+                            sanitized_pending = _sanitize_json_object_stream_content_fragment(pending_content, state)
+                            if sanitized_pending:
+                                parts.append(sanitized_pending)
+                        flushed_suffix = _flush_json_stream_suffix(state)
+                        if flushed_suffix:
+                            parts.append(flushed_suffix)
+                        combined = "".join(parts)
+                        if combined:
+                            delta["content"] = combined
+                        else:
+                            delta.pop("content", None)
+                    else:
+                        pending_content = _flush_stream_think_buffer(state)
+                        if pending_content:
+                            sanitized_pending_content = _sanitize_json_object_stream_content_fragment(pending_content, state)
+                            if sanitized_pending_content:
+                                yield serialize_event(
+                                    _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, sanitized_pending_content)
+                                )
+                        flushed_suffix = _flush_json_stream_suffix(state)
+                        if flushed_suffix:
                             yield serialize_event(
-                                _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, sanitized_pending_content)
+                                _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, flushed_suffix)
                             )
-                    flushed_suffix = _flush_json_stream_suffix(state)
-                    if flushed_suffix:
-                        yield serialize_event(
-                            _build_openai_stream_delta_chunk(chunk_json, choice, choice_index, flushed_suffix)
-                        )
                     sanitized_choices.append(choice)
                     continue
 
-                delta = choice.get("delta")
                 if not isinstance(delta, dict):
                     sanitized_choices.append(choice)
                     continue
@@ -1332,7 +1416,7 @@ def _sanitize_openai_json_object_stream(response: StreamingResponse, requested_m
 
         async for chunk in source_iterator:
             text_chunk = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer += text_chunk
+            buffer = (buffer + text_chunk).replace("\r\n", "\n")
             events = buffer.split("\n\n")
             buffer = events.pop() if not buffer.endswith("\n\n") else ""
 
@@ -1540,7 +1624,7 @@ def _anthropic_stream_to_openai(
             else:
                 text = str(chunk)
 
-            buffer += text
+            buffer = (buffer + text).replace("\r\n", "\n")
             # SSE events are separated by a blank line (\n\n). Extract complete events.
             while "\n\n" in buffer:
                 raw_event, buffer = buffer.split("\n\n", 1)
@@ -1870,16 +1954,16 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
             else:
                 text = str(chunk)
 
-            buffer += text
+            buffer = (buffer + text).replace("\r\n", "\n")
             lines = buffer.split("\n")
             buffer = lines.pop()
 
             for line in lines:
                 stripped_line = line.strip()
-                if not stripped_line or not stripped_line.startswith("data: "):
+                if not stripped_line or not stripped_line.startswith("data:"):
                     continue
 
-                data = stripped_line[len("data: "):]
+                data = stripped_line[len("data:"):].lstrip()
                 if data == "[DONE]":
                     continue
 
@@ -1895,8 +1979,8 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
         # Process any remaining data left in the buffer after the stream ends.
         if buffer:
             stripped_line = buffer.strip()
-            if stripped_line and stripped_line.startswith("data: "):
-                data = stripped_line[len("data: "):]
+            if stripped_line and stripped_line.startswith("data:"):
+                data = stripped_line[len("data:"):].lstrip()
                 if data != "[DONE]":
                     try:
                         chunk_json = sanitize_payload(json.loads(data))
@@ -1920,7 +2004,10 @@ def _openai_stream_to_anthropic(request: Request, response: StreamingResponse, r
                         "content": [],
                         "stop_reason": None,
                         "stop_sequence": None,
-                        "usage": usage,
+                        "usage": {
+                            "input_tokens": usage.get("prompt_tokens", 0),
+                            "output_tokens": 0,
+                        },
                     },
                 },
             )
@@ -2161,16 +2248,16 @@ def _openai_stream_to_responses(
 
         async for chunk in source_iterator:
             text = decoder.decode(chunk) if isinstance(chunk, bytes) else str(chunk)
-            buffer += text
+            buffer = (buffer + text).replace("\r\n", "\n")
             lines = buffer.split("\n")
             buffer = lines.pop()
 
             for line in lines:
                 stripped_line = line.strip()
-                if not stripped_line or not stripped_line.startswith("data: "):
+                if not stripped_line or not stripped_line.startswith("data:"):
                     continue
 
-                data = stripped_line[len("data: "):]
+                data = stripped_line[len("data:"):].lstrip()
                 if data == "[DONE]":
                     continue
 
@@ -2187,8 +2274,8 @@ def _openai_stream_to_responses(
         # Process any remaining data left in the buffer after the stream ends.
         if buffer:
             stripped_line = buffer.strip()
-            if stripped_line and stripped_line.startswith("data: "):
-                data = stripped_line[len("data: "):]
+            if stripped_line and stripped_line.startswith("data:"):
+                data = stripped_line[len("data:"):].lstrip()
                 if data != "[DONE]":
                     try:
                         chunk_json = sanitize_payload(json.loads(data))

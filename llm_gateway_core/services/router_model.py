@@ -462,6 +462,24 @@ class RouterModelService:
         )
         return observed.response
 
+    @staticmethod
+    def _publish_partial_selector_failure(
+        target_handoff: Any,
+        selector_components: tuple[BillingComponent, ...],
+        rejected_components: Any = (),
+    ) -> None:
+        publish_fn = getattr(target_handoff, "publish_partial_failure", None)
+        if not callable(publish_fn) or not selector_components:
+            return
+        first = selector_components[0]
+        publish_fn(
+            ChatTerminalObservation(
+                top_provider=first.provider,
+                top_model=first.model,
+                components=(*selector_components, *rejected_components),
+            )
+        )
+
     async def run_stream(
         self,
         *,
@@ -476,16 +494,26 @@ class RouterModelService:
             request=request,
             router_config=router_config,
             request_body=request_body,
+            accounting_handoff=accounting_handoff,
         )
         handoff = accounting_handoff
         if accounting_handoff is not None and selector_components:
             handoff = _PrefixedChatHandoff(accounting_handoff, selector_components)
-        return await self._dispatch_selected_target(
-            request=request,
-            request_body=request_body,
-            selected_candidate=selected_candidate,
-            accounting_handoff=handoff,
-        )
+        try:
+            return await self._dispatch_selected_target(
+                request=request,
+                request_body=request_body,
+                selected_candidate=selected_candidate,
+                accounting_handoff=handoff,
+            )
+        except BaseException:
+            if accounting_handoff is not None and selector_components:
+                self._publish_partial_selector_failure(
+                    accounting_handoff,
+                    selector_components,
+                    getattr(handoff, "_rejected_components", ()),
+                )
+            raise
 
     async def run_observed(
         self,
@@ -495,34 +523,49 @@ class RouterModelService:
         router_config: dict[str, Any],
         request_body: dict[str, Any],
     ) -> ObservedChatResponse:
-        from ..api.v1.chat_accounting import ChatTerminalHandoff
+        from ..api.v1.chat_accounting import ChatTerminalHandoff, get_chat_terminal_handoff
 
         if request_body.get("stream", False):
             raise HTTPException(status_code=400, detail="Use run_stream for streaming Router requests.")
+
+        try:
+            outer_handoff = get_chat_terminal_handoff(request)
+        except Exception:
+            outer_handoff = None
 
         selected_candidate, decision, decision_source, selector_components, selector_usage = await self._select(
             request=request,
             router_config=router_config,
             request_body=request_body,
+            accounting_handoff=outer_handoff,
         )
         selected_id = selected_candidate["id"]
 
         handoff = ChatTerminalHandoff()
-        response = await self._dispatch_selected_target(
-            request=request,
-            request_body=request_body,
-            selected_candidate=selected_candidate,
-            accounting_handoff=handoff,
-        )
+        try:
+            response = await self._dispatch_selected_target(
+                request=request,
+                request_body=request_body,
+                selected_candidate=selected_candidate,
+                accounting_handoff=handoff,
+            )
 
-        if not isinstance(response, dict):
-            raise HTTPException(status_code=502, detail="Router delegate returned a non-JSON response.")
+            if not isinstance(response, dict):
+                raise HTTPException(status_code=502, detail="Router delegate returned a non-JSON response.")
 
-        is_anthropic_raw = bool(
-            getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
-        )
-        if "choices" not in response and not is_anthropic_raw:
-            raise HTTPException(status_code=502, detail="Router delegate returned an invalid chat response.")
+            is_anthropic_raw = bool(
+                getattr(request.state, "llmgateway_response_is_anthropic_raw", False)
+            )
+            if "choices" not in response and not is_anthropic_raw:
+                raise HTTPException(status_code=502, detail="Router delegate returned an invalid chat response.")
+        except BaseException:
+            if outer_handoff is not None and selector_components:
+                self._publish_partial_selector_failure(
+                    outer_handoff,
+                    selector_components,
+                    handoff._rejected_components,
+                )
+            raise
 
         observation = handoff.take()
         if selector_components:
@@ -556,6 +599,7 @@ class RouterModelService:
         request: Request,
         router_config: dict[str, Any],
         request_body: dict[str, Any],
+        accounting_handoff: Any = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, tuple[BillingComponent, ...], dict[str, Any]]:
         """Pick a premium candidate for images, otherwise use tool history or decisions.
 
@@ -599,16 +643,21 @@ class RouterModelService:
             ),
         )
         try:
-            decision = _parse_decision_answer(decision_response)
-        except ValueError as exc:
-            raise HTTPException(status_code=502, detail=f"Router decision model returned an invalid answer: {exc}") from exc
+            try:
+                decision = _parse_decision_answer(decision_response)
+            except ValueError as exc:
+                raise HTTPException(status_code=502, detail=f"Router decision model returned an invalid answer: {exc}") from exc
 
-        selected_candidate = {candidate["id"]: candidate for candidate in candidates}.get(decision["candidate_id"])
-        if selected_candidate is None:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Router decision model chose unknown candidate_id '{decision['candidate_id']}'.",
-            )
+            selected_candidate = {candidate["id"]: candidate for candidate in candidates}.get(decision["candidate_id"])
+            if selected_candidate is None:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Router decision model chose unknown candidate_id '{decision['candidate_id']}'.",
+                )
+        except BaseException:
+            if accounting_handoff is not None and selector_components:
+                self._publish_partial_selector_failure(accounting_handoff, selector_components)
+            raise
         usage = decision_response.get("usage")
         selector_usage = _usage_for_cost(usage) if isinstance(usage, dict) else {}
         return selected_candidate, decision, "decision_model", selector_components, selector_usage

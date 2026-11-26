@@ -166,3 +166,94 @@ def test_redirects_are_async_revalidated_and_every_response_is_closed(
         assert final_stream.closed is True
 
     run_async(scenario())
+
+
+def test_pinned_forward_proxy_rejects_oversized_headers_with_431() -> None:
+    async def scenario() -> None:
+        proxy = web_safe_fetch._PinnedForwardProxy()
+        await proxy.start()
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+            try:
+                oversized_headers = b"GET http://example.com/ HTTP/1.1\r\n" + (
+                    b"X-Pad: " + b"a" * 1000 + b"\r\n"
+                ) * 70 + b"\r\n"
+                writer.write(oversized_headers)
+                await writer.drain()
+                status_line = await asyncio.wait_for(reader.readline(), timeout=2.0)
+                assert status_line.startswith(b"HTTP/1.1 431 ")
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        finally:
+            await proxy.stop()
+
+    run_async(scenario())
+
+
+def test_cloakbrowser_fetch_propagates_http_exception_and_bounds_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        monkeypatch.setattr(web_extraction.settings, "web_read_cloakbrowser_enabled", True)
+        with pytest.raises(HTTPException) as exc_info:
+            await web_extraction._cloakbrowser_fetch("http://127.0.0.1/secret")
+        assert exc_info.value.status_code == 400
+
+        in_flight = 0
+        max_in_flight = 0
+
+        def fake_render(url: str, _port: int) -> tuple[str, str, str]:
+            nonlocal in_flight, max_in_flight
+            import time
+
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            time.sleep(0.05)
+            in_flight -= 1
+            return "<html><title>T</title><body><p>Body</p></body></html>", "T", url
+
+        async def fake_validate(url: str):
+            return web_safe_fetch._ValidatedFetchUrl(
+                url=url, host="example.com", port=443, addresses=("93.184.216.34",), connect_ip="93.184.216.34"
+            )
+
+        monkeypatch.setattr(web_extraction, "_validated_fetch_url", fake_validate)
+        monkeypatch.setattr(web_extraction, "_cloakbrowser_render_sync", fake_render)
+        monkeypatch.setattr(web_extraction, "_extract_cloakbrowser_markdown", lambda html, url, title: {"url": url, "title": title, "content": "Body", "images": []})
+
+        results = await asyncio.gather(
+            *(web_extraction._cloakbrowser_fetch(f"https://example.com/{i}") for i in range(4))
+        )
+        assert len(results) == 4
+        assert max_in_flight <= web_extraction.CLOAKBROWSER_MAX_CONCURRENT
+
+    run_async(scenario())
+
+
+def test_web_research_download_content_returns_empty_on_ssrf_400_without_fallback() -> None:
+    from unittest.mock import AsyncMock
+
+    from llm_gateway_core.agents import web_research as web_research_module
+
+    async def scenario() -> None:
+        client = web_research_module.WebResearchClient(
+            tavily_api_key="tavily-key",
+            jina_api_key="jina-key",
+            proxy_url="http://proxy.internal",
+        )
+        client._tavily_extract = AsyncMock(side_effect=AssertionError("must not fall back to tavily"))
+        client._get_clean_text_jina = AsyncMock(side_effect=AssertionError("must not fall back to jina"))
+
+        with patch.object(
+            web_research_module,
+            "_get_with_public_redirects",
+            new=AsyncMock(side_effect=HTTPException(status_code=400, detail="blocked")),
+        ):
+            result = await client._download_content("http://127.0.0.1/admin")
+
+        assert result == {"url": "http://127.0.0.1/admin", "title": "", "content": ""}
+        client._tavily_extract.assert_not_awaited()
+        client._get_clean_text_jina.assert_not_awaited()
+
+    run_async(scenario())

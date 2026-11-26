@@ -190,6 +190,17 @@ def test_loader_spec_and_initial_state_remain_compatible(tmp_path: Path) -> None
     assert loader.router_rules == {}
 
 
+def test_empty_operation_rules_includes_all_media_operations() -> None:
+    rules = empty_operation_rules()
+    for key in (
+        "videos_generations",
+        "audio_diarizations",
+        "audio_speaker_transcriptions",
+    ):
+        assert key in rules
+        assert rules[key] == {}
+
+
 def test_from_source_bundle_returns_facade_subtype(tmp_path: Path) -> None:
     (tmp_path / "providers.json").write_text("[]", encoding="utf-8")
     (tmp_path / "models_fallback_rules.json").write_text("[]", encoding="utf-8")

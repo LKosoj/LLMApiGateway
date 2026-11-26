@@ -645,6 +645,7 @@ async def attempt_model_fallback_rule(
     affinity_ttl_seconds = _provider_key_routing_affinity_ttl(provider_config, key_pool_config)
     session_id = request.headers.get(affinity_header) if affinity_enabled else None
     affinity_scope = _affinity_scope_for_request(request) if affinity_enabled else None
+    model_limits = upstream_limits_for_model(provider_config, provider_model or "")
     shared_limits = getattr(provider_config, "upstream_limits", None)
     key_limits = UpstreamQuotaLimits.from_mapping(shared_limits.model_dump() if shared_limits is not None else None)
 
@@ -653,7 +654,7 @@ async def attempt_model_fallback_rule(
             provider_name or "unknown",
             provider_model or "unknown",
             key_candidates,
-            limits=upstream_limits_for_model(provider_config, provider_model or ""),
+            limits=model_limits,
             key_limits=key_limits,
             strategy=strategy,
             session_id=session_id,
@@ -702,7 +703,7 @@ async def attempt_model_fallback_rule(
     tool_call_rescue_enabled = bool(model_fallback_rule.get("tool_call_rescue")) and not is_anthropic_provider
     request_has_tools_for_rescue = _request_has_tools(request_body_json)
 
-    def _apply_non_stream_tool_call_rescue() -> ModelBehaviorFailureDetail | None:
+    def _apply_non_stream_tool_call_rescue(response_data: dict) -> ModelBehaviorFailureDetail | None:
         if not tool_call_rescue_enabled or not request_has_tools_for_rescue:
             return None
         return _apply_tool_call_rescue(response_data, request_body_json)
@@ -969,6 +970,7 @@ async def attempt_model_fallback_rule(
             provider_name or "unknown",
             provider_model or "unknown",
             upstream_key_fingerprint,
+            limits=model_limits,
             key_limits=key_limits,
         )
         if blocked:
@@ -1103,7 +1105,342 @@ async def attempt_model_fallback_rule(
             )
             return None, error_detail, attempt_number
 
+    async def _execute_single_attempt(
+        attempt_payload: dict,
+        *,
+        sub_provider: str | None = None,
+    ) -> tuple[str, object]:
+        nonlocal last_error_detail, key_switches_used
+        concurrency_lease = await _acquire_upstream_slot()
+        if concurrency_lease is None:
+            return (
+                "return_error",
+                f"No upstream key is currently available for provider '{provider_name}' "
+                f"and model '{provider_model}': shared key max concurrency reached.",
+            )
+
+        try:
+            update_active_request(
+                request,
+                gateway_model=requested_model,
+                operation=getattr(request.state, "llmgateway_operation", "chat"),
+                provider=provider_name,
+                model=provider_model,
+                upstream_key_fingerprint=upstream_key_fingerprint,
+            )
+        except BaseException:
+            concurrency_lease.release()
+            raise
+        attempt_entry = _track_attempt_start()
+        if isinstance(attempt_entry, str):
+            concurrency_lease.release()
+            _record_event(False, attempt_entry, 0, upstream_key_fingerprint=upstream_key_fingerprint)
+            return "return_error", attempt_entry
+        t0 = time.monotonic()
+        response_headers: dict[str, str] = {}
+        try:
+            response_data, error_detail = await make_llm_request(
+                http_client,
+                target_url,
+                headers,
+                attempt_payload,
+                is_streaming,
+                response_headers_sink=response_headers,
+                **stream_request_kwargs,
+            )
+        except BaseException:
+            concurrency_lease.release()
+            raise
+        upstream_response = response_data if error_detail is None else None
+        if is_streaming and response_data is not None and error_detail is None:
+            response_data = await _attach_stream_slot(response_data, concurrency_lease)
+        elif not is_streaming or response_data is None or error_detail is not None:
+            concurrency_lease.release()
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        _record_rate_limit_observations(target_url, response_headers)
+
+        if response_data is not None and error_detail is None and is_responses_provider:
+            if is_streaming:
+                try:
+                    response_data = responses_stream_to_chat(response_data, provider_model)
+                except BaseException:
+                    await _close_stream_after_postprocess_failure(response_data)
+                    raise
+            else:
+                response_data = responses_response_to_chat(response_data)
+                if response_data.get("error"):
+                    error_detail = str(response_data["error"])
+                    response_data = None
+
+        if (
+            response_data
+            and error_detail is None
+            and is_streaming
+            and isinstance(response_data, StreamingResponse)
+        ):
+            stream_response = response_data
+            try:
+                response_data, error_detail = await detect_upstream_provider_error_stream(
+                    stream_response,
+                    provider_model,
+                    is_anthropic_provider=is_anthropic_provider,
+                )
+            except BaseException:
+                await _close_stream_after_postprocess_failure(stream_response)
+                raise
+            if error_detail is not None:
+                await _close_stream_after_postprocess_failure(stream_response)
+                if sub_provider is not None:
+                    logging.warning(
+                        "Detected upstream-provider error response from model '%s' via provider '%s' sub-provider '%s'.",
+                        provider_model,
+                        provider_name,
+                        sub_provider,
+                    )
+                else:
+                    logging.warning(
+                        "Detected upstream-provider error response from model '%s' via provider '%s'.",
+                        provider_model,
+                        provider_name,
+                    )
+                response_data = None
+
+        response_data, error_detail = await _apply_leading_ideograph_check(
+            response_data,
+            error_detail,
+            providers_config=providers_config,
+            provider_name=provider_name,
+            provider_model=provider_model,
+            is_streaming=is_streaming,
+            is_anthropic_provider=is_anthropic_provider,
+            close_stream=_close_stream_after_postprocess_failure,
+        )
+
+        if response_data and error_detail is None and not is_streaming:
+            # Detection must run before _observe_success(): the accounting
+            # handoff is one-shot, and publishing on a degenerate attempt
+            # would burn it before the eventual successful attempt.
+            behavior_detail = detect_upstream_provider_error_non_stream(
+                response_data,
+                provider_model,
+                is_anthropic_provider=is_anthropic_provider,
+            ) or detect_degenerate_non_stream_response(
+                response_data,
+                request_body_json,
+                is_anthropic_provider=is_anthropic_provider,
+            )
+            if behavior_detail is not None:
+                degenerate_summary = describe_degenerate_response(
+                    response_data,
+                    is_anthropic_provider=is_anthropic_provider,
+                    include_full_text=settings.log_fallback_full_messages,
+                )
+                if sub_provider is not None:
+                    logging.warning(
+                        "Detected degenerate response (%s) from model '%s' via provider '%s' sub-provider '%s'. %s",
+                        behavior_detail.behavior_class,
+                        provider_model,
+                        provider_name,
+                        sub_provider,
+                        degenerate_summary,
+                    )
+                else:
+                    logging.warning(
+                        "Detected degenerate response (%s) from model '%s' via provider '%s'. %s",
+                        behavior_detail.behavior_class,
+                        provider_model,
+                        provider_name,
+                        degenerate_summary,
+                    )
+                error_detail = behavior_detail
+                response_data = None
+            else:
+                rescue_failure = _apply_non_stream_tool_call_rescue(response_data)
+                if rescue_failure is not None:
+                    if sub_provider is not None:
+                        logging.warning(
+                            "Tool-call rescue failed (%s) for model '%s' via provider '%s' sub-provider '%s'.",
+                            rescue_failure.behavior_class,
+                            provider_model,
+                            provider_name,
+                            sub_provider,
+                        )
+                    else:
+                        logging.warning(
+                            "Tool-call rescue failed (%s) for model '%s' via provider '%s'.",
+                            rescue_failure.behavior_class,
+                            provider_model,
+                            provider_name,
+                        )
+                    error_detail = rescue_failure
+                    response_data = None
+
+        if error_detail is not None:
+            _record_rejected_response(upstream_response, error_detail)
+
+        if response_data and error_detail is None:
+            try:
+                response_data = _observe_success(response_data)
+            except BaseException:
+                if is_streaming:
+                    await _close_stream_after_postprocess_failure(response_data)
+                raise
+            if is_anthropic_provider:
+                if client_expects_anthropic:
+                    # Native end-to-end Anthropic: skip the lossy OpenAI
+                    # round-trip. ``anthropic_messages`` reads this flag
+                    # and forwards the payload/stream as-is.
+                    request.state.llmgateway_response_is_anthropic_raw = True
+                elif is_streaming:
+                    try:
+                        response_data = _anthropic_stream_to_openai(
+                            request,
+                            response_data,
+                            requested_model,
+                            tool_name_reverse_map=anthropic_tool_name_reverse_map,
+                        )
+                    except BaseException:
+                        await _close_stream_after_postprocess_failure(response_data)
+                        raise
+                else:
+                    response_data = _anthropic_response_to_openai(
+                        response_data,
+                        requested_model,
+                        tool_name_reverse_map=anthropic_tool_name_reverse_map,
+                    )
+            request.state.llmgateway_provider = provider_name
+            request.state.llmgateway_provider_model = provider_model
+            request.state.llmgateway_response_is_anthropic_provider = is_anthropic_provider
+            request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
+            _track_attempt_result(attempt_entry, True, None)
+            _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
+            if sub_provider is not None:
+                logging.info(
+                    "Connection success with model '%s' in provider '%s' via '%s'. %s response...",
+                    provider_model,
+                    provider_name,
+                    sub_provider,
+                    "Starting streaming" if is_streaming else "Received",
+                )
+            else:
+                logging.info(
+                    "Connection success to model '%s' in provider '%s'. %s response...",
+                    provider_model,
+                    provider_name,
+                    "Starting streaming" if is_streaming else "Waiting",
+                )
+            return "success", response_data
+
+        _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
+        key_blocking_failure = _track_attempt_result(attempt_entry, False, error_detail)
+        key_blocking_failure = key_blocking_failure or upstream_routing_state.has_zero_remaining_quota_block(
+            provider_name or "unknown", provider_model or "unknown", upstream_key_fingerprint
+        )
+        if sub_provider is not None:
+            _log_failed_attempt_warning(
+                provider_model,
+                provider_name,
+                error_detail,
+                target_url,
+                attempt_payload,
+                sub_provider=sub_provider,
+            )
+            last_error_detail = (
+                f"Model '{provider_model}' failed from provider '{provider_name}' "
+                f"and sub-provider {sub_provider} : {error_detail}"
+            )
+        else:
+            _log_failed_attempt_warning(
+                provider_model,
+                provider_name,
+                error_detail,
+                target_url,
+                attempt_payload,
+            )
+            last_error_detail = f"Model {provider_model} failed with provider '{provider_name}': {error_detail}"
+
+        is_behavior_class_failure = bool(getattr(error_detail, "behavior_class", None))
+        is_stop_worthy_context_overflow = (
+            stop_after_context_overflow and _is_context_overflow_error(error_detail)
+        )
+        # Checked before the key switch: a rejected tool_choice is a
+        # property of the request, so another key would be refused too.
+        if _maybe_downgrade_forced_tool_choice(error_detail):
+            return "retry_immediately", error_detail
+        if (
+            key_blocking_failure
+            and not is_behavior_class_failure
+            and not is_stop_worthy_context_overflow
+            and key_switches_used < key_switch_budget
+            and not _budget_exhausted()
+        ):
+            next_selected = _select_upstream_key()
+            if next_selected.available and next_selected.fingerprint != upstream_key_fingerprint:
+                key_switches_used += 1
+                await _apply_selected_key(next_selected)
+                if sub_provider is not None:
+                    logging.info(
+                        "Switching upstream key for model '%s' on sub-provider '%s' in "
+                        "provider '%s' after a rate-limit/quota block (switch %s/%s); "
+                        "retrying the same sub-provider without consuming a retry.",
+                        provider_model,
+                        sub_provider,
+                        provider_name,
+                        key_switches_used,
+                        key_switch_budget,
+                    )
+                else:
+                    logging.info(
+                        "Switching upstream key for model '%s' in provider '%s' after a "
+                        "rate-limit/quota block (switch %s/%s); retrying the same rule "
+                        "without consuming a retry.",
+                        provider_model,
+                        provider_name,
+                        key_switches_used,
+                        key_switch_budget,
+                    )
+                return "retry_immediately", error_detail
+        if is_behavior_class_failure:
+            behavior_class = getattr(error_detail, "behavior_class", None)
+            if behavior_class in _PROVIDER_TEXT_SKIP_BEHAVIORS:
+                _remember_ideograph_provider_skip(request, provider_name)
+            if sub_provider is not None:
+                logging.warning(
+                    "Model behavior failure (%s) detected on model '%s' sub-provider '%s'; skipping local retry.",
+                    error_detail.behavior_class,
+                    provider_model,
+                    sub_provider,
+                )
+            else:
+                logging.warning(
+                    "Model behavior failure (%s) detected on model '%s'; skipping local retry.",
+                    error_detail.behavior_class,
+                    provider_model,
+                )
+            return "return_error", last_error_detail
+        if is_stop_worthy_context_overflow:
+            if sub_provider is not None:
+                logging.warning(
+                    "Context overflow detected on model '%s' sub-provider '%s' before retry; returning to dispatcher.",
+                    provider_model,
+                    sub_provider,
+                )
+            else:
+                logging.warning(
+                    "Context overflow detected on model '%s' before retry; returning to dispatcher.",
+                    provider_model,
+                )
+            return "return_error", last_error_detail
+        if sub_provider is None:
+            logging.debug(
+                "Continuing after failed attempt for model '%s' in provider '%s'.",
+                provider_model,
+                provider_name,
+            )
+        return "failed", error_detail
+
     remaining_attempts = retry_count
+    last_attempt_error_detail: object = None
     while remaining_attempts >= 0:
         if _budget_exhausted():
             logging.warning(
@@ -1136,252 +1473,14 @@ async def attempt_model_fallback_rule(
                 attempt_payload["provider"] = {"order": subproviders_ordering}
                 attempt_payload["allow_fallbacks"] = False
 
-            concurrency_lease = await _acquire_upstream_slot()
-            if concurrency_lease is None:
-                return (
-                    None,
-                    f"No upstream key is currently available for provider '{provider_name}' "
-                    f"and model '{provider_model}': shared key max concurrency reached.",
-                    attempt_number,
-                )
-
-            try:
-                update_active_request(
-                    request,
-                    gateway_model=requested_model,
-                    operation=getattr(request.state, "llmgateway_operation", "chat"),
-                    provider=provider_name,
-                    model=provider_model,
-                    upstream_key_fingerprint=upstream_key_fingerprint,
-                )
-            except BaseException:
-                concurrency_lease.release()
-                raise
-            attempt_entry = _track_attempt_start()
-            if isinstance(attempt_entry, str):
-                concurrency_lease.release()
-                _record_event(False, attempt_entry, 0, upstream_key_fingerprint=upstream_key_fingerprint)
-                return None, attempt_entry, attempt_number
-            t0 = time.monotonic()
-            response_headers: dict[str, str] = {}
-            try:
-                response_data, error_detail = await make_llm_request(
-                    http_client,
-                    target_url,
-                    headers,
-                    attempt_payload,
-                    is_streaming,
-                    response_headers_sink=response_headers,
-                    **stream_request_kwargs,
-                )
-            except BaseException:
-                concurrency_lease.release()
-                raise
-            upstream_response = response_data if error_detail is None else None
-            if is_streaming and response_data is not None and error_detail is None:
-                response_data = await _attach_stream_slot(response_data, concurrency_lease)
-            elif not is_streaming or response_data is None or error_detail is not None:
-                concurrency_lease.release()
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            _record_rate_limit_observations(target_url, response_headers)
-
-            if response_data is not None and error_detail is None and is_responses_provider:
-                if is_streaming:
-                    try:
-                        response_data = responses_stream_to_chat(response_data, provider_model)
-                    except BaseException:
-                        await _close_stream_after_postprocess_failure(response_data)
-                        raise
-                else:
-                    response_data = responses_response_to_chat(response_data)
-                    if response_data.get("error"):
-                        error_detail = str(response_data["error"])
-                        response_data = None
-
-            if (
-                response_data
-                and error_detail is None
-                and is_streaming
-                and isinstance(response_data, StreamingResponse)
-            ):
-                stream_response = response_data
-                try:
-                    response_data, error_detail = await detect_upstream_provider_error_stream(
-                        stream_response,
-                        provider_model,
-                        is_anthropic_provider=is_anthropic_provider,
-                    )
-                except BaseException:
-                    await _close_stream_after_postprocess_failure(stream_response)
-                    raise
-                if error_detail is not None:
-                    await _close_stream_after_postprocess_failure(stream_response)
-                    logging.warning(
-                        "Detected upstream-provider error response from model '%s' via provider '%s'.",
-                        provider_model,
-                        provider_name,
-                    )
-                    response_data = None
-
-            response_data, error_detail = await _apply_leading_ideograph_check(
-                response_data,
-                error_detail,
-                providers_config=providers_config,
-                provider_name=provider_name,
-                provider_model=provider_model,
-                is_streaming=is_streaming,
-                is_anthropic_provider=is_anthropic_provider,
-                close_stream=_close_stream_after_postprocess_failure,
-            )
-
-            if response_data and error_detail is None and not is_streaming:
-                # Detection must run before _observe_success(): the accounting
-                # handoff is one-shot, and publishing on a degenerate attempt
-                # would burn it before the eventual successful attempt.
-                behavior_detail = detect_upstream_provider_error_non_stream(
-                    response_data,
-                    provider_model,
-                    is_anthropic_provider=is_anthropic_provider,
-                ) or detect_degenerate_non_stream_response(
-                    response_data,
-                    request_body_json,
-                    is_anthropic_provider=is_anthropic_provider,
-                )
-                if behavior_detail is not None:
-                    logging.warning(
-                        "Detected degenerate response (%s) from model '%s' via provider '%s'. %s",
-                        behavior_detail.behavior_class,
-                        provider_model,
-                        provider_name,
-                        describe_degenerate_response(
-                            response_data,
-                            is_anthropic_provider=is_anthropic_provider,
-                            include_full_text=settings.log_fallback_full_messages,
-                        ),
-                    )
-                    error_detail = behavior_detail
-                    response_data = None
-                else:
-                    rescue_failure = _apply_non_stream_tool_call_rescue()
-                    if rescue_failure is not None:
-                        logging.warning(
-                            "Tool-call rescue failed (%s) for model '%s' via provider '%s'.",
-                            rescue_failure.behavior_class,
-                            provider_model,
-                            provider_name,
-                        )
-                        error_detail = rescue_failure
-                        response_data = None
-
-            if error_detail is not None:
-                _record_rejected_response(upstream_response, error_detail)
-
-            if response_data and error_detail is None:
-                try:
-                    response_data = _observe_success(response_data)
-                except BaseException:
-                    if is_streaming:
-                        await _close_stream_after_postprocess_failure(response_data)
-                    raise
-                if is_anthropic_provider:
-                    if client_expects_anthropic:
-                        # Native end-to-end Anthropic: skip the lossy OpenAI
-                        # round-trip. ``anthropic_messages`` reads this flag
-                        # and forwards the payload/stream as-is.
-                        request.state.llmgateway_response_is_anthropic_raw = True
-                    elif is_streaming:
-                        try:
-                            response_data = _anthropic_stream_to_openai(
-                                request,
-                                response_data,
-                                requested_model,
-                                tool_name_reverse_map=anthropic_tool_name_reverse_map,
-                            )
-                        except BaseException:
-                            await _close_stream_after_postprocess_failure(response_data)
-                            raise
-                    else:
-                        response_data = _anthropic_response_to_openai(
-                            response_data,
-                            requested_model,
-                            tool_name_reverse_map=anthropic_tool_name_reverse_map,
-                        )
-                request.state.llmgateway_provider = provider_name
-                request.state.llmgateway_provider_model = provider_model
-                request.state.llmgateway_response_is_anthropic_provider = is_anthropic_provider
-                request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
-                _track_attempt_result(attempt_entry, True, None)
-                _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
-                logging.info(
-                    "Connection success to model '%s' in provider '%s'. %s response...",
-                    provider_model,
-                    provider_name,
-                    "Starting streaming" if is_streaming else "Waiting",
-                )
-                return response_data, None, attempt_number
-
-            _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
-            key_blocking_failure = _track_attempt_result(attempt_entry, False, error_detail)
-            key_blocking_failure = key_blocking_failure or upstream_routing_state.has_zero_remaining_quota_block(
-                provider_name or "unknown", provider_model or "unknown", upstream_key_fingerprint
-            )
-            _log_failed_attempt_warning(
-                provider_model,
-                provider_name,
-                error_detail,
-                target_url,
-                attempt_payload,
-            )
-            last_error_detail = f"Model {provider_model} failed with provider '{provider_name}': {error_detail}"
-            is_behavior_class_failure = bool(getattr(error_detail, "behavior_class", None))
-            is_stop_worthy_context_overflow = (
-                stop_after_context_overflow and _is_context_overflow_error(error_detail)
-            )
-            # Checked before the key switch: a rejected tool_choice is a
-            # property of the request, so another key would be refused too.
-            if _maybe_downgrade_forced_tool_choice(error_detail):
+            action, result_val = await _execute_single_attempt(attempt_payload)
+            if action == "success":
+                return result_val, None, attempt_number
+            if action == "return_error":
+                return None, result_val, attempt_number
+            last_attempt_error_detail = result_val
+            if action == "retry_immediately":
                 continue
-            if (
-                key_blocking_failure
-                and not is_behavior_class_failure
-                and not is_stop_worthy_context_overflow
-                and key_switches_used < key_switch_budget
-            ):
-                next_selected = _select_upstream_key()
-                if next_selected.available and next_selected.fingerprint != upstream_key_fingerprint:
-                    key_switches_used += 1
-                    await _apply_selected_key(next_selected)
-                    logging.info(
-                        "Switching upstream key for model '%s' in provider '%s' after a "
-                        "rate-limit/quota block (switch %s/%s); retrying the same rule "
-                        "without consuming a retry.",
-                        provider_model,
-                        provider_name,
-                        key_switches_used,
-                        key_switch_budget,
-                    )
-                    continue
-            if is_behavior_class_failure:
-                behavior_class = getattr(error_detail, "behavior_class", None)
-                if behavior_class in _PROVIDER_TEXT_SKIP_BEHAVIORS:
-                    _remember_ideograph_provider_skip(request, provider_name)
-                logging.warning(
-                    "Model behavior failure (%s) detected on model '%s'; skipping local retry.",
-                    error_detail.behavior_class,
-                    provider_model,
-                )
-                return None, last_error_detail, attempt_number
-            if is_stop_worthy_context_overflow:
-                logging.warning(
-                    "Context overflow detected on model '%s' before retry; returning to dispatcher.",
-                    provider_model,
-                )
-                return None, last_error_detail, attempt_number
-            logging.debug(
-                "Continuing after failed attempt for model '%s' in provider '%s'.",
-                provider_model,
-                provider_name,
-            )
         else:
             logging.info(
                 "Provider '%s' uses sub-provider ordering. Target model: %s. Order: %s",
@@ -1401,6 +1500,14 @@ async def attempt_model_fallback_rule(
                     break
 
                 while True:
+                    if _budget_exhausted():
+                        logging.warning(
+                            "Chain-wide attempt budget (%s) exhausted before sub-provider '%s' for model '%s'.",
+                            total_attempts_budget,
+                            sub_provider,
+                            requested_model,
+                        )
+                        break
                     logging.info(
                         "Attempting model '%s' on sub-provider '%s' in provider '%s'",
                         provider_model,
@@ -1410,257 +1517,29 @@ async def attempt_model_fallback_rule(
                     attempt_payload = copy.deepcopy(provider_payload_template)
                     attempt_payload["provider"] = {"order": [sub_provider]}
                     attempt_payload["allow_fallbacks"] = False
-                    concurrency_lease = await _acquire_upstream_slot()
-                    if concurrency_lease is None:
-                        return (
-                            None,
-                            f"No upstream key is currently available for provider '{provider_name}' "
-                            f"and model '{provider_model}': shared key max concurrency reached.",
-                            attempt_number,
-                        )
-                    try:
-                        update_active_request(
-                            request,
-                            gateway_model=requested_model,
-                            operation=getattr(request.state, "llmgateway_operation", "chat"),
-                            provider=provider_name,
-                            model=provider_model,
-                            upstream_key_fingerprint=upstream_key_fingerprint,
-                        )
-                    except BaseException:
-                        concurrency_lease.release()
-                        raise
-                    attempt_entry = _track_attempt_start()
-                    if isinstance(attempt_entry, str):
-                        concurrency_lease.release()
-                        _record_event(False, attempt_entry, 0, upstream_key_fingerprint=upstream_key_fingerprint)
-                        return None, attempt_entry, attempt_number
-                    t0 = time.monotonic()
-                    response_headers = {}
-                    try:
-                        response_data, error_detail = await make_llm_request(
-                            http_client,
-                            target_url,
-                            headers,
-                            attempt_payload,
-                            is_streaming,
-                            response_headers_sink=response_headers,
-                            **stream_request_kwargs,
-                        )
-                    except BaseException:
-                        concurrency_lease.release()
-                        raise
-                    upstream_response = response_data if error_detail is None else None
-                    if is_streaming and response_data is not None and error_detail is None:
-                        response_data = await _attach_stream_slot(response_data, concurrency_lease)
-                    elif not is_streaming or response_data is None or error_detail is not None:
-                        concurrency_lease.release()
-                    duration_ms = int((time.monotonic() - t0) * 1000)
-                    _record_rate_limit_observations(target_url, response_headers)
-
-                    if response_data is not None and error_detail is None and is_responses_provider:
-                        if is_streaming:
-                            try:
-                                response_data = responses_stream_to_chat(response_data, provider_model)
-                            except BaseException:
-                                await _close_stream_after_postprocess_failure(response_data)
-                                raise
-                        else:
-                            response_data = responses_response_to_chat(response_data)
-                            if response_data.get("error"):
-                                error_detail = str(response_data["error"])
-                                response_data = None
-
-                    if (
-                        response_data
-                        and error_detail is None
-                        and is_streaming
-                        and isinstance(response_data, StreamingResponse)
-                    ):
-                        stream_response = response_data
-                        try:
-                            response_data, error_detail = await detect_upstream_provider_error_stream(
-                                stream_response,
-                                provider_model,
-                                is_anthropic_provider=is_anthropic_provider,
-                            )
-                        except BaseException:
-                            await _close_stream_after_postprocess_failure(stream_response)
-                            raise
-                        if error_detail is not None:
-                            await _close_stream_after_postprocess_failure(stream_response)
-                            logging.warning(
-                                "Detected upstream-provider error response from model '%s' via provider '%s' sub-provider '%s'.",
-                                provider_model,
-                                provider_name,
-                                sub_provider,
-                            )
-                            response_data = None
-
-                    response_data, error_detail = await _apply_leading_ideograph_check(
-                        response_data,
-                        error_detail,
-                        providers_config=providers_config,
-                        provider_name=provider_name,
-                        provider_model=provider_model,
-                        is_streaming=is_streaming,
-                        is_anthropic_provider=is_anthropic_provider,
-                        close_stream=_close_stream_after_postprocess_failure,
-                    )
-
-                    if response_data and error_detail is None and not is_streaming:
-                        # Detection must run before _observe_success(): the
-                        # accounting handoff is one-shot, and publishing on a
-                        # degenerate attempt would burn it before the eventual
-                        # successful attempt.
-                        behavior_detail = detect_upstream_provider_error_non_stream(
-                            response_data,
-                            provider_model,
-                            is_anthropic_provider=is_anthropic_provider,
-                        ) or detect_degenerate_non_stream_response(
-                            response_data,
-                            request_body_json,
-                            is_anthropic_provider=is_anthropic_provider,
-                        )
-                        if behavior_detail is not None:
-                            logging.warning(
-                                "Detected degenerate response (%s) from model '%s' via provider '%s' sub-provider '%s'. %s",
-                                behavior_detail.behavior_class,
-                                provider_model,
-                                provider_name,
-                                sub_provider,
-                                describe_degenerate_response(
-                                    response_data,
-                                    is_anthropic_provider=is_anthropic_provider,
-                                    include_full_text=settings.log_fallback_full_messages,
-                                ),
-                            )
-                            error_detail = behavior_detail
-                            response_data = None
-                        else:
-                            rescue_failure = _apply_non_stream_tool_call_rescue()
-                            if rescue_failure is not None:
-                                logging.warning(
-                                    "Tool-call rescue failed (%s) for model '%s' via provider '%s' sub-provider '%s'.",
-                                    rescue_failure.behavior_class,
-                                    provider_model,
-                                    provider_name,
-                                    sub_provider,
-                                )
-                                error_detail = rescue_failure
-                                response_data = None
-
-                    if error_detail is not None:
-                        _record_rejected_response(upstream_response, error_detail)
-
-                    if response_data and error_detail is None:
-                        try:
-                            response_data = _observe_success(response_data)
-                        except BaseException:
-                            if is_streaming:
-                                await _close_stream_after_postprocess_failure(response_data)
-                            raise
-                        request.state.llmgateway_provider = provider_name
-                        request.state.llmgateway_provider_model = provider_model
-                        # This branch (sub-provider ordering loop) is structurally
-                        # reachable only when is_anthropic_provider is False (see
-                        # the "or is_anthropic_provider" guard above that forces
-                        # native Anthropic providers into the plain path instead),
-                        # so this is always False here -- set explicitly from the
-                        # local variable, mirroring the plain-path success branch,
-                        # instead of leaving it to the caller's getattr(..., False)
-                        # default.
-                        request.state.llmgateway_response_is_anthropic_provider = is_anthropic_provider
-                        request.state.llmgateway_upstream_key_fingerprint = upstream_key_fingerprint
-                        _track_attempt_result(attempt_entry, True, None)
-                        _record_event(True, None, duration_ms, upstream_key_fingerprint=upstream_key_fingerprint)
-                        logging.info(
-                            "Connection success with model '%s' in provider '%s' via '%s'. %s response...",
-                            provider_model,
-                            provider_name,
-                            sub_provider,
-                            "Starting streaming" if is_streaming else "Received",
-                        )
-                        return response_data, None, attempt_number
-
-                    _record_event(False, error_detail, duration_ms, attempt_payload, upstream_key_fingerprint)
-                    key_blocking_failure = _track_attempt_result(attempt_entry, False, error_detail)
-                    key_blocking_failure = (
-                        key_blocking_failure
-                        or upstream_routing_state.has_zero_remaining_quota_block(
-                            provider_name or "unknown", provider_model or "unknown", upstream_key_fingerprint
-                        )
-                    )
-                    _log_failed_attempt_warning(
-                        provider_model,
-                        provider_name,
-                        error_detail,
-                        target_url,
+                    action, result_val = await _execute_single_attempt(
                         attempt_payload,
                         sub_provider=sub_provider,
                     )
-                    last_error_detail = (
-                        f"Model '{provider_model}' failed from provider '{provider_name}' "
-                        f"and sub-provider {sub_provider} : {error_detail}"
-                    )
-                    is_behavior_class_failure = bool(getattr(error_detail, "behavior_class", None))
-                    is_stop_worthy_context_overflow = (
-                        stop_after_context_overflow and _is_context_overflow_error(error_detail)
-                    )
-                    if _maybe_downgrade_forced_tool_choice(error_detail):
+                    if action == "success":
+                        return result_val, None, attempt_number
+                    if action == "return_error":
+                        return None, result_val, attempt_number
+                    last_attempt_error_detail = result_val
+                    if action == "retry_immediately":
                         continue
-                    if (
-                        key_blocking_failure
-                        and not is_behavior_class_failure
-                        and not is_stop_worthy_context_overflow
-                        and key_switches_used < key_switch_budget
-                        and not _budget_exhausted()
-                    ):
-                        next_selected = _select_upstream_key()
-                        if next_selected.available and next_selected.fingerprint != upstream_key_fingerprint:
-                            key_switches_used += 1
-                            await _apply_selected_key(next_selected)
-                            logging.info(
-                                "Switching upstream key for model '%s' on sub-provider '%s' in "
-                                "provider '%s' after a rate-limit/quota block (switch %s/%s); "
-                                "retrying the same sub-provider without consuming a retry.",
-                                provider_model,
-                                sub_provider,
-                                provider_name,
-                                key_switches_used,
-                                key_switch_budget,
-                            )
-                            continue
-                    if is_behavior_class_failure:
-                        behavior_class = getattr(error_detail, "behavior_class", None)
-                        if behavior_class in _PROVIDER_TEXT_SKIP_BEHAVIORS:
-                            _remember_ideograph_provider_skip(request, provider_name)
-                        logging.warning(
-                            "Model behavior failure (%s) detected on model '%s' sub-provider '%s'; skipping local retry.",
-                            error_detail.behavior_class,
-                            provider_model,
-                            sub_provider,
-                        )
-                        return None, last_error_detail, attempt_number
-                    if is_stop_worthy_context_overflow:
-                        logging.warning(
-                            "Context overflow detected on model '%s' sub-provider '%s' before retry; returning to dispatcher.",
-                            provider_model,
-                            sub_provider,
-                        )
-                        return None, last_error_detail, attempt_number
                     break
 
             logging.warning("All sub-providers for '%s' failed.", provider_name)
 
         if remaining_attempts > 0 and not _budget_exhausted():
-            sleep_seconds = _compute_retry_sleep_seconds(retry_delay, error_detail)
+            sleep_seconds = _compute_retry_sleep_seconds(retry_delay, last_attempt_error_detail)
             if sleep_seconds > 0:
                 logging.info(
                     "RETRYING %s in %.2f seconds (source=%s)... %s attempts left.",
                     provider_model,
                     sleep_seconds,
-                    "retry-after" if _extract_retry_after(error_detail) is not None else "retry_delay+jitter",
+                    "retry-after" if _extract_retry_after(last_attempt_error_detail) is not None else "retry_delay+jitter",
                     remaining_attempts - 1,
                 )
                 await asyncio.sleep(sleep_seconds)

@@ -1,6 +1,4 @@
 import asyncio
-import gzip
-import io
 import json
 import logging
 from collections.abc import Mapping
@@ -25,6 +23,7 @@ from ...services.provider_auth import resolve_provider_auth_material as resolve_
 from ...services.opencode_zen import make_opencode_zen_request
 from ...services.stream_observation import StreamObservationCapacity
 from ...services.upstream_routing_state import UpstreamRoutingState
+from ...utils.gzip_utils import GzipPayloadTooLarge, decompress_gzip_bounded
 from ...utils.text_sanitize import sanitize_payload
 from ...utils.usage_tracking import ModelCostRates
 from .chat_accounting import ChatTerminalHandoff, get_chat_terminal_handoff
@@ -142,8 +141,20 @@ def _read_json_request_body(request_body_bytes: bytes, endpoint_name: str, reque
     # Handle GZip compression in request body
     if request and "gzip" in request.headers.get("content-encoding", "").lower():
         try:
-            with gzip.GzipFile(fileobj=io.BytesIO(request_body_bytes)) as f:
-                request_body_bytes = f.read()
+            request_body_bytes = decompress_gzip_bounded(
+                request_body_bytes,
+                settings.max_request_body_bytes,
+            )
+        except GzipPayloadTooLarge as exc:
+            logging.warning(
+                "Decompressed GZip request body exceeds limit for %s: %s",
+                endpoint_name,
+                exc,
+            )
+            raise HTTPException(
+                status_code=413,
+                detail="Decompressed request body too large",
+            ) from exc
         except Exception as e:
             logging.warning(f"Failed to decompress GZip request body for {endpoint_name}: {e}")
 

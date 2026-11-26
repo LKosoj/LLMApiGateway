@@ -1319,6 +1319,38 @@ class RuntimeGenerationManagerTests(unittest.TestCase):
 
         run_async(scenario())
 
+    def test_shutdown_times_out_on_leaked_lease_and_cleans_up_unleased_generations(self) -> None:
+        async def scenario() -> None:
+            leased_client = Mock()
+            leased_client.aclose = AsyncMock()
+            idle_client = Mock()
+            idle_client.aclose = AsyncMock()
+            manager = RuntimeGenerationManager(lease_drain_timeout_seconds=0.05)
+            install_test_runtime_snapshot(manager, _snapshot(1, clients={"leased": leased_client}))
+            leaked_lease = manager.acquire_current()
+            publish_test_runtime_snapshot(
+                manager,
+                _snapshot(2, clients={"idle": idle_client}),
+                expected_generation=1,
+            )
+
+            await manager.shutdown()
+
+            self.assertEqual(manager.status, RuntimeManagerStatus.STOP_FAILED)
+            idle_client.aclose.assert_awaited_once()
+            leased_client.aclose.assert_not_awaited()
+            self.assertTrue(
+                any(
+                    failure.resource == "runtime_shutdown"
+                    and failure.exception_type == "LeaseDrainTimeout"
+                    for failure in manager.cleanup_failures
+                )
+            )
+
+            leaked_lease.release()
+
+        run_async(scenario())
+
 
 if __name__ == "__main__":
     unittest.main()

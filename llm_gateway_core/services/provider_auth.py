@@ -57,6 +57,6 @@ async def resolve_provider_auth_headers(
     # Resolving the provider key again would rotate to the next key.
     try:
         request.state.llmgateway_route_key_fingerprint = material.upstream_key_fingerprint
-    except Exception:
+    except (AttributeError, TypeError):
         pass
     return material.headers

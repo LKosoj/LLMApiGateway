@@ -233,6 +233,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         stats_module._usage_stats_cache.invalidate()
         stats_module._fallback_stats_cache.invalidate()
         stats_module._upstream_stats_cache.invalidate()
+        stats_module._analytics_dashboard_cache.invalidate()
 
     @contextmanager
     def _client(

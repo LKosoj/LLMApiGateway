@@ -4,12 +4,22 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, status
+
+from ...middleware.auth import ROLE_MASTER
 
 if TYPE_CHECKING:
     from llm_gateway_core.services.runtime_config import AppServices, RuntimeSnapshot
 
 router = APIRouter()
+
+
+def _require_master(request: Request) -> None:
+    if getattr(request.state, "api_key_role", None) != ROLE_MASTER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is reserved for the master API key",
+        )
 
 
 def _capture_app_services(request: Request) -> "AppServices":
@@ -22,6 +32,7 @@ def _capture_runtime_snapshot(request: Request) -> "RuntimeSnapshot":
 
 @router.get("/admin/upstream-quotas")
 async def get_upstream_quotas(request: Request) -> dict:
+    _require_master(request)
     service = _capture_app_services(request).upstream_subscription_quota_service
     providers = _capture_runtime_snapshot(request).config_loader.providers_config
     snapshots = await service.fetch_all(providers_config=providers)

@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 PERMANENT_BLOCK = -1
+DEFAULT_MAX_TRACKED_IPS = 10_000
+_PRUNE_EVERY_N_WRITES = 256
 
 
 @dataclass
@@ -29,6 +31,8 @@ class _IpState:
     failures: int = 0
     # Monotonic deadline until which the IP stays blocked (0.0 = not blocked).
     blocked_until: float = 0.0
+    # Monotonic timestamp of the most recent auth failure for stale pruning.
+    last_failure_at: float = 0.0
 
 
 class IpBlockGuard:
@@ -45,21 +49,54 @@ class IpBlockGuard:
         block_seconds: float = 1200.0,
         time_func=time.monotonic,
         rejections_db: RejectionsDB | None = None,
+        max_tracked_ips: int = DEFAULT_MAX_TRACKED_IPS,
+        stale_ttl_seconds: float | None = None,
     ) -> None:
         if max_failures <= 0:
             raise ValueError("max_failures must be greater than 0")
         if block_seconds <= 0:
             raise ValueError("block_seconds must be greater than 0")
+        if max_tracked_ips <= 0:
+            raise ValueError("max_tracked_ips must be greater than 0")
         self.max_failures = max_failures
         self.block_seconds = block_seconds
+        self._max_tracked_ips = max_tracked_ips
+        self._stale_ttl_seconds = (
+            block_seconds if stale_ttl_seconds is None else stale_ttl_seconds
+        )
         self._time = time_func
         self._by_ip: dict[str, _IpState] = {}
+        self._writes_since_prune = 0
         self._lock = threading.Lock()
         self._db = rejections_db
         self._permanent = {
             item["client_ip"]: item
             for item in (rejections_db.list_permanent_ip_blocks() if rejections_db is not None else [])
         }
+
+    def _prune_stale_locked(self, now: float) -> None:
+        stale_ips = [
+            ip
+            for ip, state in self._by_ip.items()
+            if (state.blocked_until > 0.0 and state.blocked_until <= now)
+            or (
+                state.blocked_until == 0.0
+                and (now - state.last_failure_at) >= self._stale_ttl_seconds
+            )
+        ]
+        for ip in stale_ips:
+            self._by_ip.pop(ip, None)
+
+        overflow = len(self._by_ip) - self._max_tracked_ips
+        if overflow <= 0:
+            return
+        # Evict oldest non-blocked entries first, then oldest blocked entries.
+        eviction_order = sorted(
+            self._by_ip.items(),
+            key=lambda item: (item[1].blocked_until > now, item[1].last_failure_at),
+        )
+        for ip, _state in eviction_order[:overflow]:
+            self._by_ip.pop(ip, None)
 
     def check_blocked(self, ip: str) -> int | None:
         """Return seconds, PERMANENT_BLOCK for a permanent ban, or None.
@@ -96,7 +133,7 @@ class IpBlockGuard:
         with self._lock:
             state = self._by_ip.get(ip)
             if state is None:
-                state = _IpState()
+                state = _IpState(last_failure_at=now)
                 self._by_ip[ip] = state
             if state.blocked_until > now:
                 # Already blocked: stay blocked, do not re-trigger.
@@ -104,12 +141,21 @@ class IpBlockGuard:
             if state.blocked_until:
                 # A previous block expired — start counting fresh.
                 state.blocked_until = 0.0
+            state.last_failure_at = now
             state.failures += 1
+            triggered_block: int | None = None
             if state.failures >= self.max_failures:
                 state.blocked_until = now + self.block_seconds
                 state.failures = 0
-                return int(self.block_seconds)
-            return None
+                triggered_block = int(self.block_seconds)
+            self._writes_since_prune += 1
+            if (
+                self._writes_since_prune >= _PRUNE_EVERY_N_WRITES
+                or len(self._by_ip) > self._max_tracked_ips
+            ):
+                self._prune_stale_locked(now)
+                self._writes_since_prune = 0
+            return triggered_block
 
     def register_success(self, ip: str) -> None:
         """Clear the consecutive-failure counter for *ip* after a valid auth.

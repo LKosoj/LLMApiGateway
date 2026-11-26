@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Any
 from urllib.parse import urlsplit
+from weakref import WeakKeyDictionary
 
 import httpx
 from fastapi import HTTPException
@@ -28,6 +29,19 @@ from .web_safe_fetch import (
 logger = logging.getLogger(__name__)
 
 FREEDIUM_MIRROR_PREFIX = "https://freedium-mirror.cfd/"
+CLOAKBROWSER_MAX_CONCURRENT = 2
+_cloakbrowser_semaphores: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    WeakKeyDictionary()
+)
+
+
+def _get_cloakbrowser_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    semaphore = _cloakbrowser_semaphores.get(loop)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(CLOAKBROWSER_MAX_CONCURRENT)
+        _cloakbrowser_semaphores[loop] = semaphore
+    return semaphore
 
 
 def _is_medium_url(url: str) -> bool:
@@ -129,7 +143,7 @@ async def _direct_http_fetch(url: str) -> dict[str, Any] | None:
             if title_match:
                 title = unescape(_HTML_TAG_RE.sub("", title_match.group(1))).strip()
 
-            extracted = _trafilatura_markdown(html_text, image_base_url)
+            extracted = await asyncio.to_thread(_trafilatura_markdown, html_text, image_base_url)
             if extracted:
                 content, images = _content_with_images(extracted, html_images, image_base_url)
                 return {"url": result_url, "title": title, "content": content, "images": images}
@@ -248,33 +262,29 @@ def _cloakbrowser_launch_args() -> list[str]:
 
 
 def _cloakbrowser_render_sync(url: str, proxy_port: int) -> tuple[str, str, str]:
-    from contextlib import redirect_stderr, redirect_stdout
-    from io import StringIO
-
     from cloakbrowser import launch
 
-    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-        browser = launch(
-            headless=True,
-            locale="ru-RU",
-            humanize=False,
-            args=_cloakbrowser_launch_args(),
-            # Force every outbound connection through our pinned-IP forward proxy
-            # so the browser's own DNS resolution can never diverge from the
-            # host we already validated (see _PinnedForwardProxy).
-            proxy={"server": f"http://127.0.0.1:{proxy_port}"},
-        )
+    browser = launch(
+        headless=True,
+        locale="ru-RU",
+        humanize=False,
+        args=_cloakbrowser_launch_args(),
+        # Force every outbound connection through our pinned-IP forward proxy
+        # so the browser's own DNS resolution can never diverge from the
+        # host we already validated (see _PinnedForwardProxy).
+        proxy={"server": f"http://127.0.0.1:{proxy_port}"},
+    )
+    try:
+        page = browser.new_page()
+        page.route("**/*", _abort_blocked_cloakbrowser_request)
+        page.goto(url, wait_until="domcontentloaded", timeout=20_000)
         try:
-            page = browser.new_page()
-            page.route("**/*", _abort_blocked_cloakbrowser_request)
-            page.goto(url, wait_until="domcontentloaded", timeout=20_000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=5_000)
-            except Exception:
-                logger.debug("CloakBrowser networkidle wait timed out for %s; extracting current DOM.", url)
-            return page.content(), page.title(), page.url
-        finally:
-            browser.close()
+            page.wait_for_load_state("networkidle", timeout=5_000)
+        except Exception:
+            logger.debug("CloakBrowser networkidle wait timed out for %s; extracting current DOM.", url)
+        return page.content(), page.title(), page.url
+    finally:
+        browser.close()
 
 
 async def _cloakbrowser_fetch(url: str) -> dict[str, Any] | None:
@@ -285,20 +295,23 @@ async def _cloakbrowser_fetch(url: str) -> dict[str, Any] | None:
         logger.info("CloakBrowser rendered fetch is disabled; skipping local browser render for %s", cleaned)
         return None
 
-    proxy = _PinnedForwardProxy()
-    try:
-        await _validated_fetch_url(cleaned)
-        await proxy.start()
-        html_text, page_title, final_url = await asyncio.to_thread(
-            _cloakbrowser_render_sync, cleaned, proxy.port
-        )
-    except ImportError:
-        logger.warning("cloakbrowser is not installed; skipping rendered fetch for %s", cleaned)
-        return None
-    except Exception as exc:
-        logger.warning("CloakBrowser rendered fetch failed for %s: %s", cleaned, exc)
-        return None
-    finally:
-        await proxy.stop()
+    async with _get_cloakbrowser_semaphore():
+        proxy = _PinnedForwardProxy()
+        try:
+            await _validated_fetch_url(cleaned)
+            await proxy.start()
+            html_text, page_title, final_url = await asyncio.to_thread(
+                _cloakbrowser_render_sync, cleaned, proxy.port
+            )
+        except HTTPException:
+            raise
+        except ImportError:
+            logger.warning("cloakbrowser is not installed; skipping rendered fetch for %s", cleaned)
+            return None
+        except Exception as exc:
+            logger.warning("CloakBrowser rendered fetch failed for %s: %s", cleaned, exc)
+            return None
+        finally:
+            await proxy.stop()
     await _validated_fetch_url(final_url)
-    return _extract_cloakbrowser_markdown(html_text, final_url, page_title)
+    return await asyncio.to_thread(_extract_cloakbrowser_markdown, html_text, final_url, page_title)

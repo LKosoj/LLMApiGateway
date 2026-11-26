@@ -23,6 +23,7 @@ KEYLESS_FINGERPRINT = "keyless"
 DEFAULT_COOLDOWN_SECONDS = 600.0
 PENALTY_DECAY_SECONDS = 300.0
 DEFAULT_SESSION_AFFINITY_TTL_SECONDS = 3600.0
+MAX_SESSION_AFFINITY_ENTRIES = 4096
 KeySelectionStrategy = Literal["round-robin", "fill-first", "priority"]
 
 # Single 429 hits get a short transient cooldown. A second (or later) 429 hit
@@ -187,7 +188,7 @@ class UpstreamRoutingState:
         self._active_concurrency: dict[tuple[str, str], int] = defaultdict(int)
         self._manual_pauses: dict[tuple[str, str, str | None], _ManualPause] = {}
         self._round_robin_indexes: dict[tuple[str, str, tuple[str, ...]], int] = {}
-        self._session_affinity: dict[tuple[str, str, str, str], _AffinityBinding] = {}
+        self._session_affinity: dict[tuple[str, str, str, str, str], _AffinityBinding] = {}
         # All 429 hits in the trailing hour, used to detect exhaustion events.
         self._rate_limit_hit_windows: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
         # Exhaustion events (>=2nd 429 hit within an hour) in the trailing 24h,
@@ -296,6 +297,7 @@ class UpstreamRoutingState:
                 if binding is not None and binding.expires_at > now:
                     selected = self._candidate_by_fingerprint(available, binding.fingerprint)
                     if selected is not None:
+                        self._session_affinity.pop(affinity_key, None)
                         self._session_affinity[affinity_key] = _AffinityBinding(
                             fingerprint=binding.fingerprint,
                             expires_at=now + self._normalized_affinity_ttl(session_affinity_ttl_seconds),
@@ -307,10 +309,12 @@ class UpstreamRoutingState:
             selected = self._select_available_candidate(provider, model, available, strategy)
             result = self._selected_from_candidate(selected)
             if affinity_key is not None:
+                self._session_affinity.pop(affinity_key, None)
                 self._session_affinity[affinity_key] = _AffinityBinding(
                     fingerprint=result.fingerprint,
                     expires_at=now + self._normalized_affinity_ttl(session_affinity_ttl_seconds),
                 )
+                self._prune_session_affinity(now)
             return result
 
     def cooldown_remaining_seconds(
@@ -348,6 +352,7 @@ class UpstreamRoutingState:
 
     def record_attempt_start(
         self, provider: str, model: str, key_fingerprint: str, *,
+        limits: UpstreamQuotaLimits | None = None,
         key_limits: UpstreamQuotaLimits | None = None,
     ) -> str | None:
         ref = (provider, model, key_fingerprint)
@@ -355,6 +360,9 @@ class UpstreamRoutingState:
         with self._lock:
             if self._active_pause(provider, key_fingerprint, model, now) is not None:
                 return "upstream key is manually paused"
+            model_blocked = self._quota_block_reason(ref, limits, now)
+            if model_blocked:
+                return model_blocked
             blocked = self._key_quota_block_reason(
                 provider,
                 key_fingerprint,
@@ -868,6 +876,14 @@ class UpstreamRoutingState:
         if value is None:
             return DEFAULT_SESSION_AFFINITY_TTL_SECONDS
         return max(1.0, float(value))
+
+    def _prune_session_affinity(self, now: float) -> None:
+        expired = [key for key, binding in self._session_affinity.items() if binding.expires_at <= now]
+        for key in expired:
+            self._session_affinity.pop(key, None)
+        while len(self._session_affinity) > MAX_SESSION_AFFINITY_ENTRIES:
+            oldest_key = next(iter(self._session_affinity))
+            self._session_affinity.pop(oldest_key, None)
 
     def _candidate_by_fingerprint(
         self,

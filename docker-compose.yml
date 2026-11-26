@@ -27,6 +27,10 @@ services:
     image: llm-gateway:latest
     restart: unless-stopped
     read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       outputs-init:
         condition: service_completed_successfully
@@ -44,7 +48,7 @@ services:
       - /tmp:mode=1777
     environment:
       # Required: this is the gateway token clients must send to this service.
-      - GATEWAY_API_KEY=your-secure-api-key
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY:?set GATEWAY_API_KEY in environment or .env}
 
       # Optional gateway settings
       - GATEWAY_PORT=9000
@@ -66,7 +70,7 @@ services:
 
       # Provider API keys - uncomment and set the ones you need.
       # APIKEY_OPENROUTER is issued by OpenRouter.
-      - APIKEY_OPENROUTER=your-openrouter-api-key
+      - APIKEY_OPENROUTER=${APIKEY_OPENROUTER:-}
       # - APIKEY_OPENAI=your-openai-api-key
       # - APIKEY_GOOGLE=your-google-api-key
       # - APIKEY_NEBIUS=your-nebius-api-key

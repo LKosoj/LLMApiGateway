@@ -4278,6 +4278,63 @@ class WebApiTests(unittest.TestCase):
         self.assertIn("https://example.com/good", urls)
         self.assertNotIn("https://example.com/bad", urls)
 
+    def test_web_read_redacts_secrets_from_adapter_error_detail_and_logs(self):
+        secret_token = "sk-live-secret-token-1234567890"
+        read_adapter = AsyncMock(
+            side_effect=RuntimeError(f"Authorization: Bearer {secret_token} failed")
+        )
+        with (
+            patch(
+                "llm_gateway_core.api.v1.web_adapters._direct_http_fetch",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "llm_gateway_core.api.v1.web_adapters._cloakbrowser_fetch",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            self.assertLogs("llm_gateway_core.api.v1.web_adapters", level="WARNING") as logs,
+            self._client(read_adapter=read_adapter) as (client, _fake_http, _search, _read),
+        ):
+            response = client.post(
+                "/v1/web/read",
+                json={"model": "llmgateway/web-read", "url": "https://example.com/page"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        detail = response.json()["detail"]
+        self.assertNotIn(secret_token, detail)
+        self.assertNotIn(secret_token, "\n".join(logs.output))
+
+    def test_attach_raw_content_bounds_concurrency_with_bulk_read_semaphore(self):
+        async def scenario() -> None:
+            in_flight = 0
+            max_in_flight = 0
+
+            async def slow_read(_request, *, read_model, url, output_format):
+                nonlocal in_flight, max_in_flight
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+                await asyncio.sleep(0.03)
+                in_flight -= 1
+                return {"url": url, "title": "T", "content": "Body"}
+
+            results = [{"url": f"https://example.com/{i}", "title": f"T{i}"} for i in range(8)]
+            with patch.object(web_api, "_read_with_model", side_effect=slow_read):
+                enriched = await web_api._attach_raw_content_to_results(
+                    Mock(),
+                    results=results,
+                    read_model="llmgateway/web-read",
+                    output_format="markdown",
+                )
+
+            self.assertEqual(len(enriched), 8)
+            self.assertLessEqual(max_in_flight, web_api.WEB_BULK_READ_CONCURRENCY)
+
+        run_async(scenario())
+
 
 if __name__ == "__main__":
     unittest.main()

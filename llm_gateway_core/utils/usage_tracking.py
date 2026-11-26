@@ -690,6 +690,8 @@ def backfill_zero_token_counts(
     tokens_usage: dict[str, Any],
     request_body_str: str,
     response_text: str,
+    *,
+    estimated_prompt_tokens: int | None = None,
 ) -> bool:
     """Fill in zero-valued token fields via tiktoken estimation.
 
@@ -711,11 +713,15 @@ def backfill_zero_token_counts(
             estimator_resolved = True
         return estimator
 
-    if not tokens_usage.get("prompt_tokens") and request_body_str:
-        estimated = _estimate_prompt_tokens_with_estimator(request_body_str, get_estimator())
-        if estimated > 0:
-            tokens_usage["prompt_tokens"] = estimated
+    if not tokens_usage.get("prompt_tokens"):
+        if estimated_prompt_tokens is not None and estimated_prompt_tokens > 0:
+            tokens_usage["prompt_tokens"] = estimated_prompt_tokens
             changed = True
+        elif request_body_str:
+            estimated = _estimate_prompt_tokens_with_estimator(request_body_str, get_estimator())
+            if estimated > 0:
+                tokens_usage["prompt_tokens"] = estimated
+                changed = True
 
     needs_completion = not tokens_usage.get("completion_tokens")
     needs_reasoning = not tokens_usage.get("reasoning_tokens")

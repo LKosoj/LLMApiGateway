@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import math
+import weakref
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -40,7 +41,9 @@ logger = logging.getLogger(__name__)
 
 admin_api_keys_router = APIRouter()
 
-_KEY_MUTATION_LOCKS: dict[int, asyncio.Lock] = {}
+_KEY_MUTATION_LOCKS: weakref.WeakValueDictionary[int, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
 
 
 def _key_mutation_lock(key_id: int) -> asyncio.Lock:
@@ -196,7 +199,11 @@ async def list_api_keys(request: Request) -> dict[str, Any]:
 
 
 @admin_api_keys_router.post("/admin/api-keys", status_code=status.HTTP_201_CREATED)
-async def create_api_key(request: Request, payload: ApiKeyCreatePayload) -> dict[str, Any]:
+async def create_api_key(
+    request: Request,
+    payload: ApiKeyCreatePayload,
+    response: Response,
+) -> dict[str, Any]:
     _require_master(request)
     db = _capture_app_services(request).api_keys_db
     try:
@@ -214,6 +221,8 @@ async def create_api_key(request: Request, payload: ApiKeyCreatePayload) -> dict
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     logger.info("Created virtual API key id=%s name=%s", record.id, record.name)
+    response.headers["ETag"] = _record_etag(record)
+    response.headers["Cache-Control"] = "no-store"
     return _serialize_record(record, reveal=True)
 
 
@@ -225,6 +234,7 @@ async def get_api_key(request: Request, key_id: int, response: Response) -> dict
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
     response.headers["ETag"] = _record_etag(record)
+    response.headers["Cache-Control"] = "no-store"
     return _serialize_record(record, reveal=True)
 
 
@@ -305,20 +315,17 @@ async def _apply_update(
 @admin_api_keys_router.delete("/admin/api-keys/{key_id}")
 async def delete_api_key(request: Request, key_id: int) -> Any:
     _require_master(request)
-    try:
-        deleted = await _capture_app_services(request).accounting_service.delete_key(
-            key_id
-        )
-    except AccountingError as exc:
-        return accounting_error_response(
-            request,
-            exc,
-            use=AccountingHttpUse.ADMIN_MUTATION,
-        )
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
-    # A per-key mutation lock is no longer reachable via any PATCH once the key
-    # is deleted, so drop it to keep _KEY_MUTATION_LOCKS bounded by live keys
-    # rather than by every key_id ever PATCHed over the process lifetime.
-    _KEY_MUTATION_LOCKS.pop(key_id, None)
-    return {"deleted": True, "id": key_id}
+    async with _key_mutation_lock(key_id):
+        try:
+            deleted = await _capture_app_services(request).accounting_service.delete_key(
+                key_id
+            )
+        except AccountingError as exc:
+            return accounting_error_response(
+                request,
+                exc,
+                use=AccountingHttpUse.ADMIN_MUTATION,
+            )
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+        return {"deleted": True, "id": key_id}

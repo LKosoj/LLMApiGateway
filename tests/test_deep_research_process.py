@@ -1711,3 +1711,32 @@ def test_finish_close_logs_cancelled_error_outcome_from_owner_finish(
             await runner.aclose()
 
     run_async(scenario())
+
+
+
+@pytest.mark.parametrize("bad_timeout", [0, -1, True, False, float("inf"), float("nan"), "10"])
+def test_runner_rejects_invalid_job_timeout_seconds(bad_timeout: object) -> None:
+    with pytest.raises(ValueError, match="job_timeout_seconds"):
+        DeepResearchProcessRunner(
+            _adapter_module=FIXTURE_ADAPTER,
+            job_timeout_seconds=bad_timeout,  # type: ignore[arg-type]
+        )
+
+
+def test_runner_kills_child_and_raises_job_timeout_when_job_exceeds_deadline() -> None:
+    async def scenario() -> None:
+        runner = DeepResearchProcessRunner(
+            _adapter_module=FIXTURE_ADAPTER,
+            job_timeout_seconds=0.25,
+        )
+        await runner.start()
+        try:
+            with pytest.raises(DeepResearchProcessError) as exc_info:
+                await runner.run(_job("block"))
+            assert exc_info.value.code == "job_timeout"
+            assert exc_info.value.exit_code is not None
+            assert runner.active_process_count == 0
+        finally:
+            await runner.aclose()
+
+    run_async(scenario())

@@ -223,9 +223,16 @@ def _lifespan_environment():
             await super().close()
 
     class RecordingDeepResearchRunner:
-        def __init__(self, *, capacity, admission_timeout_seconds) -> None:
+        def __init__(
+            self,
+            *,
+            capacity,
+            admission_timeout_seconds,
+            job_timeout_seconds=1800.0,
+        ) -> None:
             self.capacity = capacity
             self.admission_timeout_seconds = admission_timeout_seconds
+            self.job_timeout_seconds = job_timeout_seconds
             self.closed = False
             deep_research_runners.append(self)
 

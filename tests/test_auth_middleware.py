@@ -347,7 +347,7 @@ class AuthMiddlewareTests(unittest.TestCase):
         self.assertEqual(categories.count("auth_invalid"), 2)
         self.assertEqual(categories.count("ip_blocked"), 1)
 
-    def test_disabled_login_records_key_disabled_without_blocking_ip(self):
+    def test_disabled_login_records_key_disabled_and_counts_toward_ip_block(self):
         guard = IpBlockGuard(max_failures=1, block_seconds=600.0)
         mock_rejections_db = MagicMock(spec=RejectionsDB)
         mock_api_keys_db = MagicMock(spec=ApiKeysDB)
@@ -371,7 +371,7 @@ class AuthMiddlewareTests(unittest.TestCase):
 
         with TestClient(app) as client:
             disabled_response = client.post("/auth/login", json={"api_key": "disabled-key"})
-            valid_response = client.post("/auth/login", json={"api_key": "test-gateway-key"})
+            blocked_response = client.post("/auth/login", json={"api_key": "test-gateway-key"})
         invalid_response = self.client.post("/auth/login", json={"api_key": "wrong-key"})
 
         self.assertEqual(disabled_response.status_code, 401)
@@ -391,9 +391,9 @@ class AuthMiddlewareTests(unittest.TestCase):
             disabled_response.headers["set-cookie"],
         )
         self.assertIn("Max-Age=0", disabled_response.headers["set-cookie"])
-        self.assertEqual(valid_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
         categories = [call.kwargs["category"] for call in mock_rejections_db.insert_rejection.call_args_list]
-        self.assertEqual(categories, ["key_disabled"])
+        self.assertEqual(categories, ["key_disabled", "ip_blocked"])
 
     def test_successful_login_resets_invalid_key_counter(self):
         guard = IpBlockGuard(max_failures=3, block_seconds=600.0)
@@ -431,7 +431,7 @@ class AuthMiddlewareTests(unittest.TestCase):
 
         root_response = self.client.get("/", headers=headers, follow_redirects=False)
         self.assertEqual(root_response.status_code, 303)
-        self.assertEqual(root_response.headers["location"], "/v1/ui/overview")
+        self.assertEqual(root_response.headers["location"], "/auth/login?next=/v1/ui/overview")
 
     def test_usage_producing_request_is_active_during_handler_and_finished_after_response(self):
         response = self.client.post(
@@ -502,7 +502,11 @@ class AuthMiddlewareTests(unittest.TestCase):
                 create_authenticated_session(role=ROLE_USER, key_id=record.id),
             )
 
-            providers_response = client.post("/v1/ui/providers-config", content="[]")
+            providers_response = client.post(
+                "/v1/ui/providers-config",
+                content="[]",
+                headers={"Origin": "http://testserver"},
+            )
             eval_response = client.get("/v1/fallback-model-evals")
 
         self.assertEqual(providers_response.status_code, 403)
@@ -614,6 +618,119 @@ class AuthMiddlewareTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/html", response.headers["content-type"])
+
+    def test_optional_auth_paths_ignore_bearer_headers_and_do_not_bypass_ip_block(self):
+        guard = IpBlockGuard(max_failures=1, block_seconds=600.0)
+        mock_api_keys_db = MagicMock(spec=ApiKeysDB)
+        mock_api_keys_db.get_by_key.return_value = None
+        app = build_test_app(api_keys_db=mock_api_keys_db, ip_block_guard=guard)
+
+        with TestClient(app) as client:
+            # Probing "/" or "GET /auth/login" with Bearer tokens must not authenticate
+            # or touch api_keys_db (closes IpBlockGuard bypass via optional-auth routes).
+            root_resp = client.get(
+                "/",
+                headers={"Authorization": "Bearer test-gateway-key", "Accept": "text/html"},
+                follow_redirects=False,
+            )
+            login_resp = client.get(
+                "/auth/login",
+                headers={"Authorization": "Bearer test-gateway-key", "Accept": "text/html"},
+                follow_redirects=False,
+            )
+            probe_resp = client.get(
+                "/",
+                headers={"Authorization": "Bearer guess-virtual-key"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(root_resp.status_code, 303)
+        self.assertEqual(root_resp.headers["location"], "/auth/login?next=/v1/ui/overview")
+        self.assertEqual(login_resp.status_code, 200)
+        self.assertEqual(probe_resp.status_code, 303)
+        mock_api_keys_db.get_by_key.assert_not_called()
+
+    def test_static_prefix_skips_authentication_completely(self):
+        mock_api_keys_db = MagicMock(spec=ApiKeysDB)
+        app = build_test_app(api_keys_db=mock_api_keys_db)
+        observed_auth = []
+
+        @app.get("/static/probe.js")
+        async def static_probe(request: Request):
+            observed_auth.append(
+                (request.state.gateway_authenticated, request.state.gateway_auth_source)
+            )
+            return {"ok": True}
+
+        with TestClient(app) as client:
+            client.cookies.set(SESSION_COOKIE_NAME, create_authenticated_session())
+            resp = client.get(
+                "/static/probe.js",
+                headers={"Authorization": "Bearer some-virtual-key"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(observed_auth, [(False, None)])
+        mock_api_keys_db.get_by_key.assert_not_called()
+        mock_api_keys_db.get_by_id.assert_not_called()
+
+    def test_session_mutating_requests_require_valid_csrf_origin(self):
+        mock_db = MagicMock(spec=RejectionsDB)
+        app = build_test_app(rejections_db=mock_db)
+
+        with TestClient(app) as client:
+            client.cookies.set(SESSION_COOKIE_NAME, create_authenticated_session())
+
+            # Missing both Sec-Fetch-Site and Origin -> 403 csrf_invalid
+            missing_resp = client.post("/v1/ui/providers-config", content="[]")
+            # Cross-site Sec-Fetch-Site -> 403 csrf_invalid
+            cross_site_resp = client.post(
+                "/v1/ui/providers-config",
+                content="[]",
+                headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://testserver"},
+            )
+            # Mismatched Origin -> 403 csrf_invalid
+            bad_origin_resp = client.post(
+                "/v1/ui/providers-config",
+                content="[]",
+                headers={"Origin": "https://evil.example"},
+            )
+            # Valid Sec-Fetch-Site: same-origin -> 200
+            same_origin_fetch = client.post(
+                "/v1/ui/providers-config",
+                content="[]",
+                headers={"Sec-Fetch-Site": "same-origin"},
+            )
+            # Valid Origin matching Host -> 200
+            matching_origin = client.post(
+                "/v1/ui/providers-config",
+                content="[]",
+                headers={"Origin": "http://testserver"},
+            )
+            # Safe GET with session and no Origin -> 200
+            safe_get = client.get("/v1/ui/rules-editor")
+
+        self.assertEqual(missing_resp.status_code, 403)
+        self.assertEqual(cross_site_resp.status_code, 403)
+        self.assertEqual(bad_origin_resp.status_code, 403)
+        self.assertEqual(same_origin_fetch.status_code, 200)
+        self.assertEqual(matching_origin.status_code, 200)
+        self.assertEqual(safe_get.status_code, 200)
+        csrf_calls = [
+            call.kwargs
+            for call in mock_db.insert_rejection.call_args_list
+            if call.kwargs.get("category") == "csrf_invalid"
+        ]
+        self.assertEqual(len(csrf_calls), 3)
+        self.assertTrue(all(call["status_code"] == 403 for call in csrf_calls))
+
+    def test_bearer_mutating_requests_do_not_require_csrf_origin(self):
+        response = self.client.post(
+            "/v1/ui/providers-config",
+            content="[]",
+            headers={"Authorization": "Bearer test-gateway-key"},
+        )
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

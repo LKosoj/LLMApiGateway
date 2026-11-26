@@ -52,6 +52,7 @@ from .upload_admission import UploadAdmission
 RUNTIME_CLEANUP_MAX_ATTEMPTS = 3
 RUNTIME_GENERATION_HISTORY_LIMIT = 64
 RUNTIME_CLEANUP_DIAGNOSTIC_LIMIT = 128
+RUNTIME_SHUTDOWN_LEASE_DRAIN_TIMEOUT_SECONDS = 30.0
 # A retiring generation only keeps its own proxy HTTP clients alive until the
 # last request holding its lease finishes, so a few may overlap. The cap exists
 # to bound that overlap, not to serialize configuration writes behind long
@@ -305,7 +306,15 @@ class RuntimeUnpublishedSlot:
 class RuntimeGenerationManager:
     """Own and atomically replace runtime snapshots on one event loop."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        lease_drain_timeout_seconds: float = RUNTIME_SHUTDOWN_LEASE_DRAIN_TIMEOUT_SECONDS,
+    ) -> None:
+        self._lease_drain_timeout_seconds = _validate_positive_timeout(
+            lease_drain_timeout_seconds,
+            "lease_drain_timeout_seconds",
+        )
         self._status = RuntimeManagerStatus.NEW
         self._loop: asyncio.AbstractEventLoop | None = None
         self._current_generation: int | None = None
@@ -601,8 +610,20 @@ class RuntimeGenerationManager:
             self._status = RuntimeManagerStatus.STOPPED
         return unpublished_recovered and recovered
 
-    async def shutdown(self) -> None:
+    async def shutdown(
+        self,
+        *,
+        lease_drain_timeout_seconds: float | None = None,
+    ) -> None:
         self._bind_loop()
+        drain_timeout = (
+            self._lease_drain_timeout_seconds
+            if lease_drain_timeout_seconds is None
+            else _validate_positive_timeout(
+                lease_drain_timeout_seconds,
+                "lease_drain_timeout_seconds",
+            )
+        )
         if self._status is RuntimeManagerStatus.STOPPED:
             return
 
@@ -613,7 +634,7 @@ class RuntimeGenerationManager:
                 current.status = RuntimeGenerationStatus.RETIRED
             self._status = RuntimeManagerStatus.STOPPING
             self._shutdown_task = asyncio.create_task(
-                self._shutdown_impl(),
+                self._shutdown_impl(lease_drain_timeout_seconds=drain_timeout),
                 name="runtime-generation-shutdown",
             )
         await asyncio.shield(self._shutdown_task)
@@ -1088,13 +1109,32 @@ class RuntimeGenerationManager:
             self._cleanup_tasks.difference_update(cleanup_tasks)
             await asyncio.sleep(0)
 
-    async def _shutdown_impl(self) -> None:
+    async def _shutdown_impl(
+        self,
+        *,
+        lease_drain_timeout_seconds: float,
+    ) -> None:
+        timed_out = False
         try:
             await self._close_all_unpublished_slots()
             records = tuple(self._generations.values())
-            await asyncio.gather(*(record.zero_leases.wait() for record in records))
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(record.zero_leases.wait() for record in records)),
+                    timeout=lease_drain_timeout_seconds,
+                )
+            except TimeoutError:
+                timed_out = True
+                self._record_cleanup_failure(
+                    self._current_generation or 0,
+                    "runtime_shutdown",
+                    "LeaseDrainTimeout",
+                )
             for record in records:
-                if record.status is RuntimeGenerationStatus.RETIRED:
+                if (
+                    record.status is RuntimeGenerationStatus.RETIRED
+                    and record.active_leases == 0
+                ):
                     self._schedule_cleanup(record)
             await self._drain_cleanup_tasks()
             unpublished_recovered = await self._retry_failed_unpublished_slots()
@@ -1109,7 +1149,8 @@ class RuntimeGenerationManager:
             return
 
         if (
-            unpublished_recovered
+            not timed_out
+            and unpublished_recovered
             and recovered
             and not self._unpublished_slots
             and not self._generations
@@ -1117,12 +1158,24 @@ class RuntimeGenerationManager:
         ):
             self._status = RuntimeManagerStatus.STOPPED
         else:
-            self._record_cleanup_failure(
-                self._current_generation or 0,
-                "runtime_shutdown",
-                "UnresolvedHttpClients",
-            )
+            if not timed_out:
+                self._record_cleanup_failure(
+                    self._current_generation or 0,
+                    "runtime_shutdown",
+                    "UnresolvedHttpClients",
+                )
             self._status = RuntimeManagerStatus.STOP_FAILED
+
+
+def _validate_positive_timeout(value: object, name: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) <= 0
+    ):
+        raise ValueError(f"{name} must be a positive finite number")
+    return float(value)
 
 
 def _config_graph_value(config_loader: object, attribute: str) -> object:

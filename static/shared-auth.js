@@ -21,8 +21,18 @@
     }
 
     async function logout() {
-        await global.fetch('/auth/logout', {method: 'POST'});
-        global.location.assign(buildLoginUrl());
+        try {
+            const response = await global.fetch('/auth/logout', {method: 'POST'});
+            if (!response.ok) {
+                console.error(`Logout failed with HTTP ${response.status}`);
+                return false;
+            }
+            global.location.assign(buildLoginUrl());
+            return true;
+        } catch (error) {
+            console.error('Logout request failed', error);
+            return false;
+        }
     }
 
     const controller = ui.createAuthController({fetch: global.fetch.bind(global)});

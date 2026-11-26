@@ -157,25 +157,44 @@ async def complete_responses_web_search(
     response_data: dict | None = None
     observation: ChatTerminalObservation | None = None
     usages: list[object] = []
-    for round_index in range(_MAX_MODEL_ROUNDS):
-        handoff = ChatTerminalHandoff()
-        dispatched = await dispatch(request, working, accounting_handoff=handoff)
-        if not isinstance(dispatched, dict):
-            raise HTTPException(status_code=500, detail="Internal server error: expected JSON response")
-        observation = handoff.take()
-        components.extend(observation.components)
-        response_data = dispatched
-        usages.append(response_data.get("usage"))
-        tool_calls = _message_tool_calls(response_data)
-        if not tool_calls or not _only_bound_search(tool_calls, by_name):
-            break
-        if round_index == _MAX_MODEL_ROUNDS - 1:
-            break
-        snapshot = _snapshot_provider(request)
-        try:
-            await _append_search_results(request, messages, response_data, tool_calls, by_name, search_call)
-        finally:
-            _restore_provider(request, snapshot)
+    handoff: ChatTerminalHandoff | None = None
+    try:
+        for round_index in range(_MAX_MODEL_ROUNDS):
+            handoff = ChatTerminalHandoff()
+            dispatched = await dispatch(request, working, accounting_handoff=handoff)
+            if not isinstance(dispatched, dict):
+                raise HTTPException(status_code=500, detail="Internal server error: expected JSON response")
+            observation = handoff.take()
+            components.extend(observation.components)
+            response_data = dispatched
+            usages.append(response_data.get("usage"))
+            tool_calls = _message_tool_calls(response_data)
+            if not tool_calls or not _only_bound_search(tool_calls, by_name):
+                break
+            if round_index == _MAX_MODEL_ROUNDS - 1:
+                break
+            snapshot = _snapshot_provider(request)
+            try:
+                await _append_search_results(request, messages, response_data, tool_calls, by_name, search_call)
+            finally:
+                _restore_provider(request, snapshot)
+    except BaseException:
+        rejected = tuple(handoff._rejected_components) if handoff is not None else ()
+        partial_components = (*components, *rejected)
+        if partial_components:
+            top_provider = observation.top_provider if observation is not None else partial_components[0].provider
+            top_model = observation.top_model if observation is not None else partial_components[0].model
+            try:
+                get_chat_terminal_handoff(request).publish_partial_failure(
+                    ChatTerminalObservation(
+                        top_provider=top_provider,
+                        top_model=top_model,
+                        components=partial_components,
+                    )
+                )
+            except Exception:
+                pass
+        raise
 
     if response_data is None or observation is None:
         raise HTTPException(status_code=500, detail="Internal server error: expected JSON response")

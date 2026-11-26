@@ -179,6 +179,7 @@ MAX_DEEP_RESEARCH_WORDS = 8000
 MAX_DEEP_RESEARCH_BREADTH = 10
 MAX_DEEP_RESEARCH_DEPTH = 5
 MAX_DEEP_RESEARCH_CONCURRENCY = 10
+WEB_BULK_READ_CONCURRENCY = 4
 
 
 def _with_web_terminal_accounting(
@@ -332,19 +333,22 @@ async def _attach_raw_content_to_results(
     output_format: str,
     include_images: bool = False,
 ) -> list[dict[str, Any]]:
+    semaphore = asyncio.Semaphore(WEB_BULK_READ_CONCURRENCY)
+
     async def _read_result(result: dict[str, Any]) -> dict[str, Any]:
         enriched = dict(result)
-        try:
-            article = await _read_with_model(
-                request,
-                read_model=read_model,
-                url=_validate_http_url(str(result.get("url") or "")),
-                output_format=output_format,
-            )
-        except HTTPException as exc:
-            logger.warning("Failed to attach raw content for %s: %s", result.get("url"), exc.detail)
-            enriched["raw_content"] = None
-            return enriched
+        async with semaphore:
+            try:
+                article = await _read_with_model(
+                    request,
+                    read_model=read_model,
+                    url=_validate_http_url(str(result.get("url") or "")),
+                    output_format=output_format,
+                )
+            except HTTPException as exc:
+                logger.warning("Failed to attach raw content for %s: %s", result.get("url"), exc.detail)
+                enriched["raw_content"] = None
+                return enriched
         enriched["raw_content"] = article.get("content") or None
         if include_images:
             enriched["images"] = _merge_image_items(enriched.get("images"), article.get("images"))
@@ -586,13 +590,16 @@ async def jina_search(request: Request):
         results, include_domains=include_domains, exclude_domains=[], max_results=max_results,
     )
 
+    semaphore = asyncio.Semaphore(WEB_BULK_READ_CONCURRENCY)
+
     async def read_result(result: dict[str, Any]) -> dict[str, Any]:
-        article = await _read_with_model(
-            request,
-            read_model=read_model,
-            url=_validate_http_url(str(result.get("url") or "")),
-            output_format=output_format,
-        )
+        async with semaphore:
+            article = await _read_with_model(
+                request,
+                read_model=read_model,
+                url=_validate_http_url(str(result.get("url") or "")),
+                output_format=output_format,
+            )
         return {
             "title": str(article.get("title") or result.get("title") or ""),
             "url": article.get("url") or result["url"],
@@ -781,7 +788,7 @@ async def tavily_extract(request: Request):
     request.state.llmgateway_operation = WEB_READ_OPERATION
     update_active_request_from_state(request)
     started_at = time.monotonic()
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(WEB_BULK_READ_CONCURRENCY)
 
     async def _extract_url(url: str) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
         async with semaphore:
@@ -924,23 +931,26 @@ async def web_research(request: Request):
             detail=f"Web research search failed: {redact_provider_error_text(first_search_error)}",
         )
 
+    read_semaphore = asyncio.Semaphore(WEB_BULK_READ_CONCURRENCY)
+
     async def _read_search_result(result: dict[str, Any]) -> dict[str, str] | None:
-        try:
-            article = await _read_with_model(
-                request,
-                read_model=read_model,
-                url=_validate_http_url(str(result["url"])),
-                output_format=output_format,
-            )
-            return {
-                **article,
-                "title": article.get("title") or str(result.get("title", "")),
-                "language": str(result.get("language", "")),
-                "snippet": str(result.get("snippet", "")),
-            }
-        except HTTPException as exc:
-            logger.warning("Failed to read search result %s: %s", result.get("url"), exc.detail)
-            return None
+        async with read_semaphore:
+            try:
+                article = await _read_with_model(
+                    request,
+                    read_model=read_model,
+                    url=_validate_http_url(str(result["url"])),
+                    output_format=output_format,
+                )
+                return {
+                    **article,
+                    "title": article.get("title") or str(result.get("title", "")),
+                    "language": str(result.get("language", "")),
+                    "snippet": str(result.get("snippet", "")),
+                }
+            except HTTPException as exc:
+                logger.warning("Failed to read search result %s: %s", result.get("url"), exc.detail)
+                return None
 
     if search_candidates:
 

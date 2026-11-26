@@ -760,6 +760,116 @@ class ChatUsageTrackingTests(unittest.TestCase):
         write_log_mock.assert_not_called()
         observability_mock.assert_not_called()
 
+    def test_disabled_chat_logging_drops_request_body_but_preserves_prompt_estimate(self):
+        app = FastAPI()
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
+
+        @app.post("/v1/chat/completions")
+        async def completions(request: Request):
+            await request.body()
+            request.state.llmgateway_provider = "openai"
+            request.state.llmgateway_provider_model = "gpt-4o"
+            return JSONResponse(
+                content={
+                    "choices": [{"message": {"role": "assistant", "content": "hello world"}}],
+                    "model": "gpt-4o",
+                }
+            )
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with patch.object(
+                chat_logging,
+                "record_chat_observability",
+                wraps=chat_logging.record_chat_observability,
+            ) as observability_mock:
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/v1/chat/completions",
+                        json={
+                            "model": "gpt-4o",
+                            "messages": [{"role": "user", "content": "Explain gravity briefly."}],
+                        },
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        observability_mock.assert_called_once()
+        # Full request body string is not retained when log_chat_messages is False.
+        self.assertEqual(observability_mock.call_args.args[1], "")
+        estimated_prompt = observability_mock.call_args.kwargs.get("estimated_prompt_tokens")
+        self.assertIsNotNone(estimated_prompt)
+        self.assertGreater(estimated_prompt, 0)
+        usage = observability_mock.call_args.args[3]
+        self.assertEqual(usage["prompt_tokens"], estimated_prompt)
+        self.assertTrue(usage["is_estimated"])
+
+    def test_captured_request_body_clears_buffer_after_read(self):
+        from llm_gateway_core.middleware.response_observation import ResponseObservationSession
+
+        session = ResponseObservationSession()
+        session.enable_request_capture(1024)
+        session.observe_receive(
+            {"type": "http.request", "body": b'{"hello":"world"}', "more_body": False}
+        )
+
+        first = session.captured_request_body()
+        self.assertEqual(first, b'{"hello":"world"}')
+        self.assertEqual(len(session._captured_body), 0)
+
+    def test_disabled_chat_logging_offloads_prompt_estimate_from_event_loop(self):
+        import threading
+
+        app = FastAPI()
+        _install_chat_logging(app, tokens_usage_db=self._fake_db)
+        event_loop_thread_id: list[int] = []
+        estimate_thread_ids: list[int] = []
+
+        @app.post("/v1/chat/completions")
+        async def completions(request: Request):
+            event_loop_thread_id.append(threading.get_ident())
+            await request.body()
+            request.state.llmgateway_provider = "openai"
+            request.state.llmgateway_provider_model = "gpt-4o"
+            return JSONResponse(
+                content={
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                    "model": "gpt-4o",
+                }
+            )
+
+        original_estimate = chat_logging.estimate_prompt_tokens
+
+        def _tracking_estimate(body: str, model: str | None) -> int:
+            estimate_thread_ids.append(threading.get_ident())
+            return original_estimate(body, model)
+
+        with patch.object(chat_logging.settings, "log_chat_messages", False):
+            with patch.object(
+                chat_logging,
+                "estimate_prompt_tokens",
+                side_effect=_tracking_estimate,
+            ):
+                with patch.object(
+                    chat_logging,
+                    "record_chat_observability",
+                    wraps=chat_logging.record_chat_observability,
+                ) as observability_mock:
+                    with TestClient(app) as client:
+                        response = client.post(
+                            "/v1/chat/completions",
+                            json={
+                                "model": "gpt-4o",
+                                "messages": [{"role": "user", "content": "Hello async estimate."}],
+                            },
+                        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(event_loop_thread_id), 1)
+        self.assertEqual(len(estimate_thread_ids), 1)
+        self.assertNotEqual(estimate_thread_ids[0], event_loop_thread_id[0])
+        estimated_prompt = observability_mock.call_args.kwargs.get("estimated_prompt_tokens")
+        self.assertIsNotNone(estimated_prompt)
+        self.assertGreater(estimated_prompt, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,12 +35,19 @@ class _KeyWindow:
     rpm_count: int = 0
     tpm_tokens: int = 0
     request_events: dict[str, _RateEvent | None] = field(default_factory=dict)
+    in_flight_since: dict[str, float] = field(default_factory=dict)
 
 
 class RateLimiter:
-    def __init__(self, window_seconds: float = WINDOW_SECONDS, time_func=time.monotonic) -> None:
+    def __init__(
+        self,
+        window_seconds: float = WINDOW_SECONDS,
+        time_func=time.monotonic,
+        in_flight_ttl_seconds: float = 3600.0,
+    ) -> None:
         self._window = window_seconds
         self._time = time_func
+        self._in_flight_ttl = in_flight_ttl_seconds
         self._by_key: dict[int, _KeyWindow] = {}
         self._lock = threading.Lock()
 
@@ -55,6 +62,17 @@ class RateLimiter:
                 and state.request_events.get(event.request_id) is event
             ):
                 state.request_events.pop(event.request_id, None)
+        if state.in_flight_since:
+            in_flight_cutoff = now - self._in_flight_ttl
+            expired_in_flight = [
+                request_id
+                for request_id, started_at in state.in_flight_since.items()
+                if started_at < in_flight_cutoff
+            ]
+            for request_id in expired_in_flight:
+                state.in_flight_since.pop(request_id, None)
+                if state.request_events.get(request_id) is None:
+                    state.request_events.pop(request_id, None)
         if not state.events and not state.request_events:
             self._by_key.pop(key_id, None)
         return not state.events
@@ -157,6 +175,7 @@ class RateLimiter:
             event = _RateEvent(timestamp=now, tokens=0, rpm=1)
             state.events.append(event)
             state.request_events[request_id] = None
+            state.in_flight_since[request_id] = now
             state.rpm_count += 1
             self._by_key[key_id] = state
         return None
@@ -186,6 +205,7 @@ class RateLimiter:
             )
             state.events.append(event)
             state.request_events[request_id] = event
+            state.in_flight_since.pop(request_id, None)
             state.tpm_tokens += tokens
             self._by_key[key_id] = state
             return True

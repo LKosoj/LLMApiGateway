@@ -268,6 +268,26 @@ class AdminApiKeysIfMatchTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 412)
 
+    def test_create_returns_matching_etag_usable_for_immediate_if_match_patch(self):
+        created = self.client.post(
+            "/v1/admin/api-keys",
+            json={"name": "team-create-etag"},
+            headers=self._master_headers(),
+        )
+        self.assertEqual(created.status_code, 201)
+        etag = created.headers.get("ETag")
+        self.assertIsNotNone(etag)
+        self.assertEqual(created.headers.get("Cache-Control"), "no-store")
+
+        key_id = created.json()["id"]
+        patched = self.client.patch(
+            f"/v1/admin/api-keys/{key_id}",
+            json={"name": "team-create-etag-updated"},
+            headers={**self._master_headers(), "If-Match": etag},
+        )
+        self.assertEqual(patched.status_code, 200)
+        self.assertEqual(patched.json()["name"], "team-create-etag-updated")
+
 
 if __name__ == "__main__":
     unittest.main()

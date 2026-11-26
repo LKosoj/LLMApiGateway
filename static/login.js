@@ -58,6 +58,24 @@
         errorDetail.style.display = 'none';
     }
 
+    function resolveSafeRedirectUrl(rawRedirect, fallback = '/v1/ui/overview') {
+        if (typeof rawRedirect !== 'string') return fallback;
+        const trimmed = rawRedirect.trim();
+        if (!trimmed) return fallback;
+        try {
+            const parsed = new URL(trimmed, global.location.origin);
+            if (
+                parsed.origin === global.location.origin
+                && (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+            ) {
+                return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+            }
+        } catch (_error) {
+            return fallback;
+        }
+        return fallback;
+    }
+
     async function submitLogin() {
         try {
             const response = await global.fetch('/auth/login', {
@@ -88,7 +106,7 @@
                 }));
                 return;
             }
-            global.location.assign(payload.redirect_to || '/v1/ui/overview');
+            global.location.assign(resolveSafeRedirectUrl(payload.redirect_to));
         } catch (error) {
             showDescriptor(ui.describeApiError({detail: error.message}));
         } finally {

@@ -103,6 +103,13 @@ class _PinnedForwardProxy:
     time*, never trusting a second DNS lookup performed by the browser.
     """
 
+    _PROXY_HEADER_READ_TIMEOUT_SECONDS = 10.0
+    _PROXY_CONNECT_TIMEOUT_SECONDS = 15.0
+    _PROXY_SPLICE_IDLE_TIMEOUT_SECONDS = 30.0
+    _PROXY_MAX_REQUEST_LINE_BYTES = 8192
+    _PROXY_MAX_HEADER_LINES = 100
+    _PROXY_MAX_HEADER_BYTES = 65536
+
     def __init__(self) -> None:
         self._server: asyncio.base_events.Server | None = None
         self.port: int = 0
@@ -121,26 +128,50 @@ class _PinnedForwardProxy:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
-            request_line = await reader.readline()
-            if not request_line:
-                return
-            parts = request_line.decode("latin-1").strip().split(" ")
-            if len(parts) != 3:
-                return
-            method, target, _version = parts
+            async with asyncio.timeout(self._PROXY_HEADER_READ_TIMEOUT_SECONDS):
+                try:
+                    request_line = await reader.readline()
+                except ValueError:
+                    writer.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
+                    await writer.drain()
+                    return
+                if not request_line:
+                    return
+                if len(request_line) > self._PROXY_MAX_REQUEST_LINE_BYTES:
+                    writer.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
+                    await writer.drain()
+                    return
+                parts = request_line.decode("latin-1").strip().split(" ")
+                if len(parts) != 3:
+                    return
+                method, target, _version = parts
 
-            header_lines: list[bytes] = []
-            while True:
-                line = await reader.readline()
-                if not line or line == b"\r\n":
-                    break
-                header_lines.append(line)
+                header_lines: list[bytes] = []
+                total_header_bytes = 0
+                while True:
+                    try:
+                        line = await reader.readline()
+                    except ValueError:
+                        writer.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
+                        await writer.drain()
+                        return
+                    if not line or line == b"\r\n":
+                        break
+                    total_header_bytes += len(line)
+                    if (
+                        len(header_lines) >= self._PROXY_MAX_HEADER_LINES
+                        or total_header_bytes > self._PROXY_MAX_HEADER_BYTES
+                    ):
+                        writer.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
+                        await writer.drain()
+                        return
+                    header_lines.append(line)
 
             if method == "CONNECT":
                 await self._proxy_connect(target, reader, writer)
             else:
                 await self._proxy_plain_http(method, target, header_lines, reader, writer)
-        except (OSError, asyncio.IncompleteReadError):
+        except (OSError, asyncio.IncompleteReadError, TimeoutError):
             pass
         finally:
             with contextlib.suppress(OSError):
@@ -154,8 +185,11 @@ class _PinnedForwardProxy:
         except HTTPException:
             return None
         try:
-            return await asyncio.open_connection(addresses[0], port)
-        except OSError:
+            return await asyncio.wait_for(
+                asyncio.open_connection(addresses[0], port),
+                timeout=self._PROXY_CONNECT_TIMEOUT_SECONDS,
+            )
+        except (OSError, TimeoutError):
             return None
 
     async def _proxy_connect(
@@ -210,8 +244,9 @@ class _PinnedForwardProxy:
         await upstream_writer.drain()
         await self._splice(reader, writer, upstream_reader, upstream_writer)
 
-    @staticmethod
+    @classmethod
     async def _splice(
+        cls,
         client_reader: asyncio.StreamReader,
         client_writer: asyncio.StreamWriter,
         upstream_reader: asyncio.StreamReader,
@@ -222,12 +257,15 @@ class _PinnedForwardProxy:
         ) -> None:
             try:
                 while True:
-                    chunk = await src.read(65536)
+                    chunk = await asyncio.wait_for(
+                        src.read(65536),
+                        timeout=cls._PROXY_SPLICE_IDLE_TIMEOUT_SECONDS,
+                    )
                     if not chunk:
                         break
                     dst.write(chunk)
                     await dst.drain()
-            except (OSError, ConnectionError):
+            except (OSError, ConnectionError, TimeoutError):
                 pass
 
         try:

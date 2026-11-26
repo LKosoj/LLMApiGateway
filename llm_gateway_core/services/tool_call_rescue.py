@@ -97,7 +97,8 @@ def could_become_dialect_marker(text: str) -> bool:
     """
     if not text or text.isspace():
         return True
-    return any(marker.startswith(text) for marker in DIALECT_MARKERS)
+    stripped = text.lstrip()
+    return any(marker.startswith(stripped) for marker in DIALECT_MARKERS)
 
 
 def extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
@@ -270,6 +271,8 @@ def _parse_kimi_dialect(content: str) -> RescueResult | None:
         if not name:
             return None
         json_start = arg_begin + len(KIMI_CALL_ARGUMENT_BEGIN)
+        while json_start < len(section_body) and section_body[json_start].isspace():
+            json_start += 1
         extracted = extract_balanced_json(section_body, json_start)
         if extracted is None:
             return None
@@ -308,6 +311,8 @@ def _parse_function_tag_dialect(content: str) -> RescueResult | None:
         if gt_index != -1 and gt_index < brace_index:
             name = content[name_start:gt_index]
             json_start = gt_index + 1
+            while json_start < len(content) and content[json_start].isspace():
+                json_start += 1
         else:
             # Malformed variant: no closing '>' before the JSON payload.
             name = content[name_start:brace_index]

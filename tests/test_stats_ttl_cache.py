@@ -69,6 +69,7 @@ class StatsTtlCacheTests(unittest.TestCase):
         stats_module._usage_stats_cache.invalidate()
         stats_module._fallback_stats_cache.invalidate()
         stats_module._upstream_stats_cache.invalidate()
+        stats_module._analytics_dashboard_cache.invalidate()
 
     @contextmanager
     def _client(self, fake_tokens_db, fake_fallback_db=None):
@@ -147,6 +148,50 @@ class StatsTtlCacheTests(unittest.TestCase):
         _, start_date, end_date = fallback_db.aggregated_calls[0]
         self.assertIs(start_date.tzinfo, timezone.utc)
         self.assertIs(end_date.tzinfo, timezone.utc)
+
+    def test_analytics_dashboard_repeated_calls_within_ttl_hit_cache_and_isolate_filters(self):
+        from tests.test_stats_api import (
+            _FakeApiKeysDB,
+            _FakeFallbackEventsDB,
+            _FakeRejectionsDB,
+            _FakeTokensUsageDB,
+        )
+
+        tokens_db = _FakeTokensUsageDB()
+        fallback_db = _FakeFallbackEventsDB()
+        rejections_db = _FakeRejectionsDB()
+        api_keys_db = _FakeApiKeysDB(valid_key_id=1)
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            async with installed_runtime(
+                app,
+                tokens_usage_db=tokens_db,
+                fallback_events_db=fallback_db,
+                rejections_db=rejections_db,
+                api_keys_db=api_keys_db,
+            ):
+                yield
+
+        app = FastAPI(lifespan=lifespan)
+        app.include_router(stats_module.stats_router, prefix="/v1")
+        app.add_middleware(ApiKeyAuthMiddleware)
+
+        with patch(
+            "llm_gateway_core.middleware.auth.settings.gateway_api_key",
+            "test-gateway-key",
+        ):
+            with TestClient(app) as client:
+                headers = {"Authorization": "Bearer test-gateway-key"}
+                r1 = client.get("/v1/api/analytics-dashboard?range=7d", headers=headers)
+                r2 = client.get("/v1/api/analytics-dashboard?range=7d", headers=headers)
+                r3 = client.get("/v1/api/analytics-dashboard?range=30d", headers=headers)
+
+        self.assertEqual(r1.status_code, 200)
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r3.status_code, 200)
+        self.assertEqual(r1.json(), r2.json())
+        self.assertEqual(len(tokens_db.dashboard_calls), 2)
 
 
 if __name__ == "__main__":

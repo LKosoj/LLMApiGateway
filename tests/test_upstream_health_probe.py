@@ -302,3 +302,46 @@ def test_health_run_filter_without_a_match_is_rejected_before_any_post():
 
     run_async(scenario())
     assert client.calls == []
+
+
+
+def test_health_run_probes_targets_concurrently_up_to_semaphore_limit():
+    async def scenario() -> None:
+        in_flight = 0
+        max_in_flight = 0
+        reached_cap = asyncio.Event()
+        release = asyncio.Event()
+
+        class _ConcurrentClient:
+            async def post(self, url, *, headers, json, timeout):
+                nonlocal in_flight, max_in_flight
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+                if in_flight >= stats_module.UPSTREAM_HEALTH_PROBE_CONCURRENCY:
+                    reached_cap.set()
+                await release.wait()
+                in_flight -= 1
+                return SimpleNamespace(status_code=200)
+
+        providers = {
+            f"p{i}": ProviderDetails(baseUrl=f"https://p{i}.example", apikey=f"KEY-{i}")
+            for i in range(12)
+        }
+        fallback_models = [{"provider": f"p{i}", "model": f"m{i}"} for i in range(12)]
+        loader = _health_loader(providers, fallback_models)
+        client = _ConcurrentClient()
+        services = make_app_services(http_client=client, upstream_routing_state=UpstreamRoutingState())
+        snapshot = make_runtime_snapshot(config_loader=loader, http_client=client)
+        request = _health_request(services, snapshot)
+
+        task = asyncio.create_task(stats_module.run_upstream_health_checks(request))
+        await asyncio.wait_for(reached_cap.wait(), timeout=2.0)
+        await asyncio.sleep(0.02)
+        assert max_in_flight == stats_module.UPSTREAM_HEALTH_PROBE_CONCURRENCY
+        release.set()
+        response = await task
+        body = json.loads(response.body)
+        assert body["checked"] == 12
+        assert [row["provider"] for row in body["rows"]] == [f"p{i}" for i in range(12)]
+
+    run_async(scenario())

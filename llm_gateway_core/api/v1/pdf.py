@@ -10,7 +10,8 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from ...config.settings import settings
@@ -182,6 +183,32 @@ async def _prepare_pdf_http_request(
     return base_url, multipart_headers
 
 
+def _has_control_chars(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
+def _validate_pdf_job_id(job_id: str) -> str:
+    if (
+        not job_id
+        or job_id != job_id.strip()
+        or job_id in {".", ".."}
+        or "/" in job_id
+        or "\\" in job_id
+        or _has_control_chars(job_id)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid PDF job ID.")
+    return job_id
+
+
+def _validate_pdf_artifact_path(artifact: str) -> str:
+    if not artifact or artifact != artifact.strip() or "\\" in artifact or _has_control_chars(artifact):
+        raise HTTPException(status_code=400, detail="Invalid PDF artifact path.")
+    segments = artifact.split("/")
+    if any(segment in {"", ".", ".."} for segment in segments):
+        raise HTTPException(status_code=400, detail="Invalid PDF artifact path.")
+    return artifact
+
+
 def _join_downstream_path(base_url: str, *parts: str) -> str:
     normalized_parts = [quote(str(part).strip("/"), safe="") for part in parts]
     return "/".join([base_url.rstrip("/"), *normalized_parts])
@@ -246,6 +273,99 @@ async def _proxy_get_raw_to_downstream(
         if content_disposition:
             passthrough_headers["content-disposition"] = content_disposition
         return response.content, response.status_code, response.headers.get("content-type"), passthrough_headers
+
+    raise HTTPException(status_code=503, detail="Downstream request failed after exhausting retries.")
+
+
+async def _proxy_get_stream_to_downstream(
+    target_url: str,
+    headers: dict,
+    http_client: httpx.AsyncClient,
+    retry_count: int = 0,
+    retry_delay: float = 0.0,
+) -> StreamingResponse:
+    sanitized_target_url = sanitize_target_url_for_log(target_url)
+    logger.info("Proxying streaming PDF operation GET request to downstream %s", sanitized_target_url)
+
+    total_attempts = retry_count + 1
+    attempt_number = 0
+
+    while attempt_number < total_attempts:
+        attempt_number += 1
+
+        try:
+            response = await http_client.send(
+                http_client.build_request("GET", target_url, headers=headers),
+                stream=True,
+            )
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            logger.warning(
+                "Streaming PDF operation downstream GET request to %s failed with network error: %s",
+                sanitized_target_url,
+                exc,
+                exc_info=True,
+            )
+            if attempt_number < total_attempts:
+                await sleep_before_retry(
+                    sanitized_target_url,
+                    retry_delay,
+                    attempt_number,
+                    total_attempts,
+                    f"network error {type(exc).__name__}",
+                )
+                continue
+            raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
+
+        logger.info(
+            "Streaming PDF operation downstream GET response status %s from %s",
+            response.status_code,
+            sanitized_target_url,
+        )
+        if response.status_code >= 400:
+            try:
+                await response.aread()
+                detail = extract_downstream_error_detail(response)
+            finally:
+                await response.aclose()
+            if should_retry_operation_status(response.status_code) and attempt_number < total_attempts:
+                await sleep_before_retry(
+                    sanitized_target_url,
+                    retry_delay,
+                    attempt_number,
+                    total_attempts,
+                    f"retryable downstream status {response.status_code}",
+                )
+                continue
+            raise HTTPException(status_code=503, detail=detail)
+
+        async def _stream_body():
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                await response.aclose()
+
+        has_content_encoding = any(
+            key.lower() == "content-encoding" for key in response.headers
+        )
+        allowed_headers = (
+            {"content-type", "content-disposition"}
+            if has_content_encoding
+            else {"content-type", "content-disposition", "content-length"}
+        )
+        response_headers = {
+            key.lower(): value
+            for key, value in response.headers.items()
+            if key.lower() in allowed_headers
+        }
+        if 200 <= response.status_code < 300:
+            response_headers["X-Cost-USD"] = "0"
+        return StreamingResponse(
+            _stream_body(),
+            status_code=response.status_code,
+            headers=response_headers,
+            background=BackgroundTask(response.aclose),
+        )
 
     raise HTTPException(status_code=503, detail="Downstream request failed after exhausting retries.")
 
@@ -528,6 +648,8 @@ async def create_pdf_job(request: Request):
 
 @router.get("/pdf/jobs/{job_id}")
 async def get_pdf_job(job_id: str, model: str, request: Request):
+    _validate_pdf_job_id(job_id)
+
     async def operation(owner: OperationTerminalOwner) -> object:
         request_started_at = time.monotonic()
         route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(
@@ -568,31 +690,26 @@ async def get_pdf_job(job_id: str, model: str, request: Request):
 
 @router.get("/pdf/jobs/{job_id}/result")
 async def get_pdf_job_result(job_id: str, model: str, request: Request):
+    _validate_pdf_job_id(job_id)
     _route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(request, model)
-    response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
+    return await _proxy_get_stream_to_downstream(
         _join_downstream_path(base_url, "jobs", job_id, "result"),
         headers,
         effective_client,
         retry_count=retry_count,
         retry_delay=retry_delay,
     )
-    response = _response_from_raw_body(response_body, status_code, content_type, response_headers)
-    if 200 <= status_code < 300:
-        response.headers["X-Cost-USD"] = "0"
-    return response
 
 
 @router.get("/pdf/jobs/{job_id}/download/{artifact:path}")
 async def download_pdf_job_artifact(job_id: str, artifact: str, model: str, request: Request):
+    _validate_pdf_job_id(job_id)
+    _validate_pdf_artifact_path(artifact)
     _route, base_url, headers, effective_client, retry_count, retry_delay = await _resolve_pdf_route(request, model)
-    response_body, status_code, content_type, response_headers = await _proxy_get_raw_to_downstream(
+    return await _proxy_get_stream_to_downstream(
         _join_downstream_path(base_url, "jobs", job_id, "download", artifact),
         headers,
         effective_client,
         retry_count=retry_count,
         retry_delay=retry_delay,
     )
-    response = _response_from_raw_body(response_body, status_code, content_type, response_headers)
-    if 200 <= status_code < 300:
-        response.headers["X-Cost-USD"] = "0"
-    return response

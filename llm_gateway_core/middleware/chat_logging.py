@@ -1,10 +1,12 @@
 import asyncio
+import contextlib
 import hashlib
 import json
 import glob
 import os
 import anyio
 import time
+from collections.abc import Callable
 from datetime import datetime
 from uuid import uuid4
 import logging
@@ -14,8 +16,6 @@ from ..config.settings import settings
 from ..config.paths import resolve_log_dir
 from fastapi import Request
 from typing import TYPE_CHECKING
-import gzip
-import io
 from ..services.active_requests import active_request_id
 from ..services.accounting import AccountingValidationError, classify_billing_policy
 from ..services.upstream_routing_state import UpstreamRoutingState
@@ -49,6 +49,7 @@ from ..middleware.response_observation import (
     publish_response_observation,
 )
 from ..services.runtime_config import AppServices, RuntimeSnapshot
+from ..utils.gzip_utils import GzipPayloadTooLarge, decompress_gzip_bounded
 from ..utils.log_redaction import (
     redact_headers_for_log,
     redact_request_body_text,
@@ -103,14 +104,19 @@ def _decode_body(body_bytes: bytes, headers: dict) -> str:
     """Safely decode request body, handling optional GZIP compression."""
     if not body_bytes:
         return ""
-    
+
     content_encoding = headers.get("content-encoding", "").lower()
     try:
         if "gzip" in content_encoding:
-            with gzip.GzipFile(fileobj=io.BytesIO(body_bytes)) as f:
-                body_bytes = f.read()
-        
+            body_bytes = decompress_gzip_bounded(
+                body_bytes,
+                settings.max_request_body_bytes,
+            )
+
         return body_bytes.decode("utf-8", errors="replace")
+    except GzipPayloadTooLarge as exc:
+        logger.warning("Skipping chat log body decode: %s", exc)
+        return ""
     except Exception as e:
         logger.debug(f"Failed to decode or decompress request body: {e}")
         return body_bytes.decode("utf-8", errors="replace")
@@ -181,8 +187,14 @@ def record_chat_observability(
     request: Request | None = None,
     *,
     services: "AppServices",
+    estimated_prompt_tokens: int | None = None,
 ):
-    if backfill_zero_token_counts(tokens_usage, req_body_str, llm_response_accum):
+    if backfill_zero_token_counts(
+        tokens_usage,
+        req_body_str,
+        llm_response_accum,
+        estimated_prompt_tokens=estimated_prompt_tokens,
+    ):
         logger.warning(
             "Upstream did not return usage (possibly interrupted stream); "
             "estimated token counts via tiktoken for model %s: "
@@ -208,7 +220,14 @@ def _record_chat_observability_with_rates(
     cost_rate_registry,
     services: "AppServices",
     request: Request | None = None,
+    *,
+    estimated_prompt_tokens: int | None = None,
 ) -> None:
+    extra_kwargs = (
+        {"estimated_prompt_tokens": estimated_prompt_tokens}
+        if estimated_prompt_tokens is not None
+        else {}
+    )
     if cost_rate_registry is None:
         record_chat_observability(
             req_headers,
@@ -217,6 +236,7 @@ def _record_chat_observability_with_rates(
             tokens_usage,
             request=request,
             services=services,
+            **extra_kwargs,
         )
         return
     record_chat_observability(
@@ -227,6 +247,7 @@ def _record_chat_observability_with_rates(
         cost_rate_registry,
         request=request,
         services=services,
+        **extra_kwargs,
     )
 
 
@@ -422,9 +443,11 @@ class ChunkProcessor:
         operation="chat",
         api_key_id=None,
         request: Request | None = None,
+        estimated_prompt_tokens: int | None = None,
     ):
         self.req_headers = req_headers
         self.req_body_str = req_body_str
+        self.estimated_prompt_tokens = estimated_prompt_tokens
         self.is_real_streaming = is_real_streaming
         self.request = request
         self.services = services
@@ -502,6 +525,7 @@ class ChunkProcessor:
             self.cost_rate_registry,
             self.services,
             self.request,
+            estimated_prompt_tokens=self.estimated_prompt_tokens,
         )
         self._log_written = True
 
@@ -1358,15 +1382,17 @@ def _schedule_active_request_prompt_estimate(
     task_supervisor: "TaskSupervisor",
     req_body_str: str,
     gateway_model: str | None,
-) -> None:
+    *,
+    on_estimated: Callable[[int], None] | None = None,
+) -> asyncio.Task | None:
     """Reflect an estimated prompt token count on the in-flight usage record.
 
     Tiktoken encoding of a large body can take hundreds of milliseconds, so it
     runs in a worker thread as a background task instead of delaying the
     request path; the update is a no-op if the request finishes first.
     """
-    if not request_id or not req_body_str:
-        return
+    if not req_body_str or (not request_id and on_estimated is None):
+        return None
 
     async def _estimate_and_update() -> None:
         try:
@@ -1379,14 +1405,17 @@ def _schedule_active_request_prompt_estimate(
             logger.exception("ChatLogging: failed to estimate in-flight prompt tokens")
             return
         if estimated > 0:
-            registry.update(
-                request_id,
-                prompt_tokens=estimated,
-                total_tokens=estimated,
-                is_estimated=True,
-            )
+            if on_estimated is not None:
+                on_estimated(estimated)
+            if request_id:
+                registry.update(
+                    request_id,
+                    prompt_tokens=estimated,
+                    total_tokens=estimated,
+                    is_estimated=True,
+                )
 
-    task_supervisor.create_task(
+    return task_supervisor.create_task(
         _estimate_and_update(),
         name="chat-prompt-estimate",
     )
@@ -1399,9 +1428,11 @@ class _ChatResponseLifecycle:
         "_chunk_processor",
         "_config_loader",
         "_cost_rate_registry",
+        "_estimated_prompt_tokens",
         "_gateway_model",
         "_operation",
         "_owner",
+        "_prompt_estimate_task",
         "_req_body_str",
         "_req_headers",
         "_request",
@@ -1437,9 +1468,16 @@ class _ChatResponseLifecycle:
         self._gateway_model: str | None = None
         self._req_headers: dict = {}
         self._req_body_str = ""
+        self._estimated_prompt_tokens: int | None = None
+        self._prompt_estimate_task: asyncio.Task | None = None
         self._chunk_processor: ChunkProcessor | None = None
         self._transport_finished = False
         self._wire_mode: WireMode | None = None
+
+    def _set_estimated_prompt_tokens(self, estimated: int) -> None:
+        self._estimated_prompt_tokens = estimated
+        if self._chunk_processor is not None:
+            self._chunk_processor.estimated_prompt_tokens = estimated
 
     def bind_request(self, *, allow_incomplete: bool = False) -> None:
         if self._binding_attempted:
@@ -1452,11 +1490,11 @@ class _ChatResponseLifecycle:
                 raise
             request_body = b""
         self._req_headers = dict(self._request.headers)
-        self._req_body_str = _decode_body(request_body, self._req_headers)
+        decoded_body = _decode_body(request_body, self._req_headers)
         gateway_model: object = None
         streaming: object = False
         try:
-            payload = json.loads(self._req_body_str)
+            payload = json.loads(decoded_body)
         except (TypeError, ValueError):
             payload = None
         if isinstance(payload, dict):
@@ -1482,13 +1520,26 @@ class _ChatResponseLifecycle:
             gateway_model=self._gateway_model,
             operation=self._operation,
         )
-        _schedule_active_request_prompt_estimate(
-            self._request_id,
-            self._active_registry,
-            self._services.task_supervisor,
-            self._req_body_str,
-            self._gateway_model,
-        )
+        if settings.log_chat_messages:
+            self._req_body_str = decoded_body
+            self._prompt_estimate_task = _schedule_active_request_prompt_estimate(
+                self._request_id,
+                self._active_registry,
+                self._services.task_supervisor,
+                self._req_body_str,
+                self._gateway_model,
+            )
+        else:
+            self._req_body_str = ""
+            if decoded_body:
+                self._prompt_estimate_task = _schedule_active_request_prompt_estimate(
+                    self._request_id,
+                    self._active_registry,
+                    self._services.task_supervisor,
+                    decoded_body,
+                    self._gateway_model,
+                    on_estimated=self._set_estimated_prompt_tokens,
+                )
 
     def _ensure_chunk_processor(self, start: ResponseStart) -> ChunkProcessor:
         wire_mode = start.wire_mode
@@ -1518,6 +1569,8 @@ class _ChatResponseLifecycle:
                 api_key_id=getattr(self._request.state, "api_key_id", None),
                 request=self._request,
             )
+            if self._estimated_prompt_tokens is not None:
+                processor.estimated_prompt_tokens = self._estimated_prompt_tokens
             processor.start()
             self._chunk_processor = processor
             self._wire_mode = wire_mode
@@ -1537,6 +1590,16 @@ class _ChatResponseLifecycle:
             processor = self._chunk_processor
             if processor is None:
                 return
+            if (
+                not settings.log_chat_messages
+                and self._prompt_estimate_task is not None
+                and not self._prompt_estimate_task.done()
+            ):
+                with contextlib.suppress(TimeoutError, asyncio.CancelledError, Exception):
+                    await asyncio.wait_for(
+                        asyncio.shield(self._prompt_estimate_task),
+                        timeout=CHUNK_PROCESSOR_JOIN_TIMEOUT_SECONDS,
+                    )
             processor.tokens_usage["duration_ms"] = int(
                 (time.monotonic() - self._request_started_at) * 1000
             )

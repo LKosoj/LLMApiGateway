@@ -580,7 +580,11 @@ def test_concurrent_different_fingerprints_accepts_one_and_conflicts_one(
     assert _table_counts(source_db) == (1, 1, 0, 0)
 
 
-def test_held_write_lock_obeys_bounded_accounting_timeout(source_db: TokensUsageDB) -> None:
+def test_held_write_lock_obeys_bounded_accounting_timeout(
+    source_db: TokensUsageDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(accounting_schema, "ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS", 500)
     blocker = accounting_schema.open_accounting_runtime_connection(
         source_db.db_path,
         enable_foreign_keys=True,
@@ -596,7 +600,7 @@ def test_held_write_lock_obeys_bounded_accounting_timeout(source_db: TokensUsage
 
     elapsed = time.monotonic() - started
     assert exc_info.value.code is AccountingErrorCode.SOURCE_WRITE_FAILED
-    assert 1.5 <= elapsed < 4.0
+    assert 0.3 <= elapsed < 2.0
     assert _table_counts(source_db) == (0, 0, 0, 0)
 
 

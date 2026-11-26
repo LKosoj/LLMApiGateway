@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 DEEP_RESEARCH_BOOTSTRAP_TIMEOUT_SECONDS = 5.0
 DEEP_RESEARCH_CALLBACK_TIMEOUT_SECONDS = 300.0
+DEEP_RESEARCH_JOB_TIMEOUT_SECONDS = 1800.0
 DEEP_RESEARCH_TERMINATE_GRACE_SECONDS = 2.0
 _ADAPTER_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,255}$")
 _T = TypeVar("_T")
@@ -127,6 +128,7 @@ class DeepResearchProcessRunner:
         capacity: int = 1,
         admission_timeout_seconds: float = 5.0,
         callback_timeout_seconds: float = DEEP_RESEARCH_CALLBACK_TIMEOUT_SECONDS,
+        job_timeout_seconds: float = DEEP_RESEARCH_JOB_TIMEOUT_SECONDS,
         _adapter_module: str = "llm_gateway_core.agents.deep_research_adapter",
     ) -> None:
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0:
@@ -145,11 +147,19 @@ class DeepResearchProcessRunner:
             or not float(callback_timeout_seconds) < float("inf")
         ):
             raise ValueError("callback_timeout_seconds must be positive and finite")
+        if (
+            isinstance(job_timeout_seconds, bool)
+            or not isinstance(job_timeout_seconds, (int, float))
+            or job_timeout_seconds <= 0
+            or not float(job_timeout_seconds) < float("inf")
+        ):
+            raise ValueError("job_timeout_seconds must be positive and finite")
         if _ADAPTER_MODULE_RE.fullmatch(_adapter_module) is None:
             raise ValueError("adapter module path is invalid")
         self._capacity = capacity
         self._admission_timeout_seconds = float(admission_timeout_seconds)
         self._callback_timeout_seconds = float(callback_timeout_seconds)
+        self._job_timeout_seconds = float(job_timeout_seconds)
         self._adapter_module = _adapter_module
         self._context = multiprocessing.get_context("spawn")
         self._semaphore = asyncio.BoundedSemaphore(capacity)
@@ -238,12 +248,22 @@ class DeepResearchProcessRunner:
                 parse_ready_message(ready, expected_pid=owner.process.pid)
                 owner.ready = True
                 await _send_async_frame(owner.sock, run_message(job))
-                result = await _serve_job_callbacks(
-                    owner.sock,
-                    job=job,
-                    callbacks=callbacks,
-                    callback_timeout_seconds=self._callback_timeout_seconds,
-                )
+                try:
+                    result = await asyncio.wait_for(
+                        _serve_job_callbacks(
+                            owner.sock,
+                            job=job,
+                            callbacks=callbacks,
+                            callback_timeout_seconds=self._callback_timeout_seconds,
+                        ),
+                        timeout=self._job_timeout_seconds,
+                    )
+                except TimeoutError as exc:
+                    exit_code = await owner.finish()
+                    raise DeepResearchProcessError(
+                        "job_timeout",
+                        exit_code=exit_code,
+                    ) from exc
             except DeepResearchChildReportedError as exc:
                 exit_code = await owner.finish()
                 raise DeepResearchProcessError(

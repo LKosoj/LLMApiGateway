@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from ipaddress import ip_address, ip_network
 
@@ -10,6 +11,7 @@ from ..config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+@functools.lru_cache(maxsize=16)
 def _parse_trusted_proxy_networks(raw_value: str) -> tuple:
     networks = []
     for raw_part in raw_value.split(","):
@@ -53,19 +55,32 @@ def _get_header(headers, name: str) -> str | None:
     )
 
 
-def _forwarded_for_chain(header_value: str | None) -> list[str]:
-    if not header_value:
+def _get_header_values(headers, name: str) -> list[str]:
+    if headers is None:
         return []
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        values = getlist(name)
+        return [value for value in values if value]
+    single = _get_header(headers, name)
+    return [single] if single else []
+
+
+def _forwarded_for_chain(header_values: list[str] | str | None) -> list[str]:
+    if not header_values:
+        return []
+    values = [header_values] if isinstance(header_values, str) else header_values
 
     chain: list[str] = []
-    for raw_part in header_value.split(","):
-        part = raw_part.strip().strip('"')
-        if not part:
-            continue
-        try:
-            chain.append(str(ip_address(part)))
-        except ValueError:
-            continue
+    for header_value in values:
+        for raw_part in header_value.split(","):
+            part = raw_part.strip().strip('"')
+            if not part:
+                continue
+            try:
+                chain.append(str(ip_address(part)))
+            except ValueError:
+                continue
     return chain
 
 
@@ -89,7 +104,7 @@ def get_client_ip(request) -> str | None:
         return peer_host
 
     forwarded_chain = _forwarded_for_chain(
-        _get_header(getattr(request, "headers", None), "x-forwarded-for")
+        _get_header_values(getattr(request, "headers", None), "x-forwarded-for")
     )
     for candidate in reversed([*forwarded_chain, peer_host]):
         if not _is_trusted_peer(candidate, trusted_proxies):

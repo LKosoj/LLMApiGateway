@@ -12,6 +12,7 @@ import httpx
 
 from llm_gateway_core.services.upstream_subscription_quota import (
     UpstreamSubscriptionQuotaService,
+    _QUOTA_REQUEST_TIMEOUT_SECONDS,
 )
 from tests._async_compat import run_async
 
@@ -52,8 +53,8 @@ class _RecordingClient:
         self._release = release
         self.calls: list[dict] = []
 
-    async def get(self, url, *, headers):
-        self.calls.append({"url": url, "headers": dict(headers)})
+    async def get(self, url, *, headers, timeout=None):
+        self.calls.append({"url": url, "headers": dict(headers), "timeout": timeout})
         if self._started is not None and len(self.calls) == 1:
             self._started.set()
             assert self._release is not None
@@ -209,13 +210,24 @@ class TestTtlCacheHits(unittest.TestCase):
         run_async(service.fetch_github_copilot(copilot_token="token-b"))
 
         self.assertEqual(len(client.calls), 2)
+        self.assertEqual(client.calls[0]["timeout"], _QUOTA_REQUEST_TIMEOUT_SECONDS)
+        self.assertEqual(client.calls[1]["timeout"], _QUOTA_REQUEST_TIMEOUT_SECONDS)
+
+    def test_gemini_cli_passes_request_timeout(self):
+        client = _RecordingClient(_mock_response(200, {"projects": []}))
+        service = UpstreamSubscriptionQuotaService(http_client=client)
+
+        run_async(service.fetch_gemini_cli(access_token="tok"))
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0]["timeout"], _QUOTA_REQUEST_TIMEOUT_SECONDS)
 
 
 def test_transport_exception_does_not_expose_credentials(caplog):
     secret = "quota-secret-in-authorization"
 
     class ExplodingClient:
-        async def get(self, url, *, headers):  # noqa: ARG002
+        async def get(self, url, *, headers, timeout=None):  # noqa: ARG002
             raise RuntimeError(f"Authorization: Bearer {secret}")
 
     service = UpstreamSubscriptionQuotaService(http_client=ExplodingClient())

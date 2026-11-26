@@ -552,11 +552,7 @@ def _openai_request_to_anthropic_payload(
             continue
 
         if role == "user":
-            _flush_pending_user()
-            anthropic_messages.append({
-                "role": "user",
-                "content": _openai_user_content_to_anthropic_blocks(content),
-            })
+            pending_user_blocks.extend(_openai_user_content_to_anthropic_blocks(content))
             continue
 
         if role == "assistant":
@@ -704,6 +700,7 @@ def _anthropic_response_to_openai(
 
     content_blocks = response_data.get("content") or []
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_calls: list[dict] = []
     for block in content_blocks:
         if not isinstance(block, dict):
@@ -713,6 +710,10 @@ def _anthropic_response_to_openai(
             text = block.get("text")
             if isinstance(text, str) and text:
                 text_parts.append(text)
+        elif block_type == "thinking":
+            thinking = block.get("thinking")
+            if isinstance(thinking, str) and thinking:
+                thinking_parts.append(thinking)
         elif block_type == "tool_use":
             try:
                 arguments_json = json.dumps(
@@ -733,6 +734,8 @@ def _anthropic_response_to_openai(
 
     message: dict = {"role": "assistant"}
     message["content"] = "".join(text_parts) if text_parts else None
+    if thinking_parts:
+        message["reasoning_content"] = "".join(thinking_parts)
     if tool_calls:
         message["tool_calls"] = tool_calls
 
@@ -1198,13 +1201,26 @@ def _translate_responses_request(responses_payload: dict) -> tuple[dict, str, li
         )
 
     if "tool_choice" in responses_payload:
-        openai_payload["tool_choice"] = copy.deepcopy(responses_payload["tool_choice"])
+        tool_choice = copy.deepcopy(responses_payload["tool_choice"])
+        if (
+            isinstance(tool_choice, dict)
+            and tool_choice.get("type") == "function"
+            and "function" not in tool_choice
+            and isinstance(tool_choice.get("name"), str)
+            and tool_choice["name"]
+        ):
+            tool_choice = {"type": "function", "function": {"name": tool_choice["name"]}}
+        openai_payload["tool_choice"] = tool_choice
 
     text_config = responses_payload.get("text")
     if isinstance(text_config, dict):
         text_format = text_config.get("format")
         if isinstance(text_format, dict) and text_format.get("type") not in (None, "text"):
-            openai_payload["response_format"] = copy.deepcopy(text_format)
+            fmt = copy.deepcopy(text_format)
+            if fmt.get("type") == "json_schema" and "json_schema" not in fmt:
+                json_schema_body = {key: value for key, value in fmt.items() if key != "type"}
+                fmt = {"type": "json_schema", "json_schema": json_schema_body}
+            openai_payload["response_format"] = fmt
 
     if "response_format" in responses_payload and "response_format" not in openai_payload:
         openai_payload["response_format"] = copy.deepcopy(responses_payload["response_format"])
@@ -1297,7 +1313,46 @@ def _openai_response_to_responses(response_data: dict, requested_model: str) -> 
 
     output: list[dict] = []
     tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list) and tool_calls:
+    has_tool_calls = isinstance(tool_calls, list) and bool(tool_calls)
+
+    # Handle reasoning
+    reasoning = message.get("reasoning_content") or message.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        output.append(
+            {
+                "id": f"msg_{uuid4().hex}",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": reasoning,
+                        "annotations": ["thought"],
+                    }
+                ],
+            }
+        )
+
+    # Handle main content
+    raw_content = message.get("content")
+    has_nonempty_content = (
+        (isinstance(raw_content, str) and bool(raw_content))
+        or (isinstance(raw_content, list) and bool(raw_content))
+        or (raw_content is not None and not isinstance(raw_content, (str, list)))
+    )
+    if not has_tool_calls or has_nonempty_content:
+        output.append(
+            {
+                "id": f"msg_{uuid4().hex}",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": _openai_message_content_to_responses_content(raw_content),
+            }
+        )
+
+    if has_tool_calls:
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 continue
@@ -1313,36 +1368,6 @@ def _openai_response_to_responses(response_data: dict, requested_model: str) -> 
                     "status": "completed",
                 }
             )
-    else:
-        # Handle reasoning
-        reasoning = message.get("reasoning_content") or message.get("reasoning")
-        if isinstance(reasoning, str) and reasoning:
-            output.append(
-                {
-                    "id": f"msg_{uuid4().hex}",
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": reasoning,
-                            "annotations": ["thought"],
-                        }
-                    ],
-                }
-            )
-
-        # Handle main content
-        output.append(
-            {
-                "id": f"msg_{uuid4().hex}",
-                "type": "message",
-                "role": "assistant",
-                "status": "completed",
-                "content": _openai_message_content_to_responses_content(message.get("content")),
-            }
-        )
 
     response_status = "completed" if finish_reason != "length" else "incomplete"
     responses_response = {

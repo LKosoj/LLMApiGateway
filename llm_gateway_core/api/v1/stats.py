@@ -41,9 +41,15 @@ HTML_DIR = STATIC_DIR
 # ('hour' updates per minute in the UI), so user-perceived freshness is
 # unaffected.
 USAGE_STATS_CACHE_TTL_SECONDS = 30.0
+ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS = 15.0
+UPSTREAM_HEALTH_PROBE_CONCURRENCY = 8
 _usage_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
 _fallback_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
 _upstream_stats_cache = AsyncTtlCache(USAGE_STATS_CACHE_TTL_SECONDS)
+_analytics_dashboard_cache = AsyncTtlCache(
+    ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS,
+    max_entries=128,
+)
 
 ANALYTICS_RANGES = {
     "24h": timedelta(hours=24),
@@ -479,259 +485,282 @@ async def get_analytics_dashboard(
     if compare_filter is not None and compare_filter != "previous":
         raise HTTPException(status_code=400, detail="compare must be 'previous'.")
 
-    warnings: list[str] = []
-    routing_filters_active = any(
-        [
-            operation_filter,
-            gateway_model_filter,
-            provider_filter,
-            model_filter,
-            upstream_key_filter,
-            usage_source_filter,
-            x_title_filter,
-            estimated_filter is not None,
-        ]
-    )
-    include_rejections = not routing_filters_active
-    if routing_filters_active:
-        warnings.append(
-            "Rejection analytics are hidden while usage routing filters are active because rejection events are not stored with those fields."
-        )
-
-    if is_master:
-        api_key_records = await asyncio.to_thread(api_keys_db.list_all)
-    else:
-        own_record = await asyncio.to_thread(api_keys_db.get_by_id, api_key_id_filter)
-        api_key_records = [own_record] if own_record is not None else []
-    key_names = {record.id: record.name for record in api_key_records}
-
-    usage_task = tokens_usage_db.get_dashboard_usage(
+    cache_key = (
+        role,
+        api_key_id_filter,
+        api_key_unattributed,
+        scope_name,
+        range_name,
         resolved_bucket,
-        start_date,
-        end_date,
-        api_key_id=api_key_id_filter,
-        api_key_unattributed=api_key_unattributed,
-        operation=operation_filter,
-        gateway_model=gateway_model_filter,
-        provider=provider_filter,
-        model=model_filter,
-        upstream_key_fingerprint=upstream_key_filter,
-        usage_source=usage_source_filter,
-        x_title=x_title_filter,
-        is_estimated=estimated_filter,
-        recent_limit=10,
+        operation_filter,
+        gateway_model_filter,
+        provider_filter,
+        model_filter,
+        upstream_key_filter,
+        usage_source_filter,
+        x_title_filter,
+        estimated_filter,
+        rejection_category_filter,
+        rejection_status_code,
+        compare_filter,
     )
-    options_task = tokens_usage_db.get_dashboard_filter_options(
-        start_date,
-        end_date,
-        api_key_id=api_key_id_filter,
-        api_key_unattributed=api_key_unattributed,
-    )
-    fallback_task = fallback_events_db.get_dashboard_fallback(
-        resolved_bucket,
-        start_date,
-        end_date,
-        api_key_id=api_key_id_filter,
-        api_key_unattributed=api_key_unattributed,
-        operation=operation_filter,
-        gateway_model=gateway_model_filter,
-        provider=provider_filter,
-        model=model_filter,
-        upstream_key_fingerprint=upstream_key_filter,
-    )
-    gather_tasks = [usage_task, options_task, fallback_task]
-    if include_rejections:
-        gather_tasks.append(
-            rejections_db.get_dashboard_rejections(
-                resolved_bucket,
-                start_date,
-                end_date,
-                api_key_id=api_key_id_filter,
-                api_key_unattributed=api_key_unattributed,
-                category=rejection_category_filter,
-                status_code=rejection_status_code,
-            )
+
+    async def _compute_dashboard() -> dict[str, Any]:
+        warnings: list[str] = []
+        routing_filters_active = any(
+            [
+                operation_filter,
+                gateway_model_filter,
+                provider_filter,
+                model_filter,
+                upstream_key_filter,
+                usage_source_filter,
+                x_title_filter,
+                estimated_filter is not None,
+            ]
         )
-    if is_master:
-        gather_tasks.append(tokens_usage_db.get_lifetime_totals())
-    if compare_filter:
-        # The window of the same length right before the requested one.
-        previous_start = start_date - (end_date - start_date)
-        usage_filters = {
-            "api_key_id": api_key_id_filter,
-            "api_key_unattributed": api_key_unattributed,
-            "operation": operation_filter,
-            "gateway_model": gateway_model_filter,
-            "provider": provider_filter,
-            "model": model_filter,
-            "upstream_key_fingerprint": upstream_key_filter,
-        }
-        gather_tasks.append(
-            tokens_usage_db.get_dashboard_usage(
-                resolved_bucket,
-                previous_start,
-                start_date,
-                **usage_filters,
-                usage_source=usage_source_filter,
-                x_title=x_title_filter,
-                is_estimated=estimated_filter,
-                recent_limit=0,
+        include_rejections = not routing_filters_active
+        if routing_filters_active:
+            warnings.append(
+                "Rejection analytics are hidden while usage routing filters are active because rejection events are not stored with those fields."
             )
-        )
-        gather_tasks.append(
-            fallback_events_db.get_dashboard_fallback(
-                resolved_bucket,
-                previous_start,
-                start_date,
-                **usage_filters,
-            )
-        )
-    results = await asyncio.gather(*gather_tasks)
-    usage_data, filter_options, fallback_data = results[:3]
-    next_index = 3
-    if include_rejections:
-        rejection_data = results[next_index]
-        next_index += 1
-    else:
-        rejection_data = _empty_rejection_dashboard()
-    lifetime_data = results[next_index] if is_master else None
-    previous_payload = None
-    if compare_filter:
-        previous_usage, previous_fallback = results[-2:]
-        previous_summary = previous_usage["summary"]
-        previous_payload = {
-            "totals": {
-                "requests": previous_summary.get("requests", 0),
-                "total_tokens": previous_summary.get("total_tokens", 0),
-                "cost": previous_summary.get("cost", 0.0),
-            },
-            "fallback": {"summary": previous_fallback["summary"]},
-        }
+
         if is_master:
-            previous_payload["fallback"]["requests"] = previous_fallback["requests"]
+            api_key_records = await asyncio.to_thread(api_keys_db.list_all)
+        else:
+            own_record = await asyncio.to_thread(api_keys_db.get_by_id, api_key_id_filter)
+            api_key_records = [own_record] if own_record is not None else []
+        key_names = {record.id: record.name for record in api_key_records}
 
-    active_records = active_requests_registry.list_records(
-        api_key_id=api_key_id_filter if not api_key_unattributed else None
-    )
-    if api_key_unattributed:
-        active_records = [row for row in active_records if row.get("api_key_id") is None]
-    if operation_filter:
-        active_records = [row for row in active_records if row.get("operation") == operation_filter]
-    if gateway_model_filter:
-        active_records = [row for row in active_records if row.get("gateway_model") == gateway_model_filter]
-    if provider_filter:
-        active_records = [row for row in active_records if row.get("provider") == provider_filter]
-    if model_filter:
-        active_records = [row for row in active_records if row.get("model") == model_filter]
-    if upstream_key_filter:
-        active_records = [
-            row for row in active_records
-            if row.get("upstream_key_fingerprint") == upstream_key_filter
-        ]
-    if usage_source_filter:
-        active_records = [row for row in active_records if row.get("usage_source") == usage_source_filter]
-    if x_title_filter:
-        active_records = [row for row in active_records if row.get("x_title") == x_title_filter]
-    if estimated_filter is not None:
-        active_records = [
-            row for row in active_records
-            if bool(row.get("is_estimated")) == estimated_filter
-        ]
+        usage_task = tokens_usage_db.get_dashboard_usage(
+            resolved_bucket,
+            start_date,
+            end_date,
+            api_key_id=api_key_id_filter,
+            api_key_unattributed=api_key_unattributed,
+            operation=operation_filter,
+            gateway_model=gateway_model_filter,
+            provider=provider_filter,
+            model=model_filter,
+            upstream_key_fingerprint=upstream_key_filter,
+            usage_source=usage_source_filter,
+            x_title=x_title_filter,
+            is_estimated=estimated_filter,
+            recent_limit=10,
+        )
+        options_task = tokens_usage_db.get_dashboard_filter_options(
+            start_date,
+            end_date,
+            api_key_id=api_key_id_filter,
+            api_key_unattributed=api_key_unattributed,
+        )
+        fallback_task = fallback_events_db.get_dashboard_fallback(
+            resolved_bucket,
+            start_date,
+            end_date,
+            api_key_id=api_key_id_filter,
+            api_key_unattributed=api_key_unattributed,
+            operation=operation_filter,
+            gateway_model=gateway_model_filter,
+            provider=provider_filter,
+            model=model_filter,
+            upstream_key_fingerprint=upstream_key_filter,
+        )
+        gather_tasks = [usage_task, options_task, fallback_task]
+        if include_rejections:
+            gather_tasks.append(
+                rejections_db.get_dashboard_rejections(
+                    resolved_bucket,
+                    start_date,
+                    end_date,
+                    api_key_id=api_key_id_filter,
+                    api_key_unattributed=api_key_unattributed,
+                    category=rejection_category_filter,
+                    status_code=rejection_status_code,
+                )
+            )
+        if is_master:
+            gather_tasks.append(tokens_usage_db.get_lifetime_totals())
+        if compare_filter:
+            # The window of the same length right before the requested one.
+            previous_start = start_date - (end_date - start_date)
+            usage_filters = {
+                "api_key_id": api_key_id_filter,
+                "api_key_unattributed": api_key_unattributed,
+                "operation": operation_filter,
+                "gateway_model": gateway_model_filter,
+                "provider": provider_filter,
+                "model": model_filter,
+                "upstream_key_fingerprint": upstream_key_filter,
+            }
+            gather_tasks.append(
+                tokens_usage_db.get_dashboard_usage(
+                    resolved_bucket,
+                    previous_start,
+                    start_date,
+                    **usage_filters,
+                    usage_source=usage_source_filter,
+                    x_title=x_title_filter,
+                    is_estimated=estimated_filter,
+                    recent_limit=0,
+                )
+            )
+            gather_tasks.append(
+                fallback_events_db.get_dashboard_fallback(
+                    resolved_bucket,
+                    previous_start,
+                    start_date,
+                    **usage_filters,
+                )
+            )
+        results = await asyncio.gather(*gather_tasks)
+        usage_data, filter_options, fallback_data = results[:3]
+        next_index = 3
+        if include_rejections:
+            rejection_data = results[next_index]
+            next_index += 1
+        else:
+            rejection_data = _empty_rejection_dashboard()
+        lifetime_data = results[next_index] if is_master else None
+        previous_payload = None
+        if compare_filter:
+            previous_usage, previous_fallback = results[-2:]
+            previous_summary = previous_usage["summary"]
+            previous_payload = {
+                "totals": {
+                    "requests": previous_summary.get("requests", 0),
+                    "total_tokens": previous_summary.get("total_tokens", 0),
+                    "cost": previous_summary.get("cost", 0.0),
+                },
+                "fallback": {"summary": previous_fallback["summary"]},
+            }
+            if is_master:
+                previous_payload["fallback"]["requests"] = previous_fallback["requests"]
 
-    usage_summary = usage_data["summary"]
-    total_tokens = int(usage_summary.get("total_tokens") or 0)
-    total_cost = float(usage_summary.get("cost") or 0.0)
-    cost_per_million_tokens = (total_cost / total_tokens * 1_000_000) if total_tokens else 0.0
+        active_records = active_requests_registry.list_records(
+            api_key_id=api_key_id_filter if not api_key_unattributed else None
+        )
+        if api_key_unattributed:
+            active_records = [row for row in active_records if row.get("api_key_id") is None]
+        if operation_filter:
+            active_records = [row for row in active_records if row.get("operation") == operation_filter]
+        if gateway_model_filter:
+            active_records = [row for row in active_records if row.get("gateway_model") == gateway_model_filter]
+        if provider_filter:
+            active_records = [row for row in active_records if row.get("provider") == provider_filter]
+        if model_filter:
+            active_records = [row for row in active_records if row.get("model") == model_filter]
+        if upstream_key_filter:
+            active_records = [
+                row for row in active_records
+                if row.get("upstream_key_fingerprint") == upstream_key_filter
+            ]
+        if usage_source_filter:
+            active_records = [row for row in active_records if row.get("usage_source") == usage_source_filter]
+        if x_title_filter:
+            active_records = [row for row in active_records if row.get("x_title") == x_title_filter]
+        if estimated_filter is not None:
+            active_records = [
+                row for row in active_records
+                if bool(row.get("is_estimated")) == estimated_filter
+            ]
 
-    breakdowns = dict(usage_data["breakdowns"])
-    breakdowns["api_keys"] = _attach_api_key_names(breakdowns.get("api_keys", []), key_names)
-    breakdowns["providers"] = _merge_fallback_outcomes(
-        breakdowns.get("providers", []), fallback_data.get("providers", [])
-    )
-    breakdowns["resolved_targets"] = _merge_fallback_outcomes(
-        breakdowns.get("resolved_targets", []), fallback_data.get("targets", [])
-    )
-    if not is_master:
-        breakdowns["api_keys"] = []
-        breakdowns["upstream_keys"] = []
+        usage_summary = usage_data["summary"]
+        total_tokens = int(usage_summary.get("total_tokens") or 0)
+        total_cost = float(usage_summary.get("cost") or 0.0)
+        cost_per_million_tokens = (total_cost / total_tokens * 1_000_000) if total_tokens else 0.0
 
-    if is_master:
-        fallback_payload = {
-            key: value
-            for key, value in fallback_data.items()
-            if key not in {"providers", "targets"}
+        breakdowns = dict(usage_data["breakdowns"])
+        breakdowns["api_keys"] = _attach_api_key_names(breakdowns.get("api_keys", []), key_names)
+        breakdowns["providers"] = _merge_fallback_outcomes(
+            breakdowns.get("providers", []), fallback_data.get("providers", [])
+        )
+        breakdowns["resolved_targets"] = _merge_fallback_outcomes(
+            breakdowns.get("resolved_targets", []), fallback_data.get("targets", [])
+        )
+        if not is_master:
+            breakdowns["api_keys"] = []
+            breakdowns["upstream_keys"] = []
+
+        if is_master:
+            fallback_payload = {
+                key: value
+                for key, value in fallback_data.items()
+                if key not in {"providers", "targets"}
+            }
+        else:
+            fallback_payload = {
+                "summary": fallback_data["summary"],
+                "series": fallback_data["series"],
+                "error_types": [],
+                "upstream": [],
+            }
+
+        reliability = {
+            "fallback": fallback_payload,
+            "rejections": rejection_data,
         }
-    else:
-        fallback_payload = {
-            "summary": fallback_data["summary"],
-            "series": fallback_data["series"],
-            "error_types": [],
-            "upstream": [],
+
+        filter_options["api_keys"] = [_serialize_api_key_option(record) for record in api_key_records] if is_master else []
+        if not is_master:
+            filter_options["upstream_keys"] = []
+
+        recent_records = active_records[:5] + _mark_completed_usage_rows(usage_data.get("recent_records", []))
+        if not is_master:
+            recent_records = [
+                {key: value for key, value in row.items() if key != "upstream_key_fingerprint"}
+                for row in recent_records
+            ]
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "scope": {
+                "role": role,
+                "api_key_id": api_key_id_filter,
+                "api_key_scope": scope_name,
+                "can_filter_keys": False,
+                "can_filter_upstream_keys": is_master,
+            },
+            "filters": {
+                "range": range_name,
+                "bucket": resolved_bucket,
+                "api_key_id": None,
+                "api_key_scope": scope_name,
+                "operation": operation_filter,
+                "gateway_model": gateway_model_filter,
+                "provider": provider_filter,
+                "model": model_filter,
+                "upstream_key_fingerprint": upstream_key_filter,
+                "usage_source": usage_source_filter,
+                "x_title": x_title_filter,
+                "estimated": estimated_filter,
+                "rejection_category": rejection_category_filter,
+                "rejection_status_code": rejection_status_code,
+            },
+            "totals": {
+                **usage_summary,
+                "active_requests": len(active_records),
+                "fallback_attempts": fallback_payload["summary"]["attempts"],
+                "fallback_errors": fallback_payload["summary"]["errors"],
+                "fallback_success_rate": fallback_payload["summary"]["success_rate"],
+                "rejections": reliability["rejections"]["summary"]["rejections"],
+                "cost_per_million_tokens": cost_per_million_tokens,
+            },
+            "lifetime": lifetime_data,
+            "previous": previous_payload,
+            "series": {
+                "usage": usage_data["series"],
+                "fallback": fallback_payload["series"],
+                "rejections": rejection_data["series"],
+            },
+            "breakdowns": breakdowns,
+            "reliability": reliability,
+            "recent_records": recent_records,
+            "filter_options": filter_options,
+            "warnings": warnings,
         }
 
-    reliability = {
-        "fallback": fallback_payload,
-        "rejections": rejection_data,
-    }
-
-    filter_options["api_keys"] = [_serialize_api_key_option(record) for record in api_key_records] if is_master else []
-    if not is_master:
-        filter_options["upstream_keys"] = []
-
-    recent_records = active_records[:5] + _mark_completed_usage_rows(usage_data.get("recent_records", []))
-    if not is_master:
-        recent_records = [
-            {key: value for key, value in row.items() if key != "upstream_key_fingerprint"}
-            for row in recent_records
-        ]
-
-    payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "scope": {
-            "role": role,
-            "api_key_id": api_key_id_filter,
-            "api_key_scope": scope_name,
-            "can_filter_keys": False,
-            "can_filter_upstream_keys": is_master,
-        },
-        "filters": {
-            "range": range_name,
-            "bucket": resolved_bucket,
-            "api_key_id": None,
-            "api_key_scope": scope_name,
-            "operation": operation_filter,
-            "gateway_model": gateway_model_filter,
-            "provider": provider_filter,
-            "model": model_filter,
-            "upstream_key_fingerprint": upstream_key_filter,
-            "usage_source": usage_source_filter,
-            "x_title": x_title_filter,
-            "estimated": estimated_filter,
-            "rejection_category": rejection_category_filter,
-            "rejection_status_code": rejection_status_code,
-        },
-        "totals": {
-            **usage_summary,
-            "active_requests": len(active_records),
-            "fallback_attempts": fallback_payload["summary"]["attempts"],
-            "fallback_errors": fallback_payload["summary"]["errors"],
-            "fallback_success_rate": fallback_payload["summary"]["success_rate"],
-            "rejections": reliability["rejections"]["summary"]["rejections"],
-            "cost_per_million_tokens": cost_per_million_tokens,
-        },
-        "lifetime": lifetime_data,
-        "previous": previous_payload,
-        "series": {
-            "usage": usage_data["series"],
-            "fallback": fallback_payload["series"],
-            "rejections": rejection_data["series"],
-        },
-        "breakdowns": breakdowns,
-        "reliability": reliability,
-        "recent_records": recent_records,
-        "filter_options": filter_options,
-        "warnings": warnings,
-    }
+    payload = await _analytics_dashboard_cache.get_or_compute(cache_key, _compute_dashboard)
     return JSONResponse(content=payload)
 
 
@@ -1034,26 +1063,28 @@ async def run_upstream_health_checks(request: Request, body: UpstreamHealthRunFi
         if wanted and not targets:
             raise HTTPException(status_code=404, detail="No configured health target matches the filter.")
 
-    checked_rows: list[dict] = []
-    for target in targets:
+    semaphore = asyncio.Semaphore(UPSTREAM_HEALTH_PROBE_CONCURRENCY)
+
+    async def _probe_target(target: _HealthProbeTarget) -> dict[str, Any]:
         health_status = "error"
         last_error = None
-        try:
-            response = await target.http_client.post(
-                target.url,
-                headers=target.headers,
-                json=target.payload,
-                timeout=15.0,
-            )
-            if response.status_code < 400:
-                health_status = "healthy"
-            elif response.status_code in {401, 403}:
-                health_status = "invalid"
-                last_error = f"HTTP {response.status_code}"
-            else:
-                last_error = f"HTTP {response.status_code}"
-        except httpx.HTTPError as exc:
-            last_error = exc.__class__.__name__
+        async with semaphore:
+            try:
+                response = await target.http_client.post(
+                    target.url,
+                    headers=target.headers,
+                    json=target.payload,
+                    timeout=15.0,
+                )
+                if response.status_code < 400:
+                    health_status = "healthy"
+                elif response.status_code in {401, 403}:
+                    health_status = "invalid"
+                    last_error = f"HTTP {response.status_code}"
+                else:
+                    last_error = f"HTTP {response.status_code}"
+            except httpx.HTTPError as exc:
+                last_error = exc.__class__.__name__
         upstream_state.mark_health(
             target.provider,
             target.model,
@@ -1061,15 +1092,15 @@ async def run_upstream_health_checks(request: Request, body: UpstreamHealthRunFi
             health_status,
             last_error,
         )
-        checked_rows.append(
-            {
-                "provider": target.provider,
-                "model": target.model,
-                "upstream_key_fingerprint": target.upstream_key_fingerprint,
-                "health_status": health_status,
-                "last_error": last_error,
-            }
-        )
+        return {
+            "provider": target.provider,
+            "model": target.model,
+            "upstream_key_fingerprint": target.upstream_key_fingerprint,
+            "health_status": health_status,
+            "last_error": last_error,
+        }
+
+    checked_rows = list(await asyncio.gather(*(_probe_target(target) for target in targets)))
 
     return JSONResponse(content={"checked": len(checked_rows), "rows": checked_rows})
 

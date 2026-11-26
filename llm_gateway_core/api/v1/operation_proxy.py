@@ -114,9 +114,11 @@ async def proxy_json_to_downstream(
     http_client: httpx.AsyncClient,
     retry_count: int = 0,
     retry_delay: float = 0.0,
+    log: logging.Logger | None = None,
 ):
+    active_logger = log or logger
     sanitized_target_url = sanitize_target_url_for_log(target_url)
-    logger.info("Proxying operation request to downstream %s", sanitized_target_url)
+    active_logger.info("Proxying operation request to downstream %s", sanitized_target_url)
 
     total_attempts = retry_count + 1
     attempt_number = 0
@@ -128,7 +130,7 @@ async def proxy_json_to_downstream(
             if payload.get("stream"):
                 stream_context = http_client.stream("POST", target_url, headers=headers, json=payload)
                 response = await stream_context.__aenter__()
-                logger.info(
+                active_logger.info(
                     "Operation downstream response status %s from %s",
                     response.status_code,
                     sanitized_target_url,
@@ -136,7 +138,7 @@ async def proxy_json_to_downstream(
 
                 if response.status_code >= 400:
                     error_detail = (await response.aread()).decode("utf-8", errors="replace")
-                    logger.warning(
+                    active_logger.warning(
                         "Streaming operation downstream error status %s from %s body_bytes=%s",
                         response.status_code,
                         sanitized_target_url,
@@ -174,7 +176,7 @@ async def proxy_json_to_downstream(
 
             response = await http_client.post(target_url, headers=headers, json=payload)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
-            logger.warning(
+            active_logger.warning(
                 "Operation downstream request to %s failed with network error type=%s",
                 sanitized_target_url,
                 type(exc).__name__,
@@ -190,7 +192,7 @@ async def proxy_json_to_downstream(
                 continue
             raise HTTPException(status_code=503, detail="Downstream request failed.") from exc
 
-        logger.info(
+        active_logger.info(
             "Operation downstream response status %s from %s",
             response.status_code,
             sanitized_target_url,

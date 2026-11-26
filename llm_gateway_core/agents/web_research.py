@@ -15,6 +15,7 @@ from typing import Any, cast
 from fastapi import HTTPException
 import httpx
 
+from ..api.v1.web_safe_fetch import _get_with_public_redirects
 from ..utils.api_keys import has_api_key, select_next_api_key
 from ..utils.zai_mcp import detect_zai_search_location, zai_mcp_tool_call
 
@@ -77,6 +78,29 @@ _SELECTOLAX_NOISE_TAGS = (
     "form",
     "button",
 )
+
+
+def _extract_text_with_trafilatura(html_text: str) -> str:
+    """Extract main markdown text via trafilatura. "" on failure."""
+    try:
+        import trafilatura  # type: ignore[import-untyped]
+    except ImportError:
+        logger.debug("trafilatura не установлен, используем BeautifulSoup")
+        return ""
+    try:
+        clean_content = trafilatura.extract(
+            html_text,
+            include_formatting=True,
+            include_links=True,
+            include_tables=True,
+            include_images=True,
+            include_comments=False,
+            output_format="markdown",
+        )
+    except Exception as exc:
+        logger.warning("Ошибка trafilatura: %s", exc)
+        return ""
+    return clean_content if isinstance(clean_content, str) else ""
 
 
 def _extract_text_with_selectolax(html_text: str) -> str:
@@ -381,70 +405,49 @@ class WebResearchClient:
         title = ""
 
         try:
-            enhanced_headers = {
-                **HEADERS,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Accept-Encoding": "gzip, deflate, br",
-                "DNT": "1",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-            }
+            response, _final_url = await _get_with_public_redirects(url)
+            response.raise_for_status()
 
-            async with self._httpx_client(follow_redirects=True) as client:
-                response = await client.get(url, headers=enhanced_headers, timeout=20.0)
-                response.raise_for_status()
-
-                content_type = response.headers.get("Content-Type", "").lower()
-                if url.lower().endswith(".pdf") or "application/pdf" in content_type:
-                    logger.info("Обнаружен PDF: %s", url)
-                    try:
-                        pdf_content, pdf_title = await self._extract_pdf_content(response.content, url)
-                        return {"url": url, "title": pdf_title, "content": pdf_content}
-                    except Exception as exc:
-                        logger.warning("Ошибка извлечения PDF %s: %s", url, exc)
-                        return {
-                            "url": url,
-                            "title": url.split("/")[-1] or "PDF-документ",
-                            "content": "PDF-документ (ошибка извлечения содержимого)",
-                        }
-
-                html_content = response.text
-                title = self._extract_title(html_content)
-
+            content_type = response.headers.get("Content-Type", "").lower()
+            if url.lower().endswith(".pdf") or "application/pdf" in content_type:
+                logger.info("Обнаружен PDF: %s", url)
                 try:
-                    import trafilatura  # type: ignore[import-untyped]
-
-                    clean_content = trafilatura.extract(
-                        html_content,
-                        include_formatting=True,
-                        include_links=True,
-                        include_tables=True,
-                        include_images=True,
-                        include_comments=False,
-                        output_format="markdown",
-                    )
-                    if clean_content and clean_content.strip():
-                        clean_content = self._clean_extra_spaces(clean_content)
-                        logger.info("Успешно загружен через trafilatura: %s", url)
-                        return {"url": url, "title": title, "content": clean_content}
-                except ImportError:
-                    logger.debug("trafilatura не установлен, используем BeautifulSoup")
+                    pdf_content, pdf_title = await self._extract_pdf_content(response.content, url)
+                    return {"url": url, "title": pdf_title, "content": pdf_content}
                 except Exception as exc:
-                    logger.warning("Ошибка trafilatura для %s: %s", url, exc)
+                    logger.warning("Ошибка извлечения PDF %s: %s", url, exc)
+                    return {
+                        "url": url,
+                        "title": url.split("/")[-1] or "PDF-документ",
+                        "content": "PDF-документ (ошибка извлечения содержимого)",
+                    }
 
-                selectolax_text = await asyncio.to_thread(_extract_text_with_selectolax, html_content)
-                if selectolax_text:
-                    logger.info("Успешно загружен через selectolax: %s", url)
-                    return {"url": url, "title": title, "content": selectolax_text}
+            html_content = response.text
+            title = self._extract_title(html_content)
 
-                clean_content = await asyncio.to_thread(self._clean_html_content, html_content)
-                if clean_content and clean_content.strip():
-                    logger.info("Успешно загружен через html.parser: %s", url)
-                    return {"url": url, "title": title, "content": clean_content}
+            clean_content = await asyncio.to_thread(_extract_text_with_trafilatura, html_content)
+            if clean_content and clean_content.strip():
+                clean_content = self._clean_extra_spaces(clean_content)
+                logger.info("Успешно загружен через trafilatura: %s", url)
+                return {"url": url, "title": title, "content": clean_content}
 
-                logger.warning("Пустой контент после extraction для %s, пробуем API readers", url)
+            selectolax_text = await asyncio.to_thread(_extract_text_with_selectolax, html_content)
+            if selectolax_text:
+                logger.info("Успешно загружен через selectolax: %s", url)
+                return {"url": url, "title": title, "content": selectolax_text}
 
+            clean_content = await asyncio.to_thread(self._clean_html_content, html_content)
+            if clean_content and clean_content.strip():
+                logger.info("Успешно загружен через html.parser: %s", url)
+                return {"url": url, "title": title, "content": clean_content}
+
+            logger.warning("Пустой контент после extraction для %s, пробуем API readers", url)
+
+        except HTTPException as exc:
+            if exc.status_code == 400:
+                logger.warning("Заблокированный или некорректный URL: %s (%s)", url, exc.detail)
+                return {"url": url, "title": "", "content": ""}
+            logger.warning("HTTPException при загрузке URL: %s, статус: %s", url, exc.status_code)
         except httpx.TimeoutException:
             logger.warning("Тайм-аут при загрузке URL: %s", url)
         except httpx.HTTPError as exc:

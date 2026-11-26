@@ -48,6 +48,7 @@ from llm_gateway_core.services.config_updates import (
 )
 from llm_gateway_core.services.provider_models import ProviderModelsService
 from llm_gateway_core.services.runtime_config import RuntimeSnapshot
+from llm_gateway_core.services.task_supervisor import TaskSupervisor
 from tests._async_compat import run_async
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
@@ -1281,6 +1282,7 @@ def test_validate_candidate_uses_stale_cache_when_provider_is_slow(
                 fetched_models=["model-a", "model-new"],
             )
         )
+        supervisor = TaskSupervisor()
         loop = asyncio.get_running_loop()
         started = loop.time()
         await rules_editor._validate_candidate_provider_models(
@@ -1288,17 +1290,20 @@ def test_validate_candidate_uses_stale_cache_when_provider_is_slow(
             candidate_snapshot,
             Mock(spec=httpx.AsyncClient),
             base_snapshot=base_snapshot,
+            task_supervisor=supervisor,
         )
         assert loop.time() - started < 0.25
         assert "shared" not in candidate_catalog._cache
+        assert supervisor.task_count == 1
 
-        # The slow fetch keeps running and refreshes the candidate cache.
-        await asyncio.gather(*rules_editor._background_model_refreshes)
+        # The slow fetch keeps running under TaskSupervisor and refreshes the candidate cache.
+        await asyncio.gather(*tuple(supervisor._tasks))
         assert candidate_catalog._cache["shared"].models == [
             "model-a",
             "model-new",
         ]
-        assert not rules_editor._background_model_refreshes
+        assert supervisor.task_count == 0
+        await supervisor.close()
 
     run_async(scenario())
 
@@ -1317,14 +1322,17 @@ def test_validate_candidate_checks_slow_provider_against_stale_cache(
             fetch_delay=0.3,
             fetched_models=["model-a"],
         )
+        supervisor = TaskSupervisor()
         with pytest.raises(ValueError, match="model-a"):
             await rules_editor._validate_candidate_provider_models(
                 request,
                 candidate_snapshot,
                 Mock(spec=httpx.AsyncClient),
                 base_snapshot=base_snapshot,
+                task_supervisor=supervisor,
             )
-        await asyncio.gather(*rules_editor._background_model_refreshes)
+        await asyncio.gather(*tuple(supervisor._tasks))
+        await supervisor.close()
 
     run_async(scenario())
 
@@ -1345,14 +1353,56 @@ def test_validate_candidate_prefers_fresh_catalog_when_provider_is_fast(
                 fetched_models=["model-a"],
             )
         )
+        supervisor = TaskSupervisor()
         await rules_editor._validate_candidate_provider_models(
             request,
             candidate_snapshot,
             Mock(spec=httpx.AsyncClient),
             base_snapshot=base_snapshot,
+            task_supervisor=supervisor,
         )
         assert candidate_catalog._cache["shared"].models == ["model-a"]
-        assert not rules_editor._background_model_refreshes
+        assert supervisor.task_count == 0
+        await supervisor.close()
+
+    run_async(scenario())
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/config/models-rules",
+        "/v1/config/model-rules",
+        "/v1/config/models-rules/structured",
+        "/v1/config/fusion-rules/structured",
+        "/v1/config/router-rules/structured",
+        "/v1/config/model-operations/structured",
+        "/v1/config/providers",
+        "/v1/config/providers/structured",
+        "/v1/config/providers/provider-a/models",
+    ],
+)
+def test_config_get_endpoints_require_master_role(
+    tmp_path: Path, path: str
+) -> None:
+    async def scenario() -> None:
+        loader = _loader(tmp_path / "non-master")
+        snapshot = make_runtime_snapshot(generation=1, config_loader=loader)
+        coordinator = _coordinator(snapshot)
+        app = FastAPI()
+        app.state.services = make_app_services(config_update_coordinator=coordinator)
+
+        @app.middleware("http")
+        async def bind_user(request, call_next):
+            request.state.api_key_role = ROLE_USER
+            request.state.runtime_snapshot = snapshot
+            return await call_next(request)
+
+        app.include_router(editor_router, prefix="/v1")
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(path)
+        assert response.status_code == 403
 
     run_async(scenario())
 

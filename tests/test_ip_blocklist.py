@@ -116,6 +116,30 @@ class IpBlockGuardTests(unittest.TestCase):
         self.assertEqual(guard.register_failure("a"), 600)
         self.assertIsNone(guard.check_blocked("b"))
 
+    def test_prunes_stale_entries_and_bounds_tracked_ips(self):
+        clock = _FakeClock()
+        guard = IpBlockGuard(
+            max_failures=5,
+            block_seconds=60.0,
+            time_func=clock,
+            max_tracked_ips=3,
+        )
+        guard.register_failure("10.0.0.1")
+        clock.tick(10.0)
+        guard.register_failure("10.0.0.2")
+        clock.tick(10.0)
+        guard.register_failure("10.0.0.3")
+        # Adding a 4th IP enforces the cap of 3 by evicting the oldest non-blocked entry.
+        clock.tick(10.0)
+        guard.register_failure("10.0.0.4")
+        self.assertLessEqual(len(guard._by_ip), 3)
+        self.assertNotIn("10.0.0.1", guard._by_ip)
+
+        # After stale TTL passes, pruning removes expired failure entries.
+        clock.tick(120.0)
+        guard.register_failure("10.0.0.5")
+        self.assertEqual(set(guard._by_ip.keys()), {"10.0.0.5"})
+
 
 if __name__ == "__main__":
     unittest.main()

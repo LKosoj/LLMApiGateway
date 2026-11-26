@@ -5,7 +5,7 @@ import time
 import hmac
 import hashlib
 from typing import TYPE_CHECKING, NamedTuple, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -104,6 +104,7 @@ _RATE_LIMIT_ONLY_ROUTES = frozenset(
 PUBLIC_EXACT_PATHS = {*RUNTIME_INDEPENDENT_PATHS, LOGIN_PATH}
 PUBLIC_PREFIXES = ("/static/",)
 OPTIONAL_AUTH_PATHS = {"/"}
+_CSRF_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Paths that accept X-Api-Key header (Anthropic SDK style authentication)
 ANTHROPIC_API_PREFIXES = (
     "/v1/messages",
@@ -133,11 +134,27 @@ def _matches_path_prefix(path: str, prefix: str) -> bool:
     return path == prefix.rstrip("/") or path.startswith(prefix)
 
 
+def _is_public_prefix_path(path: str) -> bool:
+    return any(_matches_path_prefix(path, prefix) for prefix in PUBLIC_PREFIXES)
+
+
 def is_public_path(path: str) -> bool:
     if path in PUBLIC_EXACT_PATHS:
         return True
 
-    return any(_matches_path_prefix(path, prefix) for prefix in PUBLIC_PREFIXES)
+    return _is_public_prefix_path(path)
+
+
+def _is_valid_csrf_origin(request: Request) -> bool:
+    sec_fetch_site = (request.headers.get("sec-fetch-site") or "").strip().lower()
+    if sec_fetch_site:
+        return sec_fetch_site == "same-origin"
+    origin = (request.headers.get("origin") or "").strip()
+    host = (request.headers.get("host") or "").strip().lower()
+    if not origin or not host:
+        return False
+    parsed_origin = urlparse(origin)
+    return bool(parsed_origin.netloc) and parsed_origin.netloc.lower() == host
 
 
 def requires_api_key(path: str) -> bool:
@@ -648,36 +665,42 @@ async def _authenticate_request(
                 detail=API_KEY_INVALID_DETAIL,
             )
 
+    return await _authenticate_session_cookie(request, services)
+
+
+async def _authenticate_session_cookie(
+    request: Request,
+    services: "AppServices",
+) -> tuple[bool, str | None]:
     parsed_session = _parse_session(request.cookies.get(SESSION_COOKIE_NAME))
-    if parsed_session is not None:
-        role, key_id = parsed_session
-        request.state.api_key_role = role
-        request.state.api_key_id = key_id
-        if role == ROLE_USER and key_id is not None:
-            try:
-                record = await asyncio.to_thread(api_keys_db.get_by_id, key_id)
-            except Exception:
-                logging.exception("Session key lookup failed")
-                record = None
-            if record is None or record.disabled:
-                if record is not None and record.disabled:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=API_KEY_DISABLED_DETAIL,
-                    )
-                return False, None
-            request.state.api_key_record = record
-        return True, "session"
+    if parsed_session is None:
+        return False, None
+    role, key_id = parsed_session
+    request.state.api_key_role = role
+    request.state.api_key_id = key_id
+    if role == ROLE_USER and key_id is not None:
+        try:
+            record = await asyncio.to_thread(services.api_keys_db.get_by_id, key_id)
+        except Exception:
+            logging.exception("Session key lookup failed")
+            record = None
+        if record is None or record.disabled:
+            if record is not None and record.disabled:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=API_KEY_DISABLED_DETAIL,
+                )
+            return False, None
+        request.state.api_key_record = record
+    return True, "session"
 
-    return False, None
 
-
-async def _try_authenticate_request(
+async def _try_authenticate_session_only(
     request: Request,
     services: "AppServices",
 ) -> tuple[bool, str | None]:
     try:
-        return await _authenticate_request(request, services)
+        return await _authenticate_session_cookie(request, services)
     except HTTPException:
         return False, None
 
@@ -801,8 +824,11 @@ async def _prepare_api_key_auth(
     request.state.llmgateway_rate_limit_admission_key_id = None
 
     try:
+        if _is_public_prefix_path(path):
+            return None, None
+
         if not requires_api_key(path):
-            is_authenticated, auth_source = await _try_authenticate_request(
+            is_authenticated, auth_source = await _try_authenticate_session_only(
                 request,
                 services,
             )
@@ -826,6 +852,24 @@ async def _prepare_api_key_auth(
 
         if is_authenticated:
             _note_auth_success(request, guard)
+            if (
+                auth_source == "session"
+                and request.method.upper() in _CSRF_MUTATING_METHODS
+                and not _is_valid_csrf_origin(request)
+            ):
+                record_rejection(
+                    request,
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    reason="Cross-site request blocked by CSRF origin check",
+                    category="csrf_invalid",
+                )
+                return (
+                    JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "Cross-site request blocked"},
+                    ),
+                    None,
+                )
             if (
                 _is_master_only_path(path)
                 and getattr(request.state, "api_key_role", ROLE_MASTER) != ROLE_MASTER

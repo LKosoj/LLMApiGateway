@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, cast
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
-from . import operation_proxy
 from ..accounting_http import (
     AccountingHttpUse,
     accounting_error_response,
@@ -72,12 +71,8 @@ POSITION_FALLBACK_INDEX_KEY = "_llmgateway_position_fallback_index"
 
 
 async def proxy_to_downstream(*args, **kwargs):
-    original_logger = operation_proxy.logger
-    operation_proxy.logger = logger
-    try:
-        return await proxy_json_to_downstream(*args, **kwargs)
-    finally:
-        operation_proxy.logger = original_logger
+    kwargs.setdefault("log", logger)
+    return await proxy_json_to_downstream(*args, **kwargs)
 
 
 def _uses_query_passages_request_format(route: OperationRoute) -> bool:

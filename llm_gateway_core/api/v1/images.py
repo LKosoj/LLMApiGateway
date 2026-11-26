@@ -499,7 +499,11 @@ async def _proxy_image_with_fallback(
                             detail=f"Invalid downstream image response: {exc}",
                         ) from exc
                     if expected_dimensions is None or await image_dimensions_match(
-                        response_payload, expected_dimensions, http_client, gif_requested=gif_requested,
+                        response_payload,
+                        expected_dimensions,
+                        effective_client,
+                        gif_requested=gif_requested,
+                        use_proxy_client=route.provider in proxy_http_clients,
                     ):
                         break
                     record_rejected_image(downstream_json)

@@ -477,6 +477,7 @@ def _ensure_audio_materialization_limit(audio_size: int, max_bytes: int) -> None
 
 
 _FFMPEG_CONVERSION_TIMEOUT_SECONDS = 60.0
+_FFMPEG_MAX_STDERR_BYTES = 4096
 
 
 def _kill_ffmpeg_on_timeout(process: subprocess.Popen, timed_out: threading.Event) -> None:
@@ -487,23 +488,19 @@ def _kill_ffmpeg_on_timeout(process: subprocess.Popen, timed_out: threading.Even
 def _convert_audio_bytes_to_wav(audio_bytes: bytes, *, max_bytes: int) -> bytes:
     _ensure_audio_materialization_limit(0, max_bytes)
     input_file = None
-    error_file = None
     try:
         input_file = tempfile.TemporaryFile()
-        error_file = tempfile.TemporaryFile()
         input_file.write(audio_bytes)
         input_file.seek(0)
         process = subprocess.Popen(
             ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "wav", "pipe:1"],
             stdin=input_file,
             stdout=subprocess.PIPE,
-            stderr=error_file,
+            stderr=subprocess.PIPE,
         )
     except FileNotFoundError as exc:
         if input_file is not None:
             input_file.close()
-        if error_file is not None:
-            error_file.close()
         raise HTTPException(
             status_code=500,
             detail="NVIDIA audio route requires 'ffmpeg' in PATH to convert non-WAV audio.",
@@ -511,9 +508,28 @@ def _convert_audio_bytes_to_wav(audio_bytes: bytes, *, max_bytes: int) -> bytes:
     except BaseException:
         if input_file is not None:
             input_file.close()
-        if error_file is not None:
-            error_file.close()
         raise
+
+    stderr_chunks: list[bytes] = []
+    stderr_thread: threading.Thread | None = None
+    process_stderr = getattr(process, "stderr", None)
+    if process_stderr is not None:
+        def _drain_stderr() -> None:
+            collected = 0
+            try:
+                while True:
+                    chunk = process_stderr.read(4096)
+                    if not chunk:
+                        break
+                    remaining = _FFMPEG_MAX_STDERR_BYTES - collected
+                    if remaining > 0:
+                        stderr_chunks.append(chunk[:remaining])
+                        collected += min(len(chunk), remaining)
+            except (OSError, ValueError):
+                pass
+
+        stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        stderr_thread.start()
 
     # Without a wall-clock deadline, a stalled/adversarial ffmpeg invocation would
     # block the worker thread (and its blocking stdout.read()) forever. The
@@ -541,18 +557,20 @@ def _convert_audio_bytes_to_wav(audio_bytes: bytes, *, max_bytes: int) -> bytes:
                 raise AudioMaterializationTooLarge
             converted_chunks.append(chunk)
         return_code = process.wait()
-        error_file.seek(0)
-        error_detail = error_file.read(4096)
     finally:
         watchdog.cancel()
         if process.poll() is None:
             process.kill()
             process.wait()
+        if stderr_thread is not None:
+            stderr_thread.join(timeout=1.0)
         if process.stdout is not None:
             process.stdout.close()
+        if process_stderr is not None:
+            process_stderr.close()
         input_file.close()
-        error_file.close()
 
+    error_detail = b"".join(stderr_chunks)
     converted_audio_bytes = b"".join(converted_chunks)
 
     # threading.Timer.cancel() is best-effort: if the watchdog already passed

@@ -86,6 +86,7 @@ class _FakeDownstreamResponse:
         self._payload = payload
         self.status_code = status_code
         self.headers = {"content-type": content_type, **(headers or {})}
+        self.closed = False
         if isinstance(payload, bytes):
             self.content = payload
             self.text = payload.decode("utf-8", errors="replace")
@@ -100,6 +101,16 @@ class _FakeDownstreamResponse:
         if isinstance(self._payload, (dict, list)):
             return self._payload
         raise ValueError("Payload is not JSON")
+
+    async def aread(self):
+        return self.content
+
+    async def aiter_bytes(self):
+        if self.content:
+            yield self.content
+
+    async def aclose(self):
+        self.closed = True
 
 
 class PdfConversionApiTests(unittest.TestCase):
@@ -149,6 +160,10 @@ class PdfConversionApiTests(unittest.TestCase):
 
         fake_http_client.post = AsyncMock(side_effect=post)
         fake_http_client.get = AsyncMock(return_value=downstream_response)
+        fake_http_client.build_request = Mock(
+            side_effect=lambda method, url, headers=None: {"method": method, "url": url, "headers": headers}
+        )
+        fake_http_client.send = AsyncMock(return_value=downstream_response)
         fake_http_client.aclose = AsyncMock()
         config_update_coordinator = Mock()
         config_update_coordinator.close = AsyncMock()
@@ -420,27 +435,113 @@ class PdfConversionApiTests(unittest.TestCase):
         tokens_usage_db.insert_usage_once.assert_not_called()
 
     def test_pdf_download_proxies_raw_artifact(self):
-        with self._client(
-            _FakeDownstreamResponse(
-                b"docx-bytes",
-                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                headers={"content-disposition": 'attachment; filename="result.docx"'},
-            )
-        ) as (client, _dispatcher, fake_http_client):
+        downstream = _FakeDownstreamResponse(
+            b"docx-bytes",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "content-disposition": 'attachment; filename="result.docx"',
+                "content-length": "10",
+            },
+        )
+        with self._client(downstream) as (client, _dispatcher, fake_http_client):
             response = client.get(
                 "/v1/pdf/jobs/job-1/download/result.docx",
                 params={"model": "gateway/pdf-converter"},
-                headers={"Authorization": "Bearer test-gateway-key"},
+                headers={
+                    "Authorization": "Bearer test-gateway-key",
+                    "Accept-Encoding": "identity",
+                },
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"docx-bytes")
         self.assertEqual(response.headers["content-disposition"], 'attachment; filename="result.docx"')
-        fake_http_client.get.assert_awaited_once()
+        self.assertEqual(response.headers["content-length"], "10")
+        self.assertEqual(response.headers["x-cost-usd"], "0")
+        self.assertTrue(downstream.closed)
+        fake_http_client.send.assert_awaited_once()
+        self.assertEqual(fake_http_client.send.await_args.kwargs, {"stream": True})
         self.assertEqual(
-            fake_http_client.get.await_args.args[0],
+            fake_http_client.build_request.call_args.args[1],
             "https://converter.example/pdf/api/jobs/job-1/download/result.docx",
         )
+
+    def test_pdf_download_omits_content_length_when_content_encoding_present(self):
+        downstream = _FakeDownstreamResponse(
+            b"decompressed-docx-bytes",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": 'attachment; filename="result.docx"',
+                "Content-Encoding": "gzip",
+                "Content-Length": "10",
+            },
+        )
+        with self._client(downstream) as (client, _dispatcher, _fake_http_client):
+            response = client.get(
+                "/v1/pdf/jobs/job-1/download/result.docx",
+                params={"model": "gateway/pdf-converter"},
+                headers={
+                    "Authorization": "Bearer test-gateway-key",
+                    "Accept-Encoding": "identity",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"decompressed-docx-bytes")
+        self.assertEqual(response.headers["content-disposition"], 'attachment; filename="result.docx"')
+        self.assertNotIn("content-length", response.headers)
+        self.assertEqual(response.headers["x-cost-usd"], "0")
+        self.assertTrue(downstream.closed)
+
+    def test_pdf_result_streams_downstream_response(self):
+        downstream = _FakeDownstreamResponse(
+            b'{"status":"completed"}',
+            content_type="application/json",
+            headers={"content-length": "22"},
+        )
+        with self._client(downstream) as (client, _dispatcher, fake_http_client):
+            response = client.get(
+                "/v1/pdf/jobs/job-1/result",
+                params={"model": "gateway/pdf-converter"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "completed"})
+        self.assertEqual(response.headers["x-cost-usd"], "0")
+        self.assertTrue(downstream.closed)
+        fake_http_client.send.assert_awaited_once()
+        self.assertEqual(fake_http_client.send.await_args.kwargs, {"stream": True})
+
+    def test_pdf_job_and_artifact_reject_unsafe_paths(self):
+        with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):
+            bad_job = client.get(
+                "/v1/pdf/jobs/bad%5Cjob",
+                params={"model": "gateway/pdf-converter"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            bad_result = client.get(
+                "/v1/pdf/jobs/bad%0Ajob/result",
+                params={"model": "gateway/pdf-converter"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            bad_artifact = client.get(
+                "/v1/pdf/jobs/job-1/download/nested%5Csecret.docx",
+                params={"model": "gateway/pdf-converter"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+            dotdot_artifact = client.get(
+                "/v1/pdf/jobs/job-1/download/a/..%2Fsecret.docx",
+                params={"model": "gateway/pdf-converter"},
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(bad_job.status_code, 400)
+        self.assertEqual(bad_result.status_code, 400)
+        self.assertEqual(bad_artifact.status_code, 400)
+        self.assertEqual(dotdot_artifact.status_code, 400)
+        fake_http_client.get.assert_not_awaited()
+        fake_http_client.send.assert_not_awaited()
 
     def test_pdf_convert_rejects_missing_model(self):
         with self._client(_FakeDownstreamResponse({"unused": True})) as (client, _dispatcher, fake_http_client):

@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import logging
 import json
+import re
 from typing import Any, Literal
 
 import httpx
@@ -35,6 +37,7 @@ from ...services.config_updates import (
     ConfigUpdateErrorCode,
 )
 from ...services.runtime_config import AppServices, RuntimeSnapshot
+from ...services.task_supervisor import TaskSupervisor
 from ...utils.html_cache import get_template
 from ...middleware.auth import ROLE_MASTER
 from ...middleware.runtime_snapshot import retain_request_runtime
@@ -54,7 +57,7 @@ logger = logging.getLogger(__name__)
 # How long a Save waits for a fresh /models catalog before validating against
 # the last cached one. The fetch keeps running and refreshes the cache.
 PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS = 1.0
-_background_model_refreshes: set[asyncio.Task] = set()
+_TASK_NAME_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def _require_master(request: Request) -> None:
@@ -705,16 +708,41 @@ def _validation_failed(exc: ValidationError | None = None) -> ConfigUpdateError:
     return ConfigUpdateError(ConfigUpdateErrorCode.VALIDATION_FAILED, errors=errors)
 
 
+async def _refresh_provider_models(
+    provider_models_service: Any,
+    provider_name: str,
+    provider_config: Any,
+    http_client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+) -> list[str]:
+    return await provider_models_service.get_models(
+        provider_name,
+        provider_config,
+        http_client,
+        auth_headers=auth_headers,
+    )
+
+
+def _provider_refresh_task_name(provider_name: str) -> str:
+    safe_provider = _TASK_NAME_UNSAFE_RE.sub("-", provider_name).strip("-") or "provider"
+    return f"provider-models-refresh-{safe_provider}"[:64]
+
+
 async def _validate_candidate_provider_models(
     request: Request,
     candidate_snapshot: RuntimeSnapshot,
     shared_http_client: httpx.AsyncClient,
     *,
     base_snapshot: RuntimeSnapshot | None = None,
+    task_supervisor: TaskSupervisor | None = None,
 ) -> None:
     candidate_loader = candidate_snapshot.config_loader
     fallback_rules = candidate_loader._fallback_rules_base
     candidate_service = candidate_snapshot.provider_models_service
+    if task_supervisor is None:
+        services = getattr(getattr(getattr(request, "app", None), "state", None), "services", None)
+        if isinstance(services, AppServices):
+            task_supervisor = services.task_supervisor
 
     unique_providers: dict[str, Any] = {}
     for gateway_model, config in fallback_rules.items():
@@ -758,7 +786,7 @@ async def _validate_candidate_provider_models(
             if stale_entry is not None:
                 stale_entries[provider_name] = stale_entry
 
-    async def _fetch(provider_name: str, provider_config: Any) -> list[str]:
+    async def _load(provider_name: str, provider_config: Any) -> tuple[str, set[str]]:
         http_client = (
             candidate_snapshot.proxy_http_clients[provider_name]
             if provider_name in candidate_snapshot.proxy_http_clients
@@ -769,27 +797,43 @@ async def _validate_candidate_provider_models(
             provider_name=provider_name,
             provider_config=provider_config,
         )
-        return await candidate_service.get_models(
+        stale_entry = stale_entries.get(provider_name)
+        if stale_entry is None:
+            models = await _refresh_provider_models(
+                candidate_service,
+                provider_name,
+                provider_config,
+                http_client,
+                auth_headers,
+            )
+            return provider_name, set(models)
+        refresh_coro = _refresh_provider_models(
+            candidate_service,
             provider_name,
             provider_config,
             http_client,
-            auth_headers=auth_headers,
+            auth_headers,
         )
-
-    async def _load(provider_name: str, provider_config: Any) -> tuple[str, set[str]]:
-        stale_entry = stale_entries.get(provider_name)
-        if stale_entry is None:
-            models = await _fetch(provider_name, provider_config)
-            return provider_name, set(models)
-        fetch_task = asyncio.create_task(_fetch(provider_name, provider_config))
+        if task_supervisor is not None:
+            fetch_task = task_supervisor.create_task(
+                refresh_coro,
+                name=_provider_refresh_task_name(provider_name),
+            )
+        else:
+            fetch_task = asyncio.create_task(
+                refresh_coro,
+                name=_provider_refresh_task_name(provider_name),
+            )
         try:
             models = await asyncio.wait_for(
                 asyncio.shield(fetch_task),
                 timeout=PROVIDER_MODELS_STALE_CACHE_WAIT_SECONDS,
             )
         except TimeoutError:
-            _background_model_refreshes.add(fetch_task)
-            fetch_task.add_done_callback(_finish_background_model_refresh)
+            if task_supervisor is None:
+                fetch_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await fetch_task
             logger.warning(
                 "Provider '%s' /models did not answer within %.1fs; "
                 "validating against the cached catalog.",
@@ -823,15 +867,6 @@ async def _validate_candidate_provider_models(
                     f"fallback model '{model_name}' is not available from "
                     f"provider '{provider_name}'."
                 )
-
-
-def _finish_background_model_refresh(task: asyncio.Task) -> None:
-    _background_model_refreshes.discard(task)
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.warning("Background /models refresh failed: %s", exc)
 
 
 def _iter_rule_targets(config: dict) -> list[dict]:
@@ -1024,6 +1059,7 @@ async def resync_config_from_disk(request: Request):
 @editor_router.get("/config/models-rules", response_class=PlainTextResponse, tags=["Config Editor API"])
 async def get_models_rules_text(request: Request):
     """Fetches the current raw text content of models_fallback_rules.json."""
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_raw_response(snapshot, ConfigFile.FALLBACK_RULES)
@@ -1075,6 +1111,7 @@ async def save_models_rules(request: Request):
 
 @editor_router.get("/config/model-rules", response_class=PlainTextResponse, tags=["Config Editor API"])
 async def get_model_rules_text(request: Request):
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_raw_response(
@@ -1125,6 +1162,7 @@ async def save_model_rules(request: Request):
 
 @editor_router.get("/config/models-rules/structured", tags=["Config Editor API"])
 async def get_models_rules_structured(request: Request):
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_json_response(
@@ -1168,6 +1206,7 @@ async def save_models_rules_structured(request: Request):
                 candidate_snapshot,
                 services.http_client,
                 base_snapshot=snapshot,
+                task_supervisor=services.task_supervisor,
             )
 
         result = await coordinator.update(
@@ -1202,6 +1241,7 @@ async def save_models_rules_structured(request: Request):
 
 @editor_router.get("/config/fusion-rules/structured", tags=["Config Editor API"])
 async def get_fusion_rules_structured(request: Request):
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_json_response(
@@ -1264,6 +1304,7 @@ async def save_fusion_rules_structured(request: Request):
 
 @editor_router.get("/config/router-rules/structured", tags=["Config Editor API"])
 async def get_router_rules_structured(request: Request):
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_json_response(
@@ -1324,6 +1365,7 @@ async def save_router_rules_structured(request: Request):
 
 @editor_router.get("/config/model-operations/structured", tags=["Config Editor API"])
 async def get_operation_rules_structured(request: Request):
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_json_response(
@@ -1425,6 +1467,7 @@ async def save_operation_rules_structured(request: Request):
 @editor_router.get("/config/providers", response_class=PlainTextResponse, tags=["Config Editor API"])
 async def get_providers_text(request: Request):
     """Fetches the current raw text content of providers.json."""
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_raw_response(snapshot, ConfigFile.PROVIDERS)
@@ -1434,6 +1477,7 @@ async def get_providers_text(request: Request):
 
 @editor_router.get("/config/providers/structured", tags=["Config Editor API"])
 async def get_providers_structured(request: Request):
+    _require_master(request)
     try:
         _services, snapshot = capture_config_update_runtime(request)
         return _config_json_response(
@@ -1539,6 +1583,7 @@ async def save_providers_config(request: Request):
 
 @editor_router.get("/config/providers/{provider_name}/models", tags=["Config Editor API"])
 async def get_provider_models(request: Request, provider_name: str):
+    _require_master(request)
     services, runtime_snapshot = _capture_control_runtime(request)
     config_loader = runtime_snapshot.config_loader
     provider_config = config_loader.providers_config.get(provider_name)

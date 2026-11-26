@@ -244,10 +244,11 @@ class WriteBatcherTests(unittest.TestCase):
                 await batcher.stop()
 
             terminal = batcher.health_snapshot()
-            self.assertEqual(terminal.state, WriteBatcherState.FAILED)
+            self.assertEqual(terminal.state, WriteBatcherState.STOPPED)
             self.assertEqual(terminal.reserved, 0)
             self.assertEqual((terminal.accepted, terminal.committed), (3, 2))
             self.assertEqual(terminal.diagnostic_terminal, 1)
+            self.assertEqual(terminal.last_error_code, "write_failed")
             return "\n".join(logs.output)
 
         logs = run_async(scenario())
@@ -317,6 +318,44 @@ class WriteBatcherTests(unittest.TestCase):
             1,
         ):
             run_async(run_failure(limited_path, ("secret",)))
+
+    def test_single_bad_row_keeps_batcher_running_and_reuses_connection(self):
+        async def scenario():
+            batcher = WriteBatcher(
+                self.db_path,
+                batch_size=1,
+                flush_interval=0.05,
+                dead_letter_path=self.dead_letter_path,
+            )
+            await batcher.start()
+            batcher.enqueue("INSERT INTO items (value) VALUES (?)", ("first",))
+            await asyncio.sleep(0.1)
+            conn_after_first = batcher._conn
+            self.assertIsNotNone(conn_after_first)
+
+            batcher.enqueue("INSERT INTO items (value) VALUES (?)", ("second",))
+            await asyncio.sleep(0.1)
+            self.assertIs(batcher._conn, conn_after_first)
+
+            batcher.enqueue("INSERT INTO missing_table (value) VALUES (?)", ("bad",))
+            await asyncio.sleep(0.1)
+
+            live = batcher.health_snapshot()
+            self.assertEqual(live.state, WriteBatcherState.RUNNING)
+            self.assertTrue(live.accepting)
+            self.assertEqual(live.diagnostic_terminal, 1)
+            self.assertEqual(live.last_error_code, "write_failed")
+
+            batcher.enqueue("INSERT INTO items (value) VALUES (?)", ("third",))
+            await batcher.stop()
+            self.assertIsNone(batcher._conn)
+
+            terminal = batcher.health_snapshot()
+            self.assertEqual(terminal.state, WriteBatcherState.STOPPED)
+            self.assertEqual((terminal.accepted, terminal.committed, terminal.diagnostic_terminal), (4, 3, 1))
+
+        run_async(scenario())
+        self.assertEqual(self._values(), [("first",), ("second",), ("third",)])
 
 
 if __name__ == "__main__":

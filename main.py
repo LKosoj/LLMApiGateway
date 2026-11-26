@@ -15,6 +15,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePath
@@ -107,7 +109,10 @@ from llm_gateway_core.services.runtime_config import (
 from llm_gateway_core.services.task_supervisor import TaskSupervisor
 from llm_gateway_core.services.stream_observation import StreamObservationCapacity
 from llm_gateway_core.utils.html_cache import preload_templates
-from llm_gateway_core.utils.log_redaction import safe_exception_type_name
+from llm_gateway_core.utils.log_redaction import (
+    redact_exception_message,
+    safe_exception_type_name,
+)
 from llm_gateway_core.services.upload_admission import UploadAdmission
 
 # --- Application Setup ---
@@ -970,6 +975,7 @@ async def lifespan(app: FastAPI):
             admission_timeout_seconds=(
                 settings.deep_research_admission_timeout_seconds
             ),
+            job_timeout_seconds=settings.deep_research_job_timeout_seconds,
         )
         await deep_research_process_runner.start()
 
@@ -1077,42 +1083,97 @@ def configure_cors(app: FastAPI, cors_allow_origins: list[str] | None = None) ->
         logger.info("CORS middleware is DISABLED because CORS_ALLOW_ORIGINS is not set.")
         return
 
+    allow_credentials = True
+    if "*" in cors_allow_origins:
+        allow_credentials = False
+        logger.warning(
+            "CORS_ALLOW_ORIGINS contains '*'; disabling allow_credentials for browser security."
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_allow_origins,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["X-Cost-USD"],
     )
 
 
-async def add_anthropic_version_header(request: Request, call_next):
-    response = await call_next(request)
-    if "/v1/messages" in request.url.path or "/v1/models" in request.url.path or "anthropic-version" in request.headers:
-        if "anthropic-version" not in response.headers:
-            response.headers["anthropic-version"] = "2023-06-01"
-    return response
+class AnthropicVersionHeaderMiddleware:
+    """Pure-ASGI middleware adding default anthropic-version header on Anthropic routes."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = str(scope.get("path") or "")
+        has_anthropic_header = any(
+            name.lower() == b"anthropic-version"
+            for name, _value in (scope.get("headers") or [])
+        )
+        should_inject = (
+            "/v1/messages" in path
+            or "/v1/models" in path
+            or has_anthropic_header
+        )
+        if not should_inject:
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_anthropic_version(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                response_start = dict(message)
+                response_start["headers"] = list(message.get("headers", []))
+                headers = MutableHeaders(scope=response_start)
+                if "anthropic-version" not in headers:
+                    headers["anthropic-version"] = "2023-06-01"
+                await send(response_start)
+                return
+            await send(message)
+
+        await self.app(scope, receive, send_with_anthropic_version)
 
 
-async def add_routing_diagnostic_headers(request: Request, call_next):
-    response = await call_next(request)
-    if not settings.routing_diagnostic_headers:
-        return response
+class RoutingDiagnosticHeadersMiddleware:
+    """Pure-ASGI middleware emitting X-Routed-Via and X-Fallback-Attempts headers."""
 
-    provider = getattr(request.state, "llmgateway_provider", None)
-    model = getattr(request.state, "llmgateway_provider_model", None)
-    key_fingerprint = getattr(request.state, "llmgateway_upstream_key_fingerprint", None)
-    if provider and model:
-        routed_via = f"{provider}/{model}"
-        if key_fingerprint:
-            routed_via = f"{routed_via};key={key_fingerprint}"
-        response.headers["X-Routed-Via"] = routed_via
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
 
-    attempts = getattr(request.state, "llmgateway_fallback_attempts", None)
-    if isinstance(attempts, list) and attempts:
-        response.headers["X-Fallback-Attempts"] = str(len(attempts))
-    return response
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not settings.routing_diagnostic_headers:
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_routing_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                state = scope.get("state")
+                if isinstance(state, dict):
+                    provider = state.get("llmgateway_provider")
+                    model = state.get("llmgateway_provider_model")
+                    key_fingerprint = state.get("llmgateway_upstream_key_fingerprint")
+                    attempts = state.get("llmgateway_fallback_attempts")
+                    if (provider and model) or (isinstance(attempts, list) and attempts):
+                        response_start = dict(message)
+                        response_start["headers"] = list(message.get("headers", []))
+                        headers = MutableHeaders(scope=response_start)
+                        if provider and model:
+                            routed_via = f"{provider}/{model}"
+                            if key_fingerprint:
+                                routed_via = f"{routed_via};key={key_fingerprint}"
+                            headers["X-Routed-Via"] = routed_via
+                        if isinstance(attempts, list) and attempts:
+                            headers["X-Fallback-Attempts"] = str(len(attempts))
+                        await send(response_start)
+                        return
+            await send(message)
+
+        await self.app(scope, receive, send_with_routing_headers)
 
 
 def configure_gateway_middleware(
@@ -1131,8 +1192,8 @@ def configure_gateway_middleware(
     else:
         logger.info("Chat message file logging is DISABLED.")
 
-    app.middleware("http")(add_anthropic_version_header)
-    app.middleware("http")(add_routing_diagnostic_headers)
+    app.add_middleware(AnthropicVersionHeaderMiddleware)
+    app.add_middleware(RoutingDiagnosticHeadersMiddleware)
     app.add_middleware(
         ResponseObservationMiddleware,
         request_preparer=prepare_chat_response_observation,
@@ -1155,7 +1216,13 @@ def configure_gateway_middleware(
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception during {request.method} {request.url.path}: {exc}", exc_info=True)
+    logger.error(
+        "Unhandled exception during %s %s: %s: %s",
+        request.method,
+        request.url.path,
+        safe_exception_type_name(exc),
+        redact_exception_message(exc),
+    )
     return error_response(
         request,
         status_code=500,

@@ -7,6 +7,8 @@ from typing import Callable
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..utils.log_redaction import redact_exception_message, safe_exception_type_name
+
 # Use a logger specific to this module
 logger = logging.getLogger(__name__)
 
@@ -88,11 +90,11 @@ class RequestLoggingASGIMiddleware:
         except Exception as exc:
             duration = round((time.time() - start_time) * 1000, 2)
             logger.error(
-                "Request failed | ID: %s | Error: %s | Duration: %sms",
+                "Request failed | ID: %s | Error: %s: %s | Duration: %sms",
                 request_id,
-                str(exc),
+                safe_exception_type_name(exc),
+                redact_exception_message(exc),
                 duration,
-                exc_info=True,
             )
             raise
 
@@ -116,7 +118,13 @@ async def log_middleware_functional(request: Request, call_next: Callable):
              response.headers["X-Request-ID"] = request_id
     except Exception as e:
         duration = round((time.time() - start_time) * 1000, 2)
-        logger.error(f"Request failed | ID: {request_id} | Error: {str(e)} | Duration: {duration}ms", exc_info=True)
+        logger.error(
+            "Request failed | ID: %s | Error: %s: %s | Duration: %sms",
+            request_id,
+            safe_exception_type_name(e),
+            redact_exception_message(e),
+            duration,
+        )
         raise e
 
     return response

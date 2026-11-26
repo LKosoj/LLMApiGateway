@@ -186,11 +186,23 @@ class DockerComposeEditorMountsTests(unittest.TestCase):
             if line.strip().startswith("- ") and "=" in line and "/app/" not in line
         ]
 
-        self.assertIn("- GATEWAY_API_KEY=your-secure-api-key", env_lines)
-        self.assertIn("- APIKEY_OPENROUTER=your-openrouter-api-key", env_lines)
+        self.assertIn(
+            "- GATEWAY_API_KEY=${GATEWAY_API_KEY:?set GATEWAY_API_KEY in environment or .env}",
+            env_lines,
+        )
+        self.assertIn("- APIKEY_OPENROUTER=${APIKEY_OPENROUTER:-}", env_lines)
+        self.assertNotIn("GATEWAY_API_KEY=your-secure-api-key", compose_text)
+        self.assertNotIn("APIKEY_OPENROUTER=your-openrouter-api-key", compose_text)
         self.assertTrue(all("(" not in line and ")" not in line for line in env_lines))
         self.assertIn("# Required: this is the gateway token clients must send to this service.", compose_text)
         self.assertIn("# APIKEY_OPENROUTER is issued by OpenRouter.", compose_text)
+
+    def test_compose_gateway_service_drops_capabilities_and_disallows_new_privileges(self):
+        compose_text = Path("docker-compose.yml").read_text(encoding="utf-8")
+        gateway_block = compose_text[compose_text.index("  llm-gateway:") : compose_text.index("\nnetworks:")]
+
+        self.assertIn("cap_drop:\n      - ALL", gateway_block)
+        self.assertIn("security_opt:\n      - no-new-privileges:true", gateway_block)
 
     def test_entrypoint_delegates_one_fail_closed_prepare_to_symlink_safe_python(self):
         entrypoint_text = ENTRYPOINT.read_text(encoding="utf-8")

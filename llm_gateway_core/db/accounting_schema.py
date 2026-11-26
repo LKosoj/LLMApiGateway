@@ -14,6 +14,7 @@ from os import PathLike
 
 
 ACCOUNTING_MIGRATION_BUSY_TIMEOUT_MS = 2_000
+ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS = 10_000
 
 _SOURCE_COMPONENT = "accounting_source"
 _SINK_COMPONENT = "accounting_sink"
@@ -1113,6 +1114,48 @@ def open_accounting_runtime_connection(
 ) -> sqlite3.Connection:
     if not isinstance(enable_foreign_keys, bool):
         raise AccountingSchemaError("accounting connection option mismatch")
+    timeout_seconds = ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS / 1_000
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=timeout_seconds)
+        conn.execute("PRAGMA synchronous=FULL")
+        conn.execute(f"PRAGMA busy_timeout={ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS}")
+        if enable_foreign_keys:
+            conn.execute("PRAGMA foreign_keys=ON")
+
+        if conn.execute("PRAGMA synchronous").fetchone()[0] != 2:
+            raise AccountingSchemaError("accounting runtime requires FULL sync")
+        if conn.execute("PRAGMA busy_timeout").fetchone()[0] != ACCOUNTING_RUNTIME_BUSY_TIMEOUT_MS:
+            raise AccountingSchemaError("accounting runtime timeout mismatch")
+        if enable_foreign_keys and conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise AccountingSchemaError("accounting source requires foreign keys")
+        return conn
+    except BaseException as exc:
+        if conn is not None:
+            try:
+                conn.close()
+            except BaseException:
+                pass
+        if not isinstance(exc, Exception):
+            raise exc.with_traceback(exc.__traceback__)
+        if isinstance(exc, AccountingSchemaError):
+            raise
+        raise AccountingSchemaError("accounting runtime connection failed") from None
+
+
+def commit_accounting_transaction(conn: sqlite3.Connection) -> None:
+    """Patchable seam for ambiguous-commit recovery tests."""
+
+    conn.commit()
+
+
+def _open_migration_connection(
+    db_path: str | PathLike[str],
+    *,
+    enable_foreign_keys: bool,
+) -> sqlite3.Connection:
+    if not isinstance(enable_foreign_keys, bool):
+        raise AccountingSchemaError("accounting connection option mismatch")
     timeout_seconds = ACCOUNTING_MIGRATION_BUSY_TIMEOUT_MS / 1_000
     conn: sqlite3.Connection | None = None
     try:
@@ -1142,24 +1185,7 @@ def open_accounting_runtime_connection(
             raise exc.with_traceback(exc.__traceback__)
         if isinstance(exc, AccountingSchemaError):
             raise
-        raise AccountingSchemaError("accounting runtime connection failed") from None
-
-
-def commit_accounting_transaction(conn: sqlite3.Connection) -> None:
-    """Patchable seam for ambiguous-commit recovery tests."""
-
-    conn.commit()
-
-
-def _open_migration_connection(
-    db_path: str | PathLike[str],
-    *,
-    enable_foreign_keys: bool,
-) -> sqlite3.Connection:
-    return open_accounting_runtime_connection(
-        db_path,
-        enable_foreign_keys=enable_foreign_keys,
-    )
+        raise AccountingSchemaError("accounting migration connection failed") from None
 
 
 def _insert_migration_marker(
