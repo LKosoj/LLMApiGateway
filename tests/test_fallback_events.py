@@ -635,6 +635,98 @@ class FallbackEventsDBTests(unittest.TestCase):
         err_msg = records[0]["attempts"][0]["error_message"]
         self.assertLessEqual(len(err_msg), 500)
 
+    def test_get_fallback_records_filters_multi_hop_chains_by_provider_and_model(self):
+        # 2-hop chain spanning different providers and models
+        self.db.insert_event(
+            request_id="req-chain-1",
+            gateway_model="llmgateway/chat",
+            attempt_number=1,
+            provider="openrouter",
+            model="kimi-k2",
+            success=False,
+            error_type="http_429",
+            error_message="rate limited",
+            duration_ms=400,
+        )
+        self.db.insert_event(
+            request_id="req-chain-1",
+            gateway_model="llmgateway/chat",
+            attempt_number=2,
+            provider="groq",
+            model="llama-3.3",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=600,
+        )
+        # 2-hop chain with LIKE special chars (_, %) in model name
+        self.db.insert_event(
+            request_id="req-chain-2",
+            gateway_model="llmgateway/code_pro",
+            attempt_number=1,
+            provider="anthropic",
+            model="claude_3_5%beta",
+            success=False,
+            error_type="read_timeout",
+            error_message="timeout",
+            duration_ms=1000,
+        )
+        self.db.insert_event(
+            request_id="req-chain-2",
+            gateway_model="llmgateway/code_pro",
+            attempt_number=2,
+            provider="openai",
+            model="gpt-4o",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=500,
+        )
+        # Single-attempt request matching provider="groq" — must never appear
+        self.db.insert_event(
+            request_id="req-single",
+            gateway_model="llmgateway/chat",
+            attempt_number=1,
+            provider="groq",
+            model="llama-3.3",
+            success=True,
+            error_type=None,
+            error_message=None,
+            duration_ms=150,
+        )
+
+        # Filtering by provider on hop 2 keeps the full 2-hop chain and excludes single-attempt
+        records, total = run_async(self.db.get_fallback_records(provider="GROQ"))
+        self.assertEqual(total, 1)
+        self.assertEqual(records[0]["request_id"], "req-chain-1")
+        self.assertEqual(len(records[0]["attempts"]), 2)
+
+        # Case-insensitive substring on hop 1 model returns full chain
+        records, total = run_async(self.db.get_fallback_records(model="KIMI"))
+        self.assertEqual(total, 1)
+        self.assertEqual(records[0]["request_id"], "req-chain-1")
+        self.assertEqual(len(records[0]["attempts"]), 2)
+
+        # Substring matching gateway_model returns full chain
+        records, total = run_async(self.db.get_fallback_records(model="code_pro"))
+        self.assertEqual(total, 1)
+        self.assertEqual(records[0]["request_id"], "req-chain-2")
+        self.assertEqual(len(records[0]["attempts"]), 2)
+
+        # LIKE metacharacters (_, %) are escaped rather than acting as wildcards
+        records, total = run_async(self.db.get_fallback_records(model="3_5%beta"))
+        self.assertEqual(total, 1)
+        self.assertEqual(records[0]["request_id"], "req-chain-2")
+
+        records, total = run_async(self.db.get_fallback_records(model="3X5%beta"))
+        self.assertEqual(total, 0)
+        self.assertEqual(records, [])
+
+        # Whitespace-only filters are treated as no filter
+        records, total = run_async(self.db.get_fallback_records(provider="   ", model=" \t "))
+        self.assertEqual(total, 2)
+        self.assertEqual(len(records), 2)
+
 
 class ValidatePaginationTests(unittest.TestCase):
     def test_valid_params(self):
@@ -688,7 +780,13 @@ class _FakeFallbackEventsDB:
     async def get_aggregated_stats(self, period, start_date=None, end_date=None):
         return self.stats
 
-    async def get_fallback_records(self, limit=25, offset=0):
+    async def get_fallback_records(self, limit=25, offset=0, model=None, provider=None):
+        self.last_fallback_records_call = {
+            "limit": limit,
+            "offset": offset,
+            "model": model,
+            "provider": provider,
+        }
         return self.records[offset:offset + limit], len(self.records)
 
     def cleanup_old_records(self, retention_days=180):
@@ -726,7 +824,7 @@ class FallbackStatsApiTests(unittest.TestCase):
             cache.invalidate()
 
     @contextmanager
-    def _client(self):
+    def _client(self, fallback_db=None):
         from collections.abc import AsyncIterator
         from contextlib import asynccontextmanager
 
@@ -736,12 +834,14 @@ class FallbackStatsApiTests(unittest.TestCase):
         from llm_gateway_core.middleware.auth import ApiKeyAuthMiddleware
         from tests.runtime_test_support import installed_runtime
 
+        db_instance = fallback_db or _FakeFallbackEventsDB()
+
         @asynccontextmanager
         async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             async with installed_runtime(
                 app,
                 tokens_usage_db=_FakeTokensUsageDB(),
-                fallback_events_db=_FakeFallbackEventsDB(),
+                fallback_events_db=db_instance,
             ):
                 yield
 
@@ -785,9 +885,26 @@ class FallbackStatsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["total_records"], 1)
+        self.assertEqual(data["total"], 1)
         self.assertEqual(len(data["records"]), 1)
         self.assertEqual(data["records"][0]["total_attempts"], 3)
         self.assertEqual(data["records"][0]["x_title"], "tgBot")
+
+    def test_fallback_records_forwards_model_and_provider_filters(self):
+        fake_db = _FakeFallbackEventsDB()
+        with self._client(fallback_db=fake_db) as client:
+            response = client.get(
+                "/v1/api/fallback-records?limit=10&offset=5&model=kimi-k2&provider=openrouter",
+                headers={"Authorization": "Bearer test-key"},
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["total_records"], 1)
+        self.assertEqual(
+            fake_db.last_fallback_records_call,
+            {"limit": 10, "offset": 5, "model": "kimi-k2", "provider": "openrouter"},
+        )
 
     def test_fallback_records_rejects_invalid_pagination(self):
         with self._client() as client:

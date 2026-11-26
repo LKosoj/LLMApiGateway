@@ -35,9 +35,13 @@
   "who": {
     "heading": "Who generates load",
     "groupLabel": "Breakdown",
+    "metricLabel": "Metric",
     "keys": "Keys",
     "clients": "Clients (X-Title)",
     "hint": "requests in 24 h",
+    "hintRequests": "requests in 24 h",
+    "hintTokens": "tokens in 24 h",
+    "hintCost": "spent in 24 h",
     "masterKey": "Master key",
     "unknownClient": "No X-Title",
     "empty": "No requests in the last 24 hours."
@@ -53,6 +57,7 @@
       "client": "Client",
       "operation": "Operation"
     },
+    "openDetails": "Open running request details for {model}",
     "notChosen": "model not chosen yet",
     "empty": "Nothing is running right now."
   },
@@ -90,6 +95,26 @@
     "close": "Close",
     "loading": "Loading…",
     "aria": "Requests to {model} per hour over 24 hours"
+  },
+  "drawer": {
+    "heading": "Running request details",
+    "close": "Close request details",
+    "statusRunning": "Running",
+    "fields": {
+      "requestId": "Request ID",
+      "status": "Status",
+      "duration": "Duration",
+      "startedUtc": "Started (UTC)",
+      "startedLocal": "Started (local)",
+      "operation": "Operation",
+      "requestedModel": "Requested model",
+      "provider": "Provider",
+      "resolvedModel": "Resolved model",
+      "key": "Key",
+      "client": "Client (X-Title)",
+      "promptTokens": "Prompt tokens",
+      "completionTokens": "Completion tokens"
+    }
   },
   "values": {
     "notAvailable": "—",

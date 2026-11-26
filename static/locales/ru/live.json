@@ -35,9 +35,13 @@
   "who": {
     "heading": "Кто нагружает",
     "groupLabel": "Разбивка",
+    "metricLabel": "Показатель",
     "keys": "Ключи",
     "clients": "Клиенты (X-Title)",
     "hint": "запросы за 24 часа",
+    "hintRequests": "запросы за 24 часа",
+    "hintTokens": "токены за 24 часа",
+    "hintCost": "расходы за 24 часа",
     "masterKey": "Мастер-ключ",
     "unknownClient": "Без X-Title",
     "empty": "За последние 24 часа запросов не было."
@@ -53,6 +57,7 @@
       "client": "Клиент",
       "operation": "Операция"
     },
+    "openDetails": "Открыть детали выполняющегося запроса для {model}",
     "notChosen": "модель ещё не выбрана",
     "empty": "Сейчас ничего не выполняется."
   },
@@ -90,6 +95,26 @@
     "close": "Закрыть",
     "loading": "Загружаем…",
     "aria": "Запросы к {model} по часам за 24 часа"
+  },
+  "drawer": {
+    "heading": "Детали выполняющегося запроса",
+    "close": "Закрыть детали запроса",
+    "statusRunning": "Выполняется",
+    "fields": {
+      "requestId": "ID запроса",
+      "status": "Статус",
+      "duration": "Длительность",
+      "startedUtc": "Начат (UTC)",
+      "startedLocal": "Начат (локально)",
+      "operation": "Операция",
+      "requestedModel": "Запрошенная модель",
+      "provider": "Провайдер",
+      "resolvedModel": "Выполняющая модель",
+      "key": "Ключ",
+      "client": "Клиент (X-Title)",
+      "promptTokens": "Токены промпта",
+      "completionTokens": "Токены ответа"
+    }
   },
   "values": {
     "notAvailable": "—",

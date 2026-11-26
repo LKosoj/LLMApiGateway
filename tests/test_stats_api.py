@@ -47,11 +47,31 @@ class _FakeTokensUsageDB:
             }
         ]
 
-    async def get_latest_usage_records(self, limit: int = 25, offset: int = 0, *, api_key_id=None):
+    async def get_latest_usage_records(
+        self,
+        limit: int = 25,
+        offset: int = 0,
+        *,
+        api_key_id=None,
+        provider=None,
+        model=None,
+        operation=None,
+        request_id=None,
+        since=None,
+    ):
         self.calls.append((limit, offset, api_key_id))
         return self.records[offset:offset + limit]
 
-    async def get_total_records_count(self, *, api_key_id=None):
+    async def get_total_records_count(
+        self,
+        *,
+        api_key_id=None,
+        provider=None,
+        model=None,
+        operation=None,
+        request_id=None,
+        since=None,
+    ):
         self.count_calls.append(api_key_id)
         return len(self.records)
 
@@ -417,8 +437,8 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(payload["records"][0]["total_tokens"], 42)
         self.assertTrue(payload["records"][0]["is_estimated"])
         self.assertEqual(payload["records"][1]["status"], "completed")
-        self.assertEqual(fake_tokens_usage_db.calls, [(1, 0, None)])
-        self.assertEqual(fake_tokens_usage_db.count_calls, [None])
+        self.assertEqual(fake_tokens_usage_db.calls, [(1, 0, 7)])
+        self.assertEqual(fake_tokens_usage_db.count_calls, [7])
 
     def test_usage_records_pagination_offsets_past_running_requests(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
@@ -445,7 +465,7 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual([record["status"] for record in response.json()["records"]], ["completed", "completed"])
         self.assertEqual(fake_tokens_usage_db.calls, [(2, 0, None)])
 
-    def test_master_usage_records_ignore_api_key_id(self):
+    def test_master_usage_records_filter_by_positive_api_key_id(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
 
         with self._client(fake_tokens_usage_db) as client:
@@ -455,8 +475,8 @@ class StatsApiPaginationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(fake_tokens_usage_db.calls, [(2, 0, None)])
-        self.assertEqual(fake_tokens_usage_db.count_calls, [None])
+        self.assertEqual(fake_tokens_usage_db.calls, [(2, 0, 7)])
+        self.assertEqual(fake_tokens_usage_db.count_calls, [7])
 
     def test_master_usage_stats_ignore_api_key_id(self):
         fake_tokens_usage_db = _FakeTokensUsageDB()
@@ -816,7 +836,16 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(previous_fallback["end_date"], current_fallback["start_date"])
         self.assertEqual(previous_fallback["model"], "qwen")
         previous = response.json()["previous"]
-        self.assertEqual(previous["totals"], {"requests": 2, "total_tokens": 30, "cost": 0.06})
+        self.assertEqual(
+            previous["totals"],
+            {
+                "requests": 2,
+                "total_tokens": 30,
+                "cost": 0.06,
+                "cost_saved": 0.01,
+                "duration_p95_ms": 240,
+            },
+        )
         self.assertEqual(previous["fallback"]["summary"]["errors"], 1)
         self.assertEqual(previous["fallback"]["requests"], {"total": 2, "rescued": 1, "failed": 0})
 

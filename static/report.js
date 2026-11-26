@@ -121,7 +121,7 @@
 
     // rows: [{ label, value, display }] — value drives the bar width.
     function rankList(container, rows) {
-        const max = Math.max(1, ...rows.map((row) => numberValue(row.value)));
+        const max = Math.max(0, ...rows.map((row) => numberValue(row.value))) || 1;
         const list = el('div', 'rp-rank');
         rows.forEach((row) => {
             const item = el('div', 'rp-rank-row');

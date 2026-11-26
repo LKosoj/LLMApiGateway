@@ -5,7 +5,8 @@
   "rangeLabel": "Period",
   "ranges": {
     "24h": "Last 24 hours",
-    "7d": "Last 7 days"
+    "7d": "Last 7 days",
+    "30d": "Last 30 days"
   },
   "actions": {
     "checkAll": "Check all models",
@@ -24,6 +25,7 @@
     "notRescuedNote": "the client received an error",
     "rescued": "Rescued by switching",
     "rescuedNote": "of {total, plural, one {# request} other {# requests}} with a failed attempt",
+    "firstAttemptNote": "First-attempt success: {rate} ({first} of {tracked})",
     "failedAttempts": "Failed attempts",
     "failedAttemptsNote": "{share} of all attempts"
   },
@@ -85,6 +87,11 @@
     "rescuedBadge": "rescued",
     "notRescuedBadge": "not rescued",
     "total": "{client} · {duration} in total",
+    "filterModel": "Filter by model…",
+    "filterProvider": "Filter by provider…",
+    "prev": "Previous",
+    "next": "Next",
+    "pageInfo": "{start}–{end} of {total}",
     "empty": "No switches yet."
   },
   "delta": {

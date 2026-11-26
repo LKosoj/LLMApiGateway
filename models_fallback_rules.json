@@ -425,7 +425,7 @@
       },
       {
         "provider": "agentrouter",
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},

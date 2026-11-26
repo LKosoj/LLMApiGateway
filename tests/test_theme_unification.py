@@ -306,28 +306,27 @@ class ThemeUnificationTests(unittest.TestCase):
         self.assertIn(".rej-table-wrap", rejections_css)
         self.assertIn("overflow-x: auto", rejections_css)
 
-    def test_theme_uses_indigo_accent_palette(self):
-        """Primary and paired accent tokens use the indigo palette."""
+    def test_theme_uses_signal_teal_accent_palette(self):
+        """Primary and paired accent tokens use the Precision Ops signal teal palette."""
         content = (STATIC_DIR / "theme.css").read_text(encoding="utf-8")
-        self.assertIn("--accent: #4f46e5;", content)
-        self.assertIn("--accent-hover: #4338ca;", content)
-        self.assertIn("--accent-soft: rgba(79, 70, 229, 0.11);", content)
-        self.assertIn("--accent-text: #4338ca;", content)
-        self.assertIn("--accent: #818cf8;", content)
-        self.assertIn("--accent-hover: #a5b4fc;", content)
-        self.assertIn("--accent-soft: rgba(129, 140, 248, 0.16);", content)
-        self.assertIn("--accent-text: #a5b4fc;", content)
+        self.assertIn("--accent: #0f766e;", content)
+        self.assertIn("--accent-hover: #0d635c;", content)
+        self.assertIn("--accent-soft: rgba(15, 118, 110, 0.10);", content)
+        self.assertIn("--accent-text: #0f6b64;", content)
+        self.assertIn("--accent: #2dd4bf;", content)
+        self.assertIn("--accent-hover: #5eead4;", content)
+        self.assertIn("--accent-soft: rgba(45, 212, 191, 0.13);", content)
+        self.assertIn("--accent-text: #5eead4;", content)
 
-    def test_first_party_static_assets_do_not_reference_legacy_teal_accent(self):
-        """First-party root static assets no longer hard-code the previous teal accent."""
+    def test_first_party_static_assets_do_not_reference_legacy_indigo_accent(self):
+        """First-party root static assets no longer hard-code the previous indigo accent."""
         legacy_patterns = (
-            "deep teal",
-            "#0d9488",
-            "#0f766e",
-            "#2dd4bf",
-            "#5eead4",
-            "13, 148, 136",
-            "45, 212, 191",
+            "#4f46e5",
+            "#4338ca",
+            "#818cf8",
+            "#a5b4fc",
+            "79, 70, 229",
+            "129, 140, 248",
         )
         checked_suffixes = {".css", ".html", ".js", ".svg"}
         for path in STATIC_DIR.iterdir():

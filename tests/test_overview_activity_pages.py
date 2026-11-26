@@ -134,6 +134,352 @@ def test_overview_health_banner_shows_unavailable_when_health_endpoint_is_unreac
     expect(page.locator("#healthStatus")).to_contain_text("unavailable")
 
 
+def _rich_dashboard(role: str = "master", include_lifetime: bool = True) -> dict:
+    payload = {
+        "scope": {"role": role},
+        "filters": {"bucket": "day"},
+        "totals": {
+            "requests": 120,
+            "total_tokens": 54000,
+            "cost": 2.4,
+            "cost_saved": 0.6,
+            "tokens_per_second": 48.5,
+            "ttft_p50_ms": 220,
+            "ttft_p95_ms": 1400,
+            "duration_p95_ms": 900,
+            "active_requests": 3,
+            "fallback_errors": 2,
+            "rejections": 5,
+        },
+        "previous": {
+            "totals": {
+                "requests": 100,
+                "total_tokens": 45000,
+                "cost": 2.0,
+                "cost_saved": 0.4,
+                "tokens_per_second": 40.0,
+                "duration_p95_ms": 1000,
+            },
+            "fallback": {
+                "summary": {"attempts": 50, "errors": 4, "success_rate": 92.0},
+            },
+        },
+        "series": {
+            "usage": [
+                {"time_period": f"2026-07-{day:02d}", "requests": 10 + day, "total_tokens": 1000 * day, "cost": 0.1 * day}
+                for day in range(1, 10)
+            ]
+        },
+        "breakdowns": {
+            "resolved_targets": [
+                {
+                    "label": "openai / gpt-4o-mini",
+                    "requests": 80,
+                    "total_tokens": 32000,
+                    "cost": 1.5,
+                    "cost_saved": 0.4,
+                    "tokens_per_second": 52.3,
+                    "fallback_success_rate": 98.5,
+                }
+            ],
+            "providers": [
+                {
+                    "label": "openai",
+                    "requests": 90,
+                    "total_tokens": 40000,
+                    "cost": 1.8,
+                    "cost_saved": 0.5,
+                    "tokens_per_second": 50.0,
+                    "ttft_avg_ms": 210,
+                    "duration_p95_ms": 880,
+                    "fallback_success_rate": 97.2,
+                }
+            ],
+            "operations": [
+                {
+                    "label": "chat",
+                    "requests": 110,
+                    "total_tokens": 50000,
+                    "cost": 2.2,
+                    "cost_saved": 0.6,
+                    "tokens_per_second": 49.1,
+                    "avg_duration_ms": 620,
+                }
+            ],
+            "api_keys": [
+                {
+                    "label": "7",
+                    "api_key_name": "Team Backend",
+                    "requests": 70,
+                    "total_tokens": 28000,
+                    "cost": 1.1,
+                    "cost_saved": 0.2,
+                    "tokens_per_second": 46.0,
+                }
+            ]
+            if role == "master"
+            else [],
+            "x_titles": [
+                {
+                    "label": "tgBot",
+                    "requests": 60,
+                    "total_tokens": 21000,
+                    "cost": 0.9,
+                    "cost_saved": 0.1,
+                    "tokens_per_second": 44.2,
+                }
+            ],
+        },
+        "reliability": {"fallback": {}, "rejections": {}},
+        "recent_records": [],
+        "filter_options": {},
+    }
+    if include_lifetime:
+        payload["lifetime"] = {
+            "requests": 9876,
+            "total_tokens": 1234567,
+            "cost": 42.5,
+            "cost_saved": 7.25,
+            "first_event_at": "2025-01-15T10:00:00Z",
+        }
+    return payload
+
+
+def test_overview_renders_extended_kpis_deltas_and_lifetime_with_compare_previous(
+    page: Page, r5_2_server: str
+):
+    _login(page.context, r5_2_server, MASTER_KEY)
+    seen_urls: list[str] = []
+
+    def handle_dashboard(route):
+        seen_urls.append(route.request.url)
+        route.fulfill(json=_rich_dashboard("master", include_lifetime=True))
+
+    page.route(f"{r5_2_server}/v1/api/analytics-dashboard*", handle_dashboard)
+    page.route(f"{r5_2_server}/health", lambda route: route.fulfill(json={"status": "ok", "phase": "ready"}))
+
+    page.goto(f"{r5_2_server}/v1/ui/overview")
+
+    expect(page.locator("#kpiRequests")).to_have_text("120")
+    expect(page.locator("#kpiTokens")).to_have_text("54,000")
+    expect(page.locator("#kpiCostSaved")).to_contain_text("0.6000")
+    expect(page.locator("#kpiThroughput")).to_have_text("48.5 tok/s")
+    expect(page.locator("#kpiTtft")).to_have_text("220 ms / 1.4 s")
+
+    # Deltas and semantic tones
+    expect(page.locator("#kpiRequestsDelta")).to_have_attribute("data-tone", "neutral")
+    expect(page.locator("#kpiRequestsDelta")).to_contain_text("+20%")
+    expect(page.locator("#kpiCostDelta")).to_have_attribute("data-tone", "bad")
+    expect(page.locator("#kpiCostSavedDelta")).to_have_attribute("data-tone", "ok")
+    expect(page.locator("#kpiLatencyDelta")).to_have_attribute("data-tone", "ok")
+    expect(page.locator("#kpiErrorsDelta")).to_have_attribute("data-tone", "ok")
+
+    # Lifetime row
+    expect(page.locator("#overviewLifetime")).to_be_visible()
+    expect(page.locator("#overviewLifetime")).to_contain_text("All-time")
+    expect(page.locator("#overviewLifetime")).to_contain_text("9,876")
+    expect(page.locator("#overviewLifetime")).to_contain_text("2025")
+
+    assert any("compare=previous" in url for url in seen_urls)
+
+
+def test_overview_drilldowns_and_keys_tab_are_master_only(page: Page, r5_2_server: str):
+    # Master sees all 3 drill-down links and Keys tab
+    _login(page.context, r5_2_server, MASTER_KEY)
+    _route_json(page, f"{r5_2_server}/v1/api/analytics-dashboard*", _rich_dashboard("master"))
+    page.route(f"{r5_2_server}/health", lambda route: route.fulfill(json={"status": "ok", "phase": "ready"}))
+
+    page.goto(f"{r5_2_server}/v1/ui/overview")
+
+    expect(page.locator('a.ov-kpi-drill[href="/v1/ui/live"]')).to_be_visible()
+    expect(page.locator('a.ov-kpi-drill[href="/v1/ui/failures"]')).to_be_visible()
+    expect(page.locator('a.ov-kpi-drill[href="/v1/ui/rejections"]')).to_be_visible()
+    expect(page.locator('#breakdownTabs [data-tab="api_keys"]')).to_be_visible()
+
+    # User sees no drill-down links, no Keys tab, and no lifetime row when omitted
+    page.route(
+        f"{r5_2_server}/auth/me",
+        lambda route: route.fulfill(json={"role": "user", "key_id": 7, "name": "Team Backend"}),
+    )
+    _route_json(
+        page,
+        f"{r5_2_server}/v1/api/analytics-dashboard*",
+        _rich_dashboard("user", include_lifetime=False),
+    )
+
+    page.goto(f"{r5_2_server}/v1/ui/overview")
+    page.wait_for_function("window.gatewayAuth && window.gatewayAuth.state === 'user'")
+
+    expect(page.locator('a.ov-kpi-drill[href="/v1/ui/live"]')).to_be_hidden()
+    expect(page.locator('a.ov-kpi-drill[href="/v1/ui/failures"]')).to_be_hidden()
+    expect(page.locator('a.ov-kpi-drill[href="/v1/ui/rejections"]')).to_be_hidden()
+    expect(page.locator('#breakdownTabs [data-tab="api_keys"]')).to_be_hidden()
+    expect(page.locator("#overviewLifetime")).to_be_hidden()
+
+
+def test_overview_trend_metric_switch_and_interactive_tooltip(page: Page, r5_2_server: str):
+    _login(page.context, r5_2_server, MASTER_KEY)
+    _route_json(page, f"{r5_2_server}/v1/api/analytics-dashboard*", _rich_dashboard("master"))
+    page.route(f"{r5_2_server}/health", lambda route: route.fulfill(json={"status": "ok", "phase": "ready"}))
+
+    page.goto(f"{r5_2_server}/v1/ui/overview")
+    expect(page.locator("#trendChart svg")).to_be_visible()
+
+    # Intermediate X-axis labels (more than just first and last)
+    labels = page.locator("#trendChart svg text.ov-chart-label")
+    assert labels.count() >= 5
+
+    # Switch to total_tokens metric
+    page.select_option("#trendMetric", "total_tokens")
+    hit = page.locator("#trendChart svg circle.ov-hit").nth(2)
+    hit.focus()
+    tooltip = page.locator("#trendChart .ov-chart-tooltip")
+    expect(tooltip).to_be_visible()
+    expect(tooltip).to_contain_text("2026-07-03")
+    expect(tooltip).to_contain_text("3,000")
+
+    # Tooltip hides on blur
+    hit.blur()
+    expect(tooltip).to_be_hidden()
+
+    # Tooltip shows on mouseenter and hides on mouseleave
+    hit.dispatch_event("mouseenter")
+    expect(tooltip).to_be_visible()
+    hit.dispatch_event("mouseleave")
+    expect(tooltip).to_be_hidden()
+
+
+def test_overview_single_point_trend_and_missing_optional_fields(page: Page, r5_2_server: str):
+    _login(page.context, r5_2_server, MASTER_KEY)
+    payload = {
+        "scope": {"role": "master"},
+        "filters": {"bucket": "day"},
+        "totals": {
+            "requests": 5,
+            "total_tokens": 1000,
+            "cost": 0.05,
+            "cost_saved": 0.0,
+            "tokens_per_second": 0,
+            "ttft_p50_ms": None,
+            "ttft_p95_ms": None,
+            "duration_p95_ms": 0,
+            "active_requests": 0,
+            "fallback_errors": 0,
+            "rejections": 0,
+        },
+        "previous": {
+            "totals": {
+                "requests": 5,
+                "tokens_per_second": 42.0,
+                "duration_p95_ms": 500,
+            },
+        },
+        "series": {
+            "usage": [
+                {"time_period": "2026-07-19", "requests": 5, "total_tokens": 1000, "cost": 0.05},
+            ]
+        },
+        "breakdowns": {
+            "resolved_targets": [
+                {
+                    "label": "openai / gpt-4o-mini",
+                    "requests": 5,
+                    "total_tokens": 1000,
+                    "cost": 0.05,
+                    "cost_saved": 0.0,
+                    "tokens_per_second": None,
+                    "fallback_success_rate": None,
+                }
+            ],
+            "providers": [],
+            "operations": [],
+            "api_keys": [],
+            "x_titles": [],
+        },
+        "reliability": {"fallback": {}, "rejections": {}},
+        "recent_records": [],
+        "filter_options": {},
+    }
+    _route_json(page, f"{r5_2_server}/v1/api/analytics-dashboard*", payload)
+    page.route(f"{r5_2_server}/health", lambda route: route.fulfill(json={"status": "ok", "phase": "ready"}))
+
+    page.goto(f"{r5_2_server}/v1/ui/overview")
+    expect(page.locator("#trendChart svg")).to_be_visible()
+
+    # Single-point chart skips polygon/polyline and centers its lone X-axis label
+    assert page.locator("#trendChart svg polygon.ov-area").count() == 0
+    assert page.locator("#trendChart svg polyline.ov-line").count() == 0
+    x_label = page.locator("#trendChart svg text.ov-chart-label", has_text="2026-07-19")
+    expect(x_label).to_have_attribute("text-anchor", "middle")
+
+    # Zero/null throughput & latency render N/A without bogus -100% deltas
+    expect(page.locator("#kpiThroughput")).to_have_text("N/A")
+    expect(page.locator("#kpiThroughputDelta")).to_be_hidden()
+    expect(page.locator("#kpiTtft")).to_have_text("N/A")
+    expect(page.locator("#kpiLatency")).to_have_text("N/A")
+    expect(page.locator("#kpiLatencyDelta")).to_be_hidden()
+    expect(page.locator("#kpiErrorsDelta")).to_be_hidden()
+    expect(page.locator("#topModelsBody")).to_contain_text("N/A")
+
+
+def test_overview_breakdown_tabs_switch_columns_and_rows_and_ru_locale(page: Page, r5_2_server: str):
+    _login(page.context, r5_2_server, MASTER_KEY)
+    dashboard_fetches: list[str] = []
+
+    def handle_dashboard(route):
+        dashboard_fetches.append(route.request.url)
+        route.fulfill(json=_rich_dashboard("master"))
+
+    page.route(f"{r5_2_server}/v1/api/analytics-dashboard*", handle_dashboard)
+    page.route(f"{r5_2_server}/health", lambda route: route.fulfill(json={"status": "ok", "phase": "ready"}))
+
+    page.goto(f"{r5_2_server}/v1/ui/overview")
+
+    # Default Models tab
+    expect(page.locator("#topModelsBody")).to_contain_text("openai / gpt-4o-mini")
+    expect(page.locator("#topModelsBody")).to_contain_text("98.5%")
+
+    # Keyboard navigation (ArrowRight -> Providers, End -> Clients, Home -> Models)
+    models_tab = page.locator('#breakdownTabs [data-tab="resolved_targets"]')
+    models_tab.focus()
+    page.keyboard.press("ArrowRight")
+    expect(page.locator('#breakdownTabs [data-tab="providers"]')).to_be_focused()
+    expect(page.locator('#breakdownTabs [data-tab="providers"]')).to_have_attribute("aria-selected", "true")
+    expect(page.locator("#breakdownsHead")).to_contain_text("TTFT")
+    expect(page.locator("#breakdownsHead")).to_contain_text("P95")
+    expect(page.locator("#topModelsBody")).to_contain_text("openai")
+    expect(page.locator("#topModelsBody")).to_contain_text("210 ms")
+
+    page.keyboard.press("End")
+    expect(page.locator('#breakdownTabs [data-tab="x_titles"]')).to_be_focused()
+    expect(page.locator("#topModelsBody")).to_contain_text("tgBot")
+
+    page.keyboard.press("Home")
+    expect(models_tab).to_be_focused()
+
+    # Operations tab
+    page.locator('#breakdownTabs [data-tab="operations"]').click()
+    expect(page.locator("#breakdownsHead")).to_contain_text("Avg duration")
+    expect(page.locator("#topModelsBody")).to_contain_text("chat")
+
+    # Keys tab (master)
+    page.locator('#breakdownTabs [data-tab="api_keys"]').click()
+    expect(page.locator("#topModelsBody")).to_contain_text("Team Backend")
+
+    # Clients tab
+    page.locator('#breakdownTabs [data-tab="x_titles"]').click()
+    expect(page.locator("#topModelsBody")).to_contain_text("tgBot")
+
+    # Switch to RU locale and verify localized rendering without re-fetching dashboard
+    fetches_before_locale = len(dashboard_fetches)
+    page.select_option("#localeSelect", "ru")
+    expect(page.locator("h1")).to_have_text("Обзор")
+    expect(page.locator("#kpiThroughput")).to_contain_text("ток/с")
+    expect(page.locator("#overviewLifetime")).to_contain_text("За всё время")
+    expect(page.locator('#breakdownTabs [data-tab="x_titles"]')).to_have_text("Клиенты")
+    assert len(dashboard_fetches) == fetches_before_locale
+
+
 def _route_single_usage_record(page: Page, r5_2_server: str, record: dict) -> None:
     page.route(
         f"{r5_2_server}/v1/api/usage-records*",

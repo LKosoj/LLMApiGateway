@@ -5,7 +5,8 @@
   "rangeLabel": "Период",
   "ranges": {
     "24h": "За 24 часа",
-    "7d": "За 7 дней"
+    "7d": "За 7 дней",
+    "30d": "За 30 дней"
   },
   "actions": {
     "checkAll": "Проверить все модели",
@@ -24,6 +25,7 @@
     "notRescuedNote": "клиент получил ошибку",
     "rescued": "Спасено переключением",
     "rescuedNote": "из {total, plural, one {# запроса} few {# запросов} many {# запросов} other {# запроса}} с неудачной попыткой",
+    "firstAttemptNote": "С первой попытки: {rate} ({first} из {tracked})",
     "failedAttempts": "Неудачных попыток",
     "failedAttemptsNote": "{share} всех попыток"
   },
@@ -85,6 +87,11 @@
     "rescuedBadge": "спасён",
     "notRescuedBadge": "не спасён",
     "total": "{client} · всего {duration}",
+    "filterModel": "Фильтр по модели…",
+    "filterProvider": "Фильтр по провайдеру…",
+    "prev": "Назад",
+    "next": "Вперёд",
+    "pageInfo": "{start}–{end} из {total}",
     "empty": "Переключений пока не было."
   },
   "delta": {

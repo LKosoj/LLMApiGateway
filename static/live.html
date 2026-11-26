@@ -7,6 +7,7 @@
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/theme.css">
     <link rel="stylesheet" href="/static/report.css">
+    <link rel="stylesheet" href="/static/request-drawer.css">
     <link rel="stylesheet" href="/static/shared-nav.css">
     <script src="/static/theme.js"></script>
 </head>
@@ -83,12 +84,19 @@
             <section class="rp-panel">
                 <div class="rp-panel-head">
                     <h2 data-i18n="live:who.heading">Who generates load</h2>
-                    <span class="rp-hint" data-i18n="live:who.hint">requests in 24 h</span>
+                    <span id="whoHint" class="rp-hint" data-i18n="live:who.hintRequests">requests in 24 h</span>
                 </div>
                 <div class="rp-panel-body">
-                    <div class="rp-seg" id="whoGroup" role="group" aria-label="Breakdown" data-i18n-aria-label="live:who.groupLabel">
-                        <button type="button" data-value="keys" aria-pressed="true" data-i18n="live:who.keys">Keys</button>
-                        <button type="button" data-value="clients" aria-pressed="false" data-i18n="live:who.clients">Clients (X-Title)</button>
+                    <div class="rp-who-controls">
+                        <div class="rp-seg" id="whoGroup" role="group" aria-label="Breakdown" data-i18n-aria-label="live:who.groupLabel">
+                            <button type="button" data-value="keys" aria-pressed="true" data-i18n="live:who.keys">Keys</button>
+                            <button type="button" data-value="clients" aria-pressed="false" data-i18n="live:who.clients">Clients (X-Title)</button>
+                        </div>
+                        <div class="rp-seg" id="whoMetric" role="group" aria-label="Metric" data-i18n-aria-label="live:who.metricLabel">
+                            <button type="button" data-value="requests" aria-pressed="true" data-i18n="live:load.requests">Requests</button>
+                            <button type="button" data-value="total_tokens" aria-pressed="false" data-i18n="live:load.tokens">Tokens</button>
+                            <button type="button" data-value="cost" aria-pressed="false" data-i18n="live:load.cost">Cost</button>
+                        </div>
                     </div>
                     <div id="whoList"></div>
                 </div>
@@ -153,10 +161,13 @@
         </section>
     </main>
 
+    <div id="requestDrawerMount"></div>
+
     <script src="/static/vendor/ui-runtime.bundle.js"></script>
     <script src="/static/shared-auth.js"></script>
     <script src="/static/shared-nav.js"></script>
     <script src="/static/report.js"></script>
+    <script src="/static/request-drawer.js"></script>
     <script src="/static/live.js"></script>
 </body>
 </html>

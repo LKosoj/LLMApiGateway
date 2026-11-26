@@ -18,7 +18,10 @@ from llm_gateway_core.config.loader import (
 )
 from llm_gateway_core.config.paths import STATIC_DIR
 from llm_gateway_core.db.api_keys_db import ApiKeyRecord
-from llm_gateway_core.db.tokens_usage_db import validate_usage_records_pagination
+from llm_gateway_core.db.tokens_usage_db import (
+    _normalize_since_timestamp,
+    validate_usage_records_pagination,
+)
 from llm_gateway_core.db.fallback_events_db import validate_fallback_records_pagination
 from llm_gateway_core.db.rejections_db import VALID_CATEGORIES
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
@@ -87,6 +90,29 @@ def _effective_api_key_filter(request: Request) -> int | None:
         return api_key_id
     if role != ROLE_MASTER:
         raise HTTPException(status_code=401, detail="Authenticated API key role is not recognized.")
+    return None
+
+
+def _resolve_usage_records_api_key_filter(
+    request: Request,
+    requested_api_key_id: int | None,
+) -> int | None:
+    """Resolve ``api_key_id`` scope for ``/api/usage-records``.
+
+    Virtual-key callers are ALWAYS locked to their own ``api_key_id`` regardless
+    of query parameters. Master callers may optionally filter by a positive
+    ``api_key_id``.
+    """
+    role = getattr(request.state, "api_key_role", None)
+    if role == ROLE_USER:
+        api_key_id = getattr(request.state, "api_key_id", None)
+        if api_key_id is None:
+            raise HTTPException(status_code=401, detail="Virtual key session is missing api_key_id.")
+        return api_key_id
+    if role != ROLE_MASTER:
+        raise HTTPException(status_code=401, detail="Authenticated API key role is not recognized.")
+    if requested_api_key_id is not None and requested_api_key_id > 0:
+        return requested_api_key_id
     return None
 
 
@@ -379,10 +405,18 @@ async def get_aggregated_stats(request: Request, period: str, api_key_id: int | 
 
 @stats_router.get("/api/usage-records", response_class=JSONResponse, tags=["Usage Stats API"])
 async def get_usage_records(
-    request: Request, limit: int = 25, offset: int = 0, api_key_id: int | None = None
+    request: Request,
+    limit: int = 25,
+    offset: int = 0,
+    api_key_id: int | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    operation: str | None = None,
+    request_id: str | None = None,
+    since: str | None = None,
 ):
     """
-    Fetches the latest token usage records with pagination.
+    Fetches the latest token usage records with pagination and optional server-side filters.
     """
     services = _capture_app_services(request)
     tokens_usage_db = services.tokens_usage_db
@@ -390,11 +424,23 @@ async def get_usage_records(
 
     try:
         limit, offset = validate_usage_records_pagination(limit, offset)
-        api_key_id_filter = _effective_api_key_filter(request)
+        api_key_id_filter = _resolve_usage_records_api_key_filter(request, api_key_id)
+        provider_filter = _optional_query_value(provider)
+        model_filter = _optional_query_value(model)
+        operation_filter = _optional_query_value(operation)
+        request_id_filter = _optional_query_value(request_id)
+        since_filter = _normalize_since_timestamp(_optional_query_value(since))
 
-        active_records = active_requests_registry.list_records(
-            api_key_id=api_key_id_filter
-        )
+        filter_kwargs = {
+            "api_key_id": api_key_id_filter,
+            "provider": provider_filter,
+            "model": model_filter,
+            "operation": operation_filter,
+            "request_id": request_id_filter,
+            "since": since_filter,
+        }
+
+        active_records = active_requests_registry.list_records(**filter_kwargs)
         active_count = len(active_records)
         active_page_records = active_records[offset:offset + limit] if limit else []
         completed_limit = max(0, limit - len(active_page_records))
@@ -406,12 +452,12 @@ async def get_usage_records(
             return await tokens_usage_db.get_latest_usage_records(
                 limit=completed_limit,
                 offset=completed_offset,
-                api_key_id=api_key_id_filter,
+                **filter_kwargs,
             )
 
         completed_records, completed_total_records = await asyncio.gather(
             _fetch_completed_records(),
-            tokens_usage_db.get_total_records_count(api_key_id=api_key_id_filter),
+            tokens_usage_db.get_total_records_count(**filter_kwargs),
         )
         records = active_page_records + _mark_completed_usage_rows(completed_records)
         return JSONResponse(
@@ -626,12 +672,18 @@ async def get_analytics_dashboard(
         if compare_filter:
             previous_usage, previous_fallback = results[-2:]
             previous_summary = previous_usage["summary"]
+            previous_totals = {
+                "requests": previous_summary.get("requests", 0),
+                "total_tokens": previous_summary.get("total_tokens", 0),
+                "cost": previous_summary.get("cost", 0.0),
+                "cost_saved": previous_summary.get("cost_saved", 0.0),
+            }
+            if "duration_p95_ms" in previous_summary:
+                previous_totals["duration_p95_ms"] = previous_summary.get("duration_p95_ms")
+            if "tokens_per_second" in previous_summary:
+                previous_totals["tokens_per_second"] = previous_summary.get("tokens_per_second")
             previous_payload = {
-                "totals": {
-                    "requests": previous_summary.get("requests", 0),
-                    "total_tokens": previous_summary.get("total_tokens", 0),
-                    "cost": previous_summary.get("cost", 0.0),
-                },
+                "totals": previous_totals,
                 "fallback": {"summary": previous_fallback["summary"]},
             }
             if is_master:
@@ -940,9 +992,15 @@ async def get_fallback_stats(request: Request, period: str):
 
 
 @stats_router.get("/api/fallback-records", response_class=JSONResponse, tags=["Fallback Analytics API"])
-async def get_fallback_records(request: Request, limit: int = 25, offset: int = 0):
+async def get_fallback_records(
+    request: Request,
+    limit: int = 25,
+    offset: int = 0,
+    model: str | None = None,
+    provider: str | None = None,
+):
     """
-    Fetches fallback chain records with pagination.
+    Fetches fallback chain records with pagination and optional model/provider filtering.
     Only includes requests where 2+ attempts were made (i.e., fallbacks occurred).
     """
     if not _is_master_caller(request):
@@ -952,8 +1010,25 @@ async def get_fallback_records(request: Request, limit: int = 25, offset: int = 
 
     try:
         limit, offset = validate_fallback_records_pagination(limit, offset)
-        records, total_records = await fallback_events_db.get_fallback_records(limit=limit, offset=offset)
-        return JSONResponse(content={"records": records, "total_records": total_records})
+        filter_kwargs: dict[str, str] = {}
+        model_filter = _optional_query_value(model)
+        provider_filter = _optional_query_value(provider)
+        if model_filter is not None:
+            filter_kwargs["model"] = model_filter
+        if provider_filter is not None:
+            filter_kwargs["provider"] = provider_filter
+        records, total_records = await fallback_events_db.get_fallback_records(
+            limit=limit,
+            offset=offset,
+            **filter_kwargs,
+        )
+        return JSONResponse(
+            content={
+                "records": records,
+                "total_records": total_records,
+                "total": total_records,
+            }
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException as he:

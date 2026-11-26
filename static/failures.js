@@ -5,8 +5,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const PAUSES_ENDPOINT = '/v1/admin/upstream-pauses';
     const RESUME_ENDPOINT = '/v1/admin/upstream-pauses/resume';
     const HEALTH_RUN_ENDPOINT = '/v1/api/upstream-health/run';
-    const CHAINS_ENDPOINT = '/v1/api/fallback-records?limit=10';
-    const RANGE_SLOTS = { '24h': { count: 24, unit: 'hour' }, '7d': { count: 7, unit: 'day' } };
+    const CHAINS_LIMIT = 10;
+    const CHAINS_DEBOUNCE_MS = 250;
+    const RANGE_SLOTS = {
+        '24h': { count: 24, unit: 'hour' },
+        '7d': { count: 7, unit: 'day' },
+        '30d': { count: 30, unit: 'day' },
+    };
     const RELIABILITY_LIMIT = 15;
     const WHY_LIMIT = 8;
     // Error codes with their own wording in failures:reasons; other http_5xx
@@ -51,6 +56,12 @@ document.addEventListener('DOMContentLoaded', () => {
         reliabilityEmpty: document.getElementById('reliabilityEmpty'),
         chainsBody: document.getElementById('chainsBody'),
         chainsEmpty: document.getElementById('chainsEmpty'),
+        chainsModelFilter: document.getElementById('chainsModelFilter'),
+        chainsProviderFilter: document.getElementById('chainsProviderFilter'),
+        chainsPagination: document.getElementById('chainsPagination'),
+        chainsPrevBtn: document.getElementById('chainsPrevBtn'),
+        chainsPageInfo: document.getElementById('chainsPageInfo'),
+        chainsNextBtn: document.getElementById('chainsNextBtn'),
         pauseDetails: document.getElementById('pauseDetails'),
         pauseForm: document.getElementById('pauseForm'),
         pauseKey: document.getElementById('pauseKey'),
@@ -84,6 +95,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let detailData = null;
     let detailGeneration = 0;
     let requestGeneration = 0;
+    let chainsOffset = 0;
+    let chainsGeneration = 0;
+    let chainsDebounceTimer = null;
     let unsubscribeLocale = null;
     let stopped = false;
 
@@ -215,6 +229,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 total: numberValue(requests.rescued) + numberValue(requests.failed),
             }),
         );
+        const totals = data.dashboard.totals || {};
+        const tracked = numberValue(totals.fallback_tracked_requests);
+        const existingExtra = els.kpiRescued.querySelector('[data-kpi-extra]');
+        if (tracked > 0) {
+            const first = numberValue(totals.first_attempt_requests);
+            let extra = existingExtra;
+            if (!extra) {
+                extra = el('div', 'rp-kpi-note');
+                extra.setAttribute('data-kpi-extra', '');
+                const noteEl = els.kpiRescued.querySelector('[data-kpi-note]');
+                if (noteEl && noteEl.nextSibling) els.kpiRescued.insertBefore(extra, noteEl.nextSibling);
+                else els.kpiRescued.appendChild(extra);
+            }
+            extra.textContent = i18n.t('failures:kpis.firstAttemptNote', {
+                rate: formatPercent((100 * first) / tracked),
+                first: formatNumber(first),
+                tracked: formatNumber(tracked),
+            });
+        } else {
+            existingExtra?.remove();
+        }
         const attempts = numberValue(summary.attempts);
         setKpi(
             els.kpiFailedAttempts,
@@ -470,6 +505,18 @@ document.addEventListener('DOMContentLoaded', () => {
         return chain;
     }
 
+    function chainsUrl() {
+        const params = new URLSearchParams({
+            limit: String(CHAINS_LIMIT),
+            offset: String(chainsOffset),
+        });
+        const model = els.chainsModelFilter.value.trim();
+        const provider = els.chainsProviderFilter.value.trim();
+        if (model) params.set('model', model);
+        if (provider) params.set('provider', provider);
+        return `/v1/api/fallback-records?${params}`;
+    }
+
     function renderChains(data) {
         els.chainsEmpty.hidden = data.chains.length > 0;
         els.chainsBody.replaceChildren(...data.chains.map((record) => {
@@ -499,6 +546,20 @@ document.addEventListener('DOMContentLoaded', () => {
             );
             return tr;
         }));
+        const total = numberValue(data.chainsTotal);
+        const showPagination = total > CHAINS_LIMIT || chainsOffset > 0;
+        els.chainsPagination.hidden = !showPagination;
+        if (showPagination) {
+            const start = total === 0 ? 0 : Math.min(total, chainsOffset + 1);
+            const end = Math.min(total, chainsOffset + data.chains.length);
+            els.chainsPageInfo.textContent = i18n.t('failures:chains.pageInfo', {
+                start: formatNumber(start),
+                end: formatNumber(end),
+                total: formatNumber(total),
+            });
+            els.chainsPrevBtn.disabled = chainsOffset <= 0;
+            els.chainsNextBtn.disabled = chainsOffset + CHAINS_LIMIT >= total;
+        }
     }
 
     function renderUpdated() {
@@ -570,6 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function load() {
         const generation = ++requestGeneration;
+        const cGen = ++chainsGeneration;
         const range = els.range.value;
         void loadDetail();
         try {
@@ -577,16 +639,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 fetchJson(STATUS_ENDPOINT),
                 fetchJson(PAUSES_ENDPOINT),
                 fetchJson(`/v1/api/analytics-dashboard?range=${encodeURIComponent(range)}&compare=previous`),
-                fetchJson(CHAINS_ENDPOINT),
+                fetchJson(chainsUrl()),
             ]);
             if (stopped || generation !== requestGeneration) return;
+            const useLoadedChains = cGen === chainsGeneration || !lastData;
             lastData = {
                 range,
                 status: status.rows || [],
                 pauses: pauses.pauses || [],
                 pauseTargets: pauses.targets || [],
                 dashboard,
-                chains: chains.records || [],
+                chains: useLoadedChains ? (chains.records || []) : lastData.chains,
+                chainsTotal: useLoadedChains
+                    ? numberValue(chains.total_records ?? chains.total)
+                    : lastData.chainsTotal,
                 loadedAt: new Date(),
             };
             clearError();
@@ -595,6 +661,34 @@ document.addEventListener('DOMContentLoaded', () => {
             if (stopped || generation !== requestGeneration) return;
             reportFailure(error);
         }
+    }
+
+    async function loadChains() {
+        const generation = ++chainsGeneration;
+        try {
+            const chains = await fetchJson(chainsUrl());
+            if (stopped || generation !== chainsGeneration) return;
+            if (!lastData) return;
+            lastData.chains = chains.records || [];
+            lastData.chainsTotal = numberValue(chains.total_records ?? chains.total);
+            clearError();
+            renderChains(lastData);
+        } catch (error) {
+            if (stopped || generation !== chainsGeneration) return;
+            reportFailure(error);
+        }
+    }
+
+    function scheduleChainsFilter(immediate = false) {
+        clearTimeout(chainsDebounceTimer);
+        chainsOffset = 0;
+        if (immediate) {
+            void loadChains();
+            return;
+        }
+        chainsDebounceTimer = setTimeout(() => {
+            void loadChains();
+        }, CHAINS_DEBOUNCE_MS);
     }
 
     async function checkAll() {
@@ -748,10 +842,31 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     els.pauseForm.addEventListener('submit', (event) => void submitPause(event));
     els.modelDetailClose.addEventListener('click', closeDetail);
+    [els.chainsModelFilter, els.chainsProviderFilter].forEach((input) => {
+        input.addEventListener('input', () => scheduleChainsFilter(false));
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                scheduleChainsFilter(true);
+            }
+        });
+    });
+    els.chainsPrevBtn.addEventListener('click', () => {
+        if (chainsOffset <= 0) return;
+        chainsOffset = Math.max(0, chainsOffset - CHAINS_LIMIT);
+        void loadChains();
+    });
+    els.chainsNextBtn.addEventListener('click', () => {
+        if (!lastData || chainsOffset + CHAINS_LIMIT >= numberValue(lastData.chainsTotal)) return;
+        chainsOffset += CHAINS_LIMIT;
+        void loadChains();
+    });
 
     window.addEventListener('beforeunload', () => {
         stopped = true;
         requestGeneration += 1;
+        chainsGeneration += 1;
+        clearTimeout(chainsDebounceTimer);
         unsubscribeLocale?.();
     });
 

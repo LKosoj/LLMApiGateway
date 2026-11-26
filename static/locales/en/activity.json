@@ -11,17 +11,22 @@
     },
     "since": "Since (UTC)",
     "provider": "Provider",
+    "model": "Model",
+    "operation": "Operation",
     "keyId": "Key ID",
     "requestId": "Request ID",
     "perPage": "Per page",
     "any": "Any",
-    "pageScopedHint": "Since applies only to the Rejected (4xx) view. Provider, Key ID and Request ID filter the currently loaded page only."
+    "pageScopedHint": "Filters apply across all matching records on the server. In Rejected (4xx) view, Request ID filters the loaded page."
   },
   "actions": {
     "apply": "Apply",
     "reset": "Reset",
     "refresh": "Refresh",
-    "copy": "Copy"
+    "copy": "Copy",
+    "exportCsv": "Export CSV",
+    "exportJson": "Export JSON",
+    "exporting": "Exporting…"
   },
   "serverError": {
     "title": "No data source for 5xx",
@@ -38,7 +43,7 @@
     "status": "Status",
     "latency": "Latency",
     "cost": "Cost",
-    "empty": "No activity matches the current filters on this page."
+    "empty": "No activity matches the current filters."
   },
   "pagination": {
     "newer": "← Newer",

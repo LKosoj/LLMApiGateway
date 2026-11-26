@@ -35,6 +35,24 @@ _PATH_OPERATION_SUFFIXES = (
 )
 
 
+def _parse_utc_iso_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("since must be a valid ISO 8601 datetime string")
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    normalized = f"{cleaned[:-1]}+00:00" if cleaned.endswith(("Z", "z")) else cleaned
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("since must be a valid ISO 8601 datetime string") from exc
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def operation_from_path(path: str) -> str | None:
     normalized_path = path.rstrip("/")
     for prefix, operation in (("/v1/jina/extract/", "web_read"), ("/v1/jina/search/", "web_search")):
@@ -126,19 +144,53 @@ class ActiveRequestsRegistry:
         with self._lock:
             self._records.pop(request_id, None)
 
-    def list_records(self, *, api_key_id: int | None = None) -> list[dict[str, Any]]:
+    def list_records(
+        self,
+        *,
+        api_key_id: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        operation: str | None = None,
+        request_id: str | None = None,
+        since: str | None = None,
+    ) -> list[dict[str, Any]]:
+        provider_needle = provider.strip().lower() if isinstance(provider, str) else ""
+        model_needle = model.strip().lower() if isinstance(model, str) else ""
+        operation_needle = operation.strip().lower() if isinstance(operation, str) else ""
+        request_id_needle = request_id.strip().lower() if isinstance(request_id, str) else ""
+        since_dt = _parse_utc_iso_datetime(since)
+
         now = time.monotonic()
         with self._lock:
             records = []
-            for request_id, record in self._records.items():
+            for active_id, record in self._records.items():
                 if api_key_id is not None and record.get("api_key_id") != api_key_id:
                     continue
+                if provider_needle and provider_needle not in str(record.get("provider") or "").lower():
+                    continue
+                if model_needle:
+                    model_val = str(record.get("model") or "").lower()
+                    gw_model_val = str(record.get("gateway_model") or "").lower()
+                    if model_needle not in model_val and model_needle not in gw_model_val:
+                        continue
+                if operation_needle and operation_needle not in str(record.get("operation") or "").lower():
+                    continue
+                if request_id_needle and request_id_needle not in str(record.get("request_id") or "").lower():
+                    continue
+                if since_dt is not None:
+                    ts_raw = record.get("timestamp")
+                    try:
+                        record_dt = _parse_utc_iso_datetime(str(ts_raw)) if ts_raw else None
+                    except ValueError:
+                        record_dt = None
+                    if record_dt is None or record_dt < since_dt:
+                        continue
                 public_record = {
                     key: value
                     for key, value in record.items()
                     if not key.startswith("_")
                 }
-                public_record["id"] = f"active:{request_id}"
+                public_record["id"] = f"active:{active_id}"
                 public_record["duration_ms"] = int(
                     (now - float(record["_started_monotonic"])) * 1000
                 )

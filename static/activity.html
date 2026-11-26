@@ -48,6 +48,14 @@
                 <label for="filterProvider" data-i18n="activity:filters.provider">Provider</label>
                 <input type="text" id="filterProvider" placeholder="any" data-i18n-placeholder="activity:filters.any">
             </div>
+            <div class="act-field">
+                <label for="filterModel" data-i18n="activity:filters.model">Model</label>
+                <input type="text" id="filterModel" placeholder="any" data-i18n-placeholder="activity:filters.any">
+            </div>
+            <div class="act-field">
+                <label for="filterOperation" data-i18n="activity:filters.operation">Operation</label>
+                <input type="text" id="filterOperation" placeholder="any" data-i18n-placeholder="activity:filters.any">
+            </div>
             <div class="act-field" data-master-only hidden>
                 <label for="filterKeyId" data-i18n="activity:filters.keyId">Key ID</label>
                 <input type="number" id="filterKeyId" min="0" placeholder="any" data-i18n-placeholder="activity:filters.any">
@@ -62,16 +70,17 @@
                     <option value="25">25</option>
                     <option value="50" selected>50</option>
                     <option value="100">100</option>
-                    <option value="200">200</option>
                 </select>
             </div>
-            <button id="applyFiltersBtn" class="primary" data-i18n="activity:actions.apply">Apply</button>
-            <button id="resetFiltersBtn" data-i18n="activity:actions.reset">Reset</button>
+            <button id="applyFiltersBtn" type="button" class="primary" data-i18n="activity:actions.apply">Apply</button>
+            <button id="resetFiltersBtn" type="button" data-i18n="activity:actions.reset">Reset</button>
             <div class="spacer"></div>
-            <button id="refreshBtn" data-i18n="activity:actions.refresh">Refresh</button>
+            <button id="exportCsvBtn" type="button" data-i18n="activity:actions.exportCsv">Export CSV</button>
+            <button id="exportJsonBtn" type="button" data-i18n="activity:actions.exportJson">Export JSON</button>
+            <button id="refreshBtn" type="button" data-i18n="activity:actions.refresh">Refresh</button>
         </div>
 
-        <p class="act-hint" data-i18n="activity:filters.pageScopedHint">Since applies only to the Rejected (4xx) view. Provider, Key ID and Request ID filter the currently loaded page only.</p>
+        <p class="act-hint" data-i18n="activity:filters.pageScopedHint">Filters apply across all matching records on the server. In Rejected (4xx) view, Request ID filters the loaded page.</p>
 
         <div id="actMeta" class="act-meta"><span id="actMetaText"></span><span id="actStaleBadge" class="stale-badge" hidden></span></div>
 

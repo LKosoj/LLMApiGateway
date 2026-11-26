@@ -36,29 +36,71 @@
   },
   "kpis": {
     "requests": "Запросы",
+    "tokens": "Токены",
     "cost": "Стоимость",
+    "costSaved": "Экономия",
+    "throughput": "Скорость",
+    "ttft": "TTFT P50 / P95",
     "p95Latency": "P95 задержка",
     "activeRequests": "Активные запросы",
     "errors": "Ошибки fallback",
-    "rejections": "Отклонения"
+    "rejections": "Отклонения",
+    "drillLive": "Открыть live",
+    "drillFailures": "Открыть ошибки",
+    "drillRejections": "Открыть отклонения"
+  },
+  "delta": {
+    "up": "+{value}% к пред.",
+    "down": "-{value}% к пред.",
+    "flat": "0% к пред.",
+    "new": "Новое к пред."
+  },
+  "lifetime": {
+    "label": "За всё время",
+    "requests": "Запросы: {value}",
+    "tokens": "Токены: {value}",
+    "cost": "Стоимость: {value}",
+    "costSaved": "Экономия: {value}",
+    "since": "С {date}"
   },
   "trend": {
     "heading": "Динамика",
     "metricLabel": "Метрика",
     "metricRequests": "Запросы",
+    "metricTokens": "Токены",
     "metricCost": "Стоимость",
     "meta": "{count, plural, one {# интервал} few {# интервала} many {# интервалов} other {# интервала}}",
     "empty": "Нет данных для графика за этот период.",
-    "aria": "График динамики использования"
+    "aria": "График динамики использования",
+    "pointLabel": "{period}: {value}"
   },
-  "topModels": {
-    "heading": "Топ моделей",
+  "breakdowns": {
+    "heading": "Разбивка",
+    "tablistAria": "Срезы статистики",
+    "tabs": {
+      "resolved_targets": "Модели",
+      "providers": "Провайдеры",
+      "operations": "Операции",
+      "api_keys": "Ключи",
+      "x_titles": "Клиенты"
+    },
     "columns": {
       "model": "Модель",
+      "provider": "Провайдер",
+      "operation": "Операция",
+      "key": "Ключ",
+      "client": "Клиент",
       "requests": "Запросы",
-      "cost": "Стоимость"
+      "tokens": "Токены",
+      "cost": "Стоимость",
+      "costSaved": "Экономия",
+      "throughput": "Ток/с",
+      "ttft": "TTFT",
+      "p95": "P95",
+      "avgDuration": "Ср. длительность",
+      "successRate": "Успешность"
     },
-    "empty": "За этот период нет данных по моделям."
+    "empty": "За этот период нет данных для разбивки."
   },
   "loading": "Загрузка…",
   "values": {
@@ -67,6 +109,9 @@
   },
   "format": {
     "milliseconds": "{value} мс",
-    "seconds": "{value} с"
+    "seconds": "{value} с",
+    "tokensPerSecond": "{value} ток/с",
+    "percent": "{value}%",
+    "pair": "{first} / {second}"
   }
 }

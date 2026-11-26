@@ -46,6 +46,11 @@ def _append_optional_filter(where_parts: list[str], params: list, column: str, v
         params.append(value)
 
 
+def _like_pattern(value: str) -> str:
+    escaped = value.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _build_fallback_where(
     *,
     start_date: datetime | None = None,
@@ -333,12 +338,32 @@ class FallbackEventsDB:
             api_key_id=api_key_id,
             api_key_unattributed=api_key_unattributed,
             operation=operation,
-            gateway_model=gateway_model,
-            provider=provider,
-            model=model,
-            error_type=error_type,
         )
+        having_parts = ["COUNT(*) > 1"]
+        having_params: list = []
+        provider_term = provider.strip() if provider else ""
+        if provider_term:
+            having_parts.append(
+                "MAX(CASE WHEN LOWER(COALESCE(provider, '')) LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END) = 1"
+            )
+            having_params.append(_like_pattern(provider_term))
+        model_term = model.strip() if model else ""
+        if model_term:
+            pattern = _like_pattern(model_term)
+            having_parts.append(
+                "MAX(CASE WHEN LOWER(COALESCE(model, '')) LIKE ? ESCAPE '\\' "
+                "OR LOWER(COALESCE(gateway_model, '')) LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END) = 1"
+            )
+            having_params.extend([pattern, pattern])
+        if gateway_model:
+            having_parts.append("MAX(CASE WHEN gateway_model = ? THEN 1 ELSE 0 END) = 1")
+            having_params.append(gateway_model)
+        if error_type:
+            having_parts.append("MAX(CASE WHEN error_type = ? THEN 1 ELSE 0 END) = 1")
+            having_params.append(error_type)
         request_filter = where_clause or ""
+        having_clause = "HAVING " + " AND ".join(having_parts)
+        query_params = params + having_params
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 for pragma in RUNTIME_PRAGMAS:
@@ -353,9 +378,9 @@ class FallbackEventsDB:
                     FROM fallback_events
                     {request_filter}
                     GROUP BY request_id, COALESCE(operation, 'chat')
-                    HAVING COUNT(*) > 1
+                    {having_clause}
                 )
-                """, params)
+                """, query_params)
                 row = await cursor.fetchone()
                 total_count = row[0]
 
@@ -367,10 +392,10 @@ class FallbackEventsDB:
                 FROM fallback_events
                 {request_filter}
                 GROUP BY request_id, COALESCE(operation, 'chat')
-                HAVING COUNT(*) > 1
+                {having_clause}
                 ORDER BY latest_ts DESC
                 LIMIT ? OFFSET ?
-                """, params + [limit, offset])
+                """, query_params + [limit, offset])
                 page_pairs = [(row["request_id"], row["operation"]) async for row in cursor]
 
                 if not page_pairs:

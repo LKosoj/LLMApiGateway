@@ -544,3 +544,194 @@ def test_admin_pages_drop_the_page_card_and_grey_buttons(page: Page, r5_2_server
     # The legacy analytics page keeps its card.
     page.goto(f"{r5_2_server}/v1/ui/usage-stats")
     expect(page.locator(".container").first).not_to_have_css("box-shadow", "none")
+
+
+def test_failures_page_30d_range_first_attempt_and_chains_filter_pagination(page: Page, r5_2_server: str):
+    _login(page.context, r5_2_server, MASTER_KEY)
+    seen_dashboards: list[str] = []
+    seen_chains: list[str] = []
+
+    def make_chain(index: int, *, model: str = "kimi-k2", provider: str = "openrouter") -> dict:
+        return {
+            "request_id": f"req-{index}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "gateway_model": "llmgateway/chat",
+            "x_title": "notes-app",
+            "success": True,
+            "total_duration_ms": 1200,
+            "attempts": [
+                {
+                    "provider": provider,
+                    "model": model,
+                    "success": False,
+                    "error_type": "http_429",
+                    "error_message": "rate limited",
+                    "duration_ms": 400,
+                },
+                {
+                    "provider": "groq",
+                    "model": "llama-3.3",
+                    "success": True,
+                    "error_type": None,
+                    "duration_ms": 800,
+                },
+            ],
+        }
+
+    def handle_dashboard(route):
+        seen_dashboards.append(route.request.url)
+        route.fulfill(json=_dashboard(
+            totals={
+                "requests": 50,
+                "total_tokens": 0,
+                "cost": 0,
+                "fallback_tracked_requests": 50,
+                "first_attempt_requests": 46,
+            },
+            reliability={
+                "fallback": {
+                    "summary": {"attempts": 200, "successes": 190, "errors": 10},
+                    "requests": {"total": 50, "rescued": 3, "failed": 1},
+                    "series": [{"time_period": _today_key(), "attempts": 20, "successes": 15, "errors": 5}],
+                    "error_types": [{"label": "http_429", "errors": 10}],
+                    "upstream": [],
+                },
+                "rejections": {},
+            },
+        ))
+
+    def handle_chains(route):
+        seen_chains.append(route.request.url)
+        url = route.request.url
+        if "model=claude" in url:
+            route.fulfill(json={
+                "records": [make_chain(99, model="claude-3.5", provider="anthropic")],
+                "total_records": 1,
+            })
+            return
+        if "offset=10" in url:
+            route.fulfill(json={
+                "records": [make_chain(i) for i in range(11, 16)],
+                "total_records": 15,
+            })
+            return
+        route.fulfill(json={
+            "records": [make_chain(i) for i in range(1, 11)],
+            "total_records": 15,
+        })
+
+    _route_json(page, f"{r5_2_server}/v1/admin/upstream-pauses", {"targets": [], "pauses": []})
+    _route_json(page, f"{r5_2_server}/v1/api/upstream-status", {"rows": [_status_row()]})
+    page.route(f"{r5_2_server}/v1/api/analytics-dashboard*", handle_dashboard)
+    page.route(f"{r5_2_server}/v1/api/fallback-records*", handle_chains)
+
+    page.goto(f"{r5_2_server}/v1/ui/failures")
+
+    # First-attempt success note rendered alongside preserved rescued note.
+    expect(page.locator("#kpiRescued [data-kpi-note]")).to_contain_text("of 4 requests")
+    expect(page.locator("#kpiRescued [data-kpi-extra]")).to_have_text("First-attempt success: 92% (46 of 50)")
+
+    # 30d range option works and fetches range=30d.
+    page.select_option("#rangeSelect", "30d")
+    expect(page.locator("#errorsHint")).to_have_text("failed attempts per day")
+    assert any("range=30d" in url for url in seen_dashboards)
+
+    # Pagination shows 1–10 of 15 and pages to 11–15 of 15.
+    expect(page.locator("#chainsPagination")).to_be_visible()
+    expect(page.locator("#chainsPageInfo")).to_have_text("1–10 of 15")
+    expect(page.locator("#chainsPrevBtn")).to_be_disabled()
+    expect(page.locator("#chainsNextBtn")).to_be_enabled()
+    expect(page.locator("#chainsBody tr")).to_have_count(10)
+
+    page.click("#chainsNextBtn")
+    expect(page.locator("#chainsPageInfo")).to_have_text("11–15 of 15")
+    expect(page.locator("#chainsBody tr")).to_have_count(5)
+    expect(page.locator("#chainsPrevBtn")).to_be_enabled()
+    expect(page.locator("#chainsNextBtn")).to_be_disabled()
+    assert any("offset=10" in url for url in seen_chains)
+
+    # Filtering resets offset to 0 and forwards model & provider query params.
+    page.fill("#chainsModelFilter", "claude")
+    page.fill("#chainsProviderFilter", "anthropic")
+    page.locator("#chainsProviderFilter").press("Enter")
+    expect(page.locator("#chainsBody tr")).to_have_count(1)
+    expect(page.locator("#chainsBody")).to_contain_text("claude-3.5")
+    expect(page.locator("#chainsPagination")).to_be_hidden()
+    assert any("model=claude" in url and "provider=anthropic" in url and "offset=0" in url for url in seen_chains)
+
+    _assert_axe_no_high_impact(page, "document")
+
+
+def test_live_page_who_metric_toggle_and_running_request_drawer(page: Page, r5_2_server: str):
+    _login(page.context, r5_2_server, MASTER_KEY)
+    _route_json(page, f"{r5_2_server}/v1/api/analytics-dashboard*", _dashboard(
+        totals={"requests": 60, "total_tokens": 10000, "cost": 0.30},
+        series={"usage": [{"time_period": _current_hour_key(), "requests": 60, "total_tokens": 10000, "cost": 0.30}]},
+        breakdowns={
+            "providers": [],
+            "resolved_targets": [],
+            "api_keys": [
+                {"label": "alpha", "api_key_id": 1, "api_key_name": "alpha", "requests": 50, "total_tokens": 1000, "cost": 0.05},
+                {"label": "beta", "api_key_id": 2, "api_key_name": "beta", "requests": 10, "total_tokens": 9000, "cost": 0.25},
+            ],
+            "x_titles": [],
+        },
+    ))
+    _route_json(page, f"{r5_2_server}/v1/api/usage-records*", {"records": [
+        {
+            "request_id": "req-live-42",
+            "timestamp": "2026-11-26T20:00:00+00:00",
+            "status": "running",
+            "duration_ms": 12000,
+            "gateway_model": "llmgateway/chat",
+            "provider": "openrouter",
+            "model": "kimi-k2",
+            "api_key_id": 2,
+            "x_title": "ide-client",
+            "operation": "chat",
+            "prompt_tokens": 512,
+            "completion_tokens": 128,
+        },
+    ]})
+    _route_json(page, f"{r5_2_server}/v1/api/upstream-status", {"rows": [_status_row(requests_last_day=10)]})
+
+    page.goto(f"{r5_2_server}/v1/ui/live")
+
+    # Default metric is Requests: alpha leads.
+    expect(page.locator("#whoHint")).to_have_text("requests in 24 h")
+    expect(page.locator("#whoList .rp-rank-row").first).to_contain_text("alpha")
+
+    # Switch to Tokens: beta leads.
+    page.locator("#whoMetric button[data-value='total_tokens']").click()
+    expect(page.locator("#whoHint")).to_have_text("tokens in 24 h")
+    expect(page.locator("#whoList .rp-rank-row").first).to_contain_text("beta")
+
+    # Switch to Cost: beta leads and its sub-dollar bar fills 100%.
+    page.locator("#whoMetric button[data-value='cost']").click()
+    expect(page.locator("#whoHint")).to_have_text("spent in 24 h")
+    expect(page.locator("#whoList .rp-rank-row").first).to_contain_text("beta")
+    top_bar_width = page.locator("#whoList .rp-rank-row").first.locator(".rp-meter i").evaluate("el => el.style.width")
+    assert top_bar_width == "100%"
+
+    # Clicking the running row opens the RequestDrawer with full details.
+    running_row = page.locator("#runningBody tr").first
+    expect(running_row).to_have_attribute("data-clickable", "true")
+    running_row.click()
+
+    drawer_title = page.locator("#liveRequestDrawerTitle")
+    expect(drawer_title).to_be_visible()
+    expect(drawer_title).to_have_text("Running request details")
+    drawer_panel = page.locator(".req-drawer-panel")
+    expect(drawer_panel).to_contain_text("req-live-42")
+    expect(drawer_panel).to_contain_text("Running")
+    expect(drawer_panel).to_contain_text("llmgateway/chat")
+    expect(drawer_panel).to_contain_text("openrouter")
+    expect(drawer_panel).to_contain_text("kimi-k2")
+    expect(drawer_panel).to_contain_text("beta")
+    expect(drawer_panel).to_contain_text("ide-client")
+    expect(drawer_panel).to_contain_text("512")
+    expect(drawer_panel).to_contain_text("128")
+    _assert_axe_no_high_impact(page, "document")
+
+    page.keyboard.press("Escape")
+    expect(drawer_title).to_be_hidden()

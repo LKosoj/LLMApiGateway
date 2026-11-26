@@ -34,10 +34,30 @@ class _CountingTokensUsageDB:
             }
         ]
 
-    async def get_latest_usage_records(self, limit: int = 25, offset: int = 0, *, api_key_id=None):
+    async def get_latest_usage_records(
+        self,
+        limit: int = 25,
+        offset: int = 0,
+        *,
+        api_key_id=None,
+        provider=None,
+        model=None,
+        operation=None,
+        request_id=None,
+        since=None,
+    ):
         return []
 
-    async def get_total_records_count(self, *, api_key_id=None):
+    async def get_total_records_count(
+        self,
+        *,
+        api_key_id=None,
+        provider=None,
+        model=None,
+        operation=None,
+        request_id=None,
+        since=None,
+    ):
         return 0
 
     def cleanup_old_records(self, retention_days: int = 180):

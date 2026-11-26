@@ -1294,6 +1294,68 @@ def _utc_isoformat(value: datetime) -> str:
     return value.isoformat()
 
 
+def _normalize_since_timestamp(since: str | None) -> str | None:
+    if since is None:
+        return None
+    if not isinstance(since, str):
+        raise ValueError("since must be a valid ISO 8601 datetime string")
+    cleaned = since.strip()
+    if not cleaned:
+        return None
+    normalized_input = f"{cleaned[:-1]}+00:00" if cleaned.endswith(("Z", "z")) else cleaned
+    try:
+        dt = datetime.fromisoformat(normalized_input)
+    except ValueError as exc:
+        raise ValueError("since must be a valid ISO 8601 datetime string") from exc
+    return _utc_isoformat(dt)
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _build_usage_records_where(
+    *,
+    api_key_id: int | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    operation: str | None = None,
+    request_id: str | None = None,
+    since: str | None = None,
+) -> tuple[str, list]:
+    where_parts: list[str] = []
+    params: list = []
+    if api_key_id is not None:
+        where_parts.append("api_key_id = ?")
+        params.append(api_key_id)
+    provider_clean = provider.strip() if isinstance(provider, str) else ""
+    if provider_clean:
+        where_parts.append("LOWER(COALESCE(provider, '')) LIKE ? ESCAPE '\\'")
+        params.append(f"%{_escape_like(provider_clean.lower())}%")
+    model_clean = model.strip() if isinstance(model, str) else ""
+    if model_clean:
+        pattern = f"%{_escape_like(model_clean.lower())}%"
+        where_parts.append(
+            "(LOWER(COALESCE(model, '')) LIKE ? ESCAPE '\\'"
+            " OR LOWER(COALESCE(gateway_model, '')) LIKE ? ESCAPE '\\')"
+        )
+        params.extend([pattern, pattern])
+    operation_clean = operation.strip() if isinstance(operation, str) else ""
+    if operation_clean:
+        where_parts.append("LOWER(COALESCE(operation, '')) LIKE ? ESCAPE '\\'")
+        params.append(f"%{_escape_like(operation_clean.lower())}%")
+    request_id_clean = request_id.strip() if isinstance(request_id, str) else ""
+    if request_id_clean:
+        where_parts.append("LOWER(COALESCE(request_id, '')) LIKE ? ESCAPE '\\'")
+        params.append(f"%{_escape_like(request_id_clean.lower())}%")
+    normalized_since = _normalize_since_timestamp(since)
+    if normalized_since is not None:
+        where_parts.append("timestamp >= ?")
+        params.append(normalized_since)
+    where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    return where_clause, params
+
+
 def _period_date_format(period: str) -> str:
     if period == "hour":
         return "%Y-%m-%d %H:00:00"
@@ -2361,20 +2423,32 @@ class TokensUsageDB:
     # ------------------------------------------------------------------
 
     async def get_latest_usage_records(
-        self, limit: int = 25, offset: int = 0, *, api_key_id: int | None = None
+        self,
+        limit: int = 25,
+        offset: int = 0,
+        *,
+        api_key_id: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        operation: str | None = None,
+        request_id: str | None = None,
+        since: str | None = None,
     ):
         limit, offset = validate_usage_records_pagination(limit, offset)
+        where, params = _build_usage_records_where(
+            api_key_id=api_key_id,
+            provider=provider,
+            model=model,
+            operation=operation,
+            request_id=request_id,
+            since=since,
+        )
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 for pragma in RUNTIME_PRAGMAS:
                     await db.execute(pragma)
                 db.row_factory = aiosqlite.Row
-                where = ""
-                params: list = []
-                if api_key_id is not None:
-                    where = " WHERE api_key_id = ?"
-                    params.append(api_key_id)
-                params.extend([limit, offset])
+                query_params = [*params, limit, offset]
                 query = f"""
                 SELECT
                     id, timestamp, duration_ms, prompt_tokens, completion_tokens,
@@ -2387,7 +2461,7 @@ class TokensUsageDB:
                 ORDER BY timestamp DESC
                 LIMIT ? OFFSET ?
                 """
-                cursor = await db.execute(query, params)
+                cursor = await db.execute(query, query_params)
                 rows = await cursor.fetchall()
                 results = [dict(row) for row in rows]
                 for record in results:
@@ -2400,18 +2474,32 @@ class TokensUsageDB:
             logger.error("Error retrieving latest token usage records: %s", e)
             return []
 
-    async def get_total_records_count(self, *, api_key_id: int | None = None):
+    async def get_total_records_count(
+        self,
+        *,
+        api_key_id: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        operation: str | None = None,
+        request_id: str | None = None,
+        since: str | None = None,
+    ):
+        where, params = _build_usage_records_where(
+            api_key_id=api_key_id,
+            provider=provider,
+            model=model,
+            operation=operation,
+            request_id=request_id,
+            since=since,
+        )
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 for pragma in RUNTIME_PRAGMAS:
                     await db.execute(pragma)
-                if api_key_id is not None:
-                    cursor = await db.execute(
-                        "SELECT COUNT(*) FROM tokens_usage WHERE api_key_id = ?",
-                        (api_key_id,),
-                    )
-                else:
-                    cursor = await db.execute("SELECT COUNT(*) FROM tokens_usage")
+                cursor = await db.execute(
+                    f"SELECT COUNT(*) FROM tokens_usage{where}",
+                    params,
+                )
                 row = await cursor.fetchone()
                 count = row[0]
                 logger.debug("Total number of token usage records: %d", count)

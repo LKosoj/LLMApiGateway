@@ -36,29 +36,71 @@
   },
   "kpis": {
     "requests": "Requests",
+    "tokens": "Tokens",
     "cost": "Cost",
+    "costSaved": "Cost saved",
+    "throughput": "Throughput",
+    "ttft": "TTFT P50 / P95",
     "p95Latency": "P95 latency",
     "activeRequests": "Active requests",
     "errors": "Fallback errors",
-    "rejections": "Rejections"
+    "rejections": "Rejections",
+    "drillLive": "Open live",
+    "drillFailures": "Open failures",
+    "drillRejections": "Open rejections"
+  },
+  "delta": {
+    "up": "+{value}% vs prev",
+    "down": "-{value}% vs prev",
+    "flat": "0% vs prev",
+    "new": "New vs prev"
+  },
+  "lifetime": {
+    "label": "All-time",
+    "requests": "Requests: {value}",
+    "tokens": "Tokens: {value}",
+    "cost": "Cost: {value}",
+    "costSaved": "Saved: {value}",
+    "since": "Since {date}"
   },
   "trend": {
     "heading": "Trend",
     "metricLabel": "Metric",
     "metricRequests": "Requests",
+    "metricTokens": "Tokens",
     "metricCost": "Cost",
     "meta": "{count, plural, one {# bucket} other {# buckets}}",
     "empty": "No trend data for this range.",
-    "aria": "Usage trend chart"
+    "aria": "Usage trend chart",
+    "pointLabel": "{period}: {value}"
   },
-  "topModels": {
-    "heading": "Top models",
+  "breakdowns": {
+    "heading": "Breakdowns",
+    "tablistAria": "Breakdown dimensions",
+    "tabs": {
+      "resolved_targets": "Models",
+      "providers": "Providers",
+      "operations": "Operations",
+      "api_keys": "Keys",
+      "x_titles": "Clients"
+    },
     "columns": {
       "model": "Model",
+      "provider": "Provider",
+      "operation": "Operation",
+      "key": "Key",
+      "client": "Client",
       "requests": "Requests",
-      "cost": "Cost"
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "costSaved": "Saved",
+      "throughput": "Tokens/s",
+      "ttft": "TTFT",
+      "p95": "P95",
+      "avgDuration": "Avg duration",
+      "successRate": "Success rate"
     },
-    "empty": "No model usage in this range."
+    "empty": "No breakdown data for this range."
   },
   "loading": "Loading…",
   "values": {
@@ -67,6 +109,9 @@
   },
   "format": {
     "milliseconds": "{value} ms",
-    "seconds": "{value} s"
+    "seconds": "{value} s",
+    "tokensPerSecond": "{value} tok/s",
+    "percent": "{value}%",
+    "pair": "{first} / {second}"
   }
 }

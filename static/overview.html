@@ -58,30 +58,58 @@
         <div id="overviewContent">
             <div id="overviewKpis" class="ov-kpis">
                 <div class="ov-kpi">
-                    <span data-i18n="overview:kpis.requests">Requests</span>
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.requests">Requests</span>
                     <strong id="kpiRequests">—</strong>
+                    <span id="kpiRequestsDelta" class="ov-kpi-delta" data-tone="neutral" hidden></span>
                 </div>
                 <div class="ov-kpi">
-                    <span data-i18n="overview:kpis.cost">Cost</span>
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.tokens">Tokens</span>
+                    <strong id="kpiTokens">—</strong>
+                    <span id="kpiTokensDelta" class="ov-kpi-delta" data-tone="neutral" hidden></span>
+                </div>
+                <div class="ov-kpi">
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.cost">Cost</span>
                     <strong id="kpiCost">—</strong>
+                    <span id="kpiCostDelta" class="ov-kpi-delta" data-tone="neutral" hidden></span>
                 </div>
                 <div class="ov-kpi">
-                    <span data-i18n="overview:kpis.p95Latency">P95 latency</span>
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.costSaved">Cost saved</span>
+                    <strong id="kpiCostSaved">—</strong>
+                    <span id="kpiCostSavedDelta" class="ov-kpi-delta" data-tone="neutral" hidden></span>
+                </div>
+                <div class="ov-kpi">
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.throughput">Throughput</span>
+                    <strong id="kpiThroughput">—</strong>
+                    <span id="kpiThroughputDelta" class="ov-kpi-delta" data-tone="neutral" hidden></span>
+                </div>
+                <div class="ov-kpi">
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.ttft">TTFT P50 / P95</span>
+                    <strong id="kpiTtft">—</strong>
+                </div>
+                <div class="ov-kpi">
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.p95Latency">P95 latency</span>
                     <strong id="kpiLatency">—</strong>
+                    <span id="kpiLatencyDelta" class="ov-kpi-delta" data-tone="neutral" hidden></span>
                 </div>
-                <div class="ov-kpi">
-                    <span data-i18n="overview:kpis.activeRequests">Active requests</span>
+                <div class="ov-kpi" data-drill-card>
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.activeRequests">Active requests</span>
                     <strong id="kpiActive">—</strong>
+                    <a class="ov-kpi-drill" href="/v1/ui/live" data-master-only hidden data-i18n="overview:kpis.drillLive">Open live</a>
                 </div>
-                <div class="ov-kpi">
-                    <span data-i18n="overview:kpis.errors">Fallback errors</span>
+                <div class="ov-kpi" data-drill-card>
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.errors">Fallback errors</span>
                     <strong id="kpiErrors">—</strong>
+                    <span id="kpiErrorsDelta" class="ov-kpi-delta" data-tone="neutral" hidden></span>
+                    <a class="ov-kpi-drill" href="/v1/ui/failures" data-master-only hidden data-i18n="overview:kpis.drillFailures">Open failures</a>
                 </div>
-                <div class="ov-kpi">
-                    <span data-i18n="overview:kpis.rejections">Rejections</span>
+                <div class="ov-kpi" data-drill-card>
+                    <span class="ov-kpi-label" data-i18n="overview:kpis.rejections">Rejections</span>
                     <strong id="kpiRejections">—</strong>
+                    <a class="ov-kpi-drill" href="/v1/ui/rejections" data-master-only hidden data-i18n="overview:kpis.drillRejections">Open rejections</a>
                 </div>
             </div>
+
+            <div id="overviewLifetime" class="ov-lifetime" hidden></div>
 
             <div class="ov-panel">
                 <div class="ov-panel-head">
@@ -90,6 +118,7 @@
                         <label for="trendMetric" data-i18n="overview:trend.metricLabel">Metric</label>
                         <select id="trendMetric">
                             <option value="requests" data-i18n="overview:trend.metricRequests">Requests</option>
+                            <option value="total_tokens" data-i18n="overview:trend.metricTokens">Tokens</option>
                             <option value="cost" data-i18n="overview:trend.metricCost">Cost</option>
                         </select>
                     </div>
@@ -99,20 +128,31 @@
             </div>
 
             <div class="ov-panel">
-                <div class="ov-panel-head">
-                    <h2 data-i18n="overview:topModels.heading">Top models</h2>
+                <div class="ov-panel-head ov-panel-head-tabs">
+                    <h2 data-i18n="overview:breakdowns.heading">Breakdowns</h2>
+                    <div id="breakdownTabs" class="ov-tabs" role="tablist" aria-label="Breakdown dimensions" data-i18n-aria-label="overview:breakdowns.tablistAria">
+                        <button type="button" role="tab" class="ov-tab" data-tab="resolved_targets" aria-selected="true" tabindex="0" data-i18n="overview:breakdowns.tabs.resolved_targets">Models</button>
+                        <button type="button" role="tab" class="ov-tab" data-tab="providers" aria-selected="false" tabindex="-1" data-i18n="overview:breakdowns.tabs.providers">Providers</button>
+                        <button type="button" role="tab" class="ov-tab" data-tab="operations" aria-selected="false" tabindex="-1" data-i18n="overview:breakdowns.tabs.operations">Operations</button>
+                        <button type="button" role="tab" class="ov-tab" data-tab="api_keys" aria-selected="false" tabindex="-1" data-master-only hidden data-i18n="overview:breakdowns.tabs.api_keys">Keys</button>
+                        <button type="button" role="tab" class="ov-tab" data-tab="x_titles" aria-selected="false" tabindex="-1" data-i18n="overview:breakdowns.tabs.x_titles">Clients</button>
+                    </div>
                 </div>
                 <div class="ov-table-wrap">
                     <table class="ov-table">
-                        <thead>
+                        <thead id="breakdownsHead">
                             <tr>
-                                <th data-i18n="overview:topModels.columns.model">Model</th>
-                                <th data-i18n="overview:topModels.columns.requests">Requests</th>
-                                <th data-i18n="overview:topModels.columns.cost">Cost</th>
+                                <th data-i18n="overview:breakdowns.columns.model">Model</th>
+                                <th data-i18n="overview:breakdowns.columns.requests">Requests</th>
+                                <th data-i18n="overview:breakdowns.columns.tokens">Tokens</th>
+                                <th data-i18n="overview:breakdowns.columns.cost">Cost</th>
+                                <th data-i18n="overview:breakdowns.columns.costSaved">Saved</th>
+                                <th data-i18n="overview:breakdowns.columns.throughput">Tokens/s</th>
+                                <th data-i18n="overview:breakdowns.columns.successRate">Success rate</th>
                             </tr>
                         </thead>
                         <tbody id="topModelsBody">
-                            <tr><td colspan="3" class="ov-table-loading" data-i18n="overview:loading">Loading…</td></tr>
+                            <tr><td colspan="7" class="ov-table-loading" data-i18n="overview:loading">Loading…</td></tr>
                         </tbody>
                     </table>
                 </div>

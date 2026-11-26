@@ -153,6 +153,11 @@ h1 {
     flex: 1;
 }
 
+.act-toolbar button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .act-hint {
     margin: 0 0 14px;
     color: var(--text-muted);

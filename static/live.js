@@ -27,7 +27,9 @@ document.addEventListener('DOMContentLoaded', () => {
         kpiCost: document.getElementById('kpiCost'),
         loadMetric: document.getElementById('loadMetric'),
         loadChart: document.getElementById('loadChart'),
+        whoHint: document.getElementById('whoHint'),
         whoGroup: document.getElementById('whoGroup'),
+        whoMetric: document.getElementById('whoMetric'),
         whoList: document.getElementById('whoList'),
         runningBody: document.getElementById('runningBody'),
         runningEmpty: document.getElementById('runningEmpty'),
@@ -37,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
         modelDetailTitle: document.getElementById('modelDetailTitle'),
         modelDetailChart: document.getElementById('modelDetailChart'),
         modelDetailClose: document.getElementById('modelDetailClose'),
+        requestDrawerMount: document.getElementById('requestDrawerMount'),
         messageArea: document.getElementById('messageArea'),
         messageDetail: document.getElementById('messageDetail'),
     };
@@ -44,6 +47,12 @@ document.addEventListener('DOMContentLoaded', () => {
         rawDetailElement: els.messageDetail,
         renderMessage: (message) => i18n.t(message.key, message.values || {}),
     });
+    const WHO_HINT_KEYS = {
+        requests: 'live:who.hintRequests',
+        total_tokens: 'live:who.hintTokens',
+        cost: 'live:who.hintCost',
+    };
+    let requestDrawer = null;
 
     let lastData = null;
     let detailTarget = null;
@@ -51,6 +60,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let detailGeneration = 0;
     let loadMetric = 'requests';
     let whoGroup = 'keys';
+    let whoMetric = 'requests';
+    let openRunningRow = null;
     let paused = false;
     let timer = null;
     let requestGeneration = 0;
@@ -88,6 +99,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function formatHour(date) {
         return i18n.formatDate(date, { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatTimestamp(iso, timeZone) {
+        const date = iso ? new Date(iso) : null;
+        if (!date || Number.isNaN(date.getTime())) return i18n.t('live:values.notAvailable');
+        const options = {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        };
+        if (timeZone) options.timeZone = timeZone;
+        return i18n.formatDate(date, options);
+    }
+
+    function updateDrawerChrome() {
+        requestDrawer.setChrome(
+            i18n.t('live:drawer.heading'),
+            i18n.t('live:drawer.close'),
+        );
     }
 
     function formatMetric(metric, value) {
@@ -204,19 +237,91 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderWho(data) {
+        els.whoHint.textContent = i18n.t(WHO_HINT_KEYS[whoMetric] || 'live:who.hintRequests');
         const breakdowns = data.dashboard.breakdowns || {};
         const source = whoGroup === 'keys' ? breakdowns.api_keys : breakdowns.x_titles;
-        const rows = (source || []).slice(0, WHO_LIMIT).map((row) => {
-            let label = row.label;
-            if (whoGroup === 'keys') label = keyLabel(row.api_key_id, new Map([[row.api_key_id, row.api_key_name]]));
-            else if (row.label === 'unknown') label = i18n.t('live:who.unknownClient');
-            return { label, value: row.requests, display: formatNumber(row.requests) };
-        });
+        const rows = [...(source || [])]
+            .sort((a, b) => numberValue(b[whoMetric]) - numberValue(a[whoMetric]))
+            .slice(0, WHO_LIMIT)
+            .map((row) => {
+                let label = row.label;
+                if (whoGroup === 'keys') label = keyLabel(row.api_key_id, new Map([[row.api_key_id, row.api_key_name]]));
+                else if (row.label === 'unknown') label = i18n.t('live:who.unknownClient');
+                const value = numberValue(row[whoMetric]);
+                return { label, value, display: formatMetric(whoMetric, value) };
+            });
         if (rows.length === 0) {
             els.whoList.replaceChildren(el('div', 'rp-muted', i18n.t('live:who.empty')));
             return;
         }
         report.rankList(els.whoList, rows);
+    }
+
+    function buildRunningDrawerBody(row, names) {
+        const RD = window.RequestDrawer;
+        const na = () => i18n.t('live:values.notAvailable');
+        const section = RD.createSection(null);
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.requestId'),
+            row.request_id
+                ? RD.createCopyableValue(String(row.request_id), i18n.t('common:actions.copy'), i18n.t('common:actions.copied'))
+                : na(),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.status'),
+            RD.createStatusPill(i18n.t('live:drawer.statusRunning'), 'running'),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.duration'),
+            formatDuration(row.duration_ms),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.startedUtc'),
+            formatTimestamp(row.timestamp, 'UTC'),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.startedLocal'),
+            formatTimestamp(row.timestamp),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.operation'),
+            row.operation || na(),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.requestedModel'),
+            row.gateway_model || na(),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.provider'),
+            row.provider || na(),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.resolvedModel'),
+            row.model || i18n.t('live:running.notChosen'),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.key'),
+            keyLabel(row.api_key_id, names),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.client'),
+            row.x_title || na(),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.promptTokens'),
+            row.prompt_tokens != null ? formatNumber(row.prompt_tokens) : na(),
+        ));
+        section.appendChild(RD.createField(
+            i18n.t('live:drawer.fields.completionTokens'),
+            row.completion_tokens != null ? formatNumber(row.completion_tokens) : na(),
+        ));
+        return section;
+    }
+
+    function openRunningDrawer(row, names) {
+        openRunningRow = row;
+        updateDrawerChrome();
+        requestDrawer.open(buildRunningDrawerBody(row, names));
     }
 
     function renderRunning(data) {
@@ -226,6 +331,20 @@ document.addEventListener('DOMContentLoaded', () => {
         els.runningBody.replaceChildren(...rows.map((row) => {
             const long = numberValue(row.duration_ms) >= LONG_REQUEST_MS;
             const tr = document.createElement('tr');
+            tr.dataset.clickable = 'true';
+            tr.tabIndex = 0;
+            tr.setAttribute('role', 'button');
+            tr.setAttribute('aria-label', i18n.t('live:running.openDetails', {
+                model: row.gateway_model || row.model || i18n.t('live:values.notAvailable'),
+            }));
+            const open = () => openRunningDrawer(row, names);
+            tr.addEventListener('click', open);
+            tr.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    open();
+                }
+            });
             tr.append(
                 headCell(badge(formatDuration(row.duration_ms), long ? 'warn' : null)),
                 cell(i18n.t('live:running.columns.requested'), row.gateway_model || i18n.t('live:values.notAvailable')),
@@ -477,6 +596,13 @@ document.addEventListener('DOMContentLoaded', () => {
         report.setPressed(els.whoGroup, whoGroup);
         if (lastData) renderWho(lastData);
     });
+    els.whoMetric.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-value]');
+        if (!button) return;
+        whoMetric = button.dataset.value;
+        report.setPressed(els.whoMetric, whoMetric);
+        if (lastData) renderWho(lastData);
+    });
 
     window.addEventListener('beforeunload', () => {
         stopped = true;
@@ -485,10 +611,22 @@ document.addEventListener('DOMContentLoaded', () => {
         unsubscribeLocale?.();
     });
 
-    Promise.all([bootstrapRoleUI(), i18n.ready]).then(() => {
+    Promise.all([bootstrapRoleUI(), i18n.ready, window.gatewayNav?.ready].filter(Boolean)).then(() => {
         if (stopped) return;
+        requestDrawer = window.RequestDrawer.create({
+            mount: els.requestDrawerMount,
+            titleId: 'liveRequestDrawerTitle',
+            heading: i18n.t('live:drawer.heading'),
+            closeLabel: i18n.t('live:drawer.close'),
+            inertRoots: Array.from(document.querySelectorAll('.top-nav, .rp-page, [data-gateway-nav-overlay]')),
+            restoreFocusFallback: () => els.refresh,
+        });
         unsubscribeLocale = i18n.subscribe(() => {
             pageStatus.rerender();
+            updateDrawerChrome();
+            if (requestDrawer?.state === 'open' && openRunningRow && lastData) {
+                requestDrawer.open(buildRunningDrawerBody(openRunningRow, keyNames(lastData)));
+            }
             render();
         });
         void load();
