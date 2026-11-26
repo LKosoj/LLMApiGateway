@@ -540,13 +540,13 @@ div[style*="position:relative"] {
 .rule-card {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 18px;
+    padding: 16px 18px;
     background: var(--bg-elevated);
     box-shadow: var(--shadow-sm);
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    gap: 12px;
+    transition: border-color var(--transition-fast);
     min-width: 0;
 }
 
@@ -616,7 +616,7 @@ div[style*="position:relative"] {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 8px;
 }
 
 .field-group {
@@ -1418,27 +1418,27 @@ select:focus {
 .editor-shell {
     display: flex;
     align-items: flex-start;
-    gap: 18px;
+    gap: 16px;
     flex: 1;
     min-width: 0;
 }
 
 .editor-sidebar {
-    flex: 0 0 260px;
-    width: 260px;
+    flex: 0 0 216px;
+    width: 216px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     position: sticky;
-    top: 70px;
-    max-height: calc(100dvh - 90px);
+    top: 24px;
+    max-height: calc(100dvh - 148px);
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
-    padding: 12px;
+    padding: 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    background: var(--bg-sunken);
+    background: var(--bg-elevated);
     box-sizing: border-box;
 }
 
@@ -1447,10 +1447,10 @@ select:focus {
     box-sizing: border-box;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    padding: 8px 12px;
-    font-size: 14px;
-    background: var(--bg-elevated);
-    color: var(--text);
+    padding: 6px 10px;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text-strong);
     font-family: inherit;
     outline: none;
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -1464,7 +1464,7 @@ select:focus {
 .editor-entity-list {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px;
 }
 
 .editor-entity-group {
@@ -1478,25 +1478,25 @@ select:focus {
 }
 
 .editor-entity-group-title {
-    margin: 0 0 4px;
+    margin: 0 0 2px;
     padding: 0 8px;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-transform: none;
+    color: var(--text-muted);
 }
 
 .editor-entity-item {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 8px 10px;
+    padding: 6px 10px;
     border: none;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text);
-    font-size: 0.9rem;
+    font-size: 13px;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
@@ -1512,13 +1512,15 @@ select:focus {
 }
 
 .editor-entity-item:hover {
-    background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+    background: var(--bg-sunken);
+    color: var(--text-strong);
 }
 
 .editor-entity-item.active {
     background: var(--accent-soft);
     color: var(--accent-text);
-    font-weight: 700;
+    font-weight: 600;
+    box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .editor-entity-item:disabled {

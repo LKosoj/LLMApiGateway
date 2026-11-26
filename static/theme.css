@@ -2,9 +2,8 @@
  * All pages include this file before their own CSS.
  * Light mode variables are in :root; dark mode overrides are in body.dark-mode.
  *
- * v2: design tokens (typography, radii, shadows, z-scale, motion) + self-hosted
- * variable fonts (Manrope, JetBrains Mono — latin + cyrillic subsets).
- * Legacy variable names (--bg, --accent, ...) are preserved for compatibility.
+ * v3: Precision Ops — neutral graphite ramp + signal teal accent,
+ * refined typography weights (500–600), tabular figures, 4px spacing discipline.
  */
 
 /* ---------- Fonts (self-hosted, /static/vendor/fonts) ---------- */
@@ -45,7 +44,7 @@
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* ---------- Tokens ---------- */
+/* ---------- Tokens (Precision Ops: Graphite + Signal Teal) ---------- */
 
 :root {
     color-scheme: light;
@@ -54,50 +53,51 @@
     --font-sans: 'Manrope Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
 
-    /* Surfaces — one cool (slate) gray family throughout */
-    --bg: #f4f6f9;
+    /* Surfaces — neutral graphite ramp */
+    --bg: #f5f6f7;
     --bg-elevated: #ffffff;
-    --bg-sunken: #eceff4;
-    --text: #334155;
-    --text-strong: #0f172a;
-    --text-muted: #64748b;
-    --border: #e2e8f0;
-    --border-strong: #cbd5e1;
+    --bg-sunken: #eceef0;
+    --text: #2e343b;
+    --text-strong: #111315;
+    --text-muted: #5b636e;
+    --border: #dfe3e8;
+    --border-strong: #c5ccd4;
 
-    /* Single accent: indigo */
-    --accent: #4f46e5;
-    --accent-hover: #4338ca;
-    --accent-soft: rgba(79, 70, 229, 0.11);
-    --accent-text: #4338ca;
+    /* Single accent: signal teal */
+    --accent: #0f766e;
+    --accent-hover: #0d635c;
+    --accent-soft: rgba(15, 118, 110, 0.10);
+    --accent-text: #0f6b64;
     --accent-contrast: #ffffff;
 
-    /* Shadows tinted with the slate hue, single top-light source */
-    --shadow: rgba(15, 23, 42, 0.08);
-    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
-    --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
-    --shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, 0.14), 0 4px 8px -4px rgba(15, 23, 42, 0.06);
+    /* Quiet neutral shadows (light mode only) */
+    --shadow: rgba(17, 19, 21, 0.06);
+    --shadow-sm: 0 1px 2px rgba(17, 19, 21, 0.04);
+    --shadow-md: 0 4px 12px -2px rgba(17, 19, 21, 0.06), 0 1px 3px rgba(17, 19, 21, 0.04);
+    --shadow-lg: 0 12px 28px -8px rgba(17, 19, 21, 0.12), 0 4px 8px -4px rgba(17, 19, 21, 0.05);
 
-    --code-bg: #f1f5f9;
-    --success: #16a34a;
-    --warning: #d97706;
-    --error: #dc2626;
-    --success-soft: rgba(22, 163, 74, 0.12);
-    --warning-soft: rgba(217, 119, 6, 0.12);
-    --error-soft: rgba(220, 38, 38, 0.10);
+    --code-bg: #eef0f2;
+    --success: #15803d;
+    --warning: #b45309;
+    --error: #b91c1c;
+    --success-soft: rgba(21, 128, 61, 0.11);
+    --warning-soft: rgba(180, 83, 9, 0.11);
+    --error-soft: rgba(185, 28, 28, 0.10);
 
-    /* Geometry */
-    --page-max-width: 1350px;
-    --page-gutter: clamp(14px, 3vw, 40px);
-    --nav-height: 56px;
-    --control-min-height: 38px;
+    /* Geometry — 4px grid & nested radii */
+    --page-max-width: 1380px;
+    --page-gutter: clamp(16px, 2.5vw, 32px);
+    --nav-height: 52px;
+    --control-min-height: 36px;
     --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 20px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
 
-    /* Motion */
-    --transition-fast: 150ms ease;
-    --transition-base: 250ms ease;
+    /* Motion — single crisp ease-out curve */
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --transition-fast: 140ms var(--ease-out);
+    --transition-base: 220ms var(--ease-out);
 
     /* Z-scale */
     --z-nav: 100;
@@ -109,33 +109,34 @@
 body.dark-mode {
     color-scheme: dark;
 
-    --bg: #0f1117;
-    --bg-elevated: #181c26;
-    --bg-sunken: #0b0d13;
-    --text: #dbe2ec;
-    --text-strong: #f3f6fa;
-    --text-muted: #8b97a8;
-    --border: #2a3140;
-    --border-strong: #3b4456;
+    --bg: #111315;
+    --bg-elevated: #181b1f;
+    --bg-sunken: #0d0f11;
+    --text: #cfd6de;
+    --text-strong: #f2f4f7;
+    --text-muted: #8a94a0;
+    --border: #262b31;
+    --border-strong: #373e47;
 
-    --accent: #818cf8;
-    --accent-hover: #a5b4fc;
-    --accent-soft: rgba(129, 140, 248, 0.16);
-    --accent-text: #a5b4fc;
-    --accent-contrast: #111827;
+    --accent: #2dd4bf;
+    --accent-hover: #5eead4;
+    --accent-soft: rgba(45, 212, 191, 0.13);
+    --accent-text: #5eead4;
+    --accent-contrast: #091917;
 
-    --shadow: rgba(0, 0, 0, 0.35);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.55), 0 4px 8px -4px rgba(0, 0, 0, 0.35);
+    /* Depth on dark surfaces comes from surface steps & hairlines, not heavy shadows */
+    --shadow: rgba(0, 0, 0, 0.28);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22);
+    --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.32);
+    --shadow-lg: 0 12px 28px -8px rgba(0, 0, 0, 0.48);
 
-    --code-bg: #131722;
+    --code-bg: #14171b;
     --success: #4ade80;
     --warning: #fbbf24;
     --error: #f87171;
-    --success-soft: rgba(74, 222, 128, 0.14);
-    --warning-soft: rgba(251, 191, 36, 0.14);
-    --error-soft: rgba(248, 113, 113, 0.14);
+    --success-soft: rgba(74, 222, 128, 0.13);
+    --warning-soft: rgba(251, 191, 36, 0.13);
+    --error-soft: rgba(248, 113, 113, 0.13);
 }
 
 /* ---------- Base ---------- */
@@ -177,9 +178,7 @@ textarea {
     font-variant-numeric: tabular-nums;
 }
 
-/* Touch-target minimum (WCAG 2.5.5) — opt-in utility for interactive controls
- * that need to grow to 44px on touch/mobile without affecting their default
- * (desktop) sizing everywhere else. */
+/* Touch-target minimum (WCAG 2.5.5) */
 .touch-target-min {
     min-height: 44px;
     min-width: 44px;
@@ -189,15 +188,20 @@ textarea {
 
 .primary-button,
 .secondary-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: var(--control-min-height);
     border: 1px solid transparent;
     border-radius: var(--radius-md);
-    padding: 8px 16px;
+    padding: 0 14px;
     font-family: inherit;
-    font-size: 14px;
+    font-size: 13.5px;
     font-weight: 600;
     cursor: pointer;
     box-shadow: var(--shadow-sm);
-    transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
 .primary-button {
@@ -214,7 +218,7 @@ textarea {
 .secondary-button {
     border-color: var(--border);
     background: var(--bg-elevated);
-    color: var(--text);
+    color: var(--text-strong);
 }
 
 .secondary-button:hover:where(:not(:disabled)) {
@@ -225,13 +229,12 @@ textarea {
 
 .primary-button:active:where(:not(:disabled)),
 .secondary-button:active:where(:not(:disabled)) {
-    transform: translateY(1px) scale(0.98);
-    box-shadow: none;
+    transform: scale(0.985);
 }
 
 .primary-button:disabled,
 .secondary-button:disabled {
-    opacity: 0.6;
+    opacity: 0.55;
     cursor: not-allowed;
     transform: none;
     box-shadow: none;

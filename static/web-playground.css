@@ -22,6 +22,37 @@
     width: 100%;
     flex-wrap: nowrap;
     justify-content: flex-start;
+    gap: 4px;
+    padding: 0;
+    margin-bottom: 16px;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+}
+
+.playground-section-tabs .tab-button {
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    padding: 8px 12px 10px;
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    box-shadow: none;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.playground-section-tabs .tab-button:hover {
+    background: transparent;
+    color: var(--text-strong);
+}
+
+.playground-section-tabs .tab-button.active {
+    background: transparent;
+    color: var(--accent-text);
+    border-bottom-color: var(--accent);
+    box-shadow: none;
+    font-weight: 600;
 }
 
 .web-operation-tabs {

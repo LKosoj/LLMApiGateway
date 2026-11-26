@@ -100,7 +100,7 @@
       "cost": "The final charge in USD is in usage.cost for JSON, X-Cost-USD for files and text, and the usage event for streams. The total includes accounted components and billable attempts before fallback. The gateway returns original amounts in other currencies in billing. For background PDF and video jobs, the amount appears after confirmation.",
       "linkText": "Analytics",
       "text001": "Usage by key and model is available on the",
-      "text002": "page.",
+      "text002": " page.",
       "title": "4. Check usage"
     }
   },

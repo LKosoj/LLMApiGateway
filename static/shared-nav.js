@@ -23,6 +23,8 @@
     let identityLogoutLabel = null;
 
     let sidebarFooter = null;
+    let sidebarHeader = null;
+    let sidebarBrandLabel = null;
     let sidebarOverlay = null;
     let sidebarPanel = null;
     let sidebarDialog = null;
@@ -84,6 +86,7 @@
         if (navToggleButton) navToggleButton.setAttribute('aria-label', i18n.t('common:navigation.toggle'));
         if (navCloseButton) navCloseButton.setAttribute('aria-label', i18n.t('common:navigation.close'));
         if (sidebarOverlay) sidebarOverlay.setAttribute('aria-label', i18n.t('common:navigation.overlay'));
+        if (sidebarBrandLabel) sidebarBrandLabel.textContent = i18n.t('common:appName');
         applyCurrentSidebarMode();
     }
 
@@ -212,7 +215,37 @@
         settings.insertBefore(localeControl, settings.firstChild);
         sidebarFooter.appendChild(settings);
 
-        sidebarPanel.append(navCloseButton, sidebarCollapseButton, navRoot, sidebarFooter);
+        sidebarHeader = document.createElement('div');
+        sidebarHeader.className = 'gateway-sidebar-header';
+        sidebarHeader.setAttribute('data-gateway-sidebar-header', '');
+
+        const brand = document.createElement('div');
+        brand.className = 'gateway-sidebar-brand';
+        const brandMark = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        brandMark.classList.add('gateway-sidebar-brand-mark');
+        brandMark.setAttribute('viewBox', '0 0 24 24');
+        brandMark.setAttribute('aria-hidden', 'true');
+        brandMark.setAttribute('focusable', 'false');
+        const markFrame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        markFrame.setAttribute('x', '3');
+        markFrame.setAttribute('y', '5');
+        markFrame.setAttribute('width', '18');
+        markFrame.setAttribute('height', '14');
+        markFrame.setAttribute('rx', '2.5');
+        const markLine1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        markLine1.setAttribute('d', 'M7 10h10');
+        const markLine2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        markLine2.setAttribute('d', 'M7 14h6');
+        brandMark.append(markFrame, markLine1, markLine2);
+
+        sidebarBrandLabel = document.createElement('span');
+        sidebarBrandLabel.className = 'gateway-sidebar-brand-name';
+        sidebarBrandLabel.textContent = i18n.t('common:appName');
+        brand.append(brandMark, sidebarBrandLabel);
+
+        sidebarHeader.append(brand, navCloseButton, sidebarCollapseButton);
+
+        sidebarPanel.append(sidebarHeader, navRoot, sidebarFooter);
         sidebarOverlay.appendChild(sidebarPanel);
         document.body.insertBefore(sidebarOverlay, document.body.firstChild);
 

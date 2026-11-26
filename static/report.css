@@ -96,7 +96,7 @@ body:not(.dark-mode) .rp-page {
 .rp-page {
     width: min(var(--page-max-width), calc(100% - (var(--page-gutter) * 2)));
     margin: 0 auto;
-    padding: 20px 0 64px;
+    padding: 24px 0 64px;
     box-sizing: border-box;
 }
 
@@ -113,15 +113,17 @@ body:not(.dark-mode) .rp-page {
     margin: 0;
     color: var(--text-strong);
     font-size: 26px;
-    font-weight: 800;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     line-height: 1.2;
 }
 
 .rp-head p {
     margin: 4px 0 0;
-    max-width: 70ch;
-    color: var(--text);
-    font-size: 14px;
+    max-width: 68ch;
+    color: var(--text-muted);
+    font-size: 13.5px;
+    line-height: 1.5;
 }
 
 .rp-actions {
@@ -253,7 +255,7 @@ body:not(.dark-mode) .rp-page {
 }
 
 .rp-kpi {
-    padding: 16px 18px;
+    padding: 16px 20px;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-elevated);
@@ -261,15 +263,16 @@ body:not(.dark-mode) .rp-page {
 
 .rp-kpi-label {
     color: var(--text-muted);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 12.5px;
+    font-weight: 500;
 }
 
 .rp-kpi-value {
     margin-top: 6px;
     color: var(--text-strong);
-    font-size: 30px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     line-height: 1.1;
     font-variant-numeric: tabular-nums;
 }
@@ -277,7 +280,7 @@ body:not(.dark-mode) .rp-page {
 .rp-kpi-note {
     margin-top: 6px;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 12.5px;
 }
 
 .rp-kpi[data-tone="bad"] {
@@ -344,7 +347,9 @@ body:not(.dark-mode) .rp-page {
 .rp-panel-head h2 {
     margin: 0;
     color: var(--text-strong);
-    font-size: 16px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
 }
 
 .rp-hint {
@@ -543,7 +548,7 @@ body:not(.dark-mode) .rp-page {
 
 .rp-chart text {
     fill: var(--text-muted);
-    font-family: var(--font-sans);
+    font-family: var(--font-mono);
     font-size: 11px;
 }
 

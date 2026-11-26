@@ -8,27 +8,21 @@ body.dark-mode,
 body.docs-page,
 body.dark-mode.docs-page {
     background: var(--bg);
-    /* The page background is now the surface under the text: switch it with
-       the theme at once, as the card did, so text never sits on the old colour. */
     transition: color var(--transition-base);
 }
 
 .container {
-    padding: 20px 0 64px;
+    padding: 24px 0 64px;
     border: 0;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
 }
 
-/* Muted and error text now lie on --bg, not on the white card: in the light
-   theme the defaults (#64748b, #dc2626) are about 4.4:1 there, below WCAG AA;
-   these tones are about 5:1. Green and orange text (#16a34a, #d97706) are
-   about 3:1 even on white; these darker tones are about 6:1, also on the
-   tinted notice backgrounds. */
+/* Keep WCAG AA (>= 4.5:1) on --bg and tinted notice surfaces in light theme. */
 body:not(.dark-mode) .container {
-    --text-muted: #5f6b7e;
-    --error: #c81e1e;
+    --text-muted: #565e69;
+    --error: #b91c1c;
     --success: #166534;
     --warning: #92400e;
 }
@@ -37,7 +31,8 @@ body:not(.dark-mode) .container {
     margin: 0 0 20px;
     color: var(--text-strong);
     font-size: 26px;
-    font-weight: 800;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     line-height: 1.2;
 }
 
@@ -49,9 +44,10 @@ body:not(.dark-mode) .container {
 .container > h1 + p {
     margin: 0 0 20px;
     text-align: start;
-    max-width: 70ch;
-    color: var(--text);
-    font-size: 14px;
+    max-width: 68ch;
+    color: var(--text-muted);
+    font-size: 13.5px;
+    line-height: 1.5;
 }
 
 /* Plain text links in the interface colour instead of the browser blue. */
@@ -78,16 +74,20 @@ body:not(.dark-mode) .container {
     background: var(--bg-elevated);
     color: var(--text-strong);
     font: inherit;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 13.5px;
+    font-weight: 500;
     cursor: pointer;
     box-shadow: var(--shadow-sm);
-    transition: background-color var(--transition-fast), border-color var(--transition-fast);
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
 
 :where(.container button:not([class]):hover:not(:disabled)) {
     background: var(--bg-sunken);
     border-color: var(--border-strong);
+}
+
+:where(.container button:not([class]):active:not(:disabled)) {
+    transform: scale(0.985);
 }
 
 :where(.container button:not([class]):disabled) {
@@ -109,12 +109,17 @@ body:not(.dark-mode) .container {
     background: var(--accent);
     color: var(--accent-contrast);
     font: inherit;
-    font-size: 14px;
+    font-size: 13.5px;
     font-weight: 600;
     cursor: pointer;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
 
 :where(.container button).primary:hover:not(:disabled) {
     border-color: var(--accent-hover);
     background: var(--accent-hover);
+}
+
+:where(.container button).primary:active:not(:disabled) {
+    transform: scale(0.985);
 }

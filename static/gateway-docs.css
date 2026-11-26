@@ -43,8 +43,9 @@ body.dark-mode .docs-header {
     margin: 0;
     color: var(--accent-text);
     font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0.01em;
 }
 
 body.dark-mode .docs-kicker {
@@ -77,15 +78,17 @@ body.dark-mode .docs-lead {
 .docs-status {
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    padding: 12px 14px;
+    padding: 6px 12px;
     background: var(--bg-sunken);
     color: var(--text);
-    font-size: 13px;
-    line-height: 1.45;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
 }
 
 .docs-status-block {
-    flex: 0 0 260px;
+    flex: 0 0 auto;
 }
 
 .docs-status-detail {
@@ -218,7 +221,8 @@ body.dark-mode .docs-toc a:hover {
 }
 
 .docs-code-block pre {
-    padding-right: 44px;
+    padding-right: 48px;
+    overflow-x: auto;
 }
 
 .btn-copy {
