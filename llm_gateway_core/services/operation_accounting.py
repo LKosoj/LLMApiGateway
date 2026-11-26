@@ -437,6 +437,7 @@ def _resolve_token_cost(
     *,
     prompt_tokens: int,
     completion_tokens: int,
+    cached_tokens: int = 0,
     provider: str,
     model: str,
     cost_rate_registry: Mapping[tuple[str, str], ModelCostRates],
@@ -449,7 +450,10 @@ def _resolve_token_cost(
             model,
         )
         return DEFAULT_OPERATION_COST_USD, CostSource.OPERATION_DEFAULT
-    for rate in (rates.input_rate, rates.output_rate):
+    rates_to_validate: list[object] = [rates.input_rate, rates.output_rate]
+    if rates.cached_input_rate is not None:
+        rates_to_validate.append(rates.cached_input_rate)
+    for rate in rates_to_validate:
         if (
             isinstance(rate, bool)
             or not isinstance(rate, (int, float))
@@ -465,6 +469,7 @@ def _resolve_token_cost(
     cost = calculate_model_cost_usd(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
         rates=rates,
     )
     if cost is None or not math.isfinite(cost) or cost < 0:
@@ -510,6 +515,7 @@ def _build_token_model_component(
         cost, cost_source = _resolve_token_cost(
             prompt_tokens=prompt,
             completion_tokens=completion,
+            cached_tokens=cached,
             provider=provider,
             model=model,
             cost_rate_registry=cost_rate_registry,
@@ -532,6 +538,7 @@ def _build_token_model_component(
             cost_saved=cost_saved,
             duration_ms=normalized_duration_ms,
             is_estimated=is_estimated,
+            cost_unavailable=cost_source is CostSource.OPERATION_DEFAULT,
         ),
         cost_source=cost_source,
     )

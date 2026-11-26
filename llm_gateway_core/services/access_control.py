@@ -44,6 +44,8 @@ class _UsdBudgetLedgerEntry:
     reserved_usd: float = 0.0
     reservations: list[float] = field(default_factory=list)
     request_reservations: dict[str, float] = field(default_factory=dict)
+    request_requested_estimates: dict[str, float] = field(default_factory=dict)
+    request_allow_partial: dict[str, bool] = field(default_factory=dict)
 
     def budget_enforced(self) -> bool:
         return self.budget_usd is not None and self.budget_usd >= 0
@@ -139,8 +141,17 @@ class UsdBudgetLedger:
             entry.reservations.append(estimate_value)
             return True
 
-    def reserve_request(self, request_id: str, key_id: int, estimate: float) -> bool:
-        """Reserve *estimate* once for a server-owned request identifier."""
+    def reserve_request_amount(
+        self,
+        request_id: str,
+        key_id: int,
+        estimate: float,
+        *,
+        allow_partial: bool = False,
+    ) -> float | None:
+        """Reserve up to *estimate* once for a server-owned request identifier."""
+        if not isinstance(allow_partial, bool):
+            raise AccountingValidationError from None
         estimate_value = _normalize_request_usd(estimate)
         with self._lock:
             entry = self._entries.get(key_id)
@@ -148,19 +159,69 @@ class UsdBudgetLedger:
                 entry = _UsdBudgetLedgerEntry(budget_usd=None, spent_usd=0.0)
             existing = entry.request_reservations.get(request_id)
             if existing is not None:
-                if existing != estimate_value:
+                requested = entry.request_requested_estimates.get(request_id, existing)
+                existing_allow_partial = entry.request_allow_partial.get(request_id, False)
+                if (
+                    requested != estimate_value
+                    or existing_allow_partial is not allow_partial
+                    or (not allow_partial and existing < estimate_value)
+                ):
                     raise AccountingValidationError from None
-                return True
+                return existing
 
-            next_reserved = _request_reserved_total(entry, additional=(estimate_value,))
-            liability = _sum_request_usd(entry.spent_usd, next_reserved)
-            if entry.budget_enforced() and liability > float(entry.budget_usd) + _USD_EPSILON:
-                return False
+            effective_estimate = estimate_value
+            if entry.budget_enforced():
+                current_reserved = _request_reserved_total(entry)
+                current_liability = _sum_request_usd(entry.spent_usd, current_reserved)
+                remaining = float(entry.budget_usd) - current_liability
+                if remaining <= _USD_EPSILON:
+                    return None
+                next_reserved = _request_reserved_total(
+                    entry,
+                    additional=(effective_estimate,),
+                )
+                liability = _sum_request_usd(entry.spent_usd, next_reserved)
+                if liability > float(entry.budget_usd) + _USD_EPSILON:
+                    if not allow_partial:
+                        return None
+                    effective_estimate = min(estimate_value, remaining)
+                    next_reserved = _request_reserved_total(
+                        entry,
+                        additional=(effective_estimate,),
+                    )
+                    _sum_request_usd(entry.spent_usd, next_reserved)
+            else:
+                next_reserved = _request_reserved_total(
+                    entry,
+                    additional=(effective_estimate,),
+                )
+                _sum_request_usd(entry.spent_usd, next_reserved)
 
             self._entries[key_id] = entry
             entry.reserved_usd = next_reserved
-            entry.request_reservations[request_id] = estimate_value
-            return True
+            entry.request_reservations[request_id] = effective_estimate
+            entry.request_requested_estimates[request_id] = estimate_value
+            entry.request_allow_partial[request_id] = allow_partial
+            return effective_estimate
+
+    def reserve_request(
+        self,
+        request_id: str,
+        key_id: int,
+        estimate: float,
+        *,
+        allow_partial: bool = False,
+    ) -> bool:
+        """Reserve *estimate* once for a server-owned request identifier."""
+        return (
+            self.reserve_request_amount(
+                request_id,
+                key_id,
+                estimate,
+                allow_partial=allow_partial,
+            )
+            is not None
+        )
 
     def commit_reserved(self, key_id: int, actual: float, *, reserved: float | None) -> None:
         actual_value = max(0.0, float(actual or 0.0))
@@ -190,6 +251,8 @@ class UsdBudgetLedger:
             next_spent = _sum_request_usd(entry.spent_usd, actual_value)
 
             entry.request_reservations.pop(request_id)
+            entry.request_requested_estimates.pop(request_id, None)
+            entry.request_allow_partial.pop(request_id, None)
             entry.reserved_usd = next_reserved
             entry.spent_usd = next_spent
             return True
@@ -217,6 +280,8 @@ class UsdBudgetLedger:
                 exclude_request_id=request_id,
             )
             entry.request_reservations.pop(request_id)
+            entry.request_requested_estimates.pop(request_id, None)
+            entry.request_allow_partial.pop(request_id, None)
             entry.reserved_usd = next_reserved
             return True
 

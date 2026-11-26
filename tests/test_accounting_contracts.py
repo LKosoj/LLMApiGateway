@@ -1229,3 +1229,45 @@ def test_billing_policy_classifier_rejects_method_mismatches_and_suffix_lookalik
     route_template: str,
 ):
     assert classify_billing_policy(method, route_template) is None
+
+
+def test_accounting_event_billing_fingerprint_stable_for_usd_and_sensitive_to_native_costs() -> None:
+    usd_default = _event(usage=_usage(cost=0.25))
+    usd_explicit_empty = _event(usage=replace(_usage(cost=0.25), native_costs=()))
+    rub_25 = _event(usage=replace(_usage(cost=0.25), native_costs=(("RUB", 25.0),)))
+    rub_26 = _event(usage=replace(_usage(cost=0.25), native_costs=(("RUB", 26.0),)))
+    eur_25 = _event(usage=replace(_usage(cost=0.25), native_costs=(("EUR", 25.0),)))
+
+    assert usd_default.billing_fingerprint == usd_explicit_empty.billing_fingerprint
+    assert rub_25.billing_fingerprint != usd_default.billing_fingerprint
+    assert rub_26.billing_fingerprint != rub_25.billing_fingerprint
+    assert eur_25.billing_fingerprint != rub_25.billing_fingerprint
+
+
+def test_component_sum_event_with_non_usd_component_changes_fingerprint() -> None:
+    usd_component = BillingComponent(
+        "provider-usd",
+        "model-usd",
+        _usage(cost=0.25),
+        CostSource.UPSTREAM,
+    )
+    rub_component = BillingComponent(
+        "provider-rub",
+        "model-rub",
+        replace(_usage(cost=0.25), native_costs=(("RUB", 25.0),)),
+        CostSource.UPSTREAM,
+    )
+    usd_event = _event(
+        components=(usd_component,),
+        usage=build_component_sum_usage((usd_component,), duration_ms=20),
+        cost_source=CostSource.COMPONENT_SUM,
+    )
+    rub_event = _event(
+        components=(rub_component,),
+        usage=build_component_sum_usage((rub_component,), duration_ms=20),
+        cost_source=CostSource.COMPONENT_SUM,
+    )
+
+    assert usd_event.usage.native_costs == ()
+    assert rub_event.usage.native_costs == (("RUB", 25.0),)
+    assert rub_event.billing_fingerprint != usd_event.billing_fingerprint

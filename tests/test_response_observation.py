@@ -1114,6 +1114,117 @@ def test_json_keepalive_still_buffers_partial_objects() -> None:
     run_async(scenario())
 
 
+def test_json_keepalive_with_cost_strips_content_length_and_does_not_mutate_sent_start() -> None:
+    async def scenario() -> None:
+        services = make_app_services()
+        probe = _Probe()
+        receipt = AccountingReceipt(
+            source_status=SourceStatus.ACCEPTED,
+            projection_status=ProjectionStatus.APPLIED,
+            event_id="request-1",
+            billing_fingerprint="a" * 64,
+            response_cost_usd=0.25,
+            native_costs=(("RUB", 24.5),),
+        )
+        document = b'{"answer":"ok","usage":{"total_tokens":3}}'
+        source = [
+            _json_start(
+                (b"x-llmgateway-json-keepalive", b"1"),
+                (b"content-length", str(len(document) + 1).encode()),
+            ),
+            {"type": "http.response.body", "body": b"\n", "more_body": True},
+            {"type": "http.response.body", "body": document},
+        ]
+
+        app_state = FastAPI()
+        app_state.state.services = services
+        scope = _scope(app_state)
+        sent: list[Message] = []
+        initial_headers_ref: list[tuple[bytes, bytes]] | None = None
+        initial_headers_snapshot: list[tuple[bytes, bytes]] = []
+
+        async def app(_scope: Scope, _receive, send) -> None:
+            for message in source:
+                await send(dict(message))
+
+        async def receive() -> Message:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: Message) -> None:
+            nonlocal initial_headers_ref, initial_headers_snapshot
+            if message.get("type") == "http.response.start":
+                initial_headers_ref = message["headers"]
+                initial_headers_snapshot = list(message["headers"])
+            sent.append(message)
+
+        observation = _observation(services, probe, receipt=receipt)
+
+        async def prepare(request: Request) -> None:
+            publish_response_observation(request.scope, observation)
+
+        middleware = ResponseObservationMiddleware(app, request_preparer=prepare)
+        await middleware(scope, receive, send)
+
+        sent_start = sent[0]
+        assert sent_start["headers"] is initial_headers_ref
+        assert sent_start["headers"] == initial_headers_snapshot
+        headers = {name.lower(): value for name, value in sent_start["headers"]}
+        assert b"content-length" not in headers
+        assert b"x-cost-usd" not in headers
+
+        parsed = json.loads(_body(sent))
+        assert parsed == {
+            "answer": "ok",
+            "usage": {"total_tokens": 3, "cost": 0.25},
+            "billing": {"currency": "RUB", "net_amount": 24.5, "status": "settled"},
+        }
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
+
+
+def test_json_keepalive_without_whitespace_keeps_updated_content_length_and_cost_header() -> None:
+    async def scenario() -> None:
+        services = make_app_services()
+        probe = _Probe()
+        receipt = AccountingReceipt(
+            source_status=SourceStatus.ACCEPTED,
+            projection_status=ProjectionStatus.APPLIED,
+            event_id="request-1",
+            billing_fingerprint="a" * 64,
+            response_cost_usd=0.25,
+            native_costs=(("RUB", 24.5),),
+        )
+        document = b'{"answer":"ok","usage":{"total_tokens":3}}'
+        source = [
+            _json_start(
+                (b"x-llmgateway-json-keepalive", b"1"),
+                (b"content-length", str(len(document)).encode()),
+            ),
+            {"type": "http.response.body", "body": document},
+        ]
+
+        sent = await _run_observed(
+            source,
+            services=services,
+            observation=_observation(services, probe, receipt=receipt),
+            probe=probe,
+        )
+
+        headers = {name.lower(): value for name, value in sent[0]["headers"]}
+        result = _body(sent)
+        assert headers[b"x-cost-usd"] == b"0.25"
+        assert int(headers[b"content-length"]) == len(result)
+        assert json.loads(result) == {
+            "answer": "ok",
+            "usage": {"total_tokens": 3, "cost": 0.25},
+            "billing": {"currency": "RUB", "net_amount": 24.5, "status": "settled"},
+        }
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
+
+
 def test_response_finalizer_duplicate_signals_share_one_result_identity() -> None:
     async def scenario() -> None:
         supervisor = TaskSupervisor()

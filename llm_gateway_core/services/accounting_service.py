@@ -326,6 +326,8 @@ _RetainedKey = tuple[str, str]
 @dataclass(slots=True)
 class _AccountingSession:
     reservation: AccountingReservation
+    requested_estimate_usd: float = 0.0
+    allow_partial: bool = False
     state: str = "reserved"
     event_key: _RetainedKey | None = None
     owner_task: asyncio.Task[AccountingReceipt | None] | None = None
@@ -1141,10 +1143,13 @@ class AccountingService:
         rpm_limit: int | None,
         tpm_limit: int | None,
         estimate_usd: float,
+        allow_partial: bool = False,
     ) -> AccountingReservation:
         """Acquire one bounded request session before upstream dispatch."""
 
         self._bind_loop()
+        if not isinstance(allow_partial, bool):
+            raise AccountingValidationError
         key_id = None if api_key_id is None else _api_key_id(api_key_id)
         budget = _optional_non_negative_float(budget_usd)
         spent = _non_negative_float(spent_usd)
@@ -1163,10 +1168,13 @@ class AccountingService:
                 raise AccountingError(AccountingErrorCode.ADMISSION_CLOSED)
             existing_id = self._session_by_request.get(reservation.request_id)
             if existing_id is not None:
-                existing = self._sessions[existing_id].reservation
+                existing_session = self._sessions[existing_id]
+                existing = existing_session.reservation
                 if (
                     existing.api_key_id != key_id
-                    or existing.reserved_usd != estimate
+                    or existing_session.requested_estimate_usd != estimate
+                    or existing_session.allow_partial is not allow_partial
+                    or (not allow_partial and existing.reserved_usd < estimate)
                 ):
                     raise AccountingError(AccountingErrorCode.RESERVATION_CONFLICT)
                 return existing
@@ -1188,12 +1196,21 @@ class AccountingService:
                     self._key_limits[key_id] = (rpm, tpm)
                 else:
                     rpm, tpm = self._key_limits[key_id]
-                if not self._budget_ledger.reserve_request(
+                reserved_amount = self._budget_ledger.reserve_request_amount(
                     reservation.request_id,
                     key_id,
                     estimate,
-                ):
+                    allow_partial=allow_partial,
+                )
+                if reserved_amount is None:
                     raise AccountingError(AccountingErrorCode.BUDGET_EXHAUSTED)
+                if reserved_amount != reservation.reserved_usd:
+                    reservation = AccountingReservation(
+                        reservation_id=reservation.reservation_id,
+                        request_id=reservation.request_id,
+                        api_key_id=reservation.api_key_id,
+                        reserved_usd=reserved_amount,
+                    )
                 try:
                     rate_error = self._rate_limiter.admit_request(
                         reservation.request_id,
@@ -1230,6 +1247,8 @@ class AccountingService:
 
             self._sessions[reservation.reservation_id] = _AccountingSession(
                 reservation=reservation,
+                requested_estimate_usd=estimate,
+                allow_partial=allow_partial,
             )
             self._session_by_request[reservation.request_id] = reservation.reservation_id
             if key_id is not None:
@@ -1274,6 +1293,7 @@ class AccountingService:
         *,
         request_id: str,
         estimate_usd: float,
+        allow_partial: bool = False,
     ) -> DeepResearchChildAdmission:
         """Reserve one ordinary accounting session under a signed parent token."""
         self._bind_loop()
@@ -1290,6 +1310,7 @@ class AccountingService:
                 rpm_limit=None,
                 tpm_limit=None,
                 estimate_usd=estimate_usd,
+                allow_partial=allow_partial,
             )
         except BaseException:
             self._deep_research_accounting.abort_child(prepared)

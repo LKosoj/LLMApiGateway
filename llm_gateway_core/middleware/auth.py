@@ -556,6 +556,7 @@ async def _admit_accounting_if_needed(
             rpm_limit=rpm_limit,
             tpm_limit=tpm_limit,
             estimate_usd=services.usd_budget_ledger.default_estimate_usd,
+            allow_partial=True,
         )
     else:
         if not isinstance(child_token, str):
@@ -564,6 +565,7 @@ async def _admit_accounting_if_needed(
             child_token,
             request_id=request_id,
             estimate_usd=services.usd_budget_ledger.default_estimate_usd,
+            allow_partial=True,
         )
         reservation = child_admission.reservation
         api_key_id = reservation.api_key_id

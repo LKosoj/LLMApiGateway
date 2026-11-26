@@ -16,7 +16,10 @@ from llm_gateway_core.services.pricing_autofill import (
     PricingSource,
     classify_pricing_rows,
 )
-from llm_gateway_core.utils.usage_tracking import ModelCostRates
+from llm_gateway_core.utils.usage_tracking import (
+    ModelCostRates,
+    build_model_cost_rate_registry,
+)
 
 
 def _classify(**kwargs):
@@ -159,3 +162,44 @@ def test_rows_are_sorted_by_provider_then_model():
     )
     pairs = [(row.provider, row.model) for row in classification.rows]
     assert pairs == sorted(pairs)
+
+
+def test_classify_pricing_rows_ignores_provider_currency_entries():
+    # Case 1: RUB provider with configured models
+    registry_with_models = build_model_cost_rate_registry({
+        "rub_provider": {
+            "usage_cost_currency": "RUB",
+            "usage_cost_units_per_usd": 90.0,
+            "models": {
+                "rub-model": {"input_rate": 1.5, "output_rate": 3.5},
+            },
+        },
+    })
+    classification_with_models = _classify(
+        used_models={("rub_provider", "rub-model"), ("rub_provider", "unpriced-model")},
+        configured_registry=registry_with_models,
+    )
+    pairs = [(row.provider, row.model) for row in classification_with_models.rows]
+    assert pairs == [
+        ("rub_provider", "rub-model"),
+        ("rub_provider", "unpriced-model"),
+    ]
+    configured_row = _row(classification_with_models, "rub_provider", "rub-model")
+    assert configured_row.source is PricingSource.CONFIGURED
+    assert configured_row.input_rate == 1.5
+    assert configured_row.output_rate == 3.5
+    unpriced_row = _row(classification_with_models, "rub_provider", "unpriced-model")
+    assert unpriced_row.source is PricingSource.UPSTREAM_ONLY
+
+    # Case 2: RUB provider without models block
+    registry_without_models = build_model_cost_rate_registry({
+        "rub_provider": {
+            "usage_cost_currency": "RUB",
+            "usage_cost_units_per_usd": 90.0,
+        },
+    })
+    classification_without_models = _classify(
+        configured_registry=registry_without_models,
+    )
+    assert classification_without_models.rows == []
+    assert classification_without_models.autofill_additions == []

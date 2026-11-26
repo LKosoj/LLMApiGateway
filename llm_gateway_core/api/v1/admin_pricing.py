@@ -41,6 +41,7 @@ from ...utils.html_cache import get_template
 from ...utils.usage_tracking import (
     ModelCostRates,
     calculate_model_cost_usd,
+    iter_model_cost_rates,
 )
 from .config_update_http import (
     ConfigRequestInvalid,
@@ -181,7 +182,7 @@ def _require_master(request: Request) -> None:
 
 
 def _pricing_items_from_registry(
-    registry: Mapping[tuple[str, str], ModelCostRates],
+    registry: Mapping[tuple[str, str | None], Any],
 ) -> list[PricingListItem]:
     return [
         PricingListItem(
@@ -191,7 +192,7 @@ def _pricing_items_from_registry(
             input_rate=rates.input_rate,
             output_rate=rates.output_rate,
         )
-        for (provider, model), rates in sorted(registry.items())
+        for (provider, model), rates in sorted(iter_model_cost_rates(registry))
     ]
 
 
@@ -325,6 +326,7 @@ def patch_provider_pricing(
                 continue
             metadata.pop("input_rate", None)
             metadata.pop("output_rate", None)
+            metadata.pop("cached_input_rate", None)
             if not metadata:
                 del models[model_name]
 
@@ -527,7 +529,7 @@ async def calculate_cost(
         return config_error_response(exc)
 
     rates = snapshot.cost_rate_registry.get((payload.provider, payload.model))
-    if rates is None:
+    if not isinstance(rates, ModelCostRates):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Model '{payload.model}' for provider '{payload.provider}' not found in pricing registry",

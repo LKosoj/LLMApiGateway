@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -1491,6 +1492,53 @@ def _coerce_usage_summary(row) -> dict:
     }
 
 
+async def _aggregate_native_costs(
+    db: aiosqlite.Connection,
+    where_clause: str,
+    params: list,
+) -> dict[str, float]:
+    native_where = (
+        f"{where_clause} AND native_costs IS NOT NULL"
+        if where_clause
+        else "WHERE native_costs IS NOT NULL"
+    )
+    cursor = await db.execute(
+        f"SELECT native_costs FROM tokens_usage {native_where}",
+        params,
+    )
+    amounts_by_currency: dict[str, list[float]] = {}
+    for row in await cursor.fetchall():
+        raw_value = row["native_costs"]
+        try:
+            parsed = json.loads(raw_value)
+            if not isinstance(parsed, list):
+                raise ValueError("native_costs must be a JSON list")
+            pairs: list[tuple[str, float]] = []
+            for item in parsed:
+                if (
+                    not isinstance(item, (list, tuple))
+                    or len(item) != 2
+                    or not isinstance(item[0], str)
+                    or not item[0].strip()
+                    or isinstance(item[1], bool)
+                    or not isinstance(item[1], (int, float))
+                ):
+                    raise ValueError("invalid native_costs entry")
+                amount = float(item[1])
+                if not math.isfinite(amount) or amount < 0:
+                    raise ValueError("invalid native_costs amount")
+                pairs.append((item[0], 0.0 if amount == 0.0 else amount))
+        except (TypeError, ValueError, OverflowError) as exc:
+            logger.warning("Skipping malformed native_costs row in tokens_usage: %s", exc)
+            continue
+        for currency, amount in pairs:
+            amounts_by_currency.setdefault(currency, []).append(amount)
+    return {
+        currency: math.fsum(amounts)
+        for currency, amounts in sorted(amounts_by_currency.items())
+    }
+
+
 def validate_usage_records_pagination(limit: int, offset: int) -> tuple[int, int]:
     if limit < 0 or limit > MAX_USAGE_RECORDS_LIMIT:
         raise ValueError(f"Invalid limit. Must be between 0 and {MAX_USAGE_RECORDS_LIMIT}.")
@@ -2804,6 +2852,9 @@ class TokensUsageDB:
                     params,
                 )
                 summary = _coerce_usage_summary(await cursor.fetchone())
+                native_costs = await _aggregate_native_costs(db, where_clause, params)
+                if native_costs:
+                    summary["native_costs"] = native_costs
 
                 unfiltered = not any(
                     [
@@ -3104,7 +3155,11 @@ class TokensUsageDB:
                     """,
                     params,
                 )
-                return _coerce_usage_summary(await cursor.fetchone())
+                summary = _coerce_usage_summary(await cursor.fetchone())
+                native_costs = await _aggregate_native_costs(db, where_clause, params)
+                if native_costs:
+                    summary["native_costs"] = native_costs
+                return summary
         except Exception as e:
             logger.error("Error retrieving analytics usage summary data: %s", e)
             return _coerce_usage_summary(None)

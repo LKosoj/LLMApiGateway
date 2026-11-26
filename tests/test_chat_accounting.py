@@ -515,3 +515,51 @@ def test_direct_chat_partial_cache_usage_preserves_cost_and_event(upstream_cost)
         event.usage.cached_tokens,
     ) == (2060, 806, 2866, 92)
     assert event.usage.cost == pytest.approx(expected)
+
+
+def test_direct_chat_observation_uses_cached_input_rate() -> None:
+    registry = MappingProxyType(
+        {("provider", "model"): ModelCostRates(input_rate=4.0, output_rate=10.0, cached_input_rate=0.5)}
+    )
+    observation = build_direct_chat_terminal_observation(
+        {
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "prompt_tokens_details": {"cached_tokens": 600},
+            }
+        },
+        provider="provider",
+        model="model",
+        cost_rate_registry=registry,
+    )
+
+    expected = (400 * 4.0 + 600 * 0.5 + 200 * 10.0) / 1_000_000
+    assert observation.usage.cost == pytest.approx(expected)
+    assert observation.usage.cost_unavailable is False
+    assert observation.components[0].cost_source is CostSource.TOKEN_REGISTRY
+
+
+def test_direct_chat_observation_without_tariff_sets_cost_unavailable() -> None:
+    observation = build_direct_chat_terminal_observation(
+        {
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+            }
+        },
+        provider="provider",
+        model="unpriced-model",
+        cost_rate_registry=MappingProxyType({}),
+    )
+
+    assert observation.usage.cost_unavailable is True
+    assert observation.components[0].cost_source is CostSource.OPERATION_DEFAULT
+
+    event = build_chat_accounting_event(
+        _context("/v1/chat/completions"),
+        observation,
+        gateway_model="gateway-model",
+        occurred_at=NOW,
+    )
+    assert event.usage.cost_unavailable is True

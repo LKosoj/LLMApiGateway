@@ -164,6 +164,7 @@ def _add_usage(
     raw_cost_incomplete = bool(usage.get("_cost_incomplete"))
     prompt = int(extracted.get("prompt_tokens") or 0)
     completion = int(extracted.get("completion_tokens") or 0)
+    cached = int(extracted.get("cached_tokens") or 0)
     total = int(extracted.get("total_tokens") or (prompt + completion))
     accumulator["prompt_tokens"] += prompt
     accumulator["completion_tokens"] += completion
@@ -178,6 +179,7 @@ def _add_usage(
         cost = calculate_model_cost_usd(
             prompt_tokens=prompt,
             completion_tokens=completion,
+            cached_tokens=cached,
             rates=cost_rate_registry.get((str(member.get("provider")), str(member.get("model")))),
         )
 

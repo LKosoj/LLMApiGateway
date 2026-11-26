@@ -1533,3 +1533,43 @@ def test_get_dashboard_usage_computes_nearest_rank_percentiles(
     assert summary["ttft_max_ms"] == 500
     assert summary["ttft_p50_ms"] == 300
     assert summary["ttft_p95_ms"] == 500
+
+
+def test_accept_component_sum_with_non_usd_component_round_trips_and_audits_without_conflict(
+    source_db: TokensUsageDB,
+) -> None:
+    components = (
+        BillingComponent(
+            "provider-usd",
+            "model-usd",
+            _usage(cost=0.1),
+            CostSource.TOKEN_REGISTRY,
+        ),
+        BillingComponent(
+            "provider-rub",
+            "model-rub",
+            replace(_usage(prompt_tokens=4, completion_tokens=6, cost=0.25), native_costs=(("RUB", 25.0),)),
+            CostSource.UPSTREAM,
+        ),
+    )
+    event = _charge(
+        "event-non-usd-components",
+        components=components,
+        usage=build_component_sum_usage(components, duration_ms=150),
+        cost_source=CostSource.COMPONENT_SUM,
+    )
+
+    accepted = source_db.accept_accounting_event(event)
+    duplicate = source_db.accept_accounting_event(event)
+    stored = source_db.get_accounting_event(event.event_id)
+    audit_rows = source_db.list_accounting_source_audit_rows(limit=10)
+
+    assert accepted.status is SourceStatus.ACCEPTED
+    assert duplicate.status is SourceStatus.DUPLICATE
+    assert stored is not None
+    assert stored.billing_fingerprint == event.billing_fingerprint
+    assert stored.event.usage.native_costs == (("RUB", 25.0),)
+    assert len(audit_rows) == 1
+    assert audit_rows[0].event_id == event.event_id
+    assert audit_rows[0].billing_fingerprint == event.billing_fingerprint
+    assert audit_rows[0].row_kind is AccountingSourceAuditKind.OUTBOX

@@ -336,7 +336,7 @@ def test_missing_token_rate_uses_default_cost() -> None:
     )
 
     assert component.usage.cost == DEFAULT_OPERATION_COST_USD
-    assert component.usage.cost_unavailable is False
+    assert component.usage.cost_unavailable is True
     assert component.cost_source is CostSource.OPERATION_DEFAULT
 
 
@@ -992,3 +992,115 @@ def test_openai_prompt_still_rejects_complete_conflicting_anthropic_buckets():
 def test_partial_cache_buckets_cannot_exceed_total_prompt(partial_cache):
     with pytest.raises(AccountingValidationError):
         _parse_token({"usage": {"prompt_tokens": 2060, "completion_tokens": 806, **partial_cache}})
+
+
+def test_token_component_applies_cached_input_rate_for_openai_usage() -> None:
+    registry = MappingProxyType(
+        {("trusted-provider", "trusted-model"): ModelCostRates(10.0, 20.0, cached_input_rate=1.0)}
+    )
+    component = build_token_model_component(
+        {
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+                "prompt_tokens_details": {"cached_tokens": 600},
+            }
+        },
+        provider="trusted-provider",
+        model="trusted-model",
+        cost_rate_registry=registry,
+    )
+
+    expected = (400 * 10.0 + 600 * 1.0 + 500 * 20.0) / 1_000_000
+    assert component.usage.cost == pytest.approx(expected)
+    assert component.usage.cost_unavailable is False
+    assert component.cost_source is CostSource.TOKEN_REGISTRY
+
+
+def test_token_component_applies_cached_input_rate_for_anthropic_usage() -> None:
+    registry = MappingProxyType(
+        {("trusted-provider", "trusted-model"): ModelCostRates(10.0, 20.0, cached_input_rate=1.0)}
+    )
+    component = build_token_model_component(
+        {
+            "usage": {
+                "input_tokens": 300,
+                "cache_creation_input_tokens": 100,
+                "cache_read_input_tokens": 600,
+                "output_tokens": 500,
+            }
+        },
+        provider="trusted-provider",
+        model="trusted-model",
+        cost_rate_registry=registry,
+    )
+
+    expected = (400 * 10.0 + 600 * 1.0 + 500 * 20.0) / 1_000_000
+    assert component.usage.prompt_tokens == 1000
+    assert component.usage.cached_tokens == 600
+    assert component.usage.cost == pytest.approx(expected)
+    assert component.usage.cost_unavailable is False
+    assert component.cost_source is CostSource.TOKEN_REGISTRY
+
+
+def test_token_component_prefers_upstream_cost_over_cached_input_rate() -> None:
+    registry = MappingProxyType(
+        {("trusted-provider", "trusted-model"): ModelCostRates(10.0, 20.0, cached_input_rate=1.0)}
+    )
+    component = build_token_model_component(
+        {
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+                "prompt_tokens_details": {"cached_tokens": 600},
+                "cost": 0.123,
+            }
+        },
+        provider="trusted-provider",
+        model="trusted-model",
+        cost_rate_registry=registry,
+    )
+
+    assert component.usage.cost == pytest.approx(0.123)
+    assert component.usage.cost_unavailable is False
+    assert component.cost_source is CostSource.UPSTREAM
+
+
+@pytest.mark.parametrize(
+    "bad_cached_rate",
+    [-0.1, True, False, float("nan"), float("inf"), "1.0"],
+)
+def test_invalid_cached_input_rate_marks_cost_unavailable(bad_cached_rate: object) -> None:
+    registry = MappingProxyType(
+        {
+            ("trusted-provider", "trusted-model"): ModelCostRates(
+                10.0,
+                20.0,
+                cached_input_rate=bad_cached_rate,  # type: ignore[arg-type]
+            )
+        }
+    )
+    component = build_token_model_component(
+        {
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+                "prompt_tokens_details": {"cached_tokens": 600},
+            }
+        },
+        provider="trusted-provider",
+        model="trusted-model",
+        cost_rate_registry=registry,
+    )
+
+    assert component.usage.cost == DEFAULT_OPERATION_COST_USD
+    assert component.usage.cost_unavailable is True
+    assert component.cost_source is CostSource.OPERATION_DEFAULT
+
+
+def test_operation_unit_without_calculator_keeps_cost_unavailable_false() -> None:
+    observation = _parse_flat({})
+
+    assert observation.usage.cost == DEFAULT_OPERATION_COST_USD
+    assert observation.usage.cost_unavailable is False
+    assert observation.cost_source is CostSource.OPERATION_DEFAULT

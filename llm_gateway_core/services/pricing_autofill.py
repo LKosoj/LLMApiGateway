@@ -24,12 +24,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from ..utils.usage_tracking import iter_model_cost_rates
 from .accounting import DEFAULT_OPERATION_COST_USD
 from .model_policy import is_model_excluded
 
 if TYPE_CHECKING:
     from ..config.loader import ConfigLoader
-    from ..utils.usage_tracking import ModelCostRates
 
 OPENROUTER_PROVIDER_NAME = "openrouter"
 _OPENROUTER_FREE_SUFFIX = ":free"
@@ -244,7 +244,7 @@ def _default_row(provider: str, model: str, source: PricingSource) -> PricingRow
 def classify_pricing_rows(
     *,
     used_models: set[tuple[str, str]],
-    configured_registry: Mapping[tuple[str, str], "ModelCostRates"],
+    configured_registry: Mapping[tuple[str, str | None], Any],
     operation_model_pairs: set[tuple[str, str]],
     openrouter_catalog: Mapping[str, Mapping[str, Any]] | None,
 ) -> PricingClassification:
@@ -258,10 +258,11 @@ def classify_pricing_rows(
     rows: list[PricingRow] = []
     autofill_additions: list[PricingAutofillAddition] = []
 
-    all_pairs = set(configured_registry.keys()) | used_models
+    configured_models = dict(iter_model_cost_rates(configured_registry))
+    all_pairs = set(configured_models.keys()) | used_models
 
     for provider, model in sorted(all_pairs):
-        rates = configured_registry.get((provider, model))
+        rates = configured_models.get((provider, model))
         if rates is not None:
             rows.append(
                 PricingRow(

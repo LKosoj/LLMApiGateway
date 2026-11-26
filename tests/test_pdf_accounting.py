@@ -31,6 +31,7 @@ from llm_gateway_core.services.accounting import (
     classify_billing_policy,
 )
 from llm_gateway_core.services.rate_limiter import RateLimiter
+from llm_gateway_core.utils.usage_tracking import ProviderCostCurrency
 from tests._async_compat import run_async
 from tests.runtime_test_support import make_app_services, make_runtime_snapshot
 
@@ -61,6 +62,7 @@ def _request(
     request_id: str = "request-1",
     api_key_id: int | None = 7,
     calculators: dict[tuple[str, str], OperationCostCalculator] | None = None,
+    cost_rate_registry: dict[tuple[str, str | None], object] | None = None,
     services=None,
     with_context: bool = True,
 ) -> tuple[Request, object]:
@@ -80,6 +82,7 @@ def _request(
     )
     services = services or _services()
     snapshot = make_runtime_snapshot(
+        cost_rate_registry=cost_rate_registry or {},
         operation_cost_calculator_registry=calculators or {},
     )
     app = FastAPI()
@@ -662,6 +665,74 @@ def test_pdf_missing_accounting_context_fails_before_downstream() -> None:
         messages = await _send_response(request, response)
         assert _wire_body(messages) == response.body
         services.accounting_service.commit.assert_not_awaited()
+        services.accounting_service.release.assert_not_awaited()
+        _assert_no_legacy_writes(services)
+
+    run_async(scenario())
+
+
+@pytest.mark.parametrize("endpoint", ["convert_pdf", "create_pdf_job", "get_pdf_job"])
+@pytest.mark.parametrize(
+    ("usage_fields", "expected_cost", "expected_native_costs", "expected_source"),
+    [
+        ({"usage": {"cost": 50.0}}, 0.5, (("RUB", 50.0),), CostSource.UPSTREAM),
+        ({"usage": {"cost_rub": 25.0}}, 0.25, (("RUB", 25.0),), CostSource.UPSTREAM),
+        ({"usage": {"cost": 0}}, 0.0, (("RUB", 0.0),), CostSource.UPSTREAM),
+        ({}, DEFAULT_OPERATION_COST_USD, (), CostSource.OPERATION_DEFAULT),
+    ],
+)
+def test_pdf_endpoints_convert_rub_provider_usage_to_usd_and_native_costs(
+    endpoint: str,
+    usage_fields: dict[str, object],
+    expected_cost: float,
+    expected_native_costs: tuple[tuple[str, float], ...],
+    expected_source: CostSource,
+) -> None:
+    async def scenario() -> None:
+        rub_route = _route("rub-converter", "pdf-model")
+        cost_rate_registry = {
+            ("rub-converter", None): ProviderCostCurrency(currency="RUB", units_per_usd=100.0),
+        }
+        if endpoint == "convert_pdf":
+            method, route_template, path = "POST", "/v1/pdf/convert", "/v1/pdf/convert"
+            payload = {"status": "completed", **usage_fields}
+        elif endpoint == "create_pdf_job":
+            method, route_template, path = "POST", "/v1/pdf/jobs", "/v1/pdf/jobs"
+            payload = {"id": "job-rub-1", "status": "completed", **usage_fields}
+        else:
+            method, route_template, path = "GET", "/v1/pdf/jobs/{job_id}", "/v1/pdf/jobs/job-rub-1"
+            payload = {"id": "job-rub-1", "status": "completed", **usage_fields}
+
+        request, services = _request(
+            method,
+            route_template,
+            path=path,
+            cost_rate_registry=cost_rate_registry,
+        )
+        events: list[object] = []
+        _install_successful_commit(services.accounting_service, events)
+
+        if endpoint == "convert_pdf":
+            with _post_dependencies(payload, route=rub_route):
+                response = await pdf.convert_pdf(request)
+        elif endpoint == "create_pdf_job":
+            with _post_dependencies(payload, route=rub_route):
+                response = await pdf.create_pdf_job(request)
+        else:
+            with _get_dependencies(payload, route=rub_route):
+                response = await pdf.get_pdf_job("job-rub-1", "gateway/pdf", request)
+
+        assert response.status_code == 200
+        messages = await _send_response(request, response)
+        assert _wire_body(messages) == response.body
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "rub-converter"
+        assert event.model == "pdf-model"
+        assert event.usage.cost == pytest.approx(expected_cost)
+        assert event.usage.native_costs == expected_native_costs
+        assert event.cost_source is expected_source
+        services.accounting_service.commit.assert_awaited_once()
         services.accounting_service.release.assert_not_awaited()
         _assert_no_legacy_writes(services)
 

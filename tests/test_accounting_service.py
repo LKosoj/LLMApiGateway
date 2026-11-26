@@ -32,6 +32,7 @@ from llm_gateway_core.services.accounting import (
     AccountingSourceAuditKind,
     AccountingSourceAuditRow,
     AccountingUsage,
+    AccountingValidationError,
     CostSource,
     ProjectionStatus,
     ReconciliationMode,
@@ -3794,5 +3795,164 @@ def test_stop_drain_timeout_stops_projector_and_raises_drain_failed() -> None:
         assert snapshot.state is AccountingHealthState.FAILED
         assert snapshot.accepting is False
         assert service._projector_task is None
+
+    run_async(scenario())
+
+
+def test_reserve_allow_partial_clamps_reserved_usd_and_preserves_idempotency() -> None:
+    async def scenario() -> None:
+        source = FakeSource()
+        sink = FakeSink()
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        service = _service(source, sink, budget_ledger=ledger)
+        await service.start()
+
+        with pytest.raises(AccountingError) as err:
+            await service.reserve(
+                request_id="req-strict",
+                api_key_id=7,
+                budget_usd=2.0,
+                spent_usd=0.0,
+                rpm_limit=None,
+                tpm_limit=None,
+                estimate_usd=5.0,
+                allow_partial=False,
+            )
+        assert err.value.code is AccountingErrorCode.BUDGET_EXHAUSTED
+        assert ledger.reserved_for(7) == 0.0
+
+        reservation = await service.reserve(
+            request_id="req-partial",
+            api_key_id=7,
+            budget_usd=2.0,
+            spent_usd=0.0,
+            rpm_limit=None,
+            tpm_limit=None,
+            estimate_usd=5.0,
+            allow_partial=True,
+        )
+        assert reservation.reserved_usd == 2.0
+        assert ledger.reserved_for(7) == 2.0
+
+        duplicate = await service.reserve(
+            request_id="req-partial",
+            api_key_id=7,
+            budget_usd=2.0,
+            spent_usd=0.0,
+            rpm_limit=None,
+            tpm_limit=None,
+            estimate_usd=5.0,
+            allow_partial=True,
+        )
+        assert duplicate == reservation
+
+        with pytest.raises(AccountingError) as conflict:
+            await service.reserve(
+                request_id="req-partial",
+                api_key_id=7,
+                budget_usd=2.0,
+                spent_usd=0.0,
+                rpm_limit=None,
+                tpm_limit=None,
+                estimate_usd=2.0,
+                allow_partial=True,
+            )
+        assert conflict.value.code is AccountingErrorCode.RESERVATION_CONFLICT
+
+        with pytest.raises(AccountingError) as partial_flag_conflict:
+            await service.reserve(
+                request_id="req-partial",
+                api_key_id=7,
+                budget_usd=2.0,
+                spent_usd=0.0,
+                rpm_limit=None,
+                tpm_limit=None,
+                estimate_usd=5.0,
+                allow_partial=False,
+            )
+        assert partial_flag_conflict.value.code is AccountingErrorCode.RESERVATION_CONFLICT
+
+        with pytest.raises(AccountingValidationError):
+            await service.reserve(
+                request_id="req-bad-flag",
+                api_key_id=7,
+                budget_usd=2.0,
+                spent_usd=0.0,
+                rpm_limit=None,
+                tpm_limit=None,
+                estimate_usd=1.0,
+                allow_partial=1,  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(AccountingError) as exhausted:
+            await service.reserve(
+                request_id="req-second",
+                api_key_id=7,
+                budget_usd=2.0,
+                spent_usd=0.0,
+                rpm_limit=None,
+                tpm_limit=None,
+                estimate_usd=5.0,
+                allow_partial=True,
+            )
+        assert exhausted.value.code is AccountingErrorCode.BUDGET_EXHAUSTED
+
+        assert await service.release(reservation) is True
+        assert ledger.reserved_for(7) == 0.0
+
+        with pytest.raises(AccountingError) as zero_budget:
+            await service.reserve(
+                request_id="req-zero-budget",
+                api_key_id=8,
+                budget_usd=0.0,
+                spent_usd=0.0,
+                rpm_limit=None,
+                tpm_limit=None,
+                estimate_usd=0.0,
+                allow_partial=True,
+            )
+        assert zero_budget.value.code is AccountingErrorCode.BUDGET_EXHAUSTED
+        await service.stop()
+
+    run_async(scenario())
+
+
+def test_reserve_deep_research_child_forwards_allow_partial() -> None:
+    async def scenario() -> None:
+        source = FakeSource()
+        sink = FakeSink()
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        service = _service(source, sink, budget_ledger=ledger)
+        await service.start()
+
+        parent_reservation = await service.reserve(
+            request_id="req-dr-parent",
+            api_key_id=7,
+            budget_usd=2.0,
+            spent_usd=0.0,
+            rpm_limit=None,
+            tpm_limit=None,
+            estimate_usd=1.0,
+            allow_partial=True,
+        )
+        handle, token = service.begin_deep_research_parent(
+            parent_reservation,
+            gateway_model="llmgateway/deep-research",
+            auth_identity=DeepResearchAuthIdentity(api_key_id=7, allowed_models=()),
+        )
+
+        child = await service.reserve_deep_research_child(
+            token,
+            request_id="req-dr-child",
+            estimate_usd=5.0,
+            allow_partial=True,
+        )
+        assert child.reservation.reserved_usd == 1.0
+        assert ledger.reserved_for(7) == 2.0
+
+        assert await service.release(child.reservation) is True
+        await service.cancel_deep_research_children(handle)
+        assert await service.release(parent_reservation) is True
+        await service.stop()
 
     run_async(scenario())

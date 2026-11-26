@@ -703,6 +703,55 @@ class AdminApiKeysHttpTests(unittest.TestCase):
         gc.collect()
         self.assertNotIn(987654, admin_api_keys._KEY_MUTATION_LOCKS)
 
+    def test_admin_key_mutations_invalidate_quota_cache(self):
+        from llm_gateway_core.api.v1 import quota as quota_module
+
+        quota_module._quota_cache.invalidate()
+        quota_module._quota_cache._entries[("quota_keys", None)] = (1e12, [])
+        quota_module._quota_cache._entries[("quota_keys", 9999)] = (1e12, [])
+
+        created = self.client.post(
+            "/v1/admin/api-keys",
+            json={"name": "cache-invalidation-key"},
+            headers=self._master_headers(),
+        )
+        self.assertEqual(created.status_code, 201)
+        key_id = created.json()["id"]
+        self.assertNotIn(("quota_keys", None), quota_module._quota_cache._entries)
+        self.assertIn(("quota_keys", 9999), quota_module._quota_cache._entries)
+
+        quota_module._quota_cache._entries[("quota_keys", None)] = (1e12, [])
+        quota_module._quota_cache._entries[("quota_keys", key_id)] = (1e12, [])
+        updated = self.client.patch(
+            f"/v1/admin/api-keys/{key_id}",
+            json={"name": "cache-invalidation-key-updated"},
+            headers=self._master_headers(),
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertNotIn(("quota_keys", None), quota_module._quota_cache._entries)
+        self.assertNotIn(("quota_keys", key_id), quota_module._quota_cache._entries)
+        self.assertIn(("quota_keys", 9999), quota_module._quota_cache._entries)
+
+        quota_module._quota_cache._entries[("quota_keys", None)] = (1e12, [])
+        quota_module._quota_cache._entries[("quota_keys", key_id)] = (1e12, [])
+        missing_delete = self.client.delete(
+            "/v1/admin/api-keys/999999",
+            headers=self._master_headers(),
+        )
+        self.assertEqual(missing_delete.status_code, 404)
+        self.assertIn(("quota_keys", None), quota_module._quota_cache._entries)
+        self.assertIn(("quota_keys", key_id), quota_module._quota_cache._entries)
+
+        deleted = self.client.delete(
+            f"/v1/admin/api-keys/{key_id}",
+            headers=self._master_headers(),
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertNotIn(("quota_keys", None), quota_module._quota_cache._entries)
+        self.assertNotIn(("quota_keys", key_id), quota_module._quota_cache._entries)
+        self.assertIn(("quota_keys", 9999), quota_module._quota_cache._entries)
+        quota_module._quota_cache.invalidate()
+
 
 if __name__ == "__main__":
     unittest.main()

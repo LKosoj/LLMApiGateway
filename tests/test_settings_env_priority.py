@@ -85,6 +85,49 @@ class SettingsEnvPriorityTests(unittest.TestCase):
                     os.environ[name] = original_value
             importlib.reload(settings_module)
 
+    def test_usd_budget_reservation_estimate_is_non_negative_float_on_reload(self):
+        settings_module = importlib.import_module(SETTINGS_MODULE_NAME)
+        dotenv_patcher = patch.object(
+            environment,
+            "PROJECT_DOTENV",
+            PROJECT_ROOT / ".env.absent",
+        )
+        dotenv_patcher.start()
+        self.addCleanup(dotenv_patcher.stop)
+        environment.load_application_environment.cache_clear()
+        self.addCleanup(environment.load_application_environment.cache_clear)
+        var_name = "USD_BUDGET_RESERVATION_ESTIMATE"
+        original_value = os.environ.get(var_name)
+        try:
+            os.environ.pop(var_name, None)
+            reloaded = importlib.reload(settings_module)
+            self.assertEqual(reloaded.settings.usd_budget_reservation_estimate, 5.0)
+
+            for raw_value, expected in (("0", 0.0), ("0.0", 0.0), ("0.25", 0.25), ("12.5", 12.5)):
+                with (
+                    self.subTest(raw_value=raw_value),
+                    patch.dict(os.environ, {var_name: raw_value}, clear=False),
+                ):
+                    reloaded = importlib.reload(settings_module)
+                    self.assertEqual(reloaded.settings.usd_budget_reservation_estimate, expected)
+
+            for invalid in ("-0.01", "-1", "nan", "inf", "-inf", "not-a-number"):
+                with (
+                    self.subTest(invalid=invalid),
+                    patch.dict(os.environ, {var_name: invalid}, clear=False),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        f"key={var_name} reason=non_negative_finite_number_required",
+                    ),
+                ):
+                    importlib.reload(settings_module)
+        finally:
+            if original_value is None:
+                os.environ.pop(var_name, None)
+            else:
+                os.environ[var_name] = original_value
+            importlib.reload(settings_module)
+
     def test_upload_limits_are_strict_and_cross_validated_on_reload(self):
         settings_module = importlib.import_module(SETTINGS_MODULE_NAME)
         names = (

@@ -679,6 +679,8 @@ async def get_analytics_dashboard(
                 previous_totals["duration_p95_ms"] = previous_summary.get("duration_p95_ms")
             if "tokens_per_second" in previous_summary:
                 previous_totals["tokens_per_second"] = previous_summary.get("tokens_per_second")
+            if previous_summary.get("native_costs"):
+                previous_totals["native_costs"] = previous_summary["native_costs"]
             previous_payload = {
                 "totals": previous_totals,
                 "fallback": {"summary": previous_fallback["summary"]},

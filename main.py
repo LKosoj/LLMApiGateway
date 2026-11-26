@@ -767,7 +767,9 @@ async def lifespan(app: FastAPI):
         fallback_events_db = FallbackEventsDB()
         rejections_db = RejectionsDB()
         api_keys_db = ApiKeysDB()
-        usd_budget_ledger = UsdBudgetLedger()
+        usd_budget_ledger = UsdBudgetLedger(
+            default_estimate_usd=settings.usd_budget_reservation_estimate,
+        )
         active_requests_registry = ActiveRequestsRegistry()
         rate_limiter = RateLimiter()
         ip_block_guard = (

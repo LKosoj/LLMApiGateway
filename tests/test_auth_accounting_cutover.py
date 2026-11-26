@@ -101,6 +101,7 @@ def test_exact_master_route_reserves_and_auth_releases_unclaimed_context() -> No
         rpm_limit=None,
         tpm_limit=None,
         estimate_usd=services.usd_budget_ledger.default_estimate_usd,
+        allow_partial=True,
     )
     services.accounting_service.release.assert_awaited_once()
 
@@ -127,6 +128,7 @@ def test_virtual_key_is_authoritative_for_accounting_admission() -> None:
         "rpm_limit": record.rpm,
         "tpm_limit": record.tpm,
         "estimate_usd": services.usd_budget_ledger.default_estimate_usd,
+        "allow_partial": True,
     }
 
 
@@ -499,7 +501,8 @@ def test_signed_deep_research_child_uses_sanitized_identity_and_child_reserve() 
         )
     )
 
-    async def reserve_child(_token, *, request_id, estimate_usd):
+    async def reserve_child(_token, *, request_id, estimate_usd, allow_partial=False):
+        assert allow_partial is True
         return DeepResearchChildAdmission(
             reservation=AccountingReservation(
                 reservation_id="deep-child-reservation",

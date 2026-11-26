@@ -261,6 +261,36 @@ def test_explicit_empty_provider_candidate_does_not_fall_back_to_active_state(tm
             "apikey": "DIRECT-KEY",
             "models": {"m": {"input_rate": float("nan"), "output_rate": 1.0}},
         },
+        {
+            "baseUrl": "https://primary.example",
+            "apikey": "DIRECT-KEY",
+            "models": {"m": {"cached_input_rate": 0.5}},
+        },
+        {
+            "baseUrl": "https://primary.example",
+            "apikey": "DIRECT-KEY",
+            "models": {"m": {"input_rate": 1.0, "output_rate": 2.0, "cached_input_rate": -0.1}},
+        },
+        {
+            "baseUrl": "https://primary.example",
+            "apikey": "DIRECT-KEY",
+            "models": {"m": {"input_rate": 1.0, "output_rate": 2.0, "cached_input_rate": True}},
+        },
+        {
+            "baseUrl": "https://primary.example",
+            "apikey": "DIRECT-KEY",
+            "models": {"m": {"input_rate": 1.0, "output_rate": 2.0, "cached_input_rate": float("nan")}},
+        },
+        {
+            "baseUrl": "https://primary.example",
+            "apikey": "DIRECT-KEY",
+            "models": {"m": {"input_rate": 1.0, "output_rate": 2.0, "cached_input_rate": float("inf")}},
+        },
+        {
+            "baseUrl": "https://primary.example",
+            "apikey": "DIRECT-KEY",
+            "models": {"m": {"input_rate": 1.0, "output_rate": 2.0, "cached_input_rate": "0.5"}},
+        },
     ],
 )
 def test_complete_load_rejects_invalid_provider_boundaries(
@@ -274,6 +304,32 @@ def test_complete_load_rejects_invalid_provider_boundaries(
 
     with pytest.raises(ConfigError):
         ConfigLoader.from_source_bundle(bundle).load_complete()
+
+
+@pytest.mark.parametrize("cached_rate", [0.0, 0.25, None])
+def test_complete_load_accepts_valid_cached_input_rate(
+    tmp_path: Path,
+    cached_rate: float | None,
+) -> None:
+    provider_patch = {
+        "baseUrl": "https://primary.example",
+        "apikey": "DIRECT-KEY",
+        "models": {
+            "m": {
+                "input_rate": 1.0,
+                "output_rate": 2.0,
+                "cached_input_rate": cached_rate,
+            }
+        },
+    }
+    bundle = _bundle(tmp_path).with_candidate(
+        ConfigFile.PROVIDERS,
+        json.dumps([{"primary": provider_patch}]).encode(),
+    )
+
+    loader = ConfigLoader.from_source_bundle(bundle).load_complete()
+
+    assert loader.providers_config["primary"].models["m"]["cached_input_rate"] == cached_rate
 
 
 def test_complete_load_validates_fusion_web_tool_operation_reference(tmp_path: Path) -> None:

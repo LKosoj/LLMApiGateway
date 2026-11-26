@@ -46,8 +46,12 @@ class _FakeFallbackEventsDB:
         return dict(self._counts)
 
 
-def _build_app(db: ApiKeysDB, rate_limiter: RateLimiter | None = None,
-               fallback_db=None) -> FastAPI:
+def _build_app(
+    db: ApiKeysDB,
+    rate_limiter: RateLimiter | None = None,
+    fallback_db=None,
+    usd_budget_ledger: UsdBudgetLedger | None = None,
+) -> FastAPI:
     app = FastAPI()
     bind_app_services(
         app,
@@ -56,7 +60,9 @@ def _build_app(db: ApiKeysDB, rate_limiter: RateLimiter | None = None,
             fallback_db if fallback_db is not None else _FakeFallbackEventsDB()
         ),
         rate_limiter=rate_limiter if rate_limiter is not None else RateLimiter(),
-        usd_budget_ledger=UsdBudgetLedger(),
+        usd_budget_ledger=(
+            usd_budget_ledger if usd_budget_ledger is not None else UsdBudgetLedger()
+        ),
     )
     app.middleware("http")(api_key_auth)
     app.include_router(auth_router)
@@ -369,6 +375,71 @@ class QuotaEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["name"], "container-quota")
+
+    def test_budget_includes_reserved_and_remaining_usd(self):
+        budgeted = self.db.create(name="budgeted", budget_usd=5.0)
+        unlimited = self.db.create(name="unlimited", budget_usd=None)
+        self.db.record_spent(budgeted.id, 1.25)
+
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(budgeted.id, budget_usd=5.0, spent_usd=1.25)
+        self.assertEqual(
+            ledger.reserve_request_amount("req-quota-1", budgeted.id, 2.0),
+            2.0,
+        )
+
+        app = _build_app(self.db, usd_budget_ledger=ledger)
+        resp = TestClient(app).get("/v1/api/quota/keys", headers=self._master_headers())
+        self.assertEqual(resp.status_code, 200)
+        cards = {item["key_id"]: item for item in resp.json()}
+
+        self.assertEqual(cards[budgeted.id]["budget"]["spent_usd"], 1.25)
+        self.assertEqual(cards[budgeted.id]["budget"]["reserved_usd"], 2.0)
+        self.assertEqual(cards[budgeted.id]["budget"]["remaining_usd"], 1.75)
+
+        self.assertEqual(cards[unlimited.id]["budget"]["reserved_usd"], 0.0)
+        self.assertIsNone(cards[unlimited.id]["budget"]["remaining_usd"])
+
+    def test_budget_remaining_usd_clamps_to_zero_when_overspent(self):
+        overspent = self.db.create(name="overspent", budget_usd=5.0)
+        self.db.record_spent(overspent.id, 6.25)
+
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(overspent.id, budget_usd=5.0, spent_usd=6.25)
+
+        app = _build_app(self.db, usd_budget_ledger=ledger)
+        resp = TestClient(app).get("/v1/api/quota/keys", headers=self._master_headers())
+        self.assertEqual(resp.status_code, 200)
+        card = next(item for item in resp.json() if item["key_id"] == overspent.id)
+
+        self.assertEqual(card["budget"]["spent_usd"], 6.25)
+        self.assertEqual(card["budget"]["reserved_usd"], 0.0)
+        self.assertEqual(card["budget"]["remaining_usd"], 0.0)
+
+    def test_quota_cache_bound_and_targeted_invalidation(self):
+        self.assertEqual(quota_module.QUOTA_CACHE_MAX_ENTRIES, 256)
+        self.assertEqual(quota_module._quota_cache._max_entries, 256)
+
+        rec_a = self.db.create(name="alpha")
+        rec_b = self.db.create(name="beta")
+        app = _build_app(self.db)
+        client = TestClient(app)
+
+        client.get("/v1/api/quota/keys", headers=self._master_headers())
+        client.get("/v1/api/quota/keys", headers={"Authorization": f"Bearer {rec_a.api_key}"})
+        client.get("/v1/api/quota/keys", headers={"Authorization": f"Bearer {rec_b.api_key}"})
+
+        self.assertIn(("quota_keys", None), quota_module._quota_cache._entries)
+        self.assertIn(("quota_keys", rec_a.id), quota_module._quota_cache._entries)
+        self.assertIn(("quota_keys", rec_b.id), quota_module._quota_cache._entries)
+
+        quota_module.invalidate_quota_cache(rec_a.id)
+        self.assertNotIn(("quota_keys", None), quota_module._quota_cache._entries)
+        self.assertNotIn(("quota_keys", rec_a.id), quota_module._quota_cache._entries)
+        self.assertIn(("quota_keys", rec_b.id), quota_module._quota_cache._entries)
+
+        quota_module.invalidate_quota_cache()
+        self.assertEqual(quota_module._quota_cache._entries, {})
 
 
 if __name__ == "__main__":

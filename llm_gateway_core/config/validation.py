@@ -267,7 +267,8 @@ class _ConfigValidationMixin:
                     )
                 has_input = "input_rate" in metadata
                 has_output = "output_rate" in metadata
-                if has_input != has_output:
+                has_cached = "cached_input_rate" in metadata and metadata["cached_input_rate"] is not None
+                if has_input != has_output or (has_cached and not has_input):
                     raise ConfigError(
                         f"Incomplete pricing rates for provider '{provider_name}' model '{model_name}'."
                     )
@@ -283,6 +284,17 @@ class _ConfigValidationMixin:
                     ):
                         raise ConfigError(
                             f"Invalid {field_name} for provider '{provider_name}' model '{model_name}'."
+                        )
+                if has_cached:
+                    cached_value = metadata["cached_input_rate"]
+                    if (
+                        isinstance(cached_value, bool)
+                        or not isinstance(cached_value, (int, float))
+                        or not math.isfinite(float(cached_value))
+                        or float(cached_value) < 0
+                    ):
+                        raise ConfigError(
+                            f"Invalid cached_input_rate for provider '{provider_name}' model '{model_name}'."
                         )
 
     def _parse_and_validate_complete_providers(

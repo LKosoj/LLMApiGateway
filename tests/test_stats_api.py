@@ -1,7 +1,11 @@
+import asyncio
+import os
+import sqlite3
+import tempfile
 import unittest
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -10,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from llm_gateway_core.api.v1 import stats as stats_module
 from llm_gateway_core.config.loader import ConfigLoader, ProviderDetails
+from llm_gateway_core.db.tokens_usage_db import TokensUsageDB
 from llm_gateway_core.middleware.auth import (
     ROLE_USER,
     SESSION_COOKIE_NAME,
@@ -17,19 +22,33 @@ from llm_gateway_core.middleware.auth import (
     create_authenticated_session,
 )
 from llm_gateway_core.middleware.runtime_snapshot import RuntimeSnapshotMiddleware
+from llm_gateway_core.services.accounting import (
+    ACCOUNTING_EVENT_VERSION,
+    AccountingEvent,
+    AccountingEventKind,
+    AccountingUsage,
+    CostSource,
+)
 from llm_gateway_core.services.active_requests import ActiveRequestsRegistry
 from llm_gateway_core.services.upstream_routing_state import fingerprint_api_key
 from tests.runtime_test_support import installed_runtime
 
 
 class _FakeTokensUsageDB:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        native_costs: dict[str, float] | None = None,
+        previous_native_costs: dict[str, float] | None = None,
+    ):
         self.calls: list[tuple[int, int, object]] = []
         self.count_calls: list[object] = []
         self.aggregated_calls: list[tuple[str, object, object, object]] = []
         self.dashboard_calls: list[dict] = []
         self.dashboard_summary_calls: list[dict] = []
         self.lifetime_calls = 0
+        self.native_costs = native_costs
+        self.previous_native_costs = previous_native_costs
         self.records = [
             {"id": 1, "model": "m1", "operation": "chat"},
             {"id": 2, "model": "m2", "operation": "embeddings"},
@@ -84,26 +103,29 @@ class _FakeTokensUsageDB:
         self.dashboard_calls.append(
             {"period": period, "start_date": start_date, "end_date": end_date, **kwargs}
         )
+        summary = {
+            "requests": 2,
+            "prompt_tokens": 10,
+            "completion_tokens": 20,
+            "total_tokens": 30,
+            "reasoning_tokens": 3,
+            "cached_tokens": 4,
+            "cost": 0.06,
+            "cost_saved": 0.01,
+            "estimated_count": 1,
+            "avg_duration_ms": 150,
+            "max_duration_ms": 250,
+            "duration_p50_ms": 140,
+            "duration_p95_ms": 240,
+            "ttft_avg_ms": 80,
+            "ttft_max_ms": 120,
+            "ttft_p50_ms": 75,
+            "ttft_p95_ms": 115,
+        }
+        if self.native_costs:
+            summary["native_costs"] = dict(self.native_costs)
         return {
-            "summary": {
-                "requests": 2,
-                "prompt_tokens": 10,
-                "completion_tokens": 20,
-                "total_tokens": 30,
-                "reasoning_tokens": 3,
-                "cached_tokens": 4,
-                "cost": 0.06,
-                "cost_saved": 0.01,
-                "estimated_count": 1,
-                "avg_duration_ms": 150,
-                "max_duration_ms": 250,
-                "duration_p50_ms": 140,
-                "duration_p95_ms": 240,
-                "ttft_avg_ms": 80,
-                "ttft_max_ms": 120,
-                "ttft_p50_ms": 75,
-                "ttft_p95_ms": 115,
-            },
+            "summary": summary,
             "series": [{"time_period": "2026-05-31", "requests": 2, "total_tokens": 30, "cost": 0.06}],
             "breakdowns": {
                 "operations": [{"label": "chat", "requests": 2, "total_tokens": 30, "cost": 0.06}],
@@ -129,7 +151,7 @@ class _FakeTokensUsageDB:
         self.dashboard_summary_calls.append(
             {"start_date": start_date, "end_date": end_date, **kwargs}
         )
-        return {
+        summary = {
             "requests": 2,
             "prompt_tokens": 10,
             "completion_tokens": 20,
@@ -148,6 +170,9 @@ class _FakeTokensUsageDB:
             "ttft_p50_ms": 75,
             "ttft_p95_ms": 115,
         }
+        if self.previous_native_costs:
+            summary["native_costs"] = dict(self.previous_native_costs)
+        return summary
 
     async def get_dashboard_filter_options(self, start_date, end_date, **kwargs):
         return {
@@ -967,6 +992,227 @@ class StatsApiPaginationTests(unittest.TestCase):
         self.assertEqual(invalid_bucket.status_code, 400)
         self.assertEqual(len(fake_tokens_usage_db.dashboard_calls), 1)
         self.assertTrue(fake_tokens_usage_db.dashboard_calls[0]["api_key_unattributed"])
+
+    def test_analytics_dashboard_propagates_native_costs_in_totals_and_previous_totals(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB(
+            native_costs={"RUB": 150.5},
+            previous_native_costs={"EUR": 2.5, "RUB": 40.0},
+        )
+
+        with self._client(fake_tokens_usage_db, _FakeApiKeysDB(valid_key_id=7)) as client:
+            response = client.get(
+                "/v1/api/analytics-dashboard?range=24h&compare=previous",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["totals"]["native_costs"], {"RUB": 150.5})
+        self.assertEqual(payload["previous"]["totals"]["native_costs"], {"EUR": 2.5, "RUB": 40.0})
+
+    def test_analytics_dashboard_omits_native_costs_when_absent(self):
+        fake_tokens_usage_db = _FakeTokensUsageDB()
+
+        with self._client(fake_tokens_usage_db, _FakeApiKeysDB(valid_key_id=7)) as client:
+            response = client.get(
+                "/v1/api/analytics-dashboard?range=24h&compare=previous",
+                headers={"Authorization": "Bearer test-gateway-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertNotIn("native_costs", payload["totals"])
+        self.assertNotIn("native_costs", payload["previous"]["totals"])
+
+
+class DashboardNativeCostsAggregationTests(unittest.TestCase):
+    @staticmethod
+    def _record_event(
+        db: TokensUsageDB,
+        event_id: str,
+        *,
+        occurred_at: datetime,
+        provider: str,
+        cost: float,
+        native_costs: tuple[tuple[str, float], ...] = (),
+        api_key_id: int | None = 7,
+    ) -> None:
+        event = AccountingEvent(
+            version=ACCOUNTING_EVENT_VERSION,
+            event_id=event_id,
+            kind=AccountingEventKind.CHARGE,
+            api_key_id=api_key_id,
+            method="POST",
+            route_template="/v1/chat/completions",
+            operation="chat",
+            gateway_model="gateway/chat",
+            provider=provider,
+            model="model-a",
+            usage=AccountingUsage(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                cost=cost,
+                native_costs=native_costs,
+                duration_ms=100,
+            ),
+            cost_source=CostSource.UPSTREAM,
+            occurred_at=occurred_at,
+        )
+        db.accept_accounting_event(event)
+
+    def test_dashboard_usage_and_summary_omit_native_costs_for_usd_only(self):
+        now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(os.environ, {"GATEWAY_DB_DIR": tmp_dir}):
+                db = TokensUsageDB(db_filename="native-usd-only.db")
+                self._record_event(
+                    db,
+                    "evt-usd-1",
+                    occurred_at=now - timedelta(hours=1),
+                    provider="openrouter",
+                    cost=0.15,
+                )
+
+                dashboard = asyncio.run(
+                    db.get_dashboard_usage("hour", now - timedelta(hours=24), now)
+                )
+                summary = asyncio.run(
+                    db.get_dashboard_usage_summary(now - timedelta(hours=24), now)
+                )
+
+        self.assertNotIn("native_costs", dashboard["summary"])
+        self.assertNotIn("native_costs", summary)
+        self.assertAlmostEqual(dashboard["summary"]["cost"], 0.15)
+        self.assertAlmostEqual(summary["cost"], 0.15)
+
+    def test_dashboard_usage_and_summary_aggregate_mixed_usd_and_rub(self):
+        now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(os.environ, {"GATEWAY_DB_DIR": tmp_dir}):
+                db = TokensUsageDB(db_filename="native-mixed.db")
+                self._record_event(
+                    db,
+                    "evt-usd",
+                    occurred_at=now - timedelta(hours=3),
+                    provider="openrouter",
+                    cost=0.2,
+                )
+                self._record_event(
+                    db,
+                    "evt-rub-1",
+                    occurred_at=now - timedelta(hours=2),
+                    provider="polza",
+                    cost=0.5,
+                    native_costs=(("RUB", 50.0),),
+                )
+                self._record_event(
+                    db,
+                    "evt-rub-2",
+                    occurred_at=now - timedelta(hours=1),
+                    provider="polza",
+                    cost=0.25,
+                    native_costs=(("RUB", 25.5),),
+                )
+
+                dashboard = asyncio.run(
+                    db.get_dashboard_usage("hour", now - timedelta(hours=24), now)
+                )
+                summary = asyncio.run(
+                    db.get_dashboard_usage_summary(now - timedelta(hours=24), now)
+                )
+
+        self.assertAlmostEqual(dashboard["summary"]["cost"], 0.95)
+        self.assertAlmostEqual(summary["cost"], 0.95)
+        self.assertEqual(dashboard["summary"]["native_costs"], {"RUB": 75.5})
+        self.assertEqual(summary["native_costs"], {"RUB": 75.5})
+
+    def test_dashboard_usage_and_summary_aggregate_multiple_currencies_with_filters_and_skip_malformed(self):
+        now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(os.environ, {"GATEWAY_DB_DIR": tmp_dir}):
+                db = TokensUsageDB(db_filename="native-multi-filter.db")
+                self._record_event(
+                    db,
+                    "evt-rub-k7",
+                    occurred_at=now - timedelta(hours=2),
+                    provider="polza",
+                    cost=0.5,
+                    native_costs=(("RUB", 50.0),),
+                    api_key_id=7,
+                )
+                self._record_event(
+                    db,
+                    "evt-eur-k7",
+                    occurred_at=now - timedelta(hours=1),
+                    provider="eu-provider",
+                    cost=1.1,
+                    native_costs=(("EUR", 1.0),),
+                    api_key_id=7,
+                )
+                self._record_event(
+                    db,
+                    "evt-rub-k9",
+                    occurred_at=now - timedelta(hours=1),
+                    provider="polza",
+                    cost=0.3,
+                    native_costs=(("RUB", 30.0),),
+                    api_key_id=9,
+                )
+                self._record_event(
+                    db,
+                    "evt-old-rub",
+                    occurred_at=now - timedelta(days=5),
+                    provider="polza",
+                    cost=0.9,
+                    native_costs=(("RUB", 90.0),),
+                    api_key_id=7,
+                )
+                malformed_native_costs = (
+                    "{broken-json",
+                    '[["RUB", true]]',
+                    '[["RUB", NaN]]',
+                    '[["RUB", Infinity]]',
+                    f'[["RUB", {10**400}]]',
+                    '[["RUB", -50.0]]',
+                    '[["", 10.0]]',
+                    '[["   ", 10.0]]',
+                    '{"RUB": 10.0}',
+                )
+                with sqlite3.connect(db.db_path) as conn:
+                    for offset, raw_native_costs in enumerate(malformed_native_costs, start=1):
+                        conn.execute(
+                            """
+                            INSERT INTO tokens_usage (
+                                timestamp, total_tokens, cost, provider, api_key_id, native_costs
+                            ) VALUES (?, 1, 0.0, 'polza', 7, ?)
+                            """,
+                            ((now - timedelta(minutes=offset)).isoformat(), raw_native_costs),
+                        )
+
+                window_start = now - timedelta(hours=24)
+                all_dashboard = asyncio.run(
+                    db.get_dashboard_usage("hour", window_start, now, api_key_id=7)
+                )
+                all_summary = asyncio.run(
+                    db.get_dashboard_usage_summary(window_start, now, api_key_id=7)
+                )
+                polza_summary = asyncio.run(
+                    db.get_dashboard_usage_summary(
+                        window_start, now, api_key_id=7, provider="polza"
+                    )
+                )
+                usd_only_summary = asyncio.run(
+                    db.get_dashboard_usage_summary(
+                        window_start, now, provider="non-existent"
+                    )
+                )
+
+        self.assertEqual(list(all_dashboard["summary"]["native_costs"]), ["EUR", "RUB"])
+        self.assertEqual(all_dashboard["summary"]["native_costs"], {"EUR": 1.0, "RUB": 50.0})
+        self.assertEqual(all_summary["native_costs"], {"EUR": 1.0, "RUB": 50.0})
+        self.assertEqual(polza_summary["native_costs"], {"RUB": 50.0})
+        self.assertNotIn("native_costs", usd_only_summary)
 
 
 if __name__ == "__main__":

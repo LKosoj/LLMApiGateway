@@ -344,6 +344,118 @@ class UsdBudgetLedgerTests(unittest.TestCase):
         self.assertTrue(ledger.release_request("request-b", 1))
         self.assertTrue(ledger.release_request("request-a", 1))
 
+    def test_reserve_request_amount_partial_reserves_remaining_headroom(self):
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(1, budget_usd=2.0, spent_usd=0.0)
+
+        self.assertIsNone(ledger.reserve_request_amount("request-a", 1, 5.0, allow_partial=False))
+        self.assertEqual(ledger.reserved_for(1), 0.0)
+
+        reserved = ledger.reserve_request_amount("request-a", 1, 5.0, allow_partial=True)
+        self.assertEqual(reserved, 2.0)
+        self.assertEqual(ledger.reserved_for(1), 2.0)
+
+        # Idempotent retry with the same requested estimate returns the partial amount.
+        self.assertEqual(
+            ledger.reserve_request_amount("request-a", 1, 5.0, allow_partial=True),
+            2.0,
+        )
+        # Conflicting requested estimate raises even if it equals the clamped reserved amount.
+        with self.assertRaises(AccountingValidationError):
+            ledger.reserve_request_amount("request-a", 1, 2.0, allow_partial=True)
+
+        # No remaining headroom for a concurrent request.
+        self.assertIsNone(ledger.reserve_request_amount("request-b", 1, 5.0, allow_partial=True))
+
+        # After commit, requested estimate tracking is cleared and remaining headroom is reservable.
+        self.assertTrue(ledger.commit_request("request-a", 1, 0.5))
+        self.assertEqual(ledger.reserved_for(1), 0.0)
+        self.assertEqual(
+            ledger.reserve_request_amount("request-c", 1, 5.0, allow_partial=True),
+            1.5,
+        )
+
+    def test_reserve_request_amount_partial_rejects_zero_budget_and_cleans_on_release(self):
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(1, budget_usd=0.0, spent_usd=0.0)
+        self.assertIsNone(ledger.reserve_request_amount("request-zero", 1, 5.0, allow_partial=True))
+
+        ledger.reset_record(1, budget_usd=1.0, spent_usd=0.0)
+        self.assertEqual(
+            ledger.reserve_request_amount("request-a", 1, 5.0, allow_partial=True),
+            1.0,
+        )
+        self.assertTrue(ledger.release_request("request-a", 1))
+        self.assertEqual(ledger.reserved_for(1), 0.0)
+        # Re-using request_id after release with a different estimate is allowed.
+        self.assertEqual(
+            ledger.reserve_request_amount("request-a", 1, 0.4, allow_partial=True),
+            0.4,
+        )
+
+    def test_reserve_request_amount_rejects_overspent_and_zero_estimate_when_exhausted(self):
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(1, budget_usd=5.0, spent_usd=6.5)
+        self.assertIsNone(ledger.reserve_request_amount("overspent-partial", 1, 5.0, allow_partial=True))
+        self.assertIsNone(ledger.reserve_request_amount("overspent-zero", 1, 0.0, allow_partial=True))
+        self.assertEqual(ledger.reserved_for(1), 0.0)
+
+        ledger.reset_record(1, budget_usd=0.0, spent_usd=0.0)
+        self.assertIsNone(ledger.reserve_request_amount("zero-budget-strict", 1, 0.0, allow_partial=False))
+        self.assertIsNone(ledger.reserve_request_amount("zero-budget-partial", 1, 0.0, allow_partial=True))
+
+        ledger.reset_record(1, budget_usd=3.0, spent_usd=3.0)
+        self.assertIsNone(ledger.reserve_request_amount("exhausted-strict", 1, 0.0, allow_partial=False))
+        self.assertIsNone(ledger.reserve_request_amount("exhausted-partial", 1, 0.0, allow_partial=True))
+
+    def test_reserve_request_amount_validates_allow_partial_type_and_idempotency(self):
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(1, budget_usd=2.0, spent_usd=0.0)
+
+        for invalid in (1, 0, "true", None):
+            with self.subTest(invalid=invalid), self.assertRaises(AccountingValidationError):
+                ledger.reserve_request_amount("bad-type", 1, 1.0, allow_partial=invalid)  # type: ignore[arg-type]
+
+        self.assertEqual(
+            ledger.reserve_request_amount("req-partial", 1, 5.0, allow_partial=True),
+            2.0,
+        )
+        with self.assertRaises(AccountingValidationError):
+            ledger.reserve_request_amount("req-partial", 1, 5.0, allow_partial=False)
+        self.assertTrue(ledger.release_request("req-partial", 1))
+
+        self.assertEqual(
+            ledger.reserve_request_amount("req-strict", 1, 1.0, allow_partial=False),
+            1.0,
+        )
+        with self.assertRaises(AccountingValidationError):
+            ledger.reserve_request_amount("req-strict", 1, 1.0, allow_partial=True)
+
+    def test_concurrent_partial_request_reservations_do_not_oversubscribe_budget(self):
+        ledger = UsdBudgetLedger(default_estimate_usd=5.0)
+        ledger.sync_record(1, budget_usd=2.0, spent_usd=0.0)
+        barrier = threading.Barrier(3)
+        results: list[float | None] = [None, None]
+
+        def reserve(index: int) -> None:
+            barrier.wait()
+            results[index] = ledger.reserve_request_amount(
+                f"partial-{index}",
+                1,
+                5.0,
+                allow_partial=True,
+            )
+
+        threads = [threading.Thread(target=reserve, args=(index,)) for index in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        self.assertCountEqual(results, [2.0, None])
+        self.assertEqual(ledger.reserved_for(1), 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

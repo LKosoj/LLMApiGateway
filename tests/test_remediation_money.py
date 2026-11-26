@@ -201,7 +201,7 @@ def test_missing_token_rate_uses_default_cost() -> None:
         model="missing-model",
         cost_rate_registry={},
     )
-    assert component.usage.cost_unavailable is False
+    assert component.usage.cost_unavailable is True
     assert component.usage.cost == DEFAULT_OPERATION_COST_USD
     assert component.cost_source is CostSource.OPERATION_DEFAULT
 

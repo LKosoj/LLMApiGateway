@@ -68,6 +68,24 @@ def _get_positive_float_env(var_name: str, default: float) -> float:
     return value
 
 
+def _get_non_negative_float_env(var_name: str, default: float) -> float:
+    raw_value = os.getenv(var_name)
+    if raw_value is None:
+        return default
+
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"key={var_name} reason=non_negative_finite_number_required"
+        ) from None
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(
+            f"key={var_name} reason=non_negative_finite_number_required"
+        ) from None
+    return 0.0 if value == 0.0 else value
+
+
 def _get_non_empty_str_env(var_name: str, default: str) -> str:
     raw_value = os.getenv(var_name)
     if raw_value is None:
@@ -163,6 +181,10 @@ class Settings(BaseSettings):
     deep_research_job_timeout_seconds: float = _get_positive_float_env(
         "DEEP_RESEARCH_JOB_TIMEOUT_SECONDS",
         1800.0,
+    )
+    usd_budget_reservation_estimate: float = _get_non_negative_float_env(
+        "USD_BUDGET_RESERVATION_ESTIMATE",
+        5.0,
     )
     audio_decoded_max_bytes: int = _get_positive_int_env(
         "AUDIO_DECODED_MAX_BYTES",

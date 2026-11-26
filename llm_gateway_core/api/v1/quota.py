@@ -18,6 +18,7 @@ from llm_gateway_core.config.paths import STATIC_DIR
 from llm_gateway_core.db.api_keys_db import ApiKeysDB
 from llm_gateway_core.db.fallback_events_db import FallbackEventsDB
 from llm_gateway_core.middleware.auth import ROLE_MASTER, ROLE_USER
+from llm_gateway_core.services.access_control import UsdBudgetLedger
 from llm_gateway_core.services.rate_limiter import RateLimiter
 from llm_gateway_core.utils.html_cache import get_template
 from llm_gateway_core.utils.ttl_cache import AsyncTtlCache
@@ -30,9 +31,22 @@ logger = logging.getLogger(__name__)
 quota_router = APIRouter()
 
 QUOTA_CACHE_TTL_SECONDS = 5.0
-_quota_cache = AsyncTtlCache(QUOTA_CACHE_TTL_SECONDS)
+QUOTA_CACHE_MAX_ENTRIES = 256
+_quota_cache = AsyncTtlCache(
+    QUOTA_CACHE_TTL_SECONDS,
+    max_entries=QUOTA_CACHE_MAX_ENTRIES,
+)
 
 WINDOW_SECONDS = 60.0
+
+
+def invalidate_quota_cache(key_id: int | None = None) -> None:
+    """Invalidate cached quota snapshots for all keys or a single key."""
+    if key_id is None:
+        _quota_cache.invalidate()
+        return
+    _quota_cache.invalidate(("quota_keys", None))
+    _quota_cache.invalidate(("quota_keys", key_id))
 
 
 def _capture_app_services(request: Request) -> "AppServices":
@@ -62,6 +76,7 @@ async def _build_quota_snapshot(
     api_keys_db: ApiKeysDB,
     fallback_events_db: FallbackEventsDB,
     rate_limiter: RateLimiter,
+    usd_budget_ledger: UsdBudgetLedger,
     key_id_filter: int | None,
 ) -> list[dict]:
     """Build the per-key quota snapshot used by the dashboard endpoint."""
@@ -94,6 +109,14 @@ async def _build_quota_snapshot(
             # reset_in_seconds = how long until the oldest event leaves the window
             reset_in_seconds = max(0, int(WINDOW_SECONDS - oldest_age))
 
+        reserved_usd = usd_budget_ledger.reserved_for(key.id)
+        limit_usd = key.budget_usd
+        remaining_usd = (
+            round(max(0.0, limit_usd - (key.spent_usd + reserved_usd)), 6)
+            if limit_usd is not None and limit_usd >= 0
+            else None
+        )
+
         result.append(
             {
                 "key_id": key.id,
@@ -111,6 +134,8 @@ async def _build_quota_snapshot(
                 },
                 "budget": {
                     "spent_usd": round(key.spent_usd, 6),
+                    "reserved_usd": round(reserved_usd, 6),
+                    "remaining_usd": remaining_usd,
                     "limit_usd": key.budget_usd,
                     "period": key.budget_period,
                     "reset_at": key.budget_reset_at,
@@ -150,10 +175,15 @@ async def get_quota_keys(request: Request) -> JSONResponse:
     api_keys_db = services.api_keys_db
     fallback_events_db = services.fallback_events_db
     rate_limiter = services.rate_limiter
+    usd_budget_ledger = services.usd_budget_ledger
 
     async def _fetch() -> list[dict]:
         return await _build_quota_snapshot(
-            api_keys_db, fallback_events_db, rate_limiter, key_id_filter
+            api_keys_db,
+            fallback_events_db,
+            rate_limiter,
+            usd_budget_ledger,
+            key_id_filter,
         )
 
     cache_key = ("quota_keys", key_id_filter)

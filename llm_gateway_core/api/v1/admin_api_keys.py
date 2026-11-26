@@ -24,6 +24,7 @@ from ..accounting_http import (
     accounting_error_response,
 )
 from ..error_envelope import error_response
+from .quota import invalidate_quota_cache
 from ...config.paths import STATIC_DIR
 from ...db.api_keys_db import (
     VALID_BUDGET_PERIODS,
@@ -221,6 +222,7 @@ async def create_api_key(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     logger.info("Created virtual API key id=%s name=%s", record.id, record.name)
+    invalidate_quota_cache(record.id)
     response.headers["ETag"] = _record_etag(record)
     response.headers["Cache-Control"] = "no-store"
     return _serialize_record(record, reveal=True)
@@ -309,6 +311,7 @@ async def _apply_update(
         )
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    invalidate_quota_cache(key_id)
     return _serialize_record(record)
 
 
@@ -328,4 +331,5 @@ async def delete_api_key(request: Request, key_id: int) -> Any:
             )
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+        invalidate_quota_cache(key_id)
         return {"deleted": True, "id": key_id}

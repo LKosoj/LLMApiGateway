@@ -483,11 +483,12 @@ class _ResponseObserver:
                     self._start.charset
                 )
                 self._body_messages = [{**message, "body": payload}]
-                assert self._pending_start is not None
-                self._pending_start["headers"] = [
-                    (name, str(len(payload)).encode() if name.lower() == b"content-length" else value)
-                    for name, value in self._pending_start["headers"]
-                ]
+                if not self._actual_started:
+                    assert self._pending_start is not None
+                    self._pending_start["headers"] = [
+                        (name, str(len(payload)).encode() if name.lower() == b"content-length" else value)
+                        for name, value in self._pending_start["headers"]
+                    ]
         await self._flush_start()
         for body_message in self._body_messages:
             await self._send_body(body_message)
@@ -683,7 +684,10 @@ class _ResponseObserver:
             return
         if self._pending_start is None:
             raise _ObservationFailure(_FailureKind.PROTOCOL)
-        if self._start is not None and self._start.wire_mode is WireMode.SSE:
+        if (
+            (self._start is not None and self._start.wire_mode is WireMode.SSE)
+            or (self._json_keepalive and not self._settled)
+        ):
             self._pending_start["headers"] = [
                 (name, value) for name, value in self._pending_start["headers"]
                 if name.lower() != b"content-length"
@@ -694,6 +698,7 @@ class _ResponseObserver:
                 (name, value) for name, value in headers if name.lower() != b"x-cost-usd"
             ] + [(b"x-cost-usd", str(self._response_cost_usd).encode())]
         await self._send(self._pending_start)
+        self._pending_start = None
         self._actual_started = True
 
     async def _send_body(self, message: Message) -> None:

@@ -390,7 +390,7 @@ def test_buffered_embeddings_uses_default_cost_when_registry_price_missing() -> 
         services.accounting_service.release.assert_not_awaited()
         event = services.accounting_service.commit.await_args.args[1]
         assert event.usage.cost == DEFAULT_OPERATION_COST_USD
-        assert event.usage.cost_unavailable is False
+        assert event.usage.cost_unavailable is True
         assert event.cost_source is CostSource.OPERATION_DEFAULT
         _assert_no_legacy_writes(services)
 

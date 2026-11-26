@@ -2,7 +2,7 @@ import functools
 import json
 import logging
 import math
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +47,7 @@ class TokensEstimator:
 class ModelCostRates:
     input_rate: float
     output_rate: float
+    cached_input_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,22 @@ def get_provider_cost_currency(
 ) -> ProviderCostCurrency | None:
     value = registry.get((provider, None))
     return value if isinstance(value, ProviderCostCurrency) else None
+
+
+def iter_model_cost_rates(
+    registry: Mapping[tuple[str, str | None], Any] | None,
+) -> Iterator[tuple[tuple[str, str], ModelCostRates]]:
+    if not registry:
+        return
+    for key, value in registry.items():
+        if not isinstance(value, ModelCostRates):
+            continue
+        if not isinstance(key, tuple) or len(key) != 2:
+            continue
+        provider, model = key
+        if not isinstance(provider, str) or not isinstance(model, str):
+            continue
+        yield (provider, model), value
 
 
 def initialize_tokens_usage() -> dict[str, Any]:
@@ -132,6 +149,8 @@ def extract_request_fallback_depth(request: Request | None) -> int | None:
 
 
 def _as_non_negative_finite_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         rate = float(value)
     except (TypeError, ValueError):
@@ -161,14 +180,26 @@ def _coerce_model_cost_rates(raw_rates: Any) -> ModelCostRates | None:
         output_rate = _as_non_negative_finite_float(raw_rates.output_rate)
         if input_rate is None or output_rate is None:
             return None
-        return ModelCostRates(input_rate=input_rate, output_rate=output_rate)
+        cached_input_rate: float | None = None
+        if raw_rates.cached_input_rate is not None:
+            cached_input_rate = _as_non_negative_finite_float(raw_rates.cached_input_rate)
+            if cached_input_rate is None:
+                return None
+        return ModelCostRates(
+            input_rate=input_rate,
+            output_rate=output_rate,
+            cached_input_rate=cached_input_rate,
+        )
 
     input_rate_raw: Any = None
     output_rate_raw: Any = None
+    cached_input_rate_raw: Any = None
 
     if isinstance(raw_rates, (list, tuple)) and len(raw_rates) >= 2:
         input_rate_raw = raw_rates[0]
         output_rate_raw = raw_rates[1]
+        if len(raw_rates) >= 3:
+            cached_input_rate_raw = raw_rates[2]
     elif isinstance(raw_rates, Mapping):
         rates_mapping = raw_rates
         if "pricing" in raw_rates and not any(
@@ -195,12 +226,29 @@ def _coerce_model_cost_rates(raw_rates: Any) -> ModelCostRates | None:
                 "completion_cost_per_million",
             ),
         )
+        cached_input_rate_raw = _first_present(
+            rates_mapping,
+            (
+                "cached_input_rate",
+                "cached_input_cost_per_million",
+                "cached_prompt_rate",
+            ),
+        )
 
     input_rate = _as_non_negative_finite_float(input_rate_raw)
     output_rate = _as_non_negative_finite_float(output_rate_raw)
     if input_rate is None or output_rate is None:
         return None
-    return ModelCostRates(input_rate=input_rate, output_rate=output_rate)
+    cached_input_rate = None
+    if cached_input_rate_raw is not None:
+        cached_input_rate = _as_non_negative_finite_float(cached_input_rate_raw)
+        if cached_input_rate is None:
+            return None
+    return ModelCostRates(
+        input_rate=input_rate,
+        output_rate=output_rate,
+        cached_input_rate=cached_input_rate,
+    )
 
 
 def build_model_cost_rate_registry(
@@ -260,7 +308,8 @@ def calculate_model_cost_usd(
     *,
     prompt_tokens: int,
     completion_tokens: int,
-    rates: ModelCostRates | tuple[float, float] | Mapping[str, Any] | None,
+    cached_tokens: int = 0,
+    rates: ModelCostRates | tuple[float, float] | tuple[float, float, float | None] | Mapping[str, Any] | None,
 ) -> float | None:
     model_rates = _coerce_model_cost_rates(rates)
     if model_rates is None:
@@ -268,8 +317,18 @@ def calculate_model_cost_usd(
 
     prompt = _as_non_negative_int(prompt_tokens)
     completion = _as_non_negative_int(completion_tokens)
+    cached = _as_non_negative_int(cached_tokens)
+    if model_rates.cached_input_rate is None or cached == 0:
+        return (
+            prompt * model_rates.input_rate
+            + completion * model_rates.output_rate
+        ) / TOKEN_RATE_SCALE
+
+    effective_cached = min(cached, prompt)
+    uncached_prompt = prompt - effective_cached
     return (
-        prompt * model_rates.input_rate
+        uncached_prompt * model_rates.input_rate
+        + effective_cached * model_rates.cached_input_rate
         + completion * model_rates.output_rate
     ) / TOKEN_RATE_SCALE
 
@@ -289,6 +348,7 @@ def apply_rate_based_cost(
     estimated_cost = calculate_model_cost_usd(
         prompt_tokens=tokens_usage.get("prompt_tokens") or 0,
         completion_tokens=tokens_usage.get("completion_tokens") or 0,
+        cached_tokens=tokens_usage.get("cached_tokens") or 0,
         rates=_model_cost_rates_from_registry(
             cost_rate_registry,
             target_provider,
@@ -303,18 +363,21 @@ def _estimate_cost_saved(
     *,
     prompt_tokens: int,
     completion_tokens: int,
-    primary_rate: ModelCostRates | tuple[float, float] | Mapping[str, Any] | None,
-    fallback_rate: ModelCostRates | tuple[float, float] | Mapping[str, Any] | None,
+    cached_tokens: int = 0,
+    primary_rate: ModelCostRates | tuple[float, float] | tuple[float, float, float | None] | Mapping[str, Any] | None,
+    fallback_rate: ModelCostRates | tuple[float, float] | tuple[float, float, float | None] | Mapping[str, Any] | None,
 ) -> float | None:
     """Estimate fallback savings using separate input/output per-million rates."""
     primary_cost = calculate_model_cost_usd(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
         rates=primary_rate,
     )
     fallback_cost = calculate_model_cost_usd(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
         rates=fallback_rate,
     )
     if primary_cost is None or fallback_cost is None:
@@ -377,6 +440,7 @@ def _apply_rate_based_cost_saved(
     estimated_cost_saved = _estimate_cost_saved(
         prompt_tokens=tokens_usage.get("prompt_tokens") or 0,
         completion_tokens=tokens_usage.get("completion_tokens") or 0,
+        cached_tokens=tokens_usage.get("cached_tokens") or 0,
         primary_rate=_model_cost_rates_from_registry(
             cost_rate_registry,
             primary_provider,
@@ -490,6 +554,7 @@ def extract_tokens_usage(
                 estimated_cost_saved = _estimate_cost_saved(
                     prompt_tokens=tokens_usage.get("prompt_tokens") or 0,
                     completion_tokens=tokens_usage.get("completion_tokens") or 0,
+                    cached_tokens=tokens_usage.get("cached_tokens") or 0,
                     primary_rate=_model_cost_rates_from_registry(
                         cost_rate_registry,
                         primary_provider,

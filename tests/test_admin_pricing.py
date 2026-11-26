@@ -400,6 +400,61 @@ class TestPutPricing(_PricingTestBase):
             written[1]["other_provider"]["models"],
         )
 
+    def test_put_pricing_preserves_cached_input_rate_on_update_and_removes_on_delete(self):
+        providers_data = [
+            {
+                "test_provider": {
+                    "baseUrl": "https://example.com/v1",
+                    "apikey": "dummy",
+                    "models": {
+                        "kept_model": {
+                            "input_rate": 1.0,
+                            "output_rate": 2.0,
+                            "cached_input_rate": 0.25,
+                        },
+                        "removed_model": {
+                            "input_rate": 3.0,
+                            "output_rate": 6.0,
+                            "cached_input_rate": 0.5,
+                        },
+                        "removed_with_extra": {
+                            "input_rate": 4.0,
+                            "output_rate": 8.0,
+                            "cached_input_rate": 0.75,
+                            "context_length": 128000,
+                        },
+                    },
+                }
+            }
+        ]
+        providers_path = self.tmp_path / "providers.json"
+        providers_path.write_text(json.dumps(providers_data), encoding="utf-8")
+        app, _ = _build_app(providers_path)
+        client = self.enterContext(TestClient(app))
+
+        payload = {
+            "items": [
+                {
+                    "provider": "test_provider",
+                    "model": "kept_model",
+                    "input_rate": 1.5,
+                    "output_rate": 3.0,
+                }
+            ]
+        }
+
+        resp = client.put("/v1/admin/pricing", json=payload, headers=_master_headers())
+
+        self.assertEqual(resp.status_code, 200)
+        written = json.loads(providers_path.read_text(encoding="utf-8"))
+        models = written[0]["test_provider"]["models"]
+        self.assertEqual(
+            models["kept_model"],
+            {"input_rate": 1.5, "output_rate": 3.0, "cached_input_rate": 0.25},
+        )
+        self.assertNotIn("removed_model", models)
+        self.assertEqual(models["removed_with_extra"], {"context_length": 128000})
+
 
 class TestCalculate(_PricingTestBase):
     def test_calculate_returns_correct_cost(self):
@@ -553,6 +608,141 @@ class TestUiPage(_PricingTestBase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/html", resp.headers.get("content-type", ""))
         self.assertIn('<script src="/static/pricing.js"', resp.text)
+
+
+class TestRubProviderPricing(_PricingTestBase):
+    def test_rub_provider_with_models_get_put_calculate(self):
+        providers_path = self.tmp_path / "providers.json"
+        providers_path.write_text(
+            json.dumps([
+                {
+                    "test_provider": {
+                        "baseUrl": "https://example.com/v1",
+                        "apikey": "dummy",
+                        "usage_cost_currency": "RUB",
+                        "usage_cost_units_per_usd": 90.0,
+                        "models": {
+                            "rub_model": {
+                                "input_rate": 2.0,
+                                "output_rate": 6.0,
+                            }
+                        },
+                    }
+                }
+            ]),
+            encoding="utf-8",
+        )
+        app, _ = _build_app(providers_path)
+        client = self.enterContext(TestClient(app))
+
+        get_resp = client.get("/v1/admin/pricing", headers=_master_headers())
+        self.assertEqual(get_resp.status_code, 200)
+        items = get_resp.json()["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["provider"], "test_provider")
+        self.assertEqual(items[0]["model"], "rub_model")
+        self.assertAlmostEqual(items[0]["input_rate"], 2.0)
+        self.assertAlmostEqual(items[0]["output_rate"], 6.0)
+
+        put_resp = client.put(
+            "/v1/admin/pricing",
+            json={
+                "items": [
+                    {
+                        "provider": "test_provider",
+                        "model": "rub_model",
+                        "input_rate": 3.0,
+                        "output_rate": 9.0,
+                    }
+                ]
+            },
+            headers=_master_headers(),
+        )
+        self.assertEqual(put_resp.status_code, 200)
+        put_items = put_resp.json()["items"]
+        self.assertEqual(len(put_items), 1)
+        self.assertEqual(put_items[0]["model"], "rub_model")
+        self.assertAlmostEqual(put_items[0]["input_rate"], 3.0)
+        self.assertAlmostEqual(put_items[0]["output_rate"], 9.0)
+
+        persisted = json.loads(providers_path.read_text(encoding="utf-8"))
+        provider_cfg = persisted[0]["test_provider"]
+        self.assertEqual(provider_cfg["usage_cost_currency"], "RUB")
+        self.assertAlmostEqual(provider_cfg["usage_cost_units_per_usd"], 90.0)
+
+        calc_resp = client.post(
+            "/v1/admin/pricing/calculate",
+            json={
+                "provider": "test_provider",
+                "model": "rub_model",
+                "prompt_tokens": 1_000_000,
+                "completion_tokens": 500_000,
+            },
+            headers=_master_headers(),
+        )
+        self.assertEqual(calc_resp.status_code, 200)
+        calc_body = calc_resp.json()
+        self.assertAlmostEqual(calc_body["cost_usd"], 7.5)
+        self.assertAlmostEqual(calc_body["input_rate"], 3.0)
+        self.assertAlmostEqual(calc_body["output_rate"], 9.0)
+
+    def test_rub_provider_without_models_block(self):
+        providers_path = self.tmp_path / "providers.json"
+        providers_path.write_text(
+            json.dumps([
+                {
+                    "test_provider": {
+                        "baseUrl": "https://example.com/v1",
+                        "apikey": "dummy",
+                        "usage_cost_currency": "RUB",
+                        "usage_cost_units_per_usd": 85.0,
+                    }
+                }
+            ]),
+            encoding="utf-8",
+        )
+        app, _ = _build_app(providers_path)
+        client = self.enterContext(TestClient(app))
+
+        get_resp = client.get("/v1/admin/pricing", headers=_master_headers())
+        self.assertEqual(get_resp.status_code, 200)
+        self.assertEqual(get_resp.json()["items"], [])
+
+        put_resp = client.put(
+            "/v1/admin/pricing",
+            json={
+                "items": [
+                    {
+                        "provider": "test_provider",
+                        "model": "added_model",
+                        "input_rate": 1.0,
+                        "output_rate": 4.0,
+                    }
+                ]
+            },
+            headers=_master_headers(),
+        )
+        self.assertEqual(put_resp.status_code, 200)
+        self.assertEqual(len(put_resp.json()["items"]), 1)
+        self.assertEqual(put_resp.json()["items"][0]["model"], "added_model")
+
+        persisted = json.loads(providers_path.read_text(encoding="utf-8"))
+        provider_cfg = persisted[0]["test_provider"]
+        self.assertEqual(provider_cfg["usage_cost_currency"], "RUB")
+        self.assertAlmostEqual(provider_cfg["usage_cost_units_per_usd"], 85.0)
+
+        calc_resp = client.post(
+            "/v1/admin/pricing/calculate",
+            json={
+                "provider": "test_provider",
+                "model": "added_model",
+                "prompt_tokens": 500_000,
+                "completion_tokens": 250_000,
+            },
+            headers=_master_headers(),
+        )
+        self.assertEqual(calc_resp.status_code, 200)
+        self.assertAlmostEqual(calc_resp.json()["cost_usd"], 1.5)
 
 
 if __name__ == "__main__":

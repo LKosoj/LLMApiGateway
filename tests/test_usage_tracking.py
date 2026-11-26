@@ -5,6 +5,8 @@ import unittest
 
 from llm_gateway_core.utils.usage_tracking import (
     ModelCostRates,
+    ProviderCostCurrency,
+    _coerce_model_cost_rates,
     apply_rate_based_cost,
     calculate_model_cost_usd,
     _estimate_cost_saved,
@@ -14,6 +16,7 @@ from llm_gateway_core.utils.usage_tracking import (
     estimate_prompt_tokens,
     estimate_token_count,
     extract_tokens_usage,
+    iter_model_cost_rates,
 )
 
 
@@ -478,6 +481,43 @@ class CostSavedTests(unittest.TestCase):
             ModelCostRates(input_rate=1.0, output_rate=3.0),
         )
 
+    def test_iter_model_cost_rates_skips_provider_currency_entries(self):
+        registry = build_model_cost_rate_registry({
+            "rub_provider": {
+                "usage_cost_currency": "RUB",
+                "usage_cost_units_per_usd": 90.0,
+                "models": {
+                    "rub-model": {"input_rate": 2.0, "output_rate": 4.0},
+                },
+            },
+            "rub_no_models": {
+                "usage_cost_currency": "RUB",
+                "usage_cost_units_per_usd": 85.0,
+            },
+            "usd_provider": {
+                "models": {
+                    "usd-model": {"input_rate": 1.0, "output_rate": 3.0},
+                },
+            },
+        })
+        self.assertIsInstance(registry[("rub_provider", None)], ProviderCostCurrency)
+        self.assertIsInstance(registry[("rub_no_models", None)], ProviderCostCurrency)
+
+        entries = dict(iter_model_cost_rates(registry))
+
+        self.assertEqual(
+            entries,
+            {
+                ("rub_provider", "rub-model"): ModelCostRates(input_rate=2.0, output_rate=4.0),
+                ("usd_provider", "usd-model"): ModelCostRates(input_rate=1.0, output_rate=3.0),
+            },
+        )
+        self.assertEqual(list(iter_model_cost_rates(None)), [])
+        self.assertEqual(
+            list(iter_model_cost_rates({("bad", None): ModelCostRates(1.0, 2.0)})),
+            [],
+        )
+
     def test_extract_prefers_upstream_cost_saved_field(self):
         payload = {
             "usage": {
@@ -555,6 +595,124 @@ class CostSavedTests(unittest.TestCase):
         result = extract_tokens_usage(payload)
 
         self.assertEqual(result["cost_saved"], 0)
+
+
+class CachedInputRateTests(unittest.TestCase):
+    def test_calculate_model_cost_usd_with_cached_input_rate_variants(self):
+        # cached_input_rate=None keeps legacy formula
+        self.assertAlmostEqual(
+            calculate_model_cost_usd(
+                prompt_tokens=1000,
+                completion_tokens=200,
+                cached_tokens=600,
+                rates=ModelCostRates(10.0, 20.0, cached_input_rate=None),
+            ),
+            (1000 * 10.0 + 200 * 20.0) / 1_000_000,
+        )
+
+        # cached_input_rate=0.0 makes cached tokens free
+        self.assertAlmostEqual(
+            calculate_model_cost_usd(
+                prompt_tokens=1000,
+                completion_tokens=200,
+                cached_tokens=600,
+                rates=ModelCostRates(10.0, 20.0, cached_input_rate=0.0),
+            ),
+            (400 * 10.0 + 0.0 + 200 * 20.0) / 1_000_000,
+        )
+
+        # valid positive cached_input_rate
+        self.assertAlmostEqual(
+            calculate_model_cost_usd(
+                prompt_tokens=1000,
+                completion_tokens=200,
+                cached_tokens=600,
+                rates=ModelCostRates(10.0, 20.0, cached_input_rate=1.5),
+            ),
+            (400 * 10.0 + 600 * 1.5 + 200 * 20.0) / 1_000_000,
+        )
+
+        # cached_tokens > prompt_tokens is clamped to prompt_tokens
+        self.assertAlmostEqual(
+            calculate_model_cost_usd(
+                prompt_tokens=500,
+                completion_tokens=100,
+                cached_tokens=900,
+                rates=ModelCostRates(10.0, 20.0, cached_input_rate=1.0),
+            ),
+            (500 * 1.0 + 100 * 20.0) / 1_000_000,
+        )
+
+    def test_coerce_model_cost_rates_and_registry_valid_and_invalid_cached_rates(self):
+        self.assertEqual(
+            _coerce_model_cost_rates(ModelCostRates(2.0, 4.0, 0.5)),
+            ModelCostRates(2.0, 4.0, 0.5),
+        )
+        self.assertEqual(
+            _coerce_model_cost_rates((2.0, 4.0, 0.25)),
+            ModelCostRates(2.0, 4.0, 0.25),
+        )
+        self.assertEqual(
+            _coerce_model_cost_rates({"input_rate": 2.0, "output_rate": 4.0, "cached_input_rate": 0.0}),
+            ModelCostRates(2.0, 4.0, 0.0),
+        )
+        self.assertEqual(
+            _coerce_model_cost_rates({"input_rate": 2.0, "output_rate": 4.0, "cached_input_cost_per_million": 0.5}),
+            ModelCostRates(2.0, 4.0, 0.5),
+        )
+        self.assertEqual(
+            _coerce_model_cost_rates({"input_rate": 2.0, "output_rate": 4.0, "cached_prompt_rate": 0.3}),
+            ModelCostRates(2.0, 4.0, 0.3),
+        )
+        self.assertEqual(
+            _coerce_model_cost_rates({"input_rate": 2.0, "output_rate": 4.0, "cached_input_rate": None}),
+            ModelCostRates(2.0, 4.0, None),
+        )
+
+        for bad_value in (-0.1, float("nan"), float("inf"), True, False, "bad"):
+            self.assertIsNone(
+                _coerce_model_cost_rates({"input_rate": 2.0, "output_rate": 4.0, "cached_input_rate": bad_value})
+            )
+            self.assertIsNone(_coerce_model_cost_rates((2.0, 4.0, bad_value)))
+            self.assertIsNone(_coerce_model_cost_rates(ModelCostRates(2.0, 4.0, bad_value)))  # type: ignore[arg-type]
+
+        registry = build_model_cost_rate_registry({
+            "p": {
+                "models": {
+                    "good": {"input_rate": 2.0, "output_rate": 4.0, "cached_input_rate": 0.2},
+                    "bad": {"input_rate": 2.0, "output_rate": 4.0, "cached_input_rate": -1.0},
+                }
+            }
+        })
+        self.assertEqual(registry[("p", "good")], ModelCostRates(2.0, 4.0, 0.2))
+        self.assertNotIn(("p", "bad"), registry)
+
+    def test_apply_rate_based_cost_and_estimate_cost_saved_use_cached_tokens(self):
+        registry = {
+            ("p", "m"): ModelCostRates(10.0, 20.0, cached_input_rate=1.0),
+        }
+        tokens_usage = {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "cached_tokens": 600,
+            "cost": 0.0,
+        }
+        apply_rate_based_cost(tokens_usage, registry, provider="p", model="m")
+        self.assertAlmostEqual(
+            tokens_usage["cost"],
+            (400 * 10.0 + 600 * 1.0 + 200 * 20.0) / 1_000_000,
+        )
+
+        saved = _estimate_cost_saved(
+            prompt_tokens=1000,
+            completion_tokens=200,
+            cached_tokens=600,
+            primary_rate=ModelCostRates(10.0, 20.0, cached_input_rate=2.0),
+            fallback_rate=ModelCostRates(5.0, 10.0, cached_input_rate=0.5),
+        )
+        expected_primary = (400 * 10.0 + 600 * 2.0 + 200 * 20.0) / 1_000_000
+        expected_fallback = (400 * 5.0 + 600 * 0.5 + 200 * 10.0) / 1_000_000
+        self.assertAlmostEqual(saved, expected_primary - expected_fallback)
 
 
 if __name__ == "__main__":

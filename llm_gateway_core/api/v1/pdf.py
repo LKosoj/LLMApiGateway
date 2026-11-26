@@ -465,6 +465,7 @@ def _parse_pdf_terminal_observation(
     owner: OperationTerminalOwner,
     payload: object,
     *,
+    route,
     gateway_model: str,
     duration_ms: int,
 ) -> OperationTerminalObservation:
@@ -478,8 +479,8 @@ def _parse_pdf_terminal_observation(
         payload,
         policy=owner.context.policy,
         gateway_model=gateway_model,
-        provider=None,
-        model=None,
+        provider=route.provider,
+        model=route.model,
         cost_rate_registry=owner.cost_rate_registry,
         operation_cost_calculator_registry=(
             owner.operation_cost_calculator_registry
@@ -528,6 +529,7 @@ async def _finalize_pdf_job_response(
     observation = _parse_pdf_terminal_observation(
         owner,
         payload,
+        route=route,
         gateway_model=gateway_model,
         duration_ms=duration_ms,
     )
@@ -597,6 +599,7 @@ async def convert_pdf(request: Request):
             observation = _parse_pdf_terminal_observation(
                 owner,
                 response_payload,
+                route=route,
                 gateway_model=requested_model,
                 duration_ms=request_duration_ms(request_started_at),
             )
