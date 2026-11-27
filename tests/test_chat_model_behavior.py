@@ -230,6 +230,31 @@ class OpenAiDegenerateCompletionTests(unittest.TestCase):
 
         self.assertIsInstance(result, ModelBehaviorFailureDetail)
         self.assertEqual(result.behavior_class, "format_ignored")
+        self.assertEqual(str(result), "Model ignored the requested JSON response_format.")
+
+    def test_openai_truncated_json_at_token_limit_reports_truncation(self):
+        request_body_json = {"response_format": {"type": "json_object"}}
+        for finish_reason in ("length", "max_tokens"):
+            with self.subTest(finish_reason=finish_reason):
+                response_data = {
+                    "choices": [
+                        {
+                            "finish_reason": finish_reason,
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"entities": [{"id": "a", "desc": "cut off',
+                            },
+                        }
+                    ]
+                }
+
+                result = detect_degenerate_non_stream_response(
+                    response_data, request_body_json, is_anthropic_provider=False
+                )
+
+                self.assertIsInstance(result, ModelBehaviorFailureDetail)
+                self.assertEqual(result.behavior_class, "format_ignored")
+                self.assertIn("truncated at max_tokens limit", str(result))
 
     def test_openai_reasoning_content_without_content_is_not_degenerate(self):
         # Thinking models split the answer into "reasoning_content" (chain of
@@ -395,6 +420,25 @@ class AnthropicDegenerateCompletionTests(unittest.TestCase):
 
         self.assertIsInstance(result, ModelBehaviorFailureDetail)
         self.assertEqual(result.behavior_class, "empty_completion")
+
+    def test_anthropic_truncated_json_at_token_limit_reports_truncation(self):
+        request_body_json = {"response_format": {"type": "json_object"}}
+        for stop_reason in ("max_tokens", "length"):
+            with self.subTest(stop_reason=stop_reason):
+                response_data = {
+                    "content": [
+                        {"type": "text", "text": '{"entities": [{"id": "a", "desc": "cut off'},
+                    ],
+                    "stop_reason": stop_reason,
+                }
+
+                result = detect_degenerate_non_stream_response(
+                    response_data, request_body_json, is_anthropic_provider=True
+                )
+
+                self.assertIsInstance(result, ModelBehaviorFailureDetail)
+                self.assertEqual(result.behavior_class, "format_ignored")
+                self.assertIn("truncated at max_tokens limit", str(result))
 
 
 class DegenerateResponseDescriptionTests(unittest.TestCase):

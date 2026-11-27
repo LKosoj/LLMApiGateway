@@ -49,6 +49,7 @@ MODEL_BEHAVIOR_FAILURE_CLASSES: frozenset[str] = frozenset(
 
 UPSTREAM_PROVIDER_ERROR_PREFIX = "[Error] The upstream provider"
 UPSTREAM_PROVIDER_ERROR_COMPLETION_TOKENS = 14
+_TOKEN_LIMIT_STOP_REASONS: frozenset[str] = frozenset({"length", "max_tokens"})
 
 
 class ModelBehaviorFailureDetail(str):
@@ -140,7 +141,7 @@ def _detect_degenerate_openai_completion(
         has_reasoning = isinstance(reasoning_content, str) and bool(reasoning_content.strip())
         if (
             has_reasoning
-            and finish_reason not in {"length", "max_tokens"}
+            and finish_reason not in _TOKEN_LIMIT_STOP_REASONS
             and not expects_json_object_response(request_body_json)
         ):
             return None
@@ -150,6 +151,11 @@ def _detect_degenerate_openai_completion(
         )
 
     if expects_json_object_response(request_body_json) and extract_sanitized_json_object_content(text_content) is None:
+        if finish_reason in _TOKEN_LIMIT_STOP_REASONS:
+            return ModelBehaviorFailureDetail(
+                "Model JSON response was truncated at max_tokens limit (incomplete JSON).",
+                behavior_class="format_ignored",
+            )
         return ModelBehaviorFailureDetail(
             "Model ignored the requested JSON response_format.",
             behavior_class="format_ignored",
@@ -428,7 +434,7 @@ def _detect_degenerate_anthropic_completion(
         )
         if (
             has_thinking
-            and stop_reason not in {"length", "max_tokens"}
+            and stop_reason not in _TOKEN_LIMIT_STOP_REASONS
             and not expects_json_object_response(request_body_json)
         ):
             return None
@@ -438,6 +444,11 @@ def _detect_degenerate_anthropic_completion(
         )
 
     if expects_json_object_response(request_body_json) and extract_sanitized_json_object_content(text_content) is None:
+        if stop_reason in _TOKEN_LIMIT_STOP_REASONS:
+            return ModelBehaviorFailureDetail(
+                "Model JSON response was truncated at max_tokens limit (incomplete JSON).",
+                behavior_class="format_ignored",
+            )
         return ModelBehaviorFailureDetail(
             "Model ignored the requested JSON response_format.",
             behavior_class="format_ignored",
