@@ -442,7 +442,7 @@ class _ResponseObserver:
         if body:
             if self._leases.remaining_bytes + len(body) > self._services.json_response_max_bytes:
                 raise _ObservationFailure(_FailureKind.PROTOCOL)
-        self._retain_body_message(
+        await self._retain_body_message(
             self._services.json_response_capacity,
             message,
             body,
@@ -503,7 +503,7 @@ class _ResponseObserver:
             await self._flush_start()
             await self._send_body(message)
             return
-        self._retain_body_message(
+        await self._retain_body_message(
             self._services.stream_observation_capacity,
             message,
             body,
@@ -660,7 +660,7 @@ class _ResponseObserver:
             self._publish_cost_header = result.value.publish_cost_header
         self._settled = True
 
-    def _retain_body_message(
+    async def _retain_body_message(
         self,
         capacity: StreamObservationCapacity,
         message: Message,
@@ -669,12 +669,19 @@ class _ResponseObserver:
         if len(self._body_messages) >= capacity.snapshot.max_items:
             raise _ObservationFailure(_FailureKind.ACCOUNTING)
         if body:
-            self._reserve(capacity, body)
+            await self._reserve(capacity, body)
         self._body_messages.append(dict(message))
 
-    def _reserve(self, capacity: StreamObservationCapacity, body: bytes) -> None:
+    async def _reserve(self, capacity: StreamObservationCapacity, body: bytes) -> None:
         try:
-            lease = capacity.try_acquire(len(body))
+            if self._leases.remaining_bytes == 0:
+                lease = await capacity.acquire(len(body))
+            else:
+                lease = capacity.try_acquire(len(body))
+        except asyncio.CancelledError as exc:
+            if _request_task_is_cancelling():
+                raise
+            raise _ObservationFailure(_FailureKind.ACCOUNTING) from exc
         except StreamObservationError as exc:
             raise _ObservationFailure(_FailureKind.ACCOUNTING) from exc
         self._leases.append(lease)

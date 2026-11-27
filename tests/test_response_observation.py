@@ -1420,3 +1420,101 @@ def test_send_failure_keeps_first_finalization_and_reports_transport_once() -> N
         _assert_capacity_zero(services)
 
     run_async(scenario())
+
+
+def test_fast_sse_stream_waits_for_shared_capacity_instead_of_exhausting() -> None:
+    async def scenario() -> None:
+        max_items = 4
+        capacity = StreamObservationCapacity(max_items=max_items, max_bytes=65_536)
+        services = make_app_services(stream_observation_capacity=capacity)
+        probe = _Probe()
+        observed_queue: asyncio.Queue[tuple[bytes, object] | None] = asyncio.Queue()
+
+        async def drain_observer() -> None:
+            while True:
+                item = await observed_queue.get()
+                if item is None:
+                    return
+                _chunk, lease = item
+                lease.release_all()
+
+        drain_task = asyncio.create_task(drain_observer())
+
+        async def observe_chunk(_start: ResponseStart, body: bytes) -> None:
+            lease = await capacity.acquire(len(body))
+            observed_queue.put_nowait((body, lease))
+
+        async def finish_transport(_result: TransportResult) -> None:
+            observed_queue.put_nowait(None)
+            await drain_task
+
+        observation = replace(
+            _observation(services, probe),
+            observe_body_chunk=observe_chunk,
+            transport_finished=finish_transport,
+        )
+        chunks = [
+            {
+                "type": "http.response.body",
+                "body": f'data: {{"choices":[{{"delta":{{"reasoning_content":"tok{idx}"}}}}]}}\n\n'.encode(),
+                "more_body": True,
+            }
+            for idx in range(max_items * 3)
+        ]
+        source = [
+            _start(b"text/event-stream"),
+            *chunks,
+            {"type": "http.response.body", "body": b"data: [DONE]\n\n", "more_body": False},
+        ]
+
+        sent = await _run_observed(
+            source,
+            services=services,
+            observation=observation,
+            probe=probe,
+        )
+
+        assert sent[0]["status"] == 200
+        assert [signal.reason for signal in probe.signals] == [TerminalReason.COMPLETE]
+        assert len(sent) == len(source)
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
+
+
+def test_partial_sse_frame_still_fails_fast_when_capacity_is_exhausted() -> None:
+    async def scenario() -> None:
+        capacity = StreamObservationCapacity(max_items=2, max_bytes=65_536)
+        services = make_app_services(stream_observation_capacity=capacity)
+        probe = _Probe()
+        blocker = await capacity.acquire(1)
+        try:
+            sent = await _run_observed(
+                [
+                    _start(b"text/event-stream"),
+                    {
+                        "type": "http.response.body",
+                        "body": b"data: part1",
+                        "more_body": True,
+                    },
+                    {
+                        "type": "http.response.body",
+                        "body": b"part2\n\n",
+                        "more_body": False,
+                    },
+                ],
+                services=services,
+                observation=_observation(services, probe),
+                probe=probe,
+            )
+        finally:
+            blocker.release_all()
+
+        assert sent[0]["status"] == 503
+        assert json.loads(_body(sent))["error"]["code"] == "accounting_unavailable"
+        assert [signal.reason for signal in probe.signals] == [
+            TerminalReason.UPSTREAM_ERROR
+        ]
+        _assert_capacity_zero(services)
+
+    run_async(scenario())
