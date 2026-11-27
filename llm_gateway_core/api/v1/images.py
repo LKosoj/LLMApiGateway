@@ -73,6 +73,10 @@ IMAGE_FORM_MAX_PART_SIZE = 64 * 1024
 IMAGE_FORM_MAX_IMAGES = 16
 
 
+class ImageSizeMismatchError(HTTPException):
+    """The provider exhausted its attempts to return the requested image size."""
+
+
 def _get_operation_runtime(
     request: Request,
 ) -> tuple[OperationDispatcher, httpx.AsyncClient, ConfigLoader, Mapping[str, httpx.AsyncClient]]:
@@ -87,7 +91,10 @@ def _get_operation_runtime(
 
 
 def _should_try_next_image_route(exc: HTTPException, route_index: int, routes: list[OperationRoute]) -> bool:
-    return (isinstance(exc, DownstreamHTTPException) or exc.status_code in IMAGE_FALLBACK_STATUS_CODES) and route_index < len(routes) - 1
+    return route_index < len(routes) - 1 and (
+        isinstance(exc, (DownstreamHTTPException, ImageSizeMismatchError))
+        or exc.status_code in IMAGE_FALLBACK_STATUS_CODES
+    )
 
 
 def _log_image_route_fallback(
@@ -514,7 +521,7 @@ async def _proxy_image_with_fallback(
                         operation_label, *expected_dimensions, size_attempt + 1, route.provider, route.model,
                     )
                 else:
-                    raise HTTPException(
+                    raise ImageSizeMismatchError(
                         status_code=502,
                         detail=f"Returned image size does not match {request_payload['size']} after 3 attempts.",
                     )

@@ -31,12 +31,13 @@ def endpoint():
 
 
 @pytest.mark.parametrize("transport", ["generation", "json_edit", "multipart_edit"])
-@pytest.mark.parametrize("failures", [0, 1, 2, 3])
+@pytest.mark.parametrize("failures", [0, 1, 2, 3, 6])
 def test_image_size_retries(endpoint, transport, failures):
     wrong = {"data": [{"b64_json": encoded_image(64, 32)}]}
     correct = {"data": [{"b64_json": encoded_image(32, 64)}]}
     responses = [endpoint_support._FakeDownstreamResponse(wrong) for _ in range(failures)]
-    responses.append(endpoint_support._FakeDownstreamResponse(correct))
+    if failures < 6:
+        responses.append(endpoint_support._FakeDownstreamResponse(correct))
     with endpoint._client(responses) as (client, _, upstream):
         payload = {"model": "gateway/image-gen", "prompt": "Draw a tree", "size": "32x64"}
         kwargs = {"headers": {"Authorization": "Bearer test-gateway-key"}}
@@ -51,9 +52,17 @@ def test_image_size_retries(endpoint, transport, failures):
         else:
             kwargs["json"] = payload
         response = client.post(path, **kwargs)
-    assert upstream.post.await_count == min(failures + 1, 3)
-    assert response.status_code == (502 if failures == 3 else 200)
-    if failures < 3:
+    assert upstream.post.await_count == len(responses)
+    upstream_models = [
+        call.kwargs["data" if transport == "multipart_edit" else "json"]["model"]
+        for call in upstream.post.await_args_list
+    ]
+    assert upstream_models == (
+        ["gpt-image-1"] * min(len(responses), 3)
+        + ["gpt-image-1-fallback"] * max(len(responses) - 3, 0)
+    )
+    assert response.status_code == (502 if failures == 6 else 200)
+    if failures < 6:
         assert response.json() == correct
     else:
         assert "after 3 attempts" in response.json()["detail"]

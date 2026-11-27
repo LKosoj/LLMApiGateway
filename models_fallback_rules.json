@@ -257,6 +257,19 @@
     "gateway_model_name": "llmgateway/qwen3.5",
     "fallback_models": [
       {
+        "provider": "kimicode",
+        "model": "k3.1-pro",
+        "use_provider_order_as_fallback": false,
+        "custom_body_params": {
+          "temperature": 1
+        },
+        "custom_headers": {},
+        "context_window": 1048576,
+        "capabilities_autofilled": [
+          "context_window"
+        ]
+      },
+      {
         "provider": "z.ai",
         "model": "GLM-5.3-Flash",
         "use_provider_order_as_fallback": false,
@@ -287,19 +300,6 @@
           "context_window",
           "supports_tools",
           "supports_vision"
-        ]
-      },
-      {
-        "provider": "kimicode",
-        "model": "k3.1-pro",
-        "use_provider_order_as_fallback": false,
-        "custom_body_params": {
-          "temperature": 1
-        },
-        "custom_headers": {},
-        "context_window": 1048576,
-        "capabilities_autofilled": [
-          "context_window"
         ]
       },
       {
@@ -676,7 +676,7 @@
       },
       {
         "provider": "agentrouter",
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
         "custom_headers": {},
@@ -780,11 +780,22 @@
         ]
       },
       {
-        "provider": "opencode-zen",
-        "model": "deepseek-v4.1-flash-free",
+        "provider": "anymodel",
+        "model": "am/free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {}
+        "custom_headers": {
+          "User-Agent": "Kimi Claw Plugin",
+          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
+        },
+        "supports_vision": true,
+        "supports_tools": true,
+        "context_window": 200000,
+        "capabilities_autofilled": [
+          "context_window",
+          "supports_tools",
+          "supports_vision"
+        ]
       },
       {
         "provider": "neuraldeep",
@@ -802,22 +813,11 @@
         ]
       },
       {
-        "provider": "anymodel",
-        "model": "am/free",
+        "provider": "opencode-zen",
+        "model": "deepseek-v4.1-flash-free",
         "use_provider_order_as_fallback": false,
         "custom_body_params": {},
-        "custom_headers": {
-          "User-Agent": "Kimi Claw Plugin",
-          "X-Kimi-Claw-ID": "19dd0864-d5f2-8078-8000-0000d478e90e"
-        },
-        "supports_vision": true,
-        "supports_tools": true,
-        "context_window": 200000,
-        "capabilities_autofilled": [
-          "context_window",
-          "supports_tools",
-          "supports_vision"
-        ]
+        "custom_headers": {}
       },
       {
         "provider": "a6",

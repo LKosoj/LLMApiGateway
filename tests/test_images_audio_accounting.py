@@ -931,37 +931,49 @@ def test_audio_cancellation_releases_without_commit() -> None:
     run_async(scenario())
 
 
-@pytest.mark.parametrize("matches", [True, False])
-def test_image_size_retries_include_rejected_results_in_total_cost(matches: bool) -> None:
+@pytest.mark.parametrize(
+    ("size_matches", "expected_routes", "expected_cost"),
+    [
+        ([False, False, True], 1, 0.6),
+        ([False, False, False, True], 2, 1.0),
+        ([False] * 6, 2, None),
+    ],
+    ids=["same-route-retry", "next-route", "all-routes-exhausted"],
+)
+def test_image_size_retries_include_rejected_results_in_total_cost(
+    size_matches: list[bool], expected_routes: int, expected_cost: float | None,
+) -> None:
     async def scenario() -> None:
         request, services = _request("/v1/images/generations")
         _install_successful_commit(services.accounting_service)
         payload = {"model": "gateway-image", "prompt": "draw", "size": "32x64"}
+        costs = [attempt / 10 for attempt in range(1, len(size_matches) + 1)]
         with _image_dependencies(
             payload,
             [_route(), _route("provider-b", "model-b")],
-            [({"usage": {"cost": 0.1}}, 200),
-             ({"usage": {"cost": 0.2}}, 200),
-             ({"usage": {"cost": 0.3}}, 200)],
+            [({"usage": {"cost": cost}}, 200) for cost in costs],
             {"data": [{"b64_json": "checked separately"}]},
         ) as (execute, _, prepare), patch.object(
-            images, "image_dimensions_match", AsyncMock(side_effect=[False, False, matches]),
+            images, "image_dimensions_match", AsyncMock(side_effect=size_matches),
         ):
-            if matches:
+            if expected_cost is not None:
                 response = await images.create_images_generation(request)
                 await _send_response(request, response)
                 services.accounting_service.commit.assert_awaited_once()
                 event = services.accounting_service.commit.await_args.args[1]
-                assert event.usage.cost == pytest.approx(0.6)
-                assert [component.usage.cost for component in event.components] == [0.1, 0.2, 0.3]
+                assert event.usage.cost == pytest.approx(expected_cost)
+                assert [component.usage.cost for component in event.components] == costs
                 services.accounting_service.release.assert_not_awaited()
+                if expected_routes == 2:
+                    _assert_route_switch(services, "images_generation")
             else:
                 with pytest.raises(HTTPException) as exc:
                     await images.create_images_generation(request)
                 assert exc.value.status_code == 502
+                assert exc.value.detail == "Returned image size does not match 32x64 after 3 attempts."
                 services.accounting_service.commit.assert_not_awaited()
                 services.accounting_service.release.assert_awaited_once()
-            assert execute.await_count == 3
-            prepare.assert_awaited_once()
+            assert execute.await_count == len(size_matches)
+            assert prepare.await_count == expected_routes
 
     run_async(scenario())
