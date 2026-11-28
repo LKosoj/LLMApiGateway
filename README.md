@@ -1337,9 +1337,9 @@ Deep research не передаёт raw virtual key во внутренний wo
 
 ## Через pip
 
-Проект требует Python 3.12+. Создайте и активируйте локальное виртуальное окружение, затем установите зависимости из актуального `requirements.txt`:
+Проект требует Python 3.14+. Создайте и активируйте локальное виртуальное окружение, затем установите зависимости из актуального `requirements.txt`:
 ```bash
-python3 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python main.py
@@ -1356,18 +1356,20 @@ python -m playwright install chromium
 pip install -r requirements-research.txt
 ```
 
-> `requirements.txt`, `requirements-dev.txt`, `requirements-research.txt` и `requirements-container.txt` — сгенерированные файлы, не правьте их вручную. `security-constraints.txt` содержит только проверенные точные security pins. Отдельный `compatibility-constraints.txt` содержит проверенные cross-extra ограничения, которые не являются security policy; сейчас это семантическая граница `requests<2.34`, необходимая `arxiv==4.0.0`. Upper bound выбран намеренно вместо exact pin: точную воспроизводимость обеспечивают generated locks, а compatibility input описывает реальную границу совместимости. Оба constraint-файла применяются ко всем четырём locks. Обычные direct dependencies меняйте в `pyproject.toml`, security pins — в `security-constraints.txt`, а согласованные compatibility bounds — в `compatibility-constraints.txt`, затем запускайте единый fail-fast entrypoint:
+Временно используется пакет `gpt-researcher==0.17.0+llmgateway.1` из каталога `vendor/`. Он собран из официального выпуска 0.17.0. В этой сборке `unstructured` устанавливается только с дополнительным набором `documents`. Gateway читает материалы по ссылкам через свой сервис и этот набор не устанавливает. Для воспроизводимой сборки пакета запустите `python scripts/build_gpt_researcher_wheel.py` в окружении разработки.
+
+> `requirements.txt`, `requirements-dev.txt`, `requirements-research.txt` и `requirements-container.txt` — сгенерированные файлы, не правьте их вручную. `security-constraints.txt` содержит только проверенные точные security pins. Отдельный `compatibility-constraints.txt` содержит проверенные cross-extra ограничения, которые не являются security policy; `requests<2.35` требуется для `arxiv==4.1.0`, а `playwright<1.65` — для CloakBrowser 0.6.5. Ограничения на `htmldate` и `python-dateutil` позволяют использовать исправленную версию LiteLLM. Точные версии фиксируются в сгенерированных файлах. Оба constraint-файла применяются ко всем четырём locks. Обычные direct dependencies меняйте в `pyproject.toml`, security pins — в `security-constraints.txt`, а согласованные compatibility bounds — в `compatibility-constraints.txt`, затем запускайте единый fail-fast entrypoint:
 > ```bash
 > ./scripts/compile_requirements.sh
 > ```
-> Canonical `pip-compile` команды определены только в `scripts/check_dependency_contract.py`: script последовательно генерирует runtime, dev, research и container locks с одинаковыми security/compatibility inputs, затем выполняет статическую проверку. `requirements-container.txt` повторяет production closure research-lock, добавляет SHA-256 для `--require-hashes` и не включает dev tools. Активные installer dependencies (`pip`/`setuptools`) включаются как обычные exact pins; comments-only unsafe omission footer считается ошибкой контракта. Обычная регенерация не использует `--upgrade` и может сохранять существующие lock preferences. Независимый `python scripts/check_dependency_contract.py --verify-bootstrap` копирует только source inputs во временный каталог и заново компилирует все четыре locks без существующих outputs, не изменяя repository locks. Статический checker также проверяет активные direct dependencies и markers для Python 3.12, security/compatibility contract, exact lock pins, совпадение общих версий, container hashes и headers, но намеренно не подменяет resolver. Resolver closure дополнительно закрывают clean bootstrap, установка `requirements-dev.txt` в чистое окружение, `python -m pip check` и `python -m pip_audit -r requirements-dev.txt` без молчаливого исключения advisory. Локальную `.venv` после изменения lock следует пересоздать, а не дополнять пакетами вручную.
+> Canonical `pip-compile` команды определены только в `scripts/check_dependency_contract.py`: script последовательно генерирует runtime, dev, research и container locks с одинаковыми security/compatibility inputs, затем выполняет статическую проверку. `requirements-container.txt` повторяет production closure research-lock, добавляет SHA-256 для `--require-hashes` и не включает dev tools. Активные installer dependencies (`pip`/`setuptools`) включаются как обычные exact pins; comments-only unsafe omission footer считается ошибкой контракта. Обычная регенерация не использует `--upgrade` и может сохранять существующие lock preferences. Независимый `python scripts/check_dependency_contract.py --verify-bootstrap` копирует только source inputs во временный каталог и заново компилирует все четыре locks без существующих outputs, не изменяя repository locks. Статический checker также проверяет активные direct dependencies и markers для Python 3.14, security/compatibility contract, exact lock pins, совпадение общих версий, container hashes и headers, но намеренно не подменяет resolver. Resolver closure дополнительно закрывают clean bootstrap, установка `requirements-dev.txt` в чистое окружение, `python -m pip check` и `python -m pip_audit -r requirements-dev.txt` без молчаливого исключения advisory. Локальную `.venv` после изменения lock следует пересоздать, а не дополнять пакетами вручную.
 >
-> Pytest трактует deprecation warnings как ошибки. Единственное временное исключение — точный полный upstream warning `gpt-researcher==0.16.1` об импорте `langchain-community`; policy привязана ко всему message (включая URL и конец строки), category/module и автоматически истекает 2027-01-15 через dependency checker. Изменение текста или дополнительный suffix не подавляются. В W4 нужно повторно проверить upstream и удалить исключение, если импорт устранён. Остальные категории warnings не маскируются этим policy и разбираются в задачах соответствующих подсистем.
+> Pytest трактует предупреждения об устаревших API как ошибки. Есть два точечных исключения для сторонних библиотек. Первое касается вызова `asyncio.iscoroutinefunction` внутри LangSmith на Python 3.14. Второе касается импорта `langchain-community` в PyMuPDF-обработчике `gpt-researcher==0.17.0+llmgateway.1` и действует до 2027-01-15. Для обоих исключений проверяется полный текст предупреждения и модуль.
 
 ### Через Docker
 Если вы предпочитаете запуск через Docker, смотрите [это руководство](/docker/README.md) (спасибо [canadaduane](https://github.com/canadaduane)!👍)
 
-Docker image собирается на `python:3.12-slim` и устанавливает hash-locked зависимости из `requirements-container.txt`, поэтому обновления зависимостей попадают в контейнер при пересборке image.
+Docker image собирается на `python:3.14.10-slim-trixie` и устанавливает hash-locked зависимости из `requirements-container.txt`, поэтому обновления зависимостей попадают в контейнер при пересборке image.
 
 Canonical product version хранится только в `llm_gateway_core/version.py`. Перед любой Compose-командой в новой shell-сессии получите её из source и передайте fail-fast контракту сборки:
 
@@ -1391,7 +1393,7 @@ Compose хранит generated images в своём `gateway_outputs` volume. О
 ### Через systemd service
 Если нужен локальный systemd-сервис вне Docker, сначала подготовьте отдельный deploy checkout и `.venv` с зависимостями из `requirements.txt`:
 ```bash
-python3 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```

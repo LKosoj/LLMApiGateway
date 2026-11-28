@@ -14,22 +14,22 @@ import urllib.request
 from pathlib import Path
 
 
-ENGINE_VERSION = "146.0.7680.177.3"
 ASSETS = {
     "amd64": (
         "linux-x64",
-        "5af027faafb1fef9933eb784c094b764706de22a372a2cee84bc117fc4ab537f",
+        "146.0.7680.177.5",
+        "4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e",
         62,
     ),
     "arm64": (
         "linux-arm64",
+        "146.0.7680.177.3",
         "8b71ce53b4fd131327331a31fba3835d71882d19bfaabde78dd0f5390bd16f45",
         183,
     ),
 }
 RELEASE_BASE_URL = (
-    "https://github.com/CloakHQ/cloakbrowser/releases/download/"
-    f"chromium-v{ENGINE_VERSION}"
+    "https://github.com/CloakHQ/cloakbrowser/releases/download"
 )
 
 
@@ -129,12 +129,12 @@ def _extract_archive(
 
 def install_asset(arch: str, archive_cache: Path, destination: Path) -> None:
     try:
-        platform_name, expected_sha256, expected_machine = ASSETS[arch]
+        platform_name, version, expected_sha256, expected_machine = ASSETS[arch]
     except KeyError as exc:
         raise ValueError(f"unsupported target architecture: {arch}") from exc
     archive_name = f"cloakbrowser-{platform_name}.tar.gz"
     archive = archive_cache / archive_name
-    url = f"{RELEASE_BASE_URL}/{archive_name}"
+    url = f"{RELEASE_BASE_URL}/chromium-v{version}/{archive_name}"
     _extract_archive(
         _verified_archive(url, archive, expected_sha256),
         destination,

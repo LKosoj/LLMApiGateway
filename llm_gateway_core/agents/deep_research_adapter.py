@@ -28,7 +28,7 @@ from ..services.deep_research_protocol import (
 )
 
 
-GPT_RESEARCHER_REQUIRED_VERSION = "0.16.1"
+GPT_RESEARCHER_REQUIRED_VERSION = "0.17.0+llmgateway.1"
 DEEP_RESEARCH_REPORT_MAX_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,7 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
             results = await ipc.search(query, max_results)
             urls = [item["url"] for item in results if item.get("url")]
         else:
-            # 0.16.1 re-reads the planning search instead of searching again;
+            # 0.17.0 re-reads the planning search instead of searching again;
             # those results come from gateway_get_search_results, keyed by href.
             urls = [
                 item.get("href") or item.get("url")
@@ -322,7 +322,7 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
             ]
         new_urls = await conductor._get_new_urls(urls)
         random.shuffle(new_urls)
-        # 0.16.1 unpacks this into (urls to scrape, sources the retriever already
+        # 0.17.0 unpacks this into (urls to scrape, sources the retriever already
         # fetched). The gateway retriever only returns snippets, so nothing is
         # pre-fetched and every url still goes through the read callback.
         return new_urls, []
@@ -337,7 +337,7 @@ def _gateway_research_tools(ipc: DeepResearchIpcClient):
         cost_callback: Any = None,
         embeddings: Any = None,
     ) -> str:
-        # 0.16.1 silently swaps embeddings for keyword ranking on any failure.
+        # 0.17.0 silently swaps embeddings for keyword ranking on any failure.
         # Keep the 0.15.1 contract: always embeddings, and failures surface.
         # The threshold is left unset like 0.15.1 did (SIMILARITY_THRESHOLD env).
         del cfg
@@ -513,7 +513,7 @@ def collect_public_result(
     research_result: object,
     generated_images: tuple[dict[str, str], ...] = (),
 ) -> DeepResearchResult:
-    """Read only the public 0.16.1 result getters and validate their schema."""
+    """Read only the public 0.17.0 result getters and validate their schema."""
     sources = _call_public_getter(researcher, "get_research_sources")
     source_urls = _call_public_getter(researcher, "get_source_urls")
     context = _call_public_getter(researcher, "get_research_context")
@@ -620,5 +620,5 @@ def run_deep_research_job(
 def _call_public_getter(researcher: object, name: str) -> object:
     getter = getattr(researcher, name, None)
     if not callable(getter):
-        raise ValueError(f"GPT Researcher 0.16.1 public method {name}() is unavailable.")
+        raise ValueError(f"GPT Researcher 0.17.0 public method {name}() is unavailable.")
     return getter()

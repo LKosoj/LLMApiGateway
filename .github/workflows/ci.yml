@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.12"
+  PYTHON_VERSION: "3.14"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
@@ -68,7 +68,10 @@ jobs:
         run: python scripts/check_product_version.py --print
 
       - name: Audit pinned dependencies
-        run: python -m pip_audit -r requirements-dev.txt
+        run: |
+          python -m pip_audit -r requirements-dev.txt
+          # The local wheel keeps the official GPT Researcher code unchanged.
+          printf '%s\n' 'gpt-researcher==0.17.0' | python -m pip_audit --no-deps --disable-pip -r /dev/stdin
 
       - name: Verify dependency and CI contracts
         run: >-
@@ -155,13 +158,13 @@ jobs:
         shell: bash
         run: python -m pytest --fixtures -q | grep -Eq '^page[[:space:]]'
 
-      - name: Verify exactly 199 browser tests are collected
+      - name: Verify exactly 216 browser tests are collected
         shell: bash
         run: |
           collection="$(python -m pytest --collect-only -q -m browser)"
           printf '%s\n' "$collection"
           collected="$(printf '%s\n' "$collection" | grep -c '::')"
-          test "$collected" -eq 199
+          test "$collected" -eq 216
 
       - name: Run all browser tests without silent skips
         shell: bash
@@ -172,8 +175,8 @@ jobs:
             echo 'Browser job must not skip browser tests.' >&2
             exit 1
           fi
-          if ! grep -Eq '(^|, )199 passed(,| )' browser-pytest.log; then
-            echo 'Browser job must execute all 199 browser tests successfully.' >&2
+          if ! grep -Eq '(^|, )216 passed(,| )' browser-pytest.log; then
+            echo 'Browser job must execute all 216 browser tests successfully.' >&2
             exit 1
           fi
 

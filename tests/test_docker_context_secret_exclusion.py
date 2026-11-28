@@ -126,8 +126,8 @@ def test_dockerfile_uses_pinned_hermetic_runtime_contract() -> None:
         "b99fecfe00268a8b556fad7d9c37ee25d716ae08a5d7320e6d51c4dd83246894"
     )
     pinned_base = (
-        "python:3.12-slim@sha256:"
-        "46cb7cc2877e60fbd5e21a9ae6115c30ace7a077b9f8772da879e4590c18c2e3"
+        "python:3.14.10-slim-trixie@sha256:"
+        "f57c4c23b985d95deea5bc5249e2f9c8a512b4cc9d5d3fd31900cbd2f5f0a604"
     )
     assert dockerfile.count(f"FROM {pinned_base}") == 3
     assert "COPY . /app" not in dockerfile
@@ -141,13 +141,13 @@ def test_dockerfile_uses_pinned_hermetic_runtime_contract() -> None:
     assert 'line.startswith("setuptools==")' in dockerfile
     assert "setuptools==83.0.0" not in dockerfile
     assert "pip install --no-cache-dir --upgrade" not in dockerfile
-    assert "snapshot.debian.org/archive/debian/20260421T000000Z/" in dockerfile
-    assert "snapshot.debian.org/archive/debian-security/20260421T000000Z/" in dockerfile
+    assert "snapshot.debian.org/archive/debian/20261123T000000Z/" in dockerfile
+    assert "snapshot.debian.org/archive/debian-security/20261123T000000Z/" in dockerfile
     assert "CLOAKBROWSER_AUTO_UPDATE=false" in dockerfile
     assert "RUN --mount=type=tmpfs,target=/tmp" in dockerfile
     assert (
         'CLOAKBROWSER_BINARY_PATH="/opt/cloakbrowser/'
-        'chromium-146.0.7680.177.3/chrome"'
+        'chromium/chrome"'
     ) in dockerfile
     assert "USER 10001:10001" in dockerfile
 

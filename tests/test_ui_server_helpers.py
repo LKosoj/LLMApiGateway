@@ -2,6 +2,7 @@ import ast
 import io
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -251,7 +252,7 @@ def test_isolated_gateway_process_copies_env_and_uses_canonical_launch(
         assert yielded is proc
 
     assert inherited_env == {"GATEWAY_DB_DIR": "/checkout/db", "KEEP": "value"}
-    assert captured["args"] == ["./.venv/bin/python", "main.py"]
+    assert captured["args"] == [sys.executable, "main.py"]
     captured_kwargs = captured["kwargs"]
     assert isinstance(captured_kwargs, dict)
     assert captured_kwargs["env"] is not inherited_env

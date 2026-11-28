@@ -35,7 +35,7 @@ EXPECTED_HEALTHCHECK = {
     "Retries": 3,
 }
 OCI_VERSION_LABEL = "org.opencontainers.image.version"
-BROWSER_BINARY_PATH = "opt/cloakbrowser/chromium-146.0.7680.177.3/chrome"
+BROWSER_BINARY_PATH = "opt/cloakbrowser/chromium/chrome"
 VENV_PYTHON_PATH = "opt/venv/bin/python"
 ESSENTIAL_ENV = {
     "APP_DIR": "/app",

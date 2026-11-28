@@ -81,15 +81,16 @@ def _write_archive_with_unsafe_member(path: Path, kind: str) -> None:
 def test_asset_manifest_pins_both_linux_architectures() -> None:
     installer = _load_installer()
 
-    assert installer.ENGINE_VERSION == "146.0.7680.177.3"
     assert installer.ASSETS == {
         "amd64": (
             "linux-x64",
-            "5af027faafb1fef9933eb784c094b764706de22a372a2cee84bc117fc4ab537f",
+            "146.0.7680.177.5",
+            "4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e",
             AMD64_ELF_MACHINE,
         ),
         "arm64": (
             "linux-arm64",
+            "146.0.7680.177.3",
             "8b71ce53b4fd131327331a31fba3835d71882d19bfaabde78dd0f5390bd16f45",
             ARM64_ELF_MACHINE,
         ),

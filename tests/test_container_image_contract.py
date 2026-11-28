@@ -162,7 +162,7 @@ def _valid_entries() -> list[LayerEntry]:
         _directory("opt/venv/bin"),
         _symlink("opt/venv/bin/python", "/usr/local/bin/python"),
         _directory("opt/cloakbrowser"),
-        _directory("opt/cloakbrowser/chromium-146.0.7680.177.3"),
+        _directory("opt/cloakbrowser/chromium"),
         _file(checker.BROWSER_BINARY_PATH, b"browser", mode=0o555),
         _directory("usr"),
         _directory("usr/local"),

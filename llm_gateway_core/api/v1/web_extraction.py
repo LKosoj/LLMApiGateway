@@ -176,10 +176,7 @@ async def _direct_http_fetch(url: str) -> dict[str, Any] | None:
 def _trafilatura_markdown(html_text: str, base_url: str) -> str | None:
     """Extract clean main-content Markdown with inline ``![](url)`` images via full trafilatura.
 
-    Only the full ``trafilatura`` package keeps image links inside the markdown body;
-    ``rs_trafilatura`` surfaces images as a separate list, so the read pipeline relies on this
-    engine to return images on their place in the text. Returns ``None`` when trafilatura is
-    unavailable or yields no main content.
+    Returns ``None`` when trafilatura is unavailable or yields no main content.
     """
     try:
         import trafilatura
@@ -195,6 +192,7 @@ def _trafilatura_markdown(html_text: str, base_url: str) -> str | None:
             include_tables=True,
             include_images=True,
             include_comments=False,
+            favor_precision=True,  # Preserve inline images in Trafilatura 2.2.
             output_format="markdown",
         )
     except Exception as exc:

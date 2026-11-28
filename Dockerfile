@@ -2,11 +2,11 @@
 
 # ====================================================
 # LLM Gateway Dockerfile
-# Hermetic multi-stage Python 3.12 build
+# Hermetic multi-stage Python 3.14 build
 # ====================================================
 
 # ============= VERSION CONTRACT STAGE =============
-FROM python:3.12-slim@sha256:46cb7cc2877e60fbd5e21a9ae6115c30ace7a077b9f8772da879e4590c18c2e3 AS version-contract
+FROM python:3.14.10-slim-trixie@sha256:f57c4c23b985d95deea5bc5249e2f9c8a512b4cc9d5d3fd31900cbd2f5f0a604 AS version-contract
 
 ARG LLMGATEWAY_EXPECTED_PRODUCT_VERSION
 
@@ -23,6 +23,7 @@ FROM version-contract AS builder
 WORKDIR /build
 
 COPY requirements-container.txt ./requirements-container.txt
+COPY vendor/gpt_researcher-0.17.0+llmgateway.1-py3-none-any.whl ./vendor/
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
@@ -57,7 +58,7 @@ RUN python -m pip install --no-cache-dir \
         --no-binary=docopt,langdetect,sgmllib3k \
         --requirement requirements-container.txt && \
     python -m pip check && \
-    python -c "import importlib.metadata as m; import gpt_researcher; assert m.version('cloakbrowser') == '0.3.28'" && \
+    python -c "import importlib.metadata as m; import gpt_researcher; assert m.version('cloakbrowser') == '0.6.5'" && \
     rm -f /tmp/requirements-build-tools.txt && \
     find /opt/venv -type d -name __pycache__ -prune -exec rm -rf {} + && \
     find /opt/venv -type f -name '*.py[co]' -delete && \
@@ -65,7 +66,7 @@ RUN python -m pip install --no-cache-dir \
     find /opt/venv -type f -exec chmod a-w {} +
 
 # ============= BROWSER ASSET STAGE =============
-FROM python:3.12-slim@sha256:46cb7cc2877e60fbd5e21a9ae6115c30ace7a077b9f8772da879e4590c18c2e3 AS browser-assets
+FROM python:3.14.10-slim-trixie@sha256:f57c4c23b985d95deea5bc5249e2f9c8a512b4cc9d5d3fd31900cbd2f5f0a604 AS browser-assets
 
 ARG TARGETARCH
 
@@ -75,10 +76,10 @@ RUN --mount=type=cache,target=/var/cache/cloakbrowser \
     python /usr/local/bin/install-cloakbrowser-asset \
         --arch "${TARGETARCH}" \
         --archive-cache /var/cache/cloakbrowser \
-        --destination /opt/cloakbrowser/chromium-146.0.7680.177.3
+        --destination /opt/cloakbrowser/chromium
 
 # ============= RUNTIME STAGE =============
-FROM python:3.12-slim@sha256:46cb7cc2877e60fbd5e21a9ae6115c30ace7a077b9f8772da879e4590c18c2e3 AS runtime
+FROM python:3.14.10-slim-trixie@sha256:f57c4c23b985d95deea5bc5249e2f9c8a512b4cc9d5d3fd31900cbd2f5f0a604 AS runtime
 
 ARG LLMGATEWAY_EXPECTED_PRODUCT_VERSION
 ARG LLMGATEWAY_BUILD_SHA=
@@ -95,14 +96,14 @@ LABEL description="Fault-Tolerant Personal LLM Gateway with advanced fallback su
 # on the same immutable snapshot instead of following mutable distribution mirrors.
 RUN printf '%s\n' \
         'Types: deb' \
-        'URIs: https://snapshot.debian.org/archive/debian/20260421T000000Z/' \
+        'URIs: https://snapshot.debian.org/archive/debian/20261123T000000Z/' \
         'Suites: trixie trixie-updates' \
         'Components: main' \
         'Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp' \
         'Check-Valid-Until: no' \
         '' \
         'Types: deb' \
-        'URIs: https://snapshot.debian.org/archive/debian-security/20260421T000000Z/' \
+        'URIs: https://snapshot.debian.org/archive/debian-security/20261123T000000Z/' \
         'Suites: trixie-security' \
         'Components: main' \
         'Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp' \
@@ -161,7 +162,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     FUSION_RULES_FILENAME="/app/config/models_fusion_rules.json" \
     MODEL_RULES_FILENAME="/app/config/models_model_rules.json" \
     ROUTER_RULES_FILENAME="/app/config/models_router_rules.json" \
-    CLOAKBROWSER_BINARY_PATH="/opt/cloakbrowser/chromium-146.0.7680.177.3/chrome" \
+    CLOAKBROWSER_BINARY_PATH="/opt/cloakbrowser/chromium/chrome" \
     CLOAKBROWSER_CACHE_DIR="/opt/cloakbrowser" \
     CLOAKBROWSER_AUTO_UPDATE=false \
     LLMGATEWAY_BUILD_SHA="${LLMGATEWAY_BUILD_SHA}" \
@@ -176,7 +177,7 @@ USER 10001:10001
 
 # Validate the exact wrapper/engine contract and a real offline headless launch.
 RUN --mount=type=tmpfs,target=/tmp \
-    python -c "import importlib.metadata as m; from cloakbrowser import launch; from cloakbrowser.config import get_chromium_version; assert m.version('cloakbrowser') == '0.3.28'; assert get_chromium_version() == '146.0.7680.177.3'; browser = launch(); page = browser.new_page(); assert page.url == 'about:blank'; assert page.evaluate('1 + 1') == 2; page.evaluate(\"document.title = 'ok'\"); assert page.title() == 'ok'; browser.close()"
+    python -c "import importlib.metadata as m; from cloakbrowser import launch; from cloakbrowser.config import get_chromium_version; assert m.version('cloakbrowser') == '0.6.5'; browser = launch(); assert browser.version == get_chromium_version().rsplit('.', 1)[0]; page = browser.new_page(); assert page.url == 'about:blank'; assert page.evaluate('1 + 1') == 2; page.evaluate(\"document.title = 'ok'\"); assert page.title() == 'ok'; browser.close()"
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "main.py"]

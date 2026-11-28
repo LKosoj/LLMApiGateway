@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==83.0.0", "wheel==0.47.0"]
+requires = ["setuptools==84.2.1", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,14 +7,14 @@ name = "llmapigateway"
 dynamic = ["version"]
 description = "LLM Gateway is a gateway to LLM Providers with advanced support fallback in case of failures"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.139.0",
     "httpx[http2]>=0.27.2",
     "python-dotenv>=1.2.2",
     "pydantic>=2.11.10",
     "uvicorn>=0.32.1",
-    "python-json-logger>=2.0.7",
+    "python-json-logger>=4.2.0",
     "pydantic-settings>=2.14.2",
     "json5>=0.14.0",
     "python-multipart>=0.0.31",
@@ -23,9 +23,8 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "socksio>=1.0.0",
     "nvidia-riva-client>=2.25.1",
-    "cloakbrowser>=0.3.28",
-    "rs-trafilatura>=0.1.1",
-    "trafilatura>=2.1.0",
+    "cloakbrowser>=0.6.5,<0.7",
+    "trafilatura>=2.2.0,<2.3",
     "youtube-transcript-api>=1.2.4",
     "PySocks>=1.7.1",
     "selectolax>=0.4.9",
@@ -34,12 +33,12 @@ dependencies = [
 
 [project.optional-dependencies]
 research = [
-    "gpt-researcher>=0.16.1,<0.17.0",
-    "sse-starlette<3.1.0",
+    "gpt-researcher==0.17.0+llmgateway.1",
+    "sse-starlette>=3.7.1",
 ]
 dev = [
     "pytest>=9.0.2",
-    "pytest-playwright>=0.7.2",
+    "pytest-playwright[base-url]>=0.10.0",
     "pytest-cov>=6.0.0",
     "httpx2>=2.5.0",
     "ruff>=0.15.6",
@@ -47,8 +46,8 @@ dev = [
     "packaging>=26.0",
     "pip-audit>=2.9.0",
     "pip-tools>=7.5.3",
-    "gpt-researcher>=0.16.1,<0.17.0",
-    "sse-starlette<3.1.0",
+    "gpt-researcher==0.17.0+llmgateway.1",
+    "sse-starlette>=3.7.1",
 ]
 
 [tool.pytest.ini_options]
@@ -57,20 +56,24 @@ markers = [
 ]
 filterwarnings = [
     "error::DeprecationWarning",
+    "ignore:^'asyncio\\.iscoroutinefunction' is deprecated and slated for removal in Python 3\\.16; use inspect\\.iscoroutinefunction\\(\\) instead$:DeprecationWarning:^langsmith\\._internal\\._beta_decorator$",
     'ignore:^`langchain-community` is being sunset and is no longer actively maintained\. See https\x3a//github\.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages\.$:DeprecationWarning:^gpt_researcher\.scraper\.pymupdf\.pymupdf$',
 ]
 
 [[tool.llmgateway.upstream-warning-policy]]
 id = "gpt-researcher-langchain-community"
 package = "gpt-researcher"
-package_version = "0.16.1"
+package_version = "0.17.0+llmgateway.1"
 expires = 2027-01-15
 filter = 'ignore:^`langchain-community` is being sunset and is no longer actively maintained\. See https\x3a//github\.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages\.$:DeprecationWarning:^gpt_researcher\.scraper\.pymupdf\.pymupdf$'
-reason = "Re-reviewed 2026-10-25: locked gpt-researcher 0.16.1 no longer imports ArxivRetriever in its arxiv scraper, but its PyMuPDF scraper still imports PyMuPDFLoader from the sunset langchain-community package"
+reason = "Reviewed 2026-11-28: the gpt-researcher 0.17.0 PyMuPDF scraper still imports PyMuPDFLoader from langchain-community"
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.setuptools.packages.find]
 include = ["llm_gateway_core*"]

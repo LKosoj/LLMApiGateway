@@ -1,5 +1,11 @@
 # Reviewed cross-extra compatibility bounds applied to every generated lock.
 # Not security policy (see security-constraints.txt for exact security pins).
-# requests<2.34 is the semantic boundary required by arxiv==4.0.0; generated
+# requests<2.35 is the semantic boundary required by arxiv==4.1.0; generated
 # locks provide exact reproducibility, this file records the reviewed bound.
-requests<2.34
+requests<2.35
+# CloakBrowser 0.6 imports Playwright internals removed in 1.65.
+playwright<1.65
+# LiteLLM uses botocore, which requires python-dateutil below 3.
+# htmldate 1.11 requires python-dateutil 4.
+htmldate<1.11
+python-dateutil<3

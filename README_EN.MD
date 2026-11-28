@@ -1335,9 +1335,9 @@ Each `gateway_model_name` must be unique within its section. Each `provider` mus
 
 ## With pip
 
-The project requires Python 3.12+. Create and activate the local virtual environment, then install the dependencies from the current `requirements.txt`:
+The project requires Python 3.14+. Create and activate the local virtual environment, then install the dependencies from the current `requirements.txt`:
 ```bash
-python3 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python main.py
@@ -1354,18 +1354,20 @@ The `/v1/web/deep-research` endpoint also needs the external `gpt-researcher` pa
 pip install -r requirements-research.txt
 ```
 
-> `requirements.txt`, `requirements-dev.txt`, `requirements-research.txt`, and `requirements-container.txt` are generated files — do not edit them manually. `security-constraints.txt` contains reviewed exact security pins only. The separate `compatibility-constraints.txt` contains reviewed cross-extra bounds that are not security policy; it currently carries the semantic `requests<2.34` boundary required by `arxiv==4.0.0`. The upper bound is intentional rather than an exact pin: generated locks own exact reproducibility, while the compatibility input describes the actual incompatibility boundary. Both constraint files apply to all four locks. Change ordinary direct dependencies in `pyproject.toml`, security pins in `security-constraints.txt`, and agreed compatibility bounds in `compatibility-constraints.txt`, then run the single fail-fast entrypoint:
+The gateway temporarily uses `gpt-researcher==0.17.0+llmgateway.1` from `vendor/`. It repackages the official 0.17.0 release with one dependency change: `unstructured` is installed only with the `documents` extra. The gateway reads sources through its own web reader and does not install that extra. To reproduce the wheel, run `python scripts/build_gpt_researcher_wheel.py` in the development environment.
+
+> `requirements.txt`, `requirements-dev.txt`, `requirements-research.txt`, and `requirements-container.txt` are generated files — do not edit them manually. `security-constraints.txt` contains reviewed exact security pins only. The separate `compatibility-constraints.txt` contains reviewed cross-extra bounds that are not security policy; it currently carries the semantic `requests<2.35` is required by `arxiv==4.1.0`, and `playwright<1.65` preserves compatibility with CloakBrowser 0.6.5. The `htmldate` and `python-dateutil` bounds allow the patched LiteLLM release. Exact versions are pinned in the generated locks. Both constraint files apply to all four locks. Change ordinary direct dependencies in `pyproject.toml`, security pins in `security-constraints.txt`, and agreed compatibility bounds in `compatibility-constraints.txt`, then run the single fail-fast entrypoint:
 > ```bash
 > ./scripts/compile_requirements.sh
 > ```
-> Canonical `pip-compile` commands live only in `scripts/check_dependency_contract.py`: the script generates the runtime, dev, research, and container locks in order with the same security/compatibility inputs, then runs static validation. `requirements-container.txt` mirrors the research production closure, adds SHA-256 hashes for `--require-hashes`, and excludes development tools. Active installer dependencies (`pip`/`setuptools`) are included as ordinary exact pins; a comments-only unsafe-omission footer is a contract violation. Normal regeneration does not use `--upgrade` and may preserve existing lock preferences. The independent `python scripts/check_dependency_contract.py --verify-bootstrap` command copies source inputs only into a temporary directory and compiles all four locks without prior outputs, leaving repository locks unchanged. The static checker also validates active direct dependencies and markers for Python 3.12, the security/compatibility contract, exact lock pins, shared-version parity, container hashes, and headers, but intentionally does not replace the resolver. Resolver closure is additionally proved by clean bootstrap, a clean `requirements-dev.txt` install, `python -m pip check`, and `python -m pip_audit -r requirements-dev.txt` without silently excluding advisories. Recreate the local `.venv` after lock changes instead of adding packages manually.
+> Canonical `pip-compile` commands live only in `scripts/check_dependency_contract.py`: the script generates the runtime, dev, research, and container locks in order with the same security/compatibility inputs, then runs static validation. `requirements-container.txt` mirrors the research production closure, adds SHA-256 hashes for `--require-hashes`, and excludes development tools. Active installer dependencies (`pip`/`setuptools`) are included as ordinary exact pins; a comments-only unsafe-omission footer is a contract violation. Normal regeneration does not use `--upgrade` and may preserve existing lock preferences. The independent `python scripts/check_dependency_contract.py --verify-bootstrap` command copies source inputs only into a temporary directory and compiles all four locks without prior outputs, leaving repository locks unchanged. The static checker also validates active direct dependencies and markers for Python 3.14, the security/compatibility contract, exact lock pins, shared-version parity, container hashes, and headers, but intentionally does not replace the resolver. Resolver closure is additionally proved by clean bootstrap, a clean `requirements-dev.txt` install, `python -m pip check`, and `python -m pip_audit -r requirements-dev.txt` without silently excluding advisories. Recreate the local `.venv` after lock changes instead of adding packages manually.
 >
-> Pytest treats deprecation warnings as errors. The only temporary exception is the exact full `gpt-researcher==0.16.1` upstream warning about its `langchain-community` import; the policy is bound to the entire message (including its URL and end anchor), category/module, and automatically expires on 2027-01-15 through the dependency checker. Changed text or an added suffix is not suppressed. W4 must re-check upstream and remove the exception once the import is gone. This policy does not mask other warning categories; those remain owned by their respective subsystem work.
+> Pytest treats deprecation warnings as errors. Two exact exceptions cover third-party code. The first covers LangSmith calling `asyncio.iscoroutinefunction` on Python 3.14. The second covers the `langchain-community` import in the PyMuPDF scraper of `gpt-researcher==0.17.0+llmgateway.1` and expires on 2027-01-15. Both exceptions match the complete warning and its module.
 
 ### With Docker
 if you prefer docker deployment see [this guide](/docker/README.md) (Thanks  [canadaduane](https://github.com/canadaduane)!👍)
 
-The Docker image is built on `python:3.12-slim` and installs hash-locked dependencies from `requirements-container.txt`, so dependency updates are included when you rebuild the image.
+The Docker image is built on `python:3.14.10-slim-trixie` and installs hash-locked dependencies from `requirements-container.txt`, so dependency updates are included when you rebuild the image.
 
 The canonical product version lives only in `llm_gateway_core/version.py`. Before any Compose command in a new shell session, derive it from source and pass it to the fail-fast build contract:
 
@@ -1389,7 +1391,7 @@ Compose stores generated images in its `gateway_outputs` volume. Ordinary `docke
 ### With a systemd service
 For a local service outside Docker, first prepare a separate deployment checkout and `.venv` with dependencies from `requirements.txt`:
 ```bash
-python3 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```

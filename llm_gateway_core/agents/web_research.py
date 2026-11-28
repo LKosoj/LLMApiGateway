@@ -109,11 +109,11 @@ def _extract_text_with_trafilatura(html_text: str) -> str:
 def _extract_text_with_selectolax(html_text: str) -> str:
     """Strip noise tags and pull main text via selectolax. "" on failure."""
     try:
-        from selectolax.parser import HTMLParser as SelectolaxParser
+        from selectolax.lexbor import LexborHTMLParser
     except ImportError:
         return ""
     try:
-        tree = SelectolaxParser(html_text)
+        tree = LexborHTMLParser(html_text)
         for tag in _SELECTOLAX_NOISE_TAGS:
             for node in tree.css(tag):
                 node.decompose()

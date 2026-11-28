@@ -191,10 +191,26 @@ def test_image_metadata_allows_path_word_but_rejects_local_filesystem_urls() -> 
             )
 
 
-def test_version_pinned_adapter_uses_real_0161_public_api() -> None:
+def test_version_pinned_adapter_uses_real_0170_public_api() -> None:
     factory = get_gpt_researcher_factory()
-    assert GPT_RESEARCHER_REQUIRED_VERSION == "0.16.1"
+    assert GPT_RESEARCHER_REQUIRED_VERSION == "0.17.0+llmgateway.1"
     assert factory.__name__ == "GPTResearcher"
+
+    from importlib.metadata import metadata
+
+    from packaging.requirements import Requirement
+
+    requirements = metadata("gpt-researcher").get_all("Requires-Dist")
+    unstructured = [
+        requirement
+        for line in requirements
+        if (requirement := Requirement(line)).name == "unstructured"
+    ]
+    assert len(unstructured) == 1
+    marker = unstructured[0].marker
+    assert marker is not None
+    assert not marker.evaluate({"extra": ""})
+    assert marker.evaluate({"extra": "documents"})
     for getter in (
         "get_research_sources",
         "get_source_urls",
@@ -206,9 +222,9 @@ def test_version_pinned_adapter_uses_real_0161_public_api() -> None:
     with (
         patch(
             "llm_gateway_core.agents.deep_research_adapter.metadata.version",
-            return_value="0.16.2",
+            return_value="0.17.0",
         ),
-        pytest.raises(DeepResearchUnavailableError, match="required 0.16.1"),
+        pytest.raises(DeepResearchUnavailableError, match=r"required 0\.17\.0\+llmgateway\.1"),
     ):
         get_gpt_researcher_factory()
 
@@ -553,7 +569,7 @@ def test_installed_browse_urls_drops_refused_sources_and_keeps_the_rest() -> Non
 
 
 def test_installed_search_relevant_source_urls_returns_the_pair_the_package_unpacks() -> None:
-    """0.16.1 unpacks the override into (urls, prefetched); a bare list feeds browse_urls a string."""
+    """0.17.0 unpacks the override into (urls, prefetched); a bare list feeds browse_urls a string."""
     read_urls: list[str] = []
 
     class Ipc:
@@ -594,7 +610,7 @@ def test_installed_search_relevant_source_urls_returns_the_pair_the_package_unpa
 
 
 def test_installed_initial_search_accepts_the_max_results_the_package_passes() -> None:
-    """0.16.1 calls get_search_results(..., max_results=...); the override must take it."""
+    """0.17.0 calls get_search_results(..., max_results=...); the override must take it."""
     import gpt_researcher.actions.query_processing as query_processing_module
 
     calls: list[tuple[str, int]] = []
@@ -635,7 +651,7 @@ def test_installed_initial_search_accepts_the_max_results_the_package_passes() -
 
 
 def test_installed_initial_results_are_read_without_a_second_search() -> None:
-    """0.16.1 hands the planning results back as initial_results instead of searching again."""
+    """0.17.0 hands the planning results back as initial_results instead of searching again."""
     searches: list[str] = []
     read_urls: list[str] = []
 
@@ -678,7 +694,7 @@ def test_installed_initial_results_are_read_without_a_second_search() -> None:
 
 
 def test_installed_context_selection_keeps_embeddings_and_surfaces_their_failure() -> None:
-    """0.16.1 would quietly fall back to BM25 here; the gateway keeps the 0.15.1 contract."""
+    """0.17.0 would quietly fall back to BM25 here; the gateway keeps the 0.15.1 contract."""
     import gpt_researcher.skills.context_manager as context_manager_module
     from langchain_core.embeddings import Embeddings
 

@@ -50,6 +50,7 @@ UNSAFE_OMISSION_FOOTER = _UNSAFE_OMISSION_FOOTER
 
 SECURITY_CONSTRAINTS_FILE = "security-constraints.txt"
 COMPATIBILITY_CONSTRAINTS_FILE = "compatibility-constraints.txt"
+GPT_RESEARCHER_WHEEL = "vendor/gpt_researcher-0.17.0+llmgateway.1-py3-none-any.whl"
 LOCK_COMMANDS = {
     "requirements.txt": (
         f"pip-compile --allow-unsafe --constraint={SECURITY_CONSTRAINTS_FILE} "
@@ -59,19 +60,19 @@ LOCK_COMMANDS = {
     "requirements-dev.txt": (
         f"pip-compile --allow-unsafe --constraint={SECURITY_CONSTRAINTS_FILE} "
         f"--constraint={COMPATIBILITY_CONSTRAINTS_FILE} "
-        "--constraint=requirements.txt --extra=dev "
+        "--find-links=vendor --constraint=requirements.txt --extra=dev "
         "--output-file=requirements-dev.txt --strip-extras pyproject.toml"
     ),
     "requirements-research.txt": (
         f"pip-compile --allow-unsafe --constraint={SECURITY_CONSTRAINTS_FILE} "
         f"--constraint={COMPATIBILITY_CONSTRAINTS_FILE} "
-        "--constraint=requirements-dev.txt --constraint=requirements.txt "
+        "--find-links=vendor --constraint=requirements-dev.txt --constraint=requirements.txt "
         "--extra=research --output-file=requirements-research.txt --strip-extras pyproject.toml"
     ),
     "requirements-container.txt": (
         f"pip-compile --allow-unsafe --constraint={SECURITY_CONSTRAINTS_FILE} "
         f"--constraint={COMPATIBILITY_CONSTRAINTS_FILE} "
-        "--constraint=requirements-research.txt --extra=research --generate-hashes "
+        "--find-links=vendor --constraint=requirements-research.txt --extra=research --generate-hashes "
         "--output-file=requirements-container.txt --strip-extras pyproject.toml"
     ),
 }
@@ -83,6 +84,7 @@ BOOTSTRAP_SOURCE_FILES = (
     SECURITY_CONSTRAINTS_FILE,
     COMPATIBILITY_CONSTRAINTS_FILE,
     *README_FILES,
+    GPT_RESEARCHER_WHEEL,
 )
 COMPILE_SCRIPT_COMMAND = "./scripts/compile_requirements.sh"
 REQUIRED_DEV_DEPENDENCIES = frozenset(
@@ -107,14 +109,18 @@ REQUIRED_SECURITY_CONSTRAINTS = frozenset(
         "weasyprint",
     }
 )
-REQUIRED_COMPATIBILITY_CONSTRAINTS = {"requests": "<2.34"}
+REQUIRED_COMPATIBILITY_CONSTRAINTS = {
+    "htmldate": "<1.11",
+    "playwright": "<1.65",
+    "python-dateutil": "<3",
+    "requests": "<2.35",
+}
 RESEARCH_ONLY_DEPENDENCIES = frozenset({"gpt-researcher"})
 REQUIRED_CONTAINER_DEPENDENCIES = frozenset(
     {"cloakbrowser", "gpt-researcher", "playwright"}
 )
 FORBIDDEN_CONTAINER_DEV_DEPENDENCIES = frozenset(
     {
-        "httpx2",
         "pip-audit",
         "pip-tools",
         "pytest",
@@ -130,6 +136,11 @@ REQUIRED_UNSAFE_PINS = {
     "requirements-research.txt": frozenset({"setuptools"}),
     "requirements-container.txt": frozenset({"setuptools"}),
 }
+PY314_LANGSMITH_WARNING_FILTER = (
+    r"ignore:^'asyncio\.iscoroutinefunction' is deprecated and slated for removal "
+    r"in Python 3\.16; use inspect\.iscoroutinefunction\(\) instead$"
+    r":DeprecationWarning:^langsmith\._internal\._beta_decorator$"
+)
 UPSTREAM_WARNING_POLICY_ID = "gpt-researcher-langchain-community"
 UPSTREAM_WARNING_POLICY_PACKAGE = "gpt-researcher"
 UPSTREAM_WARNING_MESSAGE = (
@@ -569,11 +580,15 @@ def _validate_upstream_warning_policy(
     pytest_config = tool.get("pytest", {}) if isinstance(tool, dict) else {}
     ini_options = pytest_config.get("ini_options", {}) if isinstance(pytest_config, dict) else {}
     filterwarnings = ini_options.get("filterwarnings", []) if isinstance(ini_options, dict) else []
-    expected_filters = [f"error::{UPSTREAM_WARNING_CATEGORY}", UPSTREAM_WARNING_POLICY_FILTER]
+    expected_filters = [
+        f"error::{UPSTREAM_WARNING_CATEGORY}",
+        PY314_LANGSMITH_WARNING_FILTER,
+        UPSTREAM_WARNING_POLICY_FILTER,
+    ]
     if filterwarnings != expected_filters:
         errors.append(
             "[tool.pytest.ini_options].filterwarnings must reject all deprecation warnings "
-            "and exactly the versioned gpt-researcher upstream filter"
+            "and allow only the reviewed upstream filters"
         )
 
     llmgateway = tool.get("llmgateway", {}) if isinstance(tool, dict) else {}
@@ -676,7 +691,7 @@ def collect_dependency_contract_errors(
     *,
     as_of: date | None = None,
 ) -> list[str]:
-    """Return static dependency-contract violations for the Python 3.12 target.
+    """Return static dependency-contract violations for the Python 3.14 target.
 
     This function intentionally does not emulate pip's resolver or prove that
     transitive/extras closure is installable. Source-only bootstrap compilation,
@@ -732,6 +747,10 @@ def collect_dependency_contract_errors(
         if name in runtime_lock.pins:
             errors.append(f"Research-only dependency {name!r} must not be pinned in requirements.txt")
 
+    for lock in locks.values():
+        if "unstructured" in lock.pins:
+            errors.append(f"{lock.filename} must not install unstructured")
+
     _validate_direct_requirements(runtime_lock, (runtime,), errors)
     _validate_direct_requirements(dev_lock, (runtime, dev), errors)
     _validate_direct_requirements(research_lock, (runtime, research), errors)
@@ -783,7 +802,7 @@ def compile_requirement_locks(
             "pip-compile is unavailable; install the pinned requirements-dev.txt first"
         )
 
-    for command in LOCK_COMMANDS.values():
+    for filename, command in LOCK_COMMANDS.items():
         argv = shlex.split(command)
         argv[0] = executable
         try:
@@ -797,6 +816,14 @@ def compile_requirement_locks(
             raise DependencyCompilationError(
                 f"Lock compilation failed with exit code {exc.returncode}: {command}"
             ) from exc
+
+        # pip-compile also emits an absolute path for find-links read from a
+        # constraint file. Keep only the relative path passed on the command line.
+        lock_path = root / filename
+        content = lock_path.read_text(encoding="utf-8")
+        portable = content.replace(f"--find-links {root.resolve() / 'vendor'}\n", "")
+        if portable != content:
+            lock_path.write_text(portable, encoding="utf-8")
 
     check_dependency_contract(root)
 

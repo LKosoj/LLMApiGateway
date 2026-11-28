@@ -4,6 +4,7 @@ import importlib.abc
 import inspect
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 from collections.abc import AsyncIterator, Callable
@@ -707,7 +708,7 @@ def test_first_installer_alone_receives_cleanup_capability() -> None:
         "        raise AssertionError('closed controller remained globally active')\n"
     )
     result = subprocess.run(
-        [str(repo_root / ".venv" / "bin" / "python"), "-c", code],
+        [sys.executable, "-c", code],
         cwd=repo_root,
         env=os.environ.copy(),
         capture_output=True,
@@ -765,7 +766,7 @@ def test_root_pytest_configure_cleans_up_when_registration_fails() -> None:
         "assert not any(isinstance(item, _MainIsolationFinder) for item in sys.meta_path)\n"
     )
     result = subprocess.run(
-        [str(repo_root / ".venv" / "bin" / "python"), "-c", code],
+        [sys.executable, "-c", code],
         cwd=repo_root,
         env=os.environ.copy(),
         capture_output=True,
@@ -1287,7 +1288,7 @@ def test_nested_pytest_installs_owner_before_descendant_conftest_and_module_scop
         target = test_file if target_kind == "file" else probe_dir
         result = subprocess.run(
             [
-                str(repo_root / ".venv" / "bin" / "python"),
+                sys.executable,
                 "-m",
                 "pytest",
                 "-q",
@@ -1320,7 +1321,7 @@ def test_nested_pytest_rejects_main_preloaded_before_root_conftest() -> None:
             f"raise SystemExit(pytest.main(['-q', {str(test_file)!r}]))"
         )
         result = subprocess.run(
-            [str(repo_root / ".venv" / "bin" / "python"), "-c", code],
+            [sys.executable, "-c", code],
             cwd=repo_root,
             env=os.environ.copy(),
             capture_output=True,

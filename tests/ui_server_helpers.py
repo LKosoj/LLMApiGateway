@@ -1,5 +1,6 @@
 import socket
 import subprocess
+import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
@@ -84,7 +85,7 @@ def isolated_gateway_process(
     # a test that wants the real fetch can still override it via `env`.
     launch_env.setdefault("FREE_LLM_CATALOG_ENABLED", "false")
     proc = subprocess.Popen(
-        ["./.venv/bin/python", "main.py"],
+        [sys.executable, "main.py"],
         env=launch_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

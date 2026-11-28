@@ -33,7 +33,7 @@ def _prepare_test_mode(tmp_path: Path) -> dict[str, object]:
     docker_dir = project / "docker"
     venv_bin = project / ".venv" / "bin"
     core_dir = project / "llm_gateway_core"
-    site_packages = project / ".venv" / "lib" / "python3.12" / "site-packages"
+    site_packages = project / ".venv" / "lib" / "python3.14" / "site-packages"
     docker_dir.mkdir(parents=True)
     venv_bin.mkdir(parents=True)
     core_dir.mkdir()
@@ -446,7 +446,7 @@ def test_existing_service_user_requires_exact_home_and_nologin_shell(
     "relative",
     "main.py docker/systemd_migration.py docker/systemd_readiness.py "
     ".venv/bin/python .venv/pyvenv.cfg llm_gateway_core/nested.py "
-    ".venv/lib/python3.12/site-packages/nested.py".split(),
+    ".venv/lib/python3.14/site-packages/nested.py".split(),
 )
 def test_untrusted_project_file_fails_before_inventory(
     tmp_path: Path, risk: str, relative: str

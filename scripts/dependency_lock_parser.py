@@ -12,7 +12,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 
-PYTHON_LOCK_VERSION = "3.12"
+PYTHON_LOCK_VERSION = "3.14"
 UNSAFE_OMISSION_FOOTER = (
     "# The following packages are considered to be unsafe in a requirements file:"
 )
