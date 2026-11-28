@@ -37,6 +37,7 @@ from llm_gateway_core.services.deep_research_protocol import (
     DeepResearchCallbackOperation,
     DeepResearchCallbackRequest,
 )
+from llm_gateway_core.services.upstream_routing_state import UpstreamRoutingState
 
 
 def _make_png_bytes(width: int = 64, height: int = 64) -> bytes:
@@ -250,7 +251,7 @@ def test_search_with_model_runs_queries_concurrently_and_preserves_order(
         config_loader=config_loader,
         proxy_http_clients={},
     )
-    services = SimpleNamespace(http_client=MagicMock())
+    services = SimpleNamespace(http_client=MagicMock(), upstream_routing_state=UpstreamRoutingState())
     request = _make_request(services=services, runtime_snapshot=runtime_snapshot)
 
     monkeypatch.setattr(web_adapters, "_generate_queries", _fake_generate_queries)

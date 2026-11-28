@@ -29,7 +29,9 @@ from ...services.operation_accounting import (
     parse_synthesized_operation_observation,
 )
 from ...services.request_handler import OperationDispatcher
+from ...services.web_engine_routing import run_engine
 from ...utils.api_keys import has_api_key, select_next_api_key
+from ...utils.ttl_cache import AsyncTtlCache
 from ...utils.provider_error_redaction import redact_provider_error_text
 from ...utils.usage_tracking import extract_tokens_usage, initialize_tokens_usage
 from ...utils.zai_mcp import detect_zai_search_location, zai_mcp_tool_call
@@ -43,9 +45,13 @@ from .web_content import (
     merge_image_items as _merge_image_items,
 )
 from .web_extraction import _cloakbrowser_fetch, _direct_http_fetch
+from .web_free_engines import FREE_ENGINES
+from .web_relevance import looks_relevant, strip_tracking_params
+from .web_search_merge import merge_free_results
 
 if TYPE_CHECKING:
     from ...services.runtime_config import AppServices, RuntimeSnapshot
+    from ...services.upstream_routing_state import UpstreamRoutingState
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +64,8 @@ WEB_READ_OPERATION = "web_read"
 WEB_RESEARCH_OPERATION = "web_research"
 WEB_DEEP_RESEARCH_OPERATION = "web_deep_research"
 WEB_SEARCH_QUERY_CONCURRENCY = 4
+WEB_PAID_SEARCH_PROVIDER = "web_search_paid"
+WEB_PAID_KEY_FINGERPRINT = "default"
 
 _BUILTIN_SEARCH_ADAPTERS: tuple[str, ...] = ("proxy", "tavily", "jina", "zai")
 _BUILTIN_READ_ADAPTERS: tuple[str, ...] = ("proxy", "tavily", "jina", "zai")
@@ -368,11 +376,16 @@ async def _call_internal_text_model(
 
 
 def _search_result_url_key(url: str) -> str:
-    raw = str(url or "").strip()
+    raw = strip_tracking_params(str(url or "").strip())
     if not raw:
         return ""
-    parsed = urlsplit(raw)
-    host = (parsed.hostname or "").lower()
+    # Free engines feed untrusted URLs here; malformed ports/IPv6 must not raise.
+    try:
+        parsed = urlsplit(raw)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return raw.split("#", 1)[0].rstrip("/")
     if not host:
         return raw.split("#", 1)[0].rstrip("/")
     scheme = (parsed.scheme or "https").lower()
@@ -382,8 +395,8 @@ def _search_result_url_key(url: str) -> str:
     if path != "/" and path.endswith("/"):
         path = path[:-1]
     netloc = host
-    if parsed.port and parsed.port not in {80, 443}:
-        netloc = f"{host}:{parsed.port}"
+    if port and port not in {80, 443}:
+        netloc = f"{host}:{port}"
     return urlunsplit((scheme, netloc, path, parsed.query, ""))
 
 
@@ -778,6 +791,99 @@ def _read_adapter_enabled(name: str) -> bool:
     return _search_adapter_enabled(name)
 
 
+def _free_search_engines() -> list[str]:
+    """Configured free-engine pool in priority order; unknown names are skipped."""
+    names: list[str] = []
+    for raw_name in settings.web_free_search_engines.split(","):
+        name = raw_name.strip()
+        if not name:
+            continue
+        if name not in FREE_ENGINES:
+            logger.warning("Unknown free search engine '%s' in WEB_FREE_SEARCH_ENGINES; ignoring.", name)
+            continue
+        if name == "tavily_keyless" and not settings.web_search_tavily_keyless:
+            continue
+        if name not in names:
+            names.append(name)
+    return names
+
+
+async def _run_free_pool(
+    state: UpstreamRoutingState,
+    http_client: httpx.AsyncClient,
+    engines: list[str],
+    query: str,
+    *,
+    language: str,
+    max_results: int,
+    include_domains: list[str],
+    exclude_domains: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Run the free pool in parallel under one budget; return relevant results per engine."""
+
+    async def _run_engine(name: str) -> list[dict[str, Any]] | None:
+        engine = FREE_ENGINES[name]
+        kwargs: dict[str, Any] = {"language": language}
+        if name == "searxng":
+            kwargs["instances"] = [part.strip() for part in settings.searxng_instances.split(",") if part.strip()]
+            kwargs["bearer_token"] = settings.searxng_bearer_token
+        try:
+            results = await run_engine(state, name, lambda: engine(http_client, query, max_results, **kwargs))
+        except Exception as exc:
+            logger.warning("Free search engine '%s' failed for query '%s': %s", name, query, exc)
+            return None
+        if not results or not looks_relevant(query, results):
+            return None
+        # Domain filters apply per engine before counting successes, so an engine
+        # fully cut by the filters falls back to the paid chain like an empty one.
+        filtered = _filter_search_results(
+            results,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            max_results=max_results,
+        )
+        return filtered or None
+
+    tasks = {asyncio.create_task(_run_engine(name)): name for name in engines}
+    try:
+        done, pending = await asyncio.wait(tasks, timeout=settings.web_free_search_budget_seconds)
+    except asyncio.CancelledError:
+        # Client disconnect: do not leave engine tasks running in the background.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    successful = {tasks[task]: results for task in done if (results := task.result())}
+    return {name: successful[name] for name in engines if name in successful}
+
+
+_search_cache: AsyncTtlCache | None = None
+_search_cache_config: tuple[float, int] | None = None
+
+
+def _get_search_cache() -> AsyncTtlCache | None:
+    """Lazily (re)build the search cache; settings may change between calls (tests)."""
+    global _search_cache, _search_cache_config
+    config = (settings.web_search_cache_ttl_seconds, settings.web_search_cache_max_entries)
+    if config[0] <= 0:
+        _search_cache = None
+        _search_cache_config = None
+        return None
+    if _search_cache is None or _search_cache_config != config:
+        _search_cache = AsyncTtlCache(config[0], max_entries=config[1])
+        _search_cache_config = config
+    return _search_cache
+
+
+def invalidate_web_search_cache() -> None:
+    if _search_cache is not None:
+        _search_cache.invalidate()
+
+
 async def _search_with_model(
     request: Request,
     *,
@@ -793,10 +899,64 @@ async def _search_with_model(
     include_images: bool = False,
     component_accumulator: list[BillingComponent] | None = None,
 ) -> list[dict[str, Any]]:
+    async def _produce() -> list[dict[str, Any]]:
+        return await _search_with_model_uncached(
+            request,
+            search_model=search_model,
+            query=query,
+            max_results=max_results,
+            num_queries=num_queries,
+            language=language,
+            usage_accumulator=usage_accumulator,
+            expand_query=expand_query,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            include_images=include_images,
+            component_accumulator=component_accumulator,
+        )
+
+    cache = _get_search_cache()
+    if cache is None:
+        return await _produce()
+    key = (
+        search_model,
+        " ".join(query.split()).casefold(),
+        language,
+        max_results,
+        num_queries,
+        expand_query,
+        tuple(sorted(include_domains or [])),
+        tuple(sorted(exclude_domains or [])),
+        include_images,
+    )
+    results = await cache.get_or_compute(key, _produce)
+    if not results:
+        cache.invalidate(key)
+    return results
+
+
+async def _search_with_model_uncached(
+    request: Request,
+    *,
+    search_model: str,
+    query: str,
+    max_results: int,
+    num_queries: int,
+    language: str,
+    usage_accumulator: _UsageAccumulator,
+    expand_query: bool = True,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
+    include_images: bool = False,
+    component_accumulator: list[BillingComponent] | None = None,
+) -> list[dict[str, Any]]:
     _dispatcher, http_client, config_loader, _proxy_http_clients = _get_operation_runtime(request)
+    services = cast("AppServices", request.app.state.services)
+    routing_state = services.upstream_routing_state
     search_config = _get_model_config(config_loader, WEB_SEARCH_SECTION, search_model)
+    free_engines = _free_search_engines() if settings.web_free_search_enabled else []
     enabled_adapters = [name for name in _BUILTIN_SEARCH_ADAPTERS if _search_adapter_enabled(name)]
-    if not enabled_adapters:
+    if not enabled_adapters and not free_engines:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -805,7 +965,7 @@ async def _search_with_model(
             ),
         )
     request.state.llmgateway_provider = "llmgateway"
-    request.state.llmgateway_provider_model = ",".join(enabled_adapters)
+    request.state.llmgateway_provider_model = ",".join(enabled_adapters) or "free:" + ",".join(free_engines)
     request.state.llmgateway_target_path = "/v1/web/search"
     update_active_request_from_state(request)
     if expand_query:
@@ -831,59 +991,101 @@ async def _search_with_model(
     include_domains = include_domains or []
     exclude_domains = exclude_domains or []
     semaphore = asyncio.Semaphore(WEB_SEARCH_QUERY_CONCURRENCY)
+    used_free_engines: set[str] = set()
 
-    async def _run_search_query(search_query: str) -> list[dict[str, Any]]:
-        async with semaphore:
-            query_results: list[dict[str, Any]] = []
-            for adapter_name in enabled_adapters:
-                adapter = _SEARCH_ADAPTERS[adapter_name]
-                try:
-                    query_results = await adapter(
-                        http_client,
-                        search_query,
-                        per_query_limit,
-                        include_images=include_images,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Web search adapter '%s' failed for query '%s': %s",
-                        adapter_name,
-                        search_query,
-                        exc,
-                    )
-                    continue
-                if query_results:
-                    filtered_query_results = _filter_search_results(
-                        query_results,
-                        include_domains=include_domains,
-                        exclude_domains=exclude_domains,
-                        max_results=per_query_limit,
-                    )
-                    if include_domains or exclude_domains:
-                        if not filtered_query_results:
-                            logger.warning(
-                                "Web search adapter '%s' returned %d results for '%s', "
-                                "but none matched domain filters; trying next.",
-                                adapter_name,
-                                len(query_results),
-                                search_query,
-                            )
-                            query_results = []
-                            continue
-                        query_results = filtered_query_results
-                    logger.info(
-                        "Web search adapter '%s' returned %d results for '%s'.",
-                        adapter_name,
-                        len(query_results),
-                        search_query,
-                    )
-                    break
+    async def _run_paid_chain(search_query: str) -> list[dict[str, Any]]:
+        query_results: list[dict[str, Any]] | None = []
+        for adapter_name in enabled_adapters:
+            adapter = _SEARCH_ADAPTERS[adapter_name]
+            try:
+                query_results = await run_engine(
+                    routing_state,
+                    adapter_name,
+                    lambda: adapter(http_client, search_query, per_query_limit, include_images=include_images),
+                    concurrency_limit=0,
+                    provider=WEB_PAID_SEARCH_PROVIDER,
+                    key_fingerprint=WEB_PAID_KEY_FINGERPRINT,
+                )
+            except Exception as exc:
                 logger.warning(
-                    "Web search adapter '%s' returned no results for '%s'; trying next.",
+                    "Web search adapter '%s' failed for query '%s': %s",
+                    adapter_name,
+                    search_query,
+                    exc,
+                )
+                continue
+            if query_results is None:
+                logger.warning(
+                    "Web search adapter '%s' is cooling down for '%s'; trying next.",
                     adapter_name,
                     search_query,
                 )
-            return query_results
+                continue
+            if query_results:
+                filtered_query_results = _filter_search_results(
+                    query_results,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                    max_results=per_query_limit,
+                )
+                if include_domains or exclude_domains:
+                    if not filtered_query_results:
+                        logger.warning(
+                            "Web search adapter '%s' returned %d results for '%s', "
+                            "but none matched domain filters; trying next.",
+                            adapter_name,
+                            len(query_results),
+                            search_query,
+                        )
+                        query_results = []
+                        continue
+                    query_results = filtered_query_results
+                logger.info(
+                    "Web search adapter '%s' returned %d results for '%s'.",
+                    adapter_name,
+                    len(query_results),
+                    search_query,
+                )
+                break
+            logger.warning(
+                "Web search adapter '%s' returned no results for '%s'; trying next.",
+                adapter_name,
+                search_query,
+            )
+        return query_results or []
+
+    async def _run_search_query(search_query: str) -> list[dict[str, Any]]:
+        async with semaphore:
+            if not free_engines:
+                return await _run_paid_chain(search_query)
+            free_results = await _run_free_pool(
+                routing_state,
+                http_client,
+                free_engines,
+                search_query,
+                language=language,
+                max_results=per_query_limit,
+                include_domains=include_domains,
+                exclude_domains=exclude_domains,
+            )
+            if len(free_results) >= 2:
+                used_free_engines.update(free_results)
+                return merge_free_results(free_results, query=search_query, max_results=per_query_limit)
+            if len(free_results) == 1:
+                engine_name, engine_results = next(iter(free_results.items()))
+                used_free_engines.add(engine_name)
+                paid_results = await _run_paid_chain(search_query)
+                # Free results first, paid as-is (no ranking); URL dedup only.
+                combined: list[dict[str, Any]] = []
+                seen_urls: set[str] = set()
+                for result in [*engine_results, *paid_results]:
+                    url_key = _search_result_url_key(result["url"])
+                    if not url_key or url_key in seen_urls:
+                        continue
+                    seen_urls.add(url_key)
+                    combined.append(result)
+                return combined
+            return await _run_paid_chain(search_query)
 
     per_query_results = await asyncio.gather(*(_run_search_query(search_query) for search_query in queries))
     for query_results in per_query_results:
@@ -894,7 +1096,14 @@ async def _search_with_model(
             seen.add(url_key)
             collected.append(result)
             if len(collected) >= max_results:
-                return collected
+                break
+        if len(collected) >= max_results:
+            break
+    if used_free_engines:
+        request.state.llmgateway_provider_model = "free:" + ",".join(
+            name for name in free_engines if name in used_free_engines
+        )
+        update_active_request_from_state(request)
     return collected
 
 
@@ -1041,7 +1250,10 @@ def _parse_domain_list(value: object, field_name: str) -> list[str]:
 def _domain_matches(url: str, domains: list[str]) -> bool:
     if not domains:
         return False
-    hostname = (urlsplit(url).hostname or "").lower().strip(".")
+    try:
+        hostname = (urlsplit(url).hostname or "").lower().strip(".")
+    except ValueError:
+        return False
     if not hostname:
         return False
     return any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)

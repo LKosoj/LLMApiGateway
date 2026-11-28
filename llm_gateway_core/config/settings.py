@@ -272,6 +272,27 @@ class Settings(BaseSettings):
     web_read_cloakbrowser_enabled: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_ENABLED", False)
     web_read_cloakbrowser_no_sandbox: bool = _get_bool_env("WEB_READ_CLOAKBROWSER_NO_SANDBOX", False)
 
+    # Free-first web search: keyless engines run in parallel before the paid adapter
+    # chain; paid adapters stay as the fallback. Comma lists are parsed at use site.
+    web_free_search_enabled: bool = _get_bool_env("WEB_FREE_SEARCH_ENABLED", True)
+    web_free_search_engines: str = os.getenv(
+        "WEB_FREE_SEARCH_ENGINES", "bing,tavily_keyless,anysearch,youcom,firecrawl,keenable,ddg_html,searxng"
+    )
+    web_free_search_budget_seconds: float = _get_positive_float_env("WEB_FREE_SEARCH_BUDGET_SECONDS", 12.0)
+    searxng_instances: str = os.getenv(
+        "SEARXNG_INSTANCES",
+        "https://opnxng.com,https://priv.au,https://searx.be,"
+        "https://searx.tiekoetter.com,https://search.inetol.net,https://paulgo.io",
+    )
+    searxng_bearer_token: str | None = os.getenv("SEARXNG_BEARER_TOKEN") or None
+    # Global web-search result cache; TTL 0 disables it. Billing is never cached.
+    web_search_cache_ttl_seconds: float = _get_non_negative_float_env("WEB_SEARCH_CACHE_TTL_SECONDS", 120.0)
+    web_search_cache_max_entries: int = _get_positive_int_env("WEB_SEARCH_CACHE_MAX_ENTRIES", 256)
+    # Kill switch for the FREE tavily_keyless engine in the free pool (x-tavily-access-mode
+    # header, no api_key). Works even when TAVILY_API_KEY is set: the keyed mode stays
+    # a separate PAID adapter in the fallback chain. On by default (egress is not blocked).
+    web_search_tavily_keyless: bool = _get_bool_env("WEB_SEARCH_TAVILY_KEYLESS", True)
+
     # Optional proxy for YouTube transcript downloads. YouTube blocks the caption
     # endpoint for datacenter IPs, so transcripts are fetched through this proxy when
     # it is set; when unset they are fetched directly. With the proxy set, calls

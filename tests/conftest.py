@@ -19,6 +19,13 @@ os.environ.setdefault("LLMGATEWAY_LOG_DIR", _temp_log_dir)
 # or call refresh_once() directly.
 os.environ.setdefault("FREE_LLM_CATALOG_ENABLED", "false")
 
+# Legacy web tests exercise the paid adapter chain and its exact call counts;
+# the free-first pool, the global search cache, and keyless Tavily would change
+# all three. Tests of those paths re-enable them via patch.object(settings, ...).
+os.environ.setdefault("WEB_FREE_SEARCH_ENABLED", "false")
+os.environ.setdefault("WEB_SEARCH_CACHE_TTL_SECONDS", "0")
+os.environ.setdefault("WEB_SEARCH_TAVILY_KEYLESS", "false")
+
 # Same for the capability-autofill loop: its first iteration fetches provider
 # /models catalogs through the shared HTTP client, which tests replace with
 # mocks that assert exact call counts. Tests of the autofill path re-enable it
